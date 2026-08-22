@@ -1,8 +1,9 @@
 # One image holding the eight backend processes this repo normally deploys
 # as eight separate Render web services (api-gateway, dna, universe, nature,
-# ocean, auth, analytics, telemetry). Built for a platform whose free tier
-# gives exactly one container and one exposed port — see ../README.md for
-# why this exists and which platform (Koyeb, not Hugging Face) actually fits.
+# ocean, auth, analytics, telemetry), packaged so Render can run all eight
+# as ONE `runtime: docker` web service instead of eight — see ../README.md
+# for why (the 750-hour free-tier pool is shared account-wide, split eight
+# ways today) and why this stays on Render rather than a different platform.
 #
 # Scope, deliberately: the two Next.js frontends (myunivokai-web,
 # myunivokai-admin) are NOT part of this image. myunivokai-web already runs
@@ -24,7 +25,7 @@
 # module depends on the sibling `contracts/go` package (and telemetry-service
 # on `contracts/rust`) at a fixed relative path:
 #
-#   docker build -f deploy/single-container/Dockerfile -t myunivokai-services-koyeb .
+#   docker build -f deploy/single-container/Dockerfile -t myunivokai-services-single .
 
 # ---------------------------------------------------------------------------
 # Go services — identical builder recipe, repeated per service exactly as

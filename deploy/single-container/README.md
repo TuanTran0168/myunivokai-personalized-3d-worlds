@@ -8,17 +8,17 @@
 > per-service error a real deploy with an incomplete `.env` would see). That
 > smoke test is also what found and fixed the bug described below in
 > "Why `docker-entrypoint.sh` defaults every optional variable." **Not yet
-> deployed to a real Koyeb account** — the platform specifics below are from
-> documentation and community reports, and a full boot against real
-> Neon/Upstash/Synadia credentials has not been run. Treat the resource-fit
-> section as the first thing to verify there.
+> deployed as a real Render service** — the deployment steps live in
+> `notes/ops/render-single-container-deployment-guide.md` and have not been
+> run against real Neon/Upstash/Synadia credentials yet. Treat the
+> resource-fit section as the first thing to verify there.
 
-## The research: does either platform actually give what was assumed?
+## The research: why not leave Render for a new platform at all?
 
-The premise going in was: Hugging Face Spaces or Koyeb, one container, no
-sleep, no shared monthly instance-hour cap like Render's 750h/account. As of
-August 2026, **neither claim holds cleanly** for this use case. Both
-platforms are real and free, but not for what was assumed:
+The premise going in was to escape Render entirely — Hugging Face Spaces or
+Koyeb, one container, no sleep, no shared monthly instance-hour cap like
+Render's 750h/account. As of August 2026, **neither actually works out**,
+and the real fix turned out not to need a new platform:
 
 ### Hugging Face Spaces — Docker SDK is no longer free
 
@@ -32,46 +32,62 @@ ZeroGPU Spaces, but not an arbitrary Dockerfile. **This rules HF Spaces out
 as a free option for this repo entirely** — not a resource-fit problem, a
 "you cannot create the Space" problem.
 
-### Koyeb — free, but smaller and not sleep-free
+### Koyeb — ruled out by its own acquisition, not by its free tier
 
-Koyeb does let a free account deploy an arbitrary Docker image, one Free
-Instance per organization. The actual shape of that free instance:
+Koyeb's free tier was never actually "no sleep" to begin with — it slept
+too, just after a longer idle window (1h) than Render's (15m), so that part
+of the original premise was already wrong. What made it a dead end outright:
+Mistral AI acquired Koyeb in February 2026, folding it into "Mistral
+Compute," and by August 2026 its dashboard is visibly mid-transition — new
+accounts see a chat widget pushing a paid "Starter" plan instead of a
+working "Create Service" flow. Building a production dependency on a
+platform mid-acquisition, with no confirmed-working free tier, is not worth
+more scaffold time.
 
-| | Koyeb Free Instance | Render Free (this repo's status quo) |
-| --- | --- | --- |
-| RAM | 512 MB | 512 MB |
-| vCPU | 0.1 | 0.1 |
-| Disk | 2 GB SSD, no Volumes | ephemeral |
-| Sleeps on idle | **Yes — after 1 hour, cannot be disabled** | Yes — after 15 minutes |
-| Monthly instance-hour cap shared across services | No such cap | **750h/month, shared across every free service in the account** |
-| Regions | Frankfurt or Washington D.C. only | several |
+### The actual answer was already sitting in `render.yaml`
 
-So: Koyeb **does sleep** — the "no sleep" part of the premise is wrong, it
-is a different idle timeout (1h vs 15m), not the absence of one. What Koyeb
-actually removes is Render's specific pain: **the 750-hour pool split across
-every free service in the account**, which is exactly what
-`notes/ops/production-deployment-guide.md` and `render.yaml`'s own comments
-have been tracking ("seventh free web service — check the instance-hour
-budget first"). With eight backend services each getting their own Render
-container, that pool gets divided eight ways. Packing all eight into **one**
-container/one Koyeb instance means there is only one thing to divide the
-budget by — the actual win here is architectural (fewer containers,
-therefore less pool pressure and one wake instead of a wake-the-whole-chain
-cascade), not "no more sleeping."
+Every one of the 8 existing backend services is already declared with
+`runtime: docker`, its own `dockerfilePath`, and `dockerContext: .`
+(`render.yaml`'s `myunivokai-gateway` block and the same shape repeated for
+the other seven). Render's Docker support isn't a workaround being reached
+for here — it's the exact mechanism these services already run on today.
+Nothing about this folder's `Dockerfile`/`supervisord.conf` pairing is
+platform-specific; it's a generic "one image, one exposed port, eight
+processes inside" package that any `runtime: docker` Render service already
+knows how to run. The trick was never finding a new host — it's pointing
+**one more Render service** at *this* `Dockerfile` instead of running eight
+separate ones, each built from its own `Dockerfile.prod`.
 
-**The real open question is resource fit, not policy.** 512 MB / 0.1 vCPU
-for eight processes at once (api-gateway, dna, universe, nature, ocean,
-auth, analytics, telemetry) has not been measured against this image yet.
-Go binaries idle small (single-digit to low-double-digit MB RSS each); the
-Rust binary should be similar. Eight of them plus NATS/Postgres/Redis
-client connection overhead *might* fit in 512 MB, but 0.1 vCPU means a cold
-boot — eight processes each opening a NATS connection, six of them running
-a Postgres migration — will be slow, and slow enough to trip a platform
-health-check timeout is a real risk that only an actual deploy will answer.
-If it doesn't fit: the honest next step is trimming which services run
-here (e.g. defer `ocean`/`nature` and keep them on Render a while longer)
-or a paid Koyeb Nano/Micro instance (still far cheaper than Render's paid
-tier), not fighting the free tier harder.
+Consolidating 8 Render web services into 1 keeps everything else identical
+— same account, same dashboard, same Neon/Upstash/Synadia credentials
+already sitting in each service's Environment tab — while fixing the actual
+problem `notes/ops/production-deployment-guide.md` §5.3 and `render.yaml`'s
+own comments have been tracking: the shared 750-hour/month pool split
+across every free service in the account. Eight containers divide that
+budget eight ways; one container divides it by one. It also collapses
+"wake one sleeping sibling that might itself need to wake another" into a
+single wake, since every process is already running together the moment
+that one container is up. See
+`notes/ops/render-single-container-deployment-guide.md` for the concrete
+steps: add the service, reuse the credentials already in the other eight
+services' Environment tabs, verify it, and only then decommission the
+eight originals.
+
+**The real open question is still resource fit, not policy.** Render Free's
+RAM/vCPU allotment for eight processes running at once (api-gateway, dna,
+universe, nature, ocean, auth, analytics, telemetry) has not been measured
+against this image yet. Go binaries idle small (single-digit to
+low-double-digit MB RSS each); the Rust binary should be similar. Per-process
+footprint is implicitly already proven, since the account runs all eight as
+*separate* free instances today — what's new is eight of them sharing one
+instance's CPU at once during a cold boot that opens eight NATS connections
+and runs six Postgres migrations back-to-back. Whether that trips Render's
+own health-check timeout is a real risk only an actual deploy will answer.
+If it doesn't fit: the honest next step is trimming which services run here
+(e.g. defer `ocean`/`nature` and keep them as separate Render services a
+while longer) or a paid Render instance for just this one consolidated
+service (still one bill instead of scaling all eight up), not fighting the
+free tier harder.
 
 ### Frontends are explicitly out of scope here
 
@@ -97,14 +113,19 @@ covers the eight backend services only** — the actual source of Render's
 
 ## Why an entrypoint script writes the NATS credentials file
 
-Render's blueprint uses a dashboard "Secret File" feature to mount
-`nats.creds`. Whether Koyeb has an equivalent has not been verified here, so
-this deploy uses the one mechanism guaranteed to exist everywhere: an
-environment variable. `NATS_CREDS_CONTENT` holds the full multi-line
-contents of the `.creds` file Synadia issues, and `docker-entrypoint.sh`
-writes it to disk before any backend process starts. If Koyeb (or whatever
-platform is used) turns out to support real secret files, switching to one
-is a small follow-up, not a redesign.
+Render already links every one of the 8 existing services to a
+`myunivokai-shared-env` group holding `NATS_URL` and a `nats.creds` Secret
+File (see `render.yaml`'s comments near the `myunivokai-analytics` and
+`myunivokai-telemetry` blocks) — but that linkage is dashboard-only, it has
+no representation in `render.yaml` itself, so a newly-created consolidated
+service would not inherit it automatically. Rather than assume that manual
+step happens correctly on first deploy, this scaffold uses the one
+mechanism guaranteed to work the same way regardless: an environment
+variable. `NATS_CREDS_CONTENT` holds the full multi-line contents of the
+`.creds` file Synadia issues, and `docker-entrypoint.sh` writes it to disk
+before any backend process starts. Linking this service to the existing
+Secret File group instead is a small follow-up once this deploys
+successfully once, not a redesign.
 
 ## Why `docker-entrypoint.sh` defaults every optional variable
 
@@ -145,7 +166,7 @@ everything is already running in the same container the whole time it's up).
 # From the repository root — every service's go.mod depends on contracts/go
 # (and telemetry-service on contracts/rust) at this fixed relative path,
 # exactly like render.yaml's own dockerContext: . for every service.
-docker build -f deploy/single-container/Dockerfile -t myunivokai-services-koyeb .
+docker build -f deploy/single-container/Dockerfile -t myunivokai-services-single .
 
 # Local smoke test before pushing to a registry — fill in a real .env first,
 # copied from .env.example. NATS_CREDS_CONTENT is passed separately with -e
@@ -157,21 +178,30 @@ docker build -f deploy/single-container/Dockerfile -t myunivokai-services-koyeb 
 docker run --rm -p 8080:8080 \
   --env-file deploy/single-container/.env \
   -e NATS_CREDS_CONTENT="$(cat deploy/single-container/.env.nats-creds)" \
-  myunivokai-services-koyeb
+  myunivokai-services-single
 ```
 
-On Koyeb: create a Service from this Dockerfile (or from a registry image
-built by CI), set the port to 8080, and fill in every variable from
-`.env.example` under the service's Environment tab. First boot runs six
-Postgres migrations and eight NATS connections back-to-back on 0.1 vCPU —
-give the health check a generous grace period before assuming it's stuck.
+On Render: create a new **Web Service** with `runtime: docker`,
+`dockerfilePath: ./deploy/single-container/Dockerfile`, and
+`dockerContext: .` — the exact same shape every other service in
+`render.yaml` already uses, just pointed at this Dockerfile instead of a
+service's own `Dockerfile.prod`. Set the port to 8080, and fill in every
+variable from `.env.example` under the service's Environment tab (values
+for dna/universe/nature/auth/analytics/telemetry/ocean already exist in the
+other eight services' own Environment tabs — this is reuse, not new
+provisioning). First boot runs six Postgres migrations and eight NATS
+connections back-to-back on one shared instance — give the health check a
+generous grace period before assuming it's stuck. See
+`notes/ops/render-single-container-deployment-guide.md` for the full,
+step-by-step version of this.
 
 ## What's unverified and should be checked on a real account before relying on this
 
-- Whether eight processes actually fit in 512 MB RAM under real load, not
-  just at idle.
-- Whether a cold boot completes before Koyeb's own health-check deadline.
-- Whether Koyeb has a secret-file mechanism that would let
-  `docker-entrypoint.sh` be replaced with a direct mount.
-- Whether Koyeb's Frankfurt/Washington-D.C.-only regions add meaningful
-  latency versus Render's current region for this app's actual users.
+- Whether eight processes actually fit in one Render Free instance's
+  RAM/vCPU under real load, not just at idle.
+- Whether a cold boot completes before Render's own health-check deadline
+  when it's one shared instance instead of eight separate ones.
+- Whether linking this service to the existing `myunivokai-shared-env`
+  Secret File group (see above) works cleanly, letting
+  `docker-entrypoint.sh`'s `NATS_CREDS_CONTENT` step be replaced with a
+  direct file mount.
