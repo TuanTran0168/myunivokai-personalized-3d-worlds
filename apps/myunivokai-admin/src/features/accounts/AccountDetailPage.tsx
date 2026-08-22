@@ -40,6 +40,7 @@ export function AccountDetailPage({ params }: { params: Promise<{ accountId: str
       <PageHeader
         title={account?.name || account?.email || "…"}
         description="Account details and role assignment."
+        sources={["Auth Service"]}
         action={
           account ? (
             <Button variant="outline" size="sm" onClick={() => setIsEditOpen(true)}>

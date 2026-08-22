@@ -44,6 +44,7 @@ export function AccountsPage() {
       <PageHeader
         title="Accounts"
         description="Staff accounts, their roles and status."
+        sources={["Auth Service"]}
         action={
           <Button size="sm" onClick={() => setIsCreateOpen(true)}>
             <UserPlus />

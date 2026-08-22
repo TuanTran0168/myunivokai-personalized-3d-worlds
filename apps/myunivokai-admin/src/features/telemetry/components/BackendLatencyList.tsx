@@ -1,4 +1,5 @@
 import { formatCount, formatDuration } from "@/features/analytics/format";
+import { serviceDisplayName } from "@/lib/service-names";
 import type { TelemetryBackendSummary } from "../types";
 
 // Round-trip time per backend service, which end-to-end response time cannot
@@ -13,7 +14,7 @@ export function BackendLatencyList({ backends }: { backends: TelemetryBackendSum
       {backends.map((backend) => (
         <div key={backend.service} className="rounded-lg border border-border/60 p-3">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p className="text-sm font-medium capitalize text-foreground">{backend.service}</p>
+            <p className="text-sm font-medium text-foreground">{serviceDisplayName(backend.service)}</p>
             <p className="font-mono text-xs tabular-nums text-muted-foreground">
               p95 {formatDuration(backend.p95DurationMs)} · slowest {formatDuration(backend.slowestDurationMs)}
             </p>

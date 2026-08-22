@@ -50,6 +50,7 @@ export function JobsPage() {
       <PageHeader
         title="Jobs"
         description="Generation jobs across dna, universe and nature — what failed, why, and how long it took."
+        sources={["Analytics Service"]}
       />
 
       <FilterBar>

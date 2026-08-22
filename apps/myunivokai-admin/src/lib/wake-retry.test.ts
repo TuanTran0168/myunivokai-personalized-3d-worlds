@@ -83,4 +83,37 @@ describe("fetchWithWakeRetry", () => {
     const { response } = await runWith([waking(), jsonResponse(200, { worlds: [] })]);
     await expect(response.json()).resolves.toEqual({ worlds: [] });
   });
+
+  // A request that never gets a response at all (dropped connection, a dev
+  // server still compiling this route) must not hang here forever with no
+  // retry count to exhaust it — that gap, not SERVICE_WAKING, is what a
+  // stuck screen only F5 could fix actually was.
+  function requestInitOf(fetchMock: ReturnType<typeof vi.fn>, callIndex = 0): RequestInit | undefined {
+    return (fetchMock.mock.calls[callIndex] as unknown as [RequestInfo | URL, RequestInit?])[1];
+  }
+
+  it("passes an abort signal to fetch so a request with no response cannot hang forever", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchWithWakeRetry("/api/admin/overview");
+    expect(requestInitOf(fetchMock)?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("respects a caller-supplied signal instead of overriding it", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchWithWakeRetry("/api/admin/overview", { signal: controller.signal });
+    expect(requestInitOf(fetchMock)?.signal).toBe(controller.signal);
+  });
+
+  it("propagates an abort instead of retrying when the underlying fetch never responds", async () => {
+    const abortError = Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+    const fetchMock = vi.fn(async () => {
+      throw abortError;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(fetchWithWakeRetry("/api/admin/overview")).rejects.toThrow(abortError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

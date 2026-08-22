@@ -60,6 +60,7 @@ export function ContentMixPage() {
       <PageHeader
         title="Content mix"
         description="What the DNA generator is producing. Select any bar to open the worlds behind it."
+        sources={["Analytics Service"]}
       />
 
       <FilterBar>

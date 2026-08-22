@@ -83,7 +83,7 @@ func (runtime *Runtime) Run(_ context.Context) error {
 		{subject: contracts.AuthAuditListQuerySubject, handler: runtime.natsHandler.HandleAuditListQuery},
 	}
 	for _, binding := range queryBindings {
-		subscription, err := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, binding.handler)
+		subscription, err := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, runtime.loggedQuery(binding.handler))
 		if err != nil {
 			runtime.unsubscribeAll()
 			return fmt.Errorf("subscribe auth query %s: %w", binding.subject, err)
@@ -109,6 +109,20 @@ func (runtime *Runtime) unsubscribeAll() {
 		_ = subscription.Unsubscribe()
 	}
 	runtime.subscriptions = nil
+}
+
+// loggedQuery wraps a Core NATS query responder with one structured line per
+// request answered — the request-level signal this repo's HTTP services get
+// for free from middleware.Logging, which a bare NATS subscriber has no
+// equivalent of. Subject only, never the payload: auth-service's queries
+// carry credentials and account data, which is exactly why nothing besides
+// the subject and timing belongs in this line.
+func (runtime *Runtime) loggedQuery(handler nats.MsgHandler) nats.MsgHandler {
+	return func(message *nats.Msg) {
+		start := time.Now()
+		handler(message)
+		log.Info().Str("subject", message.Subject).Dur("duration", time.Since(start)).Msg("auth query answered")
+	}
 }
 
 // PublishServiceStarted announces this boot, and is the one place this

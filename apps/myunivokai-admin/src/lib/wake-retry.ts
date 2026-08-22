@@ -19,6 +19,18 @@ const SERVICE_WAKING_ERROR_CODE = "SERVICE_WAKING";
 // never comes back.
 const MAXIMUM_RETRIES = 6;
 const DEFAULT_RETRY_MILLISECONDS = 10_000;
+// Bounds the bare fetch() itself, not only the SERVICE_WAKING retry loop
+// around it. Every server-side hop this eventually reaches already times out
+// on its own (auth-relay.ts and the [...path] BFF relay both cap the gateway
+// call at 8s) — but nothing capped the FIRST hop, the browser's own fetch to
+// this Next.js server. A request that never gets a response at all (a
+// dropped connection, or the dev server still compiling this route's module
+// graph on its first hit) would hang here indefinitely with no retry count
+// to exhaust, which is a real "loading forever, only F5 fixes it" case the
+// SERVICE_WAKING bound above was never meant to cover. Longer than the
+// gateway's own 8s budget so a legitimate slow-but-answering gateway isn't
+// cut off first.
+const REQUEST_TIMEOUT_MILLISECONDS = 15_000;
 
 export type WakeProgressHandler = (attempt: number) => void;
 
@@ -60,7 +72,13 @@ export async function fetchWithWakeRetry(
   onWaking?: WakeProgressHandler
 ): Promise<Response> {
   for (let attempt = 1; ; attempt += 1) {
-    const response = await fetch(input, init);
+    // Respect a caller-supplied signal rather than override it — none does
+    // today, but silently discarding one later would be an easy mistake to
+    // miss in review.
+    const response = await fetch(input, {
+      ...init,
+      signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MILLISECONDS)
+    });
     if (attempt > MAXIMUM_RETRIES || !(await isServiceWaking(response))) {
       return response;
     }

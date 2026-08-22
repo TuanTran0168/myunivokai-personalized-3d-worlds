@@ -12,6 +12,7 @@ import { FilterBar } from "@/components/ui/filter-bar";
 import { FilterSelect } from "@/components/ui/filter-select";
 import { SectionCard } from "@/components/ui/section-card";
 import { CursorPagination, useCursorPagination } from "@/components/ui/cursor-pagination";
+import { serviceDisplayName } from "@/lib/service-names";
 import { analyticsApi } from "./api";
 import { StatCard } from "@/components/ui/stat-card";
 import { SERVICE_START_HEADERS, ServiceStartsTable } from "./components/ServiceStartsTable";
@@ -52,7 +53,7 @@ export function FleetPage() {
   // anyone remembering to edit this file.
   const serviceOptions = [
     { label: "All services", value: "" },
-    ...(wake?.services ?? []).map((entry) => ({ label: entry.service, value: entry.service }))
+    ...(wake?.services ?? []).map((entry) => ({ label: serviceDisplayName(entry.service), value: entry.service }))
   ];
 
   return (
@@ -60,6 +61,7 @@ export function FleetPage() {
       <PageHeader
         title="Fleet"
         description="Which services have restarted, and which ones the gateway has been unable to wake."
+        sources={["API Gateway", "Analytics Service"]}
       />
 
       <FilterBar>
@@ -83,7 +85,7 @@ export function FleetPage() {
           icon={TriangleAlert}
           label="Services not answering"
           value={wake ? String(strandedServices.length) : "—"}
-          hint={strandedServices.map((entry) => entry.service).join(", ") || "all answering"}
+          hint={strandedServices.map((entry) => serviceDisplayName(entry.service)).join(", ") || "all answering"}
           tone={strandedServices.length > 0 ? "warning" : "default"}
         />
         <StatCard

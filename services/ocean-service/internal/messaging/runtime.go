@@ -87,7 +87,7 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		{subject: contracts.OceanShareGetQuerySubject, handler: runtime.natsHandler.HandleShareGetQuery},
 	}
 	for _, binding := range queryBindings {
-		subscription, subscribeError := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, binding.handler)
+		subscription, subscribeError := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, runtime.loggedQuery(binding.handler))
 		if subscribeError != nil {
 			runtime.unsubscribeAll()
 			return fmt.Errorf("subscribe ocean query %s: %w", binding.subject, subscribeError)
@@ -135,15 +135,22 @@ func (runtime *Runtime) consumeCompositions(ctx context.Context, subscription *n
 			continue
 		}
 		for _, message := range messages {
+			messageStartTime := time.Now()
 			if err := runtime.natsHandler.HandleComposition(ctx, message); err != nil {
 				metadata, metadataError := message.Metadata()
 				if metadataError == nil && int(metadata.NumDelivered) >= runtime.config.ConsumerMaximumDeliveries {
 					runtime.publishTerminalCompositionFailure(ctx, message)
 					continue
 				}
+				// Subject only, never the payload: a job/world/profile id inside it
+				// is not secret, but this line is meant to answer "is anything
+				// moving" at a glance, not to become a second place a body's shape
+				// has to be kept privacy-safe.
+				log.Warn().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Err(err).Msg("ocean message processing failed, will retry")
 				_ = message.NakWithDelay(runtime.config.ConsumerRetryDelay)
 				continue
 			}
+			log.Info().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Msg("ocean message processed")
 			_ = message.Ack()
 		}
 	}
@@ -208,6 +215,20 @@ func (runtime *Runtime) publishOutboxBatch(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// loggedQuery wraps a Core NATS query responder with one structured line per
+// request answered — the request-level signal this repo's HTTP services get
+// for free from middleware.Logging, which a bare NATS subscriber has no
+// equivalent of. Subject only, same reasoning as consumeCompositions()'s own
+// logging: it identifies which query ran without touching a payload that
+// might carry a world's contents.
+func (runtime *Runtime) loggedQuery(handler nats.MsgHandler) nats.MsgHandler {
+	return func(message *nats.Msg) {
+		queryStartTime := time.Now()
+		handler(message)
+		log.Info().Str("subject", message.Subject).Dur("duration", time.Since(queryStartTime)).Msg("ocean query answered")
+	}
 }
 
 // PublishServiceStarted announces this boot so the read model can show it.

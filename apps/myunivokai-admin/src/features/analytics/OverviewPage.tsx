@@ -66,7 +66,8 @@ export function OverviewPage() {
     <div>
       <PageHeader
         title="Overview"
-        description="Read from analytics-service. Eventually consistent — a world appears here seconds after it is created."
+        description="Eventually consistent — a world appears here seconds after it is created."
+        sources={["Analytics Service"]}
       />
 
       <FilterBar>

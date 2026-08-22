@@ -55,7 +55,7 @@ export function TelemetryShell({
 
   return (
     <div>
-      <PageHeader title={title} description={description} />
+      <PageHeader title={title} description={description} sources={["Telemetry Service"]} />
 
       <FilterBar>
         <FilterSelect

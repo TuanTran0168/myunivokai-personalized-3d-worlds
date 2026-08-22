@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/myunivokai/myunivokai/services/analytics-service/internal/config"
@@ -106,7 +107,7 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		{subject: contracts.AnalyticsServiceStartListQuerySubject, handler: runtime.natsHandler.HandleServiceStartListQuery},
 	}
 	for _, binding := range queryBindings {
-		subscription, subscribeError := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, binding.handler)
+		subscription, subscribeError := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, runtime.loggedQuery(binding.handler))
 		if subscribeError != nil {
 			runtime.unsubscribeAll()
 			return fmt.Errorf("subscribe analytics query %s: %w", binding.subject, subscribeError)
@@ -153,12 +154,32 @@ func (runtime *Runtime) consumeEvents(ctx context.Context, subscription *nats.Su
 			continue
 		}
 		for _, message := range messages {
+			messageStartTime := time.Now()
 			if err := runtime.natsHandler.HandleEvent(ctx, message); err != nil {
-				log.Error().Err(err).Str("subject", message.Subject).Msg("project analytics event")
+				// Subject only, never the payload: a job/world/profile id inside it
+				// is not secret, but this line is meant to answer "is anything
+				// moving" at a glance, not to become a second place a body's shape
+				// has to be kept privacy-safe.
+				log.Warn().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Err(err).Msg("analytics message processing failed, will retry")
 				_ = message.NakWithDelay(runtime.config.ConsumerRetryDelay)
 				continue
 			}
+			log.Info().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Msg("analytics message processed")
 			_ = message.Ack()
 		}
+	}
+}
+
+// loggedQuery wraps a Core NATS query responder with one structured line per
+// request answered — the request-level signal this repo's HTTP services get
+// for free from middleware.Logging, which a bare NATS subscriber has no
+// equivalent of. Subject only, never the payload: this service's own event
+// stream carries full world snapshots, which is exactly why nothing besides
+// the subject and timing belongs in this line either.
+func (runtime *Runtime) loggedQuery(handler nats.MsgHandler) nats.MsgHandler {
+	return func(message *nats.Msg) {
+		queryStartTime := time.Now()
+		handler(message)
+		log.Info().Str("subject", message.Subject).Dur("duration", time.Since(queryStartTime)).Msg("analytics query answered")
 	}
 }

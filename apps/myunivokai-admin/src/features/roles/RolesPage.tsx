@@ -60,6 +60,7 @@ export function RolesPage() {
       <PageHeader
         title="Roles"
         description="Composed freely from permissions. System roles can't be edited or deleted."
+        sources={["Auth Service"]}
         action={
           <Button size="sm" onClick={() => setFormTarget({ open: true, role: undefined })}>
             <Plus />

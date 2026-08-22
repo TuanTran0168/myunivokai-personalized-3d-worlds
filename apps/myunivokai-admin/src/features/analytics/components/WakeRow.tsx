@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { serviceDisplayName } from "@/lib/service-names";
 import { formatCount, formatDateTime } from "../format";
 import type { ServiceWakeStats } from "../types";
 
@@ -11,7 +12,7 @@ export function WakeRow({ stats }: { stats: ServiceWakeStats }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3">
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{stats.service}</p>
+        <p className="truncate text-sm font-medium">{serviceDisplayName(stats.service)}</p>
         <p className="truncate text-xs text-muted-foreground">
           Last seen {formatDateTime(stats.lastSeenAt ?? undefined)}
         </p>

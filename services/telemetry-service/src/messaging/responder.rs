@@ -105,15 +105,26 @@ async fn spawn_responder(
 /// Dispatch is on the subject rather than on the responder that received it,
 /// so adding a third query subject is one arm here instead of another
 /// parameter threaded through the spawn path.
+///
+/// The one structured line per query answered, at info: the Core NATS
+/// equivalent of what middleware.Logging gives every HTTP service in this
+/// repo for free. Subject and timing only, matching Go's own gateway request
+/// log line — never the query window or the response body, neither of which
+/// says anything a log needs to.
 async fn answer(
     sink: Arc<dyn TelemetrySink>,
     config: Config,
     message: async_nats::Message,
 ) -> Vec<u8> {
-    if message.subject.as_str() == TELEMETRY_ROUTE_LIST_QUERY_SUBJECT {
-        return answer_routes(sink, config, &message.payload).await;
-    }
-    answer_overview(sink, config, &message.payload).await
+    let start = std::time::Instant::now();
+    let subject = message.subject.clone();
+    let reply = if subject.as_str() == TELEMETRY_ROUTE_LIST_QUERY_SUBJECT {
+        answer_routes(sink, config, &message.payload).await
+    } else {
+        answer_overview(sink, config, &message.payload).await
+    };
+    tracing::info!(%subject, duration_ms = start.elapsed().as_millis() as u64, "telemetry query answered");
+    reply
 }
 
 async fn answer_overview(sink: Arc<dyn TelemetrySink>, config: Config, payload: &[u8]) -> Vec<u8> {

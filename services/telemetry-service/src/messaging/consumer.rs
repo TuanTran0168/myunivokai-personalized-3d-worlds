@@ -107,13 +107,18 @@ async fn handle_rollup(
 
     match sink.write_rollup(&envelope).await {
         Ok(outcome) => {
+            // info, not debug: this is the one line that answers "is anything
+            // moving" for this service, the same question middleware.Logging
+            // answers for api-gateway on every HTTP request. Left at debug it
+            // was invisible under the default RUST_LOG=info this service ships
+            // with, which is indistinguishable from the service doing nothing.
             match outcome {
-                IngestOutcome::Stored => tracing::debug!(
+                IngestOutcome::Stored => tracing::info!(
                     bucket_start = %envelope.data.bucket_start,
                     http_buckets = envelope.data.buckets.len(),
                     "telemetry rollup stored"
                 ),
-                IngestOutcome::AlreadyStored => tracing::debug!(
+                IngestOutcome::AlreadyStored => tracing::info!(
                     bucket_start = %envelope.data.bucket_start,
                     instance_id = %envelope.data.instance_id,
                     "duplicate delivery already stored"

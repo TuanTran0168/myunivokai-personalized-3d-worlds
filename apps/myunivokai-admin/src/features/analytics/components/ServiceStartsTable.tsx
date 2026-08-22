@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { serviceDisplayName } from "@/lib/service-names";
 import { formatDateTime, formatDuration } from "../format";
 import type { ServiceStartRecord } from "../types";
 
@@ -20,7 +21,7 @@ export function ServiceStartsTable({ starts }: { starts: ServiceStartRecord[] })
           <TableBody>
             {starts.map((start) => (
               <TableRow key={`${start.instanceId}-${start.startedAt}`}>
-                <TableCell className="text-sm font-medium">{start.service}</TableCell>
+                <TableCell className="text-sm font-medium">{serviceDisplayName(start.service)}</TableCell>
                 <TableCell>
                   <ServiceVersion version={start.version} />
                 </TableCell>
@@ -71,7 +72,7 @@ function ServiceStartCard({ start }: { start: ServiceStartRecord }) {
   return (
     <div className="rounded-lg border border-border p-3">
       <div className="flex items-start justify-between gap-2">
-        <p className="truncate text-sm font-medium">{start.service}</p>
+        <p className="truncate text-sm font-medium">{serviceDisplayName(start.service)}</p>
         <Badge variant="ghost">
           <ServiceVersion version={start.version} />
         </Badge>

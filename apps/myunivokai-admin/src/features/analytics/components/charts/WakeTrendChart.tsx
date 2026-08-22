@@ -13,6 +13,7 @@ import {
   ChartTooltipContent,
   useChartSeriesToggle
 } from "@/components/ui/chart";
+import { serviceDisplayName } from "@/lib/service-names";
 import { seriesColor } from "../../chart-config";
 import type { ServiceWakeStats } from "../../types";
 
@@ -39,7 +40,7 @@ export function WakeTrendChart({
 }) {
   const charted = services.filter((entry) => entry.wakeable || entry.totalWakes > 0);
   const config: ChartConfig = Object.fromEntries(
-    charted.map((entry, index) => [entry.service, { label: entry.service, color: seriesColor(index) }])
+    charted.map((entry, index) => [entry.service, { label: serviceDisplayName(entry.service), color: seriesColor(index) }])
   );
 
   const rows = buildDailyRows(charted);

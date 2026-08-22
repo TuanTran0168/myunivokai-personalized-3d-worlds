@@ -36,6 +36,7 @@ export function WorldDetailPage({ params }: { params: Promise<{ worldId: string 
       <PageHeader
         title={world?.nickname ?? (worldQuery.isLoading ? "…" : "World")}
         description={world ? `${world.archetype} · ${world.sceneName}` : undefined}
+        sources={["Analytics Service"]}
         action={
           <Link
             href="/worlds"

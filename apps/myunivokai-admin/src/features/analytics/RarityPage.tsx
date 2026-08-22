@@ -61,6 +61,7 @@ export function RarityPage() {
       <PageHeader
         title="Rarity"
         description="How often each rare feature actually comes up, replayed from the seeds of real worlds — not read back from the configured probability."
+        sources={["Analytics Service"]}
       />
 
       <FilterBar>

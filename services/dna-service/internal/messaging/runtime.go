@@ -97,7 +97,7 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		return fmt.Errorf("subscribe family events: %w", err)
 	}
 	runtime.subscriptions = append(runtime.subscriptions, resultsSubscription)
-	jobQuerySubscription, err := runtime.connection.QueueSubscribe(contracts.DNAJobGetQuerySubject, requestQueueName, runtime.natsHandler.HandleJobQuery)
+	jobQuerySubscription, err := runtime.connection.QueueSubscribe(contracts.DNAJobGetQuerySubject, requestQueueName, runtime.loggedQuery(runtime.natsHandler.HandleJobQuery))
 	if err != nil {
 		runtime.unsubscribeAll()
 		return fmt.Errorf("subscribe job query: %w", err)
@@ -150,6 +150,7 @@ func (runtime *Runtime) consume(
 			continue
 		}
 		for _, message := range messages {
+			messageStartTime := time.Now()
 			if err := handler(ctx, message); err != nil {
 				metadata, metadataError := message.Metadata()
 				if terminalHandler != nil && metadataError == nil && int(metadata.NumDelivered) >= runtime.config.ConsumerMaximumDeliveries {
@@ -157,9 +158,15 @@ func (runtime *Runtime) consume(
 					terminalHandler(ctx, message)
 					continue
 				}
+				// Subject only, never the payload: a job/world/profile id inside it
+				// is not secret, but this line is meant to answer "is anything
+				// moving" at a glance, not to become a second place a body's shape
+				// has to be kept privacy-safe.
+				log.Warn().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Err(err).Msg("dna message processing failed, will retry")
 				_ = message.NakWithDelay(runtime.config.ConsumerRetryDelay)
 				continue
 			}
+			log.Info().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Msg("dna message processed")
 			_ = message.Ack()
 		}
 	}
@@ -221,6 +228,20 @@ func (runtime *Runtime) publishOutboxBatch(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// loggedQuery wraps a Core NATS query responder with one structured line per
+// request answered — the request-level signal this repo's HTTP services get
+// for free from middleware.Logging, which a bare NATS subscriber has no
+// equivalent of. Subject only, same reasoning as consume()'s own logging: it
+// identifies which query ran without touching a payload that might carry a
+// profile or world's contents.
+func (runtime *Runtime) loggedQuery(handler nats.MsgHandler) nats.MsgHandler {
+	return func(message *nats.Msg) {
+		queryStartTime := time.Now()
+		handler(message)
+		log.Info().Str("subject", message.Subject).Dur("duration", time.Since(queryStartTime)).Msg("dna query answered")
+	}
 }
 
 func DNAGenerateMessageID(jobID string) string {

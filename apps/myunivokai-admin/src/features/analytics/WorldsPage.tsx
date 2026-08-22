@@ -55,6 +55,7 @@ export function WorldsPage() {
       <PageHeader
         title="Worlds"
         description="Every generated world, newest first, projected from universe and nature events."
+        sources={["Analytics Service"]}
       />
 
       <FilterBar>

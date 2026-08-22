@@ -41,6 +41,7 @@ export function AuditPage() {
       <PageHeader
         title="Audit log"
         description="Every login, failed login, role change and admin mutation, newest first."
+        sources={["Auth Service"]}
       />
 
       <FilterBar>
