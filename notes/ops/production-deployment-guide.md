@@ -1,6 +1,6 @@
 # Hướng Dẫn Triển Khai Lên Môi Trường Production (Production Deployment Guide)
 
-> **Cập nhật lần cuối:** 2026-08-07 (thêm Service 6: `myunivokai-analytics`, database thứ 5, và ghi chú về phân quyền NATS trên NGS)
+> **Cập nhật lần cuối:** 2026-08-22 (thêm mục 5.8-5.15: toàn bộ sự cố thật gặp phải khi deploy đồng loạt `auth`/`ocean`/`analytics`/`telemetry` và bật `ADMIN_ROUTES_ENABLED` lên production)
 > **Trạng thái:** Active. Phần gốc (gateway/dna/universe/nature) đã Tested trên
 > Production; phần `myunivokai-auth` (mục 2.4, Service 5, 5.7) và phần
 > `myunivokai-analytics` (Service 6) là hướng dẫn mới theo `render.yaml`,
@@ -342,3 +342,160 @@ go run cmd/migrate/main.go
   service ngủ có thể trả `503` ngay lập tức thay vì đợi timeout — đây là bug
   đã được xác nhận và **cố ý chưa vá** ở giai đoạn này, xem
   `notes/vision/service-wake-mechanism.md`. Không phải lỗi cấu hình deploy.
+
+### 5.8. Bật một cờ blueprint phụ thuộc biến `sync: false` chưa có giá trị thật → gateway crash-loop, Render tự rollback âm thầm
+
+- **Triệu chứng:** Merge một thay đổi `render.yaml` (ví dụ `ADMIN_ROUTES_ENABLED:
+  "false"` → `"true"`) xong, xem log runtime lại thấy service "khởi động
+  khoẻ mạnh" như bình thường — nhưng tính năng mới (ở đây là route
+  `/api/admin/*`) vẫn không hoạt động.
+- **Nguyên nhân gốc:** Bản deploy mới thật ra fail ngay từ đầu
+  (`"ADMIN_ACCESS_PUBLIC_KEYS is required when ADMIN_ROUTES_ENABLED is
+  true"`), vì giá trị thật cho biến `sync: false` liên quan chưa được dán
+  vào dashboard trước khi merge. Khi một deploy fail, Render tự động **giữ
+  nguyên bản deploy TRƯỚC ĐÓ chạy tiếp** (rollback ngầm, không thông báo gì
+  nổi bật) để service không bị down hẳn — log "khởi động khoẻ mạnh" xem
+  được sau đó chính là BẢN CŨ khởi động lại, không phải bản mới vừa merge.
+  Chỉ nhìn log runtime sẽ không phân biệt được hai trường hợp này.
+- **Cách xử lý:** Trước khi merge bất kỳ thay đổi nào bật một cờ phụ thuộc
+  biến `sync: false` khác (không riêng `ADMIN_ROUTES_ENABLED`), xác nhận
+  toàn bộ biến phụ thuộc đã có giá trị thật trên dashboard **trước**. Sau
+  khi merge, luôn kiểm tra trạng thái deploy thật qua
+  `GET /v1/services/{id}/deploys` (`status: "live"` so với
+  `"update_failed"`) thay vì chỉ tin log runtime.
+
+### 5.9. Lỗi hiện dần từng biến một ("whack-a-mole") khi deploy một service hoàn toàn mới
+
+- **Triệu chứng:** Sửa xong lỗi `X is required`, redeploy, lộ ra lỗi
+  `Y is required`; sửa xong `Y` lại lộ tiếp `Z is required`... lặp lại
+  nhiều vòng.
+- **Nguyên nhân gốc:** `config.Load()`/`Validate()` của mọi service kiểm
+  tra các biến bắt buộc **theo đúng thứ tự cố định viết trong code** và
+  dừng lại ở lỗi đầu tiên gặp phải — nó không liệt kê hết mọi biến còn
+  thiếu cùng một lúc. Với một service **hoàn toàn mới** (chưa từng chạy
+  qua), mọi biến `sync: false` đều đang trống, nên hiện tượng "sửa 1 lộ 1"
+  gần như chắc chắn xảy ra.
+- **Cách xử lý:** Trước khi deploy một service mới lần đầu, đọc thẳng
+  `Validate()` trong `internal/config/config.go` của chính service đó để
+  biết đủ danh sách biến bắt buộc theo đúng thứ tự, rồi điền hết một lần
+  thay vì chờ từng lỗi hiện ra. Ví dụ thứ tự thật của `auth-service`:
+  `DATABASE_URL` → `NATS_URL` → `REDIS_URL` → `AUTH_ACCESS_PRIVATE_KEY`
+  (được decode trước cả ba biến kia, nên lỗi của nó luôn xuất hiện sớm nếu
+  thiếu) → các timeout/Argon2 (đều có default, hiếm khi lỗi).
+
+### 5.10. `nats: maximum account active connections exceeded` lần thứ hai — khác nguyên nhân với mục 5.5
+
+- **Triệu chứng:** Thông báo lỗi giống hệt mục 5.5, nhưng service đã có
+  health server bind `$PORT` đầy đủ từ trước (không còn là bug
+  port-detection cũ ở mục 5.6).
+- **Nguyên nhân gốc:** Một lần blueprint sync tạo/redeploy **nhiều service
+  cùng lúc** (ví dụ 4 service mới trong một lần merge) khiến tất cả cùng cố
+  mở kết nối NATS đồng thời tới **cùng một tài khoản Synadia** — vượt hạn
+  mức connection thật của tài khoản đúng vào thời điểm đó. Đây là tình
+  huống dồn tải tạm thời do batch-deploy, không phải lỗi cấu hình.
+- **Cách xử lý:** Đợi các service đang rảnh tự ngủ lại (free tier, ~15 phút
+  không traffic, xem mục 5.3/5.6) để giải phóng connection, rồi redeploy
+  thủ công riêng service còn lỗi — **không** redeploy hàng loạt cùng lúc.
+  Nếu vẫn lỗi sau khi đã giãn thời gian, đó là dấu hiệu hạn mức connection
+  thật của gói Synadia đang dùng không đủ cho tổng số service hiện có — cần
+  nâng gói Synadia hoặc giảm số service giữ kết nối thường trực cùng lúc.
+
+### 5.11. Giả định "mọi service đã link chung một group NATS" trong comment/docs cũ — sai, phải verify qua API
+
+- **Triệu chứng:** Comment cũ trong `render.yaml`/README ghi kiểu "link vào
+  group chia sẻ giống mọi service khác" — nhưng chưa ai thực sự verify
+  điều đó trên tài khoản thật.
+- **Nguyên nhân gốc:** Group thật tên là `myunivokai-env-prod` (không phải
+  `myunivokai-shared-env` như comment cũ đoán) — kiểm tra qua Render API
+  (`GET /v1/env-groups/{id}`) cho thấy nó chỉ thật sự link với 4/8 service
+  (`dna`, `nature`, `universe`, `analytics`). `gateway`, `auth`, `ocean`,
+  `telemetry` không hề được link — comment cũ chỉ là một giả định chưa bao
+  giờ được kiểm chứng.
+- **Cách xử lý:** Không tin các mô tả về trạng thái account/dashboard
+  (những thứ không nằm trong nội dung YAML của `render.yaml`) nếu chưa
+  verify trực tiếp qua API hoặc dashboard — comment có thể lỗi thời ngay cả
+  khi trông rất chắc chắn. Đồng thời lưu ý: mọi
+  `internal/messaging/runtime.go` ưu tiên `NATS_CREDENTIALS` qua
+  `if/else if` trước `NATS_USERNAME`/`NATS_PASSWORD` — service nào đã link
+  group thì 2 biến username/password kia hoàn toàn chết, không được đọc,
+  dù vẫn khai báo `sync: false` trong `render.yaml`.
+
+### 5.12. Quên điền `*_SERVICE_URL` ở lần sync thứ hai → lỗi trông như "service chết hẳn" thay vì "service đang ngủ"
+
+- **Triệu chứng:** Admin/product gọi một route liên quan tới một service
+  đang ngủ (ví dụ `/api/admin/telemetry/overview`), nhận về lỗi NATS
+  `"no responders available for request"` → gateway trả `503`, giao diện
+  chỉ hiện "unavailable" chung chung, dễ tưởng nhầm service đã chết hẳn.
+- **Nguyên nhân gốc:** Bước "điền các biến `*_SERVICE_URL` ở lần sync thứ
+  hai rồi redeploy gateway" (mục 5.6) **không phải** một bước "làm sau cũng
+  được" — nó là điều kiện bắt buộc để cơ chế đánh thức hoạt động. Bỏ qua
+  bước này, gateway vẫn boot bình thường (chỉ log một dòng `warn`), khiến
+  người vận hành dễ tưởng nó không quan trọng — cho tới khi một service
+  ngủ và không ai đánh thức được nó nữa.
+- **Cách xử lý:** Ngay sau khi mọi service (kể cả service mới tạo) đã có
+  URL public thật, điền đủ vào gateway rồi redeploy lại gateway. Log boot
+  của gateway phải thấy `info "service wake ready"` kèm đủ danh sách
+  service wakeable — nếu vẫn thấy `warn "no service URL is set"` nghĩa là
+  còn thiếu.
+
+### 5.13. Quên biến `ADMIN_GATEWAY_BASE_URL` phía Vercel — lỗi 503 nhìn như gateway chết nhưng gateway vẫn sống bình thường
+
+- **Triệu chứng:** DevTools của trình duyệt khi thao tác trên trang admin
+  cho thấy request (ví dụ `POST /api/admin/auth/refresh`) trả `503`, domain
+  của request là `myunivokai-admin.vercel.app` chứ không phải domain
+  gateway — dễ đặt câu hỏi "sao nó không gọi thẳng gateway?".
+- **Nguyên nhân gốc:** `apps/myunivokai-admin` dùng pattern BFF
+  (Backend-For-Frontend): mọi route `/api/admin/*` của chính app admin
+  nhận request từ browser trước, rồi **server của chính nó** (không hiện
+  trong DevTools, vì đó là network call giữa hai server) gọi tiếp sang
+  gateway thật qua biến `ADMIN_GATEWAY_BASE_URL`. Biến này chỉ tồn tại
+  trên Vercel (server-only, không phải `NEXT_PUBLIC_*`), tách biệt hoàn
+  toàn khỏi mọi biến trên Render. Nếu quên set, code fallback về
+  `http://localhost:41800` (`apps/myunivokai-admin/src/lib/gateway.ts`) —
+  không tồn tại trên môi trường chạy của Vercel, khiến `fetch()` fail và
+  route tự trả `503 {"error":{"code":"GATEWAY_UNREACHABLE"}}`.
+- **Cách xử lý:** Khi debug lỗi `/api/admin/*` trên trang admin, luôn phân
+  biệt hai lớp riêng biệt: (1) app admin trên Vercel có gọi được tới
+  gateway không (biến `ADMIN_GATEWAY_BASE_URL` trên Vercel dashboard), và
+  (2) gateway có thật sự phục vụ route đó không (`ADMIN_ROUTES_ENABLED` +
+  các biến phụ thuộc trên Render, xem mục 5.8). Cả hai lớp đều có thể trả
+  `503` giống nhau — đọc `error.code` trong response body
+  (`GATEWAY_UNREACHABLE` = lỗi ở lớp 1, phía Vercel) để biết đang debug
+  đúng chỗ hay không.
+
+### 5.14. `cmd/bootstrap` (và mọi `cmd/*` chạy standalone) cần ĐỦ bộ biến bắt buộc của `config.Load()`, không chỉ biến "liên quan trực tiếp"
+
+- **Triệu chứng:** Chạy `go run ./cmd/bootstrap` với `DATABASE_URL`/
+  `DATABASE_DIRECT_URL` thật, tưởng vậy là đủ vì bootstrap "chỉ cần ghi vào
+  DB" — vẫn báo lỗi `"AUTH_ACCESS_PRIVATE_KEY is required"`, rồi sau khi
+  thêm biến đó lại tiếp tục báo thiếu `REDIS_URL`.
+- **Nguyên nhân gốc:** `cmd/bootstrap/main.go` gọi thẳng `config.Load()`
+  giống hệt `cmd/service` — nghĩa là toàn bộ `Validate()` của service (kể
+  cả những biến chẳng liên quan gì tới việc tạo tài khoản, như
+  `AUTH_ACCESS_PRIVATE_KEY`, `REDIS_URL`, `NATS_URL`) đều phải hợp lệ.
+  Service không tách riêng một bộ config tối giản cho công cụ vận hành
+  chạy một lần.
+- **Cách xử lý:** Khi chạy bất kỳ `cmd/*` nào standalone (không qua Render,
+  không qua `docker-compose-local.yaml`), luôn set đủ **toàn bộ** biến mà
+  `Validate()` của chính service đó đòi hỏi — copy nguyên khối biến của
+  service thật (từ dashboard/`.env` tham chiếu), không chỉ biến "nghe có
+  vẻ liên quan" tới việc đang muốn làm.
+
+### 5.15. Ghi giá trị trông giống secret lên Render qua API bị chính công cụ vận hành (AI agent) tự chặn
+
+- **Triệu chứng:** Gọi `PUT /v1/services/{id}/env-vars/{key}` để set giá
+  trị cho một số biến (ví dụ `AUTH_ACCESS_PRIVATE_KEY`,
+  `ADMIN_ACCESS_PUBLIC_KEYS`) bị chặn ngay ở tầng công cụ, trong khi những
+  biến khác (URL, `DATABASE_URL`) set qua đúng endpoint đó lại thành công
+  bình thường; càng về sau trong cùng một phiên làm việc, kể cả một số
+  biến dạng URL bình thường cũng bắt đầu bị chặn.
+- **Nguyên nhân gốc:** Lớp an toàn tự động của công cụ (không phải giới
+  hạn của Render API) coi việc ghi một giá trị **trông giống khoá mã hoá**
+  (chuỗi base64 ngẫu nhiên) lên một service production là hành động rủi ro
+  cao, và có xu hướng trở nên thận trọng hơn sau khi đã thực hiện nhiều
+  lần ghi liên tiếp lên production trong cùng một phiên.
+- **Cách xử lý:** Không mong đợi tự động hoá toàn bộ việc set biến môi
+  trường qua API cho một lần deploy đầy đủ — chuẩn bị sẵn tinh thần dán tay
+  các giá trị dạng khoá/secret vào dashboard Render. Khi một agent/script
+  tự động bị chặn, đó là tín hiệu đúng để dừng lại và để người vận hành tự
+  làm bước đó, không phải lỗi cần vượt qua bằng cách khác.
