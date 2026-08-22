@@ -14,7 +14,8 @@ import { apiBaseUrlForFamily, gatewayOriginUrl } from "./gateway";
 // gateway contract; the gateway translates those requests into NATS traffic.
 const API_BASE_URLS_BY_FAMILY: Record<WorldFamily, string> = {
   universe: apiBaseUrlForFamily("universe"),
-  nature: apiBaseUrlForFamily("nature")
+  nature: apiBaseUrlForFamily("nature"),
+  ocean: apiBaseUrlForFamily("ocean")
 };
 
 const PENDING_GENERATION_STORAGE_KEY = "myunivokai:pending-generation:v1";
@@ -37,6 +38,21 @@ export type GenerationOptions = {
 };
 
 export const DEFAULT_WORLD_FAMILY: WorldFamily = "universe";
+
+/**
+ * Whether a value read back out of sessionStorage names a family this build
+ * knows.
+ *
+ * Derived from API_BASE_URLS_BY_FAMILY rather than written out as a literal
+ * comparison. The literal it replaces (`family === "universe" || family ===
+ * "nature"`) failed no build when the ocean family was added — a resumed
+ * generation would simply be discarded on reload, silently, for the newest
+ * family only. Because that record is typed `Record<WorldFamily, string>`, the
+ * compiler now refuses to let the two drift.
+ */
+function isKnownWorldFamily(value: unknown): value is WorldFamily {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(API_BASE_URLS_BY_FAMILY, value);
+}
 export class ApiError extends Error {
   code: string;
   details: unknown[];
@@ -61,17 +77,36 @@ export class ApiError extends Error {
 const MAXIMUM_GET_RETRIES_ON_RATE_LIMIT = 1;
 const DEFAULT_RATE_LIMIT_RETRY_MILLISECONDS = 1000;
 
-function rateLimitRetryDelayMilliseconds(response: Response): number {
+// A service that was asleep answers instantly with SERVICE_WAKING while the
+// gateway starts it in the background. That needs a far larger budget than the
+// rate-limit retry: a container cold start runs tens of seconds, and unlike a
+// 429 there is nothing the caller can do except wait for it.
+//
+// Retried for every method, not only GET. SERVICE_WAKING is produced by one
+// condition — the broker reporting that no subscriber existed — which means
+// the request provably never reached a service, so a repeat cannot create a
+// second world or variant. That is a stronger guarantee than the 429 above,
+// whose conservative GET-only rule is left as it was.
+const MAXIMUM_RETRIES_ON_SERVICE_WAKING = 6;
+const DEFAULT_SERVICE_WAKING_RETRY_MILLISECONDS = 10_000;
+const SERVICE_WAKING_ERROR_CODE = "SERVICE_WAKING";
+
+function retryDelayMilliseconds(response: Response, fallbackMilliseconds: number): number {
   const retryAfterSeconds = Number(response.headers.get("Retry-After"));
   if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
     return retryAfterSeconds * 1000;
   }
-  return DEFAULT_RATE_LIMIT_RETRY_MILLISECONDS;
+  return fallbackMilliseconds;
+}
+
+function isServiceWaking(status: number, payload: ApiErrorPayload): boolean {
+  return status === 503 && payload?.error?.code === SERVICE_WAKING_ERROR_CODE;
 }
 
 async function requestUrl<T>(url: string, init?: RequestInit): Promise<T> {
   const isIdempotentGet = !init?.method || init.method.toUpperCase() === "GET";
   let rateLimitRetriesLeft = isIdempotentGet ? MAXIMUM_GET_RETRIES_ON_RATE_LIMIT : 0;
+  let serviceWakingRetriesLeft = MAXIMUM_RETRIES_ON_SERVICE_WAKING;
 
   for (;;) {
     const response = await fetch(url, {
@@ -85,12 +120,26 @@ async function requestUrl<T>(url: string, init?: RequestInit): Promise<T> {
 
     if (response.status === 429 && rateLimitRetriesLeft > 0) {
       rateLimitRetriesLeft -= 1;
-      await waitForDelay(rateLimitRetryDelayMilliseconds(response), init?.signal ?? undefined);
+      await waitForDelay(
+        retryDelayMilliseconds(response, DEFAULT_RATE_LIMIT_RETRY_MILLISECONDS),
+        init?.signal ?? undefined
+      );
       continue;
     }
 
     const text = await response.text();
     const payload = text ? JSON.parse(text) : {};
+
+    // Checked against the body, not the status: 503 also carries
+    // SERVICE_UNAVAILABLE, which means a real fault that retrying will not fix.
+    if (isServiceWaking(response.status, payload) && serviceWakingRetriesLeft > 0) {
+      serviceWakingRetriesLeft -= 1;
+      await waitForDelay(
+        retryDelayMilliseconds(response, DEFAULT_SERVICE_WAKING_RETRY_MILLISECONDS),
+        init?.signal ?? undefined
+      );
+      continue;
+    }
 
     if (!response.ok) {
       throw new ApiError(response.status, payload);
@@ -140,7 +189,7 @@ function loadPendingGeneration(): PendingGeneration | null {
     const pendingGeneration = JSON.parse(storedValue) as Partial<PendingGeneration>;
     if (
       typeof pendingGeneration.jobId === "string" &&
-      (pendingGeneration.family === "universe" || pendingGeneration.family === "nature") &&
+      isKnownWorldFamily(pendingGeneration.family) &&
       typeof pendingGeneration.startedAtMilliseconds === "number"
     ) {
       return pendingGeneration as PendingGeneration;

@@ -1,0 +1,8 @@
+FROM golang:1.25-alpine
+
+WORKDIR /workspace/services/auth-service
+COPY contracts/go /workspace/contracts/go
+COPY services/auth-service/go.mod services/auth-service/go.sum ./
+RUN go mod download
+
+CMD ["go", "run", "./cmd/service"]

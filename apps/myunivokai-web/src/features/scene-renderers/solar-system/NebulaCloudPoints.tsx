@@ -118,37 +118,12 @@ export function NebulaCloudPoints({
   return (
     <points frustumCulled={false} renderOrder={renderOrder}>
       <bufferGeometry key={geometryKey}>
-        <bufferAttribute
-          attach="attributes-position"
-          count={clouds.positions.length / 3}
-          array={clouds.positions}
-          itemSize={3}
-        />
-        <bufferAttribute
-          attach="attributes-cloudColor"
-          count={clouds.colors.length / 3}
-          array={clouds.colors}
-          itemSize={3}
-        />
-        <bufferAttribute attach="attributes-cloudSize" count={clouds.sizes.length} array={clouds.sizes} itemSize={1} />
-        <bufferAttribute
-          attach="attributes-cloudRotation"
-          count={clouds.rotations.length}
-          array={clouds.rotations}
-          itemSize={1}
-        />
-        <bufferAttribute
-          attach="attributes-cloudAlpha"
-          count={clouds.alphas.length}
-          array={clouds.alphas}
-          itemSize={1}
-        />
-        <bufferAttribute
-          attach="attributes-cloudVariant"
-          count={clouds.variants.length}
-          array={clouds.variants}
-          itemSize={1}
-        />
+        <bufferAttribute attach="attributes-position" args={[clouds.positions, 3]} />
+        <bufferAttribute attach="attributes-cloudColor" args={[clouds.colors, 3]} />
+        <bufferAttribute attach="attributes-cloudSize" args={[clouds.sizes, 1]} />
+        <bufferAttribute attach="attributes-cloudRotation" args={[clouds.rotations, 1]} />
+        <bufferAttribute attach="attributes-cloudAlpha" args={[clouds.alphas, 1]} />
+        <bufferAttribute attach="attributes-cloudVariant" args={[clouds.variants, 1]} />
       </bufferGeometry>
       <shaderMaterial
         vertexShader={CLOUD_VERTEX_SHADER}

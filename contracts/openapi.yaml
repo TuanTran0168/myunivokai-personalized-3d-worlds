@@ -302,7 +302,18 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     Unavailable:
-      description: NATS or domain responder unavailable
+      description: >-
+        The domain responder could not be reached. Two error codes share this
+        status and they mean different things to a client. SERVICE_WAKING means
+        no responder was subscribed, the gateway has started the service, and
+        the request never reached it — retrying after Retry-After is expected
+        and safe for any method. SERVICE_UNAVAILABLE means a broker-level fault
+        that retrying will not fix.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying. Sent with SERVICE_WAKING only.
+          required: false
+          schema: { type: integer, minimum: 1 }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }

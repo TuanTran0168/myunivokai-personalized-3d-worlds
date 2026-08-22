@@ -1,7 +1,11 @@
 # Hướng Dẫn Triển Khai Lên Môi Trường Production (Production Deployment Guide)
 
-> **Cập nhật lần cuối:** 2026-07-26 (thêm mục 5.4–5.6: auto-migrate, connection limit do thiếu port, healthz server)
-> **Trạng thái:** Active & Tested trên Production
+> **Cập nhật lần cuối:** 2026-08-07 (thêm Service 6: `myunivokai-analytics`, database thứ 5, và ghi chú về phân quyền NATS trên NGS)
+> **Trạng thái:** Active. Phần gốc (gateway/dna/universe/nature) đã Tested trên
+> Production; phần `myunivokai-auth` (mục 2.4, Service 5, 5.7) và phần
+> `myunivokai-analytics` (Service 6) là hướng dẫn mới theo `render.yaml`,
+> **chưa có bằng chứng deploy thật** — xác nhận và xoá dòng này sau lần deploy
+> đầu tiên.
 
 Tài liệu này hướng dẫn chi tiết từng bước (step-by-step) cách cấu hình và triển khai (deploy) toàn bộ hệ thống Microservices của dự án MyUnivokai lên các nền tảng đám mây (Cloud).
 
@@ -12,22 +16,28 @@ Tài liệu này hướng dẫn chi tiết từng bước (step-by-step) cách c
 Dự án MyUnivokai được cấu thành từ 5 thành phần cốt lõi phân tán trên nhiều nền tảng:
 
 1. **Frontend (Vercel):** Ứng dụng Next.js.
-2. **Backend (Render):** Hệ thống gồm 4 Microservices viết bằng Go (`api-gateway`, `dna-service`, `universe-service`, `nature-service`). Tất cả được deploy dưới dạng `Web Service` để tối ưu chi phí (sử dụng gói Free của Render).
-3. **Database (Neon.tech):** Cơ sở dữ liệu PostgreSQL Serverless (gồm 3 database độc lập cho 3 service).
-4. **Cache & Rate Limit (Upstash):** Dịch vụ Redis Serverless.
-5. **Message Broker (Synadia Cloud - NGS):** Mạng lưới NATS JetStream đảm nhiệm việc giao tiếp không đồng bộ (asynchronous messaging) giữa các Microservices.
+2. **Backend (Render):** Hệ thống gồm 6 Microservices viết bằng Go (`api-gateway`, `dna-service`, `universe-service`, `nature-service`, `auth-service`, `analytics-service`). Tất cả được deploy dưới dạng `Web Service` để tối ưu chi phí (sử dụng gói Free của Render). ⚠️ Giờ giới hạn instance của gói Free được tính chung cho cả tài khoản — **kiểm tra ngân sách còn lại trước khi thêm service thứ 6**.
+3. **Database (Neon.tech):** Cơ sở dữ liệu PostgreSQL Serverless (gồm 5 database độc lập — `myunivokai_dna`, `myunivokai_universe`, `myunivokai_nature`, `myunivokai_auth`, `myunivokai_analytics`).
+4. **Cache & Rate Limit (Upstash):** Dịch vụ Redis Serverless — `auth-service` cũng dùng chung instance này để ghi `tokenVersion` cho cơ chế revocation, không cần Redis riêng.
+5. **Message Broker (Synadia Cloud - NGS):** Mạng lưới NATS JetStream đảm nhiệm việc giao tiếp không đồng bộ (asynchronous messaging) giữa các Microservices. `auth-service` chỉ dùng Core NATS request-reply (không JetStream), nên dùng chung `nats.creds` như các service khác mà không cần quyền `$JS.API.>`. `analytics-service` thì ngược lại: nó tạo một durable consumer riêng trên stream `MYUNIVOKAI_EVENTS`.
+
+> ℹ️ **Về phân quyền NATS:** tất cả service dùng **chung một account user** qua một file `nats.creds` duy nhất, tức trên NGS **không có allow-list publish nào** — user đó toàn quyền trong account. File `infra/nats/nats-server.conf` (phân quyền chi tiết từng service) chỉ áp dụng cho NATS chạy local. Hệ quả cần biết: luật "analytics-service không được publish subject domain nào" được **ACL bảo đảm ở local, nhưng ở production chỉ có code bảo đảm**. Nếu sau này bạn cấu hình permission riêng từng user trên Synadia, mọi user có consumer đều cần **`$JS.ACK.>`** bên cạnh `$JS.API.>` — ack một message JetStream là publish vào prefix đó, thiếu nó thì message redeliver vô hạn và chỉ hiện ra dưới dạng dòng log `permissions violation`, không bao giờ crash lúc khởi động.
 
 ---
 
 ## 2. Hướng Dẫn Chuẩn Bị Tài Nguyên Từng Bước
 
 ### Bước 2.1: Thiết lập Database trên Neon.tech
-Hệ thống sử dụng mô hình Database-per-service. Bạn cần tạo 3 database riêng biệt.
+Hệ thống sử dụng mô hình Database-per-service. Bạn cần tạo 5 database riêng biệt.
 1. Đăng nhập vào [Neon.tech](https://neon.tech/) và tạo một Project mới (Ví dụ: `myunivokai-db-prod`).
-2. Vào mục **Databases**, tạo lần lượt 3 database:
+2. Vào mục **Databases**, tạo lần lượt 5 database:
    - `myunivokai_dna`
    - `myunivokai_universe`
    - `myunivokai_nature`
+   - `myunivokai_auth`
+   - `myunivokai_analytics` — read model của admin. Đây là **bản sao thứ hai của dữ liệu production**, nên phải là database riêng: không thứ gì trong luồng sản phẩm đọc nó, và chỉ event consumer của `analytics-service` ghi vào nó.
+
+   > Nếu giới hạn số Project của Neon chặn bạn, đặt `analytics` và `auth` **cùng một project** dưới dạng hai database tách biệt — đừng gộp chung một database.
 3. Vào mục **Dashboard** -> **Connection Details**:
    - Tích chọn **Pooled connection** (để dùng PGBouncer). Copy chuỗi kết nối (thường có `?sslmode=require`). Đây chính là `DATABASE_URL`.
    - Bỏ tích **Pooled connection**. Copy chuỗi kết nối trực tiếp. Đây là `DATABASE_DIRECT_URL` (dùng để chạy Migration).
@@ -47,11 +57,27 @@ Hệ thống sử dụng mô hình Database-per-service. Bạn cần tạo 3 dat
 2. Tạo Account, sau đó tạo một User mới (Ví dụ: `myunivokai_prod_user`).
 3. Tải file thông tin xác thực về máy tính (file sẽ có đuôi là `.creds`). Mở file này bằng trình soạn thảo văn bản (Notepad/VS Code), bạn sẽ thấy cấu trúc gồm `-----BEGIN NATS USER JWT-----` và `-----BEGIN USER NKEY SEED-----`. Giữ nguyên nội dung này cho bước sau.
 
+### Bước 2.4: Sinh khoá ký JWT cho Auth Service
+
+`auth-service` ký access token bằng Ed25519, không dùng secret dạng chuỗi tuỳ ý
+— xem `notes/vision/auth-and-admin-plan.md#tokens`. Sinh một seed 32-byte,
+base64-encode, cho biến `AUTH_ACCESS_PRIVATE_KEY`:
+
+```bash
+openssl rand -base64 32
+```
+
+> ⛔ **KHÔNG dùng lại giá trị trong `.env.local`/`.env.example` của repo** —
+> đó là khoá throwaway chỉ dùng cho Docker Compose local, không có giá trị bảo
+> mật nào ở production. Sinh khoá mới cho mỗi environment (production,
+> staging nếu có), lưu vào **Render Dashboard**, không lưu vào bất kỳ file
+> nào trong repo hay gửi qua kênh chat/email không mã hoá.
+
 ---
 
 ## 3. Cấu Hình Biến Môi Trường Dùng Chung (Environment Groups) Trên Render
 
-Vì 4 Go Services đều cần kết nối chung vào NATS, để tránh cấu hình lặp lại nhiều lần, chúng ta sẽ tạo một nhóm biến môi trường dùng chung.
+Vì cả 6 Go Services đều cần kết nối chung vào NATS, để tránh cấu hình lặp lại nhiều lần, chúng ta sẽ tạo một nhóm biến môi trường dùng chung.
 
 1. Đăng nhập vào [Render Dashboard](https://dashboard.render.com).
 2. Ở cột menu bên trái, chọn **Env Groups** -> Bấm **New Environment Group**.
@@ -70,10 +96,10 @@ Vì 4 Go Services đều cần kết nối chung vào NATS, để tránh cấu h
 
 ## 4. Triển Khai Backend Lên Render (Render Blueprint)
 
-Hệ thống đã được thiết kế sẵn file `render.yaml` (Infrastructure as Code). Khi bạn push code lên GitHub, Render sẽ tự động nhận diện và tạo ra 4 Web Services.
+Hệ thống đã được thiết kế sẵn file `render.yaml` (Infrastructure as Code). Khi bạn push code lên GitHub, Render sẽ tự động nhận diện và tạo ra 6 Web Services.
 
 ### Bước 4.1: Liên kết (Link) Environment Group
-1. Lần lượt bấm vào từng Service trên Render Dashboard (`myunivokai-gateway`, `myunivokai-dna`, `myunivokai-universe`, `myunivokai-nature`).
+1. Lần lượt bấm vào từng Service trên Render Dashboard (`myunivokai-gateway`, `myunivokai-dna`, `myunivokai-universe`, `myunivokai-nature`, `myunivokai-auth`, `myunivokai-analytics`).
 2. Chuyển sang tab **Environment**.
 3. Ở mục **Linked Environment Groups**, bấm **Link** và chọn nhóm `myunivokai-shared-env`. Bấm Save.
 
@@ -102,6 +128,64 @@ Vẫn ở tab **Environment** của từng Service, điền các giá trị đ�
 - `PUBLIC_WEB_URL`: `https://<web-origin>/nature` — **có** hậu tố `/nature`, vì
   trang share của forest nằm dưới prefix đó: `/nature/share/worlds/{slug}`.
 
+#### 🚀 Service 5: Auth Service (`myunivokai-auth`)
+- `DATABASE_URL`: Dán chuỗi kết nối Pooled của database `myunivokai_auth`.
+- `DATABASE_DIRECT_URL`: Dán chuỗi kết nối Direct của database `myunivokai_auth`.
+- `REDIS_URL`: Dán **cùng** chuỗi kết nối Upstash Redis đã dùng cho gateway ở
+  Bước 2.2 — `auth-service` chỉ ghi một key (`tokenVersion`) vào đó, không cần
+  instance Redis riêng.
+- `AUTH_ACCESS_PRIVATE_KEY`: Dán giá trị đã sinh ở Bước 2.4. **Không** dùng
+  chung giá trị giữa các environment, và không copy giá trị trong
+  `.env.local` của repo (khoá đó chỉ dùng cho Docker Compose local).
+- Các biến `AUTH_ACCESS_TOKEN_TTL`, `AUTH_REFRESH_TOKEN_TTL`,
+  `AUTH_TOKEN_VERSION_CACHE_TTL`, `AUTH_ARGON2_*`, `AUTH_MAX_FAILED_ATTEMPTS`,
+  `AUTH_LOCKOUT_DURATION` đã có `value` mặc định ngay trong `render.yaml`
+  (không phải `sync: false`) — không cần điền thêm, trừ khi muốn đổi.
+
+#### 🚀 Service 6: Analytics Service (`myunivokai-analytics`)
+- `DATABASE_URL`: Dán chuỗi kết nối Pooled của database `myunivokai_analytics`.
+- `DATABASE_DIRECT_URL`: Dán chuỗi kết nối Direct của database
+  `myunivokai_analytics`. Bắt buộc phải là host **không pooled** (không có
+  `-pooler`): goose lấy advisory lock khi migrate, mà transaction pooler không
+  giữ lock đó xuyên suốt các câu lệnh.
+- Không có biến nào khác cần điền. Service này **không xác thực token, không
+  gọi provider nào, và không publish event nào** — nên nó không có
+  `REDIS_URL`, không có khoá ký, không có API key. Nếu thấy một credential
+  xuất hiện ở đây thì đó là dấu hiệu read model đã làm việc nó không được
+  phép làm.
+
+> ⚠️ **`analytics-service` sẽ crash-loop nếu deploy trước khi tạo database.**
+> Khác với các service khác, nó là service mới hoàn toàn: `render.yaml` khai
+> báo sẵn nhưng `DATABASE_URL` là `sync: false`. Tạo database ở Bước 2.1 và
+> điền hai biến trên **trước** khi merge lên `main`.
+
+> ℹ️ **Lần khởi động đầu tiên tự backfill một phần.** Stream
+> `MYUNIVOKAI_EVENTS` giữ 7 ngày với `discard: old`, và một durable consumer
+> mới mặc định `DeliverAll` — nên analytics sẽ tự chiếu lại toàn bộ những gì
+> stream còn giữ, miễn phí. Ngoài cửa sổ 7 ngày đó thì không có backfill nào
+> khác: một sự cố dài hơn 7 ngày là mất dữ liệu vĩnh viễn, đã được chấp nhận
+> ở mức dữ liệu hiện tại. Khi thấy lỗ hổng trong read model, hãy nghĩ tới
+> retention trước, đừng nghĩ tới hỏng dữ liệu.
+
+> 🔒 **Admin routes vẫn tắt cho tới khi bạn bật.** `render.yaml` để
+> `ADMIN_ROUTES_ENABLED=false` trên gateway, nên các màn hình analytics chưa
+> truy cập được. Muốn bật thì đổi thành `true` **và** điền
+> `ADMIN_ALLOWED_ORIGIN` bằng đúng origin của admin app. Bật với origin rỗng
+> hoặc wildcard sẽ fail config validation và làm **cả gateway** không khởi
+> động được — kể cả các route sản phẩm.
+
+> 🔑 **Tạo tài khoản super-admin đầu tiên sau khi deploy xong.**
+> `auth-service` không có đường tự đăng ký (self-signup). Sau khi service
+> `myunivokai-auth` chạy thành công (xem log "auth service ready"), mở
+> **Shell** của service đó trên Render Dashboard và chạy:
+> ```bash
+> ./bootstrap --email you@example.com --password "mot-mat-khau-manh-it-nhat-12-ky-tu"
+> ```
+> Đây là lệnh **thủ công, chạy một lần duy nhất**. Không đưa email/mật khẩu
+> vào biến môi trường của `render.yaml` hay bất kỳ file nào trong repo — xem
+> `notes/vision/auth-and-admin-plan.md#passwords` (không có mật khẩu mặc định
+> nào trong repo, kể cả cho production).
+
 > 🚨 **BẮT BUỘC ĐỔI TRƯỚC/CÙNG LÚC VỚI KHI DEPLOY BẢN NÀY — quên là link share
 > universe chết.** Trước đây universe **không** có hậu tố; giờ hai service dùng
 > chung một dạng `<web-origin>/<family>`. Cả hai đều `sync: false` trong
@@ -129,12 +213,26 @@ Sau khi lưu lại, Render sẽ tự động tiến hành build Docker image t�
 > - Lệnh migrate chạy trước khi service kết nối pool và trước khi start messaging runtime.
 > - Migrate dùng `DATABASE_DIRECT_URL`, fallback về `DATABASE_URL` nếu biến đó thiếu.
 > - Nếu migrate lỗi, service gọi `log.Fatal` và không start. Đây là fail-fast, thay cho việc chạy ngầm với bảng thiếu.
+>
+> **Cập nhật 2026-08-06:** `auth-service` (`cmd/service/main.go`) theo đúng
+> cùng pattern — tự migrate `myunivokai_auth` trước khi kết nối pool, dùng
+> `DATABASE_DIRECT_URL`/`DATABASE_URL` giống hệt 3 service kia. Ngoài migrate,
+> nó còn tự đồng bộ (sync) bảng `permissions` và seed role `basic_user` mỗi
+> lần khởi động — xem `internal/services/permission_sync.go`. Đây không phải
+> migration SQL, không cần thao tác gì thêm từ operator.
+>
+> **Cập nhật 2026-08-07:** `analytics-service` theo đúng cùng pattern. Hai
+> migration mới cũng đi kèm bản này ở phía family service:
+> `universe-service` và `nature-service` đều thêm cột
+> `worlds.revision INTEGER NOT NULL DEFAULT 1`. Trên PostgreSQL 11+, `ADD
+> COLUMN` với DEFAULT không đổi là thao tác **chỉ sửa metadata** — không
+> rewrite bảng, nên không có downtime dù bảng đã có dữ liệu production.
 
-Điều kiện tiên quyết duy nhất: `DATABASE_DIRECT_URL` phải được điền đúng trên Render cho cả 3 service (theo Bước 4.2). Khi điều kiện đó được đáp ứng, migrate chạy tự động mỗi lần deploy. Không còn bước thủ công nào cần thực hiện.
+Điều kiện tiên quyết duy nhất: `DATABASE_DIRECT_URL` phải được điền đúng trên Render cho cả 5 service (dna, universe, nature, auth, analytics — theo Bước 4.2). Khi điều kiện đó được đáp ứng, migrate chạy tự động mỗi lần deploy. Không còn bước thủ công nào cần thực hiện.
 
 Binary `cmd/migrate/main.go` vẫn tồn tại độc lập, dùng cho debug hoặc chạy migrate ngoài luồng deploy:
 ```bash
-cd services/dna-service   # hoặc universe-service / nature-service
+cd services/dna-service   # hoặc universe-service / nature-service / auth-service / analytics-service
 set DATABASE_DIRECT_URL="postgres://..." # (hoặc export trên Mac/Linux)
 go run cmd/migrate/main.go
 ```
@@ -152,8 +250,11 @@ go run cmd/migrate/main.go
 - **Cách xử lý:** Đây là hạn chế của tài khoản Synadia Free. Code đã được vá bằng cách thêm cờ cứng `nats.MaxAckPending(1000)` vào mọi lời gọi `PullSubscribe()` (Commit `661903b`). Tuyệt đối không xóa các dòng cấu hình này trong các file `internal/messaging/runtime.go`.
 
 ### 5.3. Giới Hạn Thời Gian Miễn Phí (750 Giờ/Tháng Của Render)
-- Gateway service được thiết lập đường dẫn kiểm tra sức khỏe tại `/api/v1/healthz`. Render sẽ liên tục "ping" vào đường dẫn này 5s/lần. Điều này khiến Gateway không bao giờ "ngủ đông" (spin down) và sẽ ngốn sạch 744 giờ/tháng.
-- Hãy chú ý giám sát giới hạn Free Hours của Render nếu bạn không nâng cấp lên các gói trả phí. Do mô hình Microservices phân mảnh, tài khoản Free có thể cạn kiệt tài nguyên rất nhanh.
+- **Hiện tại `healthCheckPath` đang TẮT cho toàn bộ service trong `render.yaml`** — kể cả gateway (dòng bị comment). Không service nào bị Render ping định kỳ, nên không service nào bị giữ thức.
+  - Trước đây mục này ghi gateway bật `healthCheckPath` và ngốn 744 giờ/tháng. Điều đó không còn đúng; ghi lại đây thay vì xoá, vì con số 744 giờ vẫn là thứ sẽ xảy ra nếu ai đó bật lại.
+- 750 giờ/tháng dùng chung cho cả tài khoản, trong khi một service thức 24/7 đã tốn ~730 giờ. Nghĩa là **không đủ ngân sách để giữ thức dù chỉ một service**, chứ chưa nói tới sáu.
+- Đó chính là lý do cron/keep-alive định kỳ bị loại, và tại sao cơ chế đánh thức theo nhu cầu là phương án duy nhất vừa ngân sách: nó gọi đúng một lần cho mỗi service đang ngủ trong mỗi cửa sổ khoá, do request thật kích hoạt, rồi để service ngủ lại. Xem `notes/vision/service-wake-mechanism.md`.
+- Vẫn nên giám sát Free Hours nếu chưa nâng gói. Mô hình microservices phân mảnh khiến tài khoản Free cạn rất nhanh.
 
 ### 5.4. Lỗi `relation "outbox_messages" does not exist` + `prepared statement name is already in use` (DNA/Universe/Nature)
 - **Triệu chứng:**
@@ -200,3 +301,44 @@ go run cmd/migrate/main.go
   - Hệ quả: DNA/Universe/Nature có thể ngủ đông và tạm ngừng xử lý job NATS.
   - Đây là đánh đổi có chủ đích, ưu tiên tiết kiệm giờ Free tier hơn uptime 24/7.
   - Xử lý job real-time liên tục đòi hỏi nâng cấp plan trả phí, hoặc bật lại `healthCheckPath` kèm ngân sách giờ tương ứng.
+- **Hệ quả "ngủ đông" nói trên nay đã được xử lý ở tầng gateway**, không phải bằng cách giữ service thức.
+  - Gateway tự gọi `/healthz` của service đang ngủ khi có request cần tới nó, rồi trả `503 SERVICE_WAKING` kèm `Retry-After` để client quay lại.
+  - Đúng một lần cho mỗi service trong mỗi cửa sổ khoá (Redis `SET NX EX`), do request thật kích hoạt, không có lịch chạy nền — nên không tốn thêm giờ Free tier ngoài thời gian service thực sự làm việc.
+  - Bật bằng `SERVICE_WAKE_PLATFORM=http` cộng các biến `*_SERVICE_URL` trong khối env của gateway (`render.yaml`). Đặt `none` khi lên plan trả phí.
+  - **Lần sync blueprint đầu tiên: để trống cả 5 biến `*_SERVICE_URL`.** Chúng phải là URL **public** `.onrender.com`, mà URL đó chỉ tồn tại sau khi chính lần sync này tạo ra service. Điền xong ở lần thứ hai rồi redeploy gateway.
+  - Không thay được bằng `fromService` + `property: host`: giá trị đó là hostname **private network**, và Render ghi rõ *"Free web services can't receive private network traffic"* — gọi vào đó không đánh thức được gì cả.
+  - Gateway **vẫn khởi động bình thường** khi thiếu URL; nó chỉ không đánh thức được ai. Mỗi lần boot nó ghi đúng một dòng cho biết nó với tới được service nào:
+    - `info … "service wake ready"` + `wakeable_services` đủ 5 → cấu hình xong.
+    - `warn … "service wake ready"` + `unwakeable_services: N` → còn thiếu N biến.
+    - `warn … "no service URL is set, so nothing can be woken"` → chưa điền biến nào.
+    - Sai tên platform (ví dụ `renderr`) thì vẫn `fatal` như cũ — lỗi đánh máy không phải một giai đoạn triển khai.
+  - Chi tiết: `notes/vision/service-wake-mechanism.md`.
+
+### 5.7. Auth Service — riêng biệt so với 3 worker kia
+
+`myunivokai-auth` dùng chung pattern `type: web` + health server bind `$PORT`
+ở mục 5.5/5.6 (không mở lại ở đây), nhưng có vài điểm khác biệt đáng chú ý:
+
+- **Không có JetStream, không có outbox.** Nếu bạn quen mắt copy nguyên khối
+  biến môi trường từ dna/universe/nature sang, các biến `NATS_ACK_WAIT`,
+  `NATS_MAX_DELIVER`, `NATS_FETCH_BATCH_SIZE`, `OUTBOX_POLL_INTERVAL`,
+  `OUTBOX_BATCH_SIZE` **không có tác dụng gì** với `auth-service` — code của
+  nó không đọc các biến này. Không phải lỗi, chỉ là thừa; không cần xoá nếu
+  lỡ điền, nhưng cũng không cần điền.
+- **Crash ngay khi khởi động, log báo thiếu biến (`DATABASE_URL is
+  required` / `REDIS_URL is required` / `AUTH_ACCESS_PRIVATE_KEY must decode
+  to a 32-byte Ed25519 seed`).** Đây là `config.Load()` fail-fast theo đúng
+  triết lý ở mục 5.4 — thà crash rõ ràng còn hơn chạy ngầm với cấu hình sai.
+  Rà lại Bước 4.2: đủ 4 biến `DATABASE_URL`, `DATABASE_DIRECT_URL`,
+  `REDIS_URL`, `AUTH_ACCESS_PRIVATE_KEY`. Lỗi phổ biến nhất với
+  `AUTH_ACCESS_PRIVATE_KEY`: dán một chuỗi bất kỳ thay vì giá trị base64 thật
+  sự sinh ra từ `openssl rand -base64 32` (Bước 2.4) — giá trị phải giải mã
+  base64 ra đúng 32 byte.
+- **Chạy `./bootstrap` hai lần với cùng email** trả lỗi rõ ràng ("an account
+  with this email already exists") thay vì tạo tài khoản trùng hoặc ghi đè
+  mật khẩu — hành vi này là chủ đích, không phải bug.
+- **`auth-service` ngủ đông sau ~15 phút không có traffic**, giống hệt
+  dna/universe/nature (mục 5.6's trade-off). Lần đăng nhập đầu tiên sau khi
+  service ngủ có thể trả `503` ngay lập tức thay vì đợi timeout — đây là bug
+  đã được xác nhận và **cố ý chưa vá** ở giai đoạn này, xem
+  `notes/vision/service-wake-mechanism.md`. Không phải lỗi cấu hình deploy.

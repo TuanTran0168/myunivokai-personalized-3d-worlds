@@ -105,19 +105,3 @@ overriding the grass/leaf-litter/snow color logic.
 | --- | --- | --- |
 | forest-floor-normal-1k.jpg | `forest_floor` (nor_gl) | normal map |
 | forest-floor-arm-1k.jpg | `forest_floor` (arm) | roughness (green channel) |
-
-## Experimental — Sketchfab CC-BY 4.0 (under `models/experimental/`, NOT yet wired)
-
-Baked whole-scene meshes downloaded from Sketchfab for visual evaluation only.
-They are self-hosted and optimized but are **not** modular instanceable assets,
-so they are not referenced by the forest renderer/catalog yet. Licensed under
-[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/);
-credit is required if any of these ships in a build.
-
-Modifications: optimized with `@gltf-transform/cli optimize` (Draco geometry
-compression, mesh simplification, WebP textures capped at 1024px).
-
-| File | Credit | Source |
-| --- | --- | --- |
-| dirt-road-through-forest.glb | "[UPDATE] Dirt Road Through Forest" by 99.Miles via Sketchfab | <https://sketchfab.com/3d-models/update-dirt-road-through-forest-c4676cdf7715484382400ff63faffd45> |
-| wetland-shoal-river.glb | "Wetland, shoal and river" by Metazeon via Sketchfab | <https://sketchfab.com/3d-models/wetland-shoal-and-river-898699b35ff149188c0ed94723b96d69> |

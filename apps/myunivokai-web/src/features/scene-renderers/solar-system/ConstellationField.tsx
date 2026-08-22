@@ -210,12 +210,7 @@ export function ConstellationField({ seed, scene }: ConstellationFieldProps) {
           orbiting the camera made whole constellations pop in and out. */}
       <points frustumCulled={false} renderOrder={CONSTELLATION_RENDER_ORDER}>
         <bufferGeometry key={`${figuresSeed}:${displayCount}:major`}>
-          <bufferAttribute
-            attach="attributes-position"
-            count={majorStarPositions.length / 3}
-            array={majorStarPositions}
-            itemSize={3}
-          />
+          <bufferAttribute attach="attributes-position" args={[majorStarPositions, 3]} />
         </bufferGeometry>
         <pointsMaterial
           map={softCircleTexture ?? undefined}
@@ -233,12 +228,7 @@ export function ConstellationField({ seed, scene }: ConstellationFieldProps) {
       </points>
       <points frustumCulled={false} renderOrder={CONSTELLATION_RENDER_ORDER}>
         <bufferGeometry key={`${figuresSeed}:${displayCount}:minor`}>
-          <bufferAttribute
-            attach="attributes-position"
-            count={minorStarPositions.length / 3}
-            array={minorStarPositions}
-            itemSize={3}
-          />
+          <bufferAttribute attach="attributes-position" args={[minorStarPositions, 3]} />
         </bufferGeometry>
         <pointsMaterial
           map={softCircleTexture ?? undefined}
@@ -256,12 +246,7 @@ export function ConstellationField({ seed, scene }: ConstellationFieldProps) {
       </points>
       <lineSegments frustumCulled={false} renderOrder={CONSTELLATION_RENDER_ORDER}>
         <bufferGeometry key={`${figuresSeed}:${displayCount}:lines`}>
-          <bufferAttribute
-            attach="attributes-position"
-            count={linePositions.length / 3}
-            array={linePositions}
-            itemSize={3}
-          />
+          <bufferAttribute attach="attributes-position" args={[linePositions, 3]} />
         </bufferGeometry>
         <lineBasicMaterial
           color={tint.lineColor}

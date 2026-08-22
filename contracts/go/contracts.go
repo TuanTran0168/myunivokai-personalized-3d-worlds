@@ -18,12 +18,15 @@ const (
 	GenerateDNACommandSubject     = "myunivokai.commands.dna.generate.v1"
 	ComposeUniverseCommandSubject = "myunivokai.commands.universe.compose.v1"
 	ComposeNatureCommandSubject   = "myunivokai.commands.nature.compose.v1"
+	ComposeOceanCommandSubject    = "myunivokai.commands.ocean.compose.v1"
 	DNAGeneratedEventSubject      = "myunivokai.events.dna.generated.v1"
 	DNAFailedEventSubject         = "myunivokai.events.dna.failed.v1"
 	UniverseCompletedEventSubject = "myunivokai.events.universe.completed.v1"
 	UniverseFailedEventSubject    = "myunivokai.events.universe.failed.v1"
 	NatureCompletedEventSubject   = "myunivokai.events.nature.completed.v1"
 	NatureFailedEventSubject      = "myunivokai.events.nature.failed.v1"
+	OceanCompletedEventSubject    = "myunivokai.events.ocean.completed.v1"
+	OceanFailedEventSubject       = "myunivokai.events.ocean.failed.v1"
 	DNAJobGetQuerySubject         = "myunivokai.queries.dna.job.get.v1"
 	UniverseWorldListQuerySubject = "myunivokai.queries.universe.world.list.v1"
 	UniverseWorldGetQuerySubject  = "myunivokai.queries.universe.world.get.v1"
@@ -37,6 +40,12 @@ const (
 	NatureVariantSelectSubject    = "myunivokai.queries.nature.variant.select.v1"
 	NatureWorldPublishSubject     = "myunivokai.queries.nature.world.publish.v1"
 	NatureShareGetQuerySubject    = "myunivokai.queries.nature.share.get.v1"
+	OceanWorldListQuerySubject    = "myunivokai.queries.ocean.world.list.v1"
+	OceanWorldGetQuerySubject     = "myunivokai.queries.ocean.world.get.v1"
+	OceanVariantCreateSubject     = "myunivokai.queries.ocean.variant.create.v1"
+	OceanVariantSelectSubject     = "myunivokai.queries.ocean.variant.select.v1"
+	OceanWorldPublishSubject      = "myunivokai.queries.ocean.world.publish.v1"
+	OceanShareGetQuerySubject     = "myunivokai.queries.ocean.share.get.v1"
 
 	JobStatusQueued     JobStatus = "queued"
 	JobStatusProcessing JobStatus = "processing"
@@ -45,6 +54,14 @@ const (
 
 	WorldFamilyUniverse WorldFamily = "universe"
 	WorldFamilyNature   WorldFamily = "nature"
+	// WorldFamilyOcean is deliberately "ocean" and not "abyss". The abyss is
+	// one end of this family's own depth axis, and a sunlit reef config living
+	// under a subject called "abyss" would be a permanent mismatch across the
+	// database name, the share URLs and the seed streams — none of which can be
+	// renamed once a share link is public. The evocative names live where this
+	// repository already puts them: depth-zone labels, landmark kinds,
+	// RarityFeature.Label and the AI-written sceneName.
+	WorldFamilyOcean WorldFamily = "ocean"
 
 	minimumNicknameCharacters  = 2
 	maximumNicknameCharacters  = 32
@@ -91,7 +108,7 @@ var allowedWorldStyles = map[string]struct{}{
 type WorldFamily string
 
 func (family WorldFamily) Valid() bool {
-	return family == WorldFamilyUniverse || family == WorldFamilyNature
+	return family == WorldFamilyUniverse || family == WorldFamilyNature || family == WorldFamilyOcean
 }
 
 func (family WorldFamily) ComposeCommandSubject() (string, error) {
@@ -100,6 +117,8 @@ func (family WorldFamily) ComposeCommandSubject() (string, error) {
 		return ComposeUniverseCommandSubject, nil
 	case WorldFamilyNature:
 		return ComposeNatureCommandSubject, nil
+	case WorldFamilyOcean:
+		return ComposeOceanCommandSubject, nil
 	default:
 		return "", fmt.Errorf("unsupported world family %q", family)
 	}
@@ -111,6 +130,8 @@ func (family WorldFamily) CompletedEventSubject() (string, error) {
 		return UniverseCompletedEventSubject, nil
 	case WorldFamilyNature:
 		return NatureCompletedEventSubject, nil
+	case WorldFamilyOcean:
+		return OceanCompletedEventSubject, nil
 	default:
 		return "", fmt.Errorf("unsupported world family %q", family)
 	}
@@ -122,6 +143,8 @@ func (family WorldFamily) FailedEventSubject() (string, error) {
 		return UniverseFailedEventSubject, nil
 	case WorldFamilyNature:
 		return NatureFailedEventSubject, nil
+	case WorldFamilyOcean:
+		return OceanFailedEventSubject, nil
 	default:
 		return "", fmt.Errorf("unsupported world family %q", family)
 	}
@@ -337,11 +360,19 @@ type DNAFailedData struct {
 	Message string      `json:"message"`
 }
 
+// FamilyCompletedData's Snapshot field was added for analytics-service and
+// is deliberately a pointer: events already sitting in MYUNIVOKAI_EVENTS when
+// it shipped decode to nil, which a reader can tell apart from a snapshot
+// that really is all zeroes. Adding it is backward compatible in both
+// directions — encoding/json ignores unknown fields, and dna-service compiles
+// against this same package and simply does not read it. See
+// notes/vision/analytics-service-plan.md#the-event-gap.
 type FamilyCompletedData struct {
-	Family       WorldFamily `json:"family"`
-	ProfileID    string      `json:"profileId"`
-	DNAVersionID string      `json:"dnaVersionId"`
-	WorldID      string      `json:"worldId"`
+	Family       WorldFamily    `json:"family"`
+	ProfileID    string         `json:"profileId"`
+	DNAVersionID string         `json:"dnaVersionId"`
+	WorldID      string         `json:"worldId"`
+	Snapshot     *WorldSnapshot `json:"snapshot,omitempty"`
 }
 
 type FamilyFailedData struct {

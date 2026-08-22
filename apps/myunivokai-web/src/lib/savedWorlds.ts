@@ -3,7 +3,22 @@ import type { WorldFamily } from "./types";
 const SAVED_WORLD_IDENTIFIERS_STORAGE_KEY = "myunivokai.savedWorldIds";
 
 const DEFAULT_SAVED_WORLD_FAMILY: WorldFamily = "universe";
-const KNOWN_WORLD_FAMILIES: WorldFamily[] = ["universe", "nature"];
+
+/**
+ * Every family a stored gallery entry may name.
+ *
+ * Written as a record rather than an array literal so the compiler forces it to
+ * stay complete. As a `WorldFamily[]` it was `["universe", "nature"]`, and
+ * adding a third family compiled cleanly while silently dropping every world of
+ * that family out of the visitor's gallery on reload — the same class of
+ * failure as the pending-generation check in lib/api.ts.
+ */
+const KNOWN_WORLD_FAMILY_FLAGS: Record<WorldFamily, true> = {
+  universe: true,
+  nature: true,
+  ocean: true
+};
+const KNOWN_WORLD_FAMILIES = Object.keys(KNOWN_WORLD_FAMILY_FLAGS) as WorldFamily[];
 
 /**
  * One gallery entry: which world, on which backend. Entries were plain id

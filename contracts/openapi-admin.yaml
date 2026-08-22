@@ -1,0 +1,1195 @@
+openapi: 3.1.0
+info:
+  title: Myunivokai Admin API
+  version: 1.0.0
+  description: >
+    The internal admin API, staff only. Served at /api/admin/* by the same
+    api-gateway process as the public API, but as a separately configured
+    route group with its own CORS policy, its own rate limits and
+    default-deny authorization. This document is deliberately never merged
+    into contracts/openapi.yaml so the public API spec never advertises
+    admin routes. Later Sprint 4 phases add the record-browsing and
+    analytics-backed routes here.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: "{protocol}://{host}"
+    description: Configurable gateway endpoint
+    variables:
+      protocol:
+        default: http
+        enum: [http, https]
+      host:
+        default: localhost:41800
+security: []
+paths:
+  /api/admin/auth/login:
+    post:
+      summary: Authenticate a staff account
+      operationId: adminAuthLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Session established; access and refresh cookies set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/auth/refresh:
+    post:
+      summary: Rotate the refresh token and mint a new access token
+      operationId: adminAuthRefresh
+      security:
+        - refreshTokenCookie: []
+      responses:
+        "200":
+          description: New session pair issued; access and refresh cookies rotated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/auth/logout:
+    post:
+      summary: Revoke the current refresh token family
+      operationId: adminAuthLogout
+      security:
+        - refreshTokenCookie: []
+      responses:
+        "204": { description: Session revoked; access and refresh cookies cleared }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/overview:
+    get:
+      summary: Dashboard totals, job health and distributions
+      description: >-
+        Answered entirely by analytics-service from its own read model. The
+        gateway performs no summation or grouping, and no domain service
+        (universe, nature, dna) is contacted on this path.
+      operationId: adminAnalyticsOverview
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - { $ref: "#/components/parameters/Family" }
+        - { $ref: "#/components/parameters/Days" }
+      responses:
+        "200":
+          description: Aggregates over the requested window
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Overview" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/service-starts:
+    get:
+      summary: Every process boot, newest first
+      description: >-
+        A process cannot report its own death - an OOM kill runs no handler -
+        so each one announces its start instead, and a start nobody scheduled
+        is the evidence that a stop happened.
+
+
+        Unlike /wake-stats this outlives the hosting tier: waking is a property
+        of a scale-to-zero plan, restarting is a property of running software.
+        The two answer different halves of one question, and reading them
+        together separates "the service never came up" from "it came up and
+        then died".
+
+
+        `instanceId` is fresh per boot, which is what distinguishes one process
+        running for a week from seven crash-restarts. `version` is "unknown"
+        rather than guessed when the build supplied none.
+      operationId: adminListServiceStarts
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - name: service
+          in: query
+          required: false
+          description: Unknown names are ignored rather than rejected, returning every service.
+          schema: { type: string, enum: [gateway, dna, universe, nature, auth, analytics] }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: One page of boots, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceStartList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/wake-stats:
+    get:
+      summary: How often each service had to be started, and when each was last seen running
+      description: >-
+        The only admin read not answered by analytics-service, and the only one
+        that starts nothing to answer. These numbers describe services being
+        asleep, so fetching them from a scale-to-zero read model would wake one
+        in order to report on wakes; they are kept in the gateway's own Redis
+        instead, where reading them stays outside what they measure.
+
+
+        `totalWakes` counts wake calls actually sent, not requests that found a
+        service asleep — single-flight collapses a burst into one call, and
+        only the call costs instance-hours. `wakeable` is false for a service
+        with no URL configured, which is what separates "never slept" from "not
+        covered": both otherwise show zero. `lastSeenAt` is null until the
+        service has answered at least once since these counters existed.
+
+
+        This whole route is scoped to scale-to-zero hosting and disappears with
+        it — see notes/vision/service-wake-mechanism.md §Removal.
+      operationId: adminWakeStats
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: >-
+            Window in days, clamped to 1..90 rather than rejected: this backs a
+            dashboard control, and a range input that returns 400 teaches the
+            operator to leave it alone.
+          schema: { type: integer, default: 30, minimum: 1, maximum: 90 }
+      responses:
+        "200":
+          description: Wake counts and liveness stamps for every service
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WakeStats" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/timeseries:
+    get:
+      summary: Daily world and job counts over a range
+      description: >-
+        Days with no activity are returned as explicit zeroes rather than
+        omitted, so a chart draws a flat line instead of interpolating.
+      operationId: adminAnalyticsTimeseries
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - { $ref: "#/components/parameters/Family" }
+        - { $ref: "#/components/parameters/Days" }
+      responses:
+        "200":
+          description: One point per day, oldest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Timeseries" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/worlds:
+    get:
+      summary: Browse projected worlds
+      description: >-
+        Cursor paginated. Pagination is mandatory and keyset-based, never
+        OFFSET, so every page costs the same and the response stays inside the
+        gateway's request/reply deadline as the table grows.
+      operationId: adminAnalyticsListWorlds
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - { $ref: "#/components/parameters/Family" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - name: archetype
+          in: query
+          required: false
+          schema: { type: string }
+        - name: worldStyle
+          in: query
+          required: false
+          schema: { type: string, enum: [cosmic-galaxy, nebula, crystal, aurora, cyber-orbit] }
+        - name: mood
+          in: query
+          required: false
+          schema: { type: string }
+        - name: published
+          in: query
+          required: false
+          description: Omit for every world; true or false to filter.
+          schema: { type: boolean }
+        - name: rareFeature
+          in: query
+          required: false
+          description: >-
+            Selects the worlds whose stored rarity draw came in under this
+            feature's CURRENT probability — the same predicate the overview's
+            rarity panel counts with, so a count and the list behind it can
+            never disagree. An unrecognised key matches nothing rather than
+            being ignored.
+          schema:
+            type: string
+            enum:
+              [
+                meteor-shower,
+                binary-sun,
+                black-hole,
+                forest-special-bird,
+                forest-special-animal,
+              ]
+      responses:
+        "200":
+          description: One page of worlds
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorldPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/worlds/{worldID}:
+    get:
+      summary: Read one projected world and its job history
+      description: >-
+        Returns the world together with every job that touched it, newest
+        first. The two travel in one response because they are read together:
+        fetching them separately would let the page show a world beside a job
+        list taken from an older read. A 404 covers both "never projected" and
+        "not a world id at all" — a projection is eventually consistent, so a
+        world that exists upstream but has not arrived here yet is legitimately
+        absent.
+      operationId: adminAnalyticsGetWorld
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - name: worldID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The world and its jobs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorldDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/jobs:
+    get:
+      summary: Browse generation jobs and their failures
+      operationId: adminAnalyticsListJobs
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - { $ref: "#/components/parameters/Family" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [queued, processing, completed, failed] }
+        - name: errorCode
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of jobs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/telemetry/overview:
+    get:
+      summary: Request volume, status mix and latency over a window
+      description: >-
+        Answered by telemetry-service, which is neither analytics-service nor a
+        domain service: this is operations data about the platform itself, from
+        a third read model with its own data boundary.
+
+
+        Every number here is a sum over one-minute rollup buckets the gateway
+        published, and every percentile is an interpolation across eight fixed
+        histogram edges rather than an exact value — `percentileIsInterpolated`
+        says so on every response, and the admin UI is required to render that
+        qualification next to the number.
+
+
+        `errorRatePercent` counts 5xx only. A validation failure or a 404 is
+        the client's problem, and folding it in would produce an error rate
+        that never goes down; `statusMix` returns the rest so nothing is
+        hidden.
+
+
+        When the service runs with TELEMETRY_SINK=otlp it stores nothing
+        locally and `chartsAvailable` is false, with `dashboardUrl` naming
+        where to look. That is a 200, not a 501: a missing chart must read as
+        "look elsewhere", never as a broken screen.
+      operationId: adminTelemetryOverview
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - { $ref: "#/components/parameters/TelemetryHours" }
+      responses:
+        "200":
+          description: One window of platform telemetry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelemetryOverview" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/admin/telemetry/routes:
+    get:
+      summary: Per-route request count, error rate and latency
+      description: >-
+        One row per route TEMPLATE and method — `/api/universe/worlds/{worldID}`,
+        never a path carrying a world id. That rule is what keeps this table
+        bounded by the gateway's route count rather than by traffic, which is
+        also why it needs no pagination.
+      operationId: adminTelemetryRoutes
+      security:
+        - accessTokenCookie: []
+      parameters:
+        - { $ref: "#/components/parameters/TelemetryHours" }
+      responses:
+        "200":
+          description: Every route observed in the window, busiest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelemetryRouteList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+components:
+  parameters:
+    Family:
+      name: family
+      in: query
+      required: false
+      description: Omit for every family.
+      schema: { type: string, enum: [universe, nature] }
+    TelemetryHours:
+      name: hours
+      in: query
+      required: false
+      description: >-
+        Window in hours, clamped to 1..168 by telemetry-service rather than
+        rejected — the maximum matches MYUNIVOKAI_EVENTS's own 7-day retention,
+        so asking for more is a question the stream could never have answered.
+        Hours rather than days because a bucket here is one minute wide and the
+        questions are operational, not historical.
+      schema: { type: integer, default: 24, minimum: 1, maximum: 168 }
+    Days:
+      name: days
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 90, default: 30 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque keyset cursor returned as nextCursor by the previous page.
+      schema: { type: string }
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+  securitySchemes:
+    accessTokenCookie:
+      type: apiKey
+      in: cookie
+      name: myunivokai_admin_access
+      description: >-
+        httpOnly, Secure, SameSite=Lax cookie holding the short-lived Ed25519
+        access token. The gateway verifies its signature locally and checks
+        its tokenVersion against the Redis revocation cache.
+    refreshTokenCookie:
+      type: apiKey
+      in: cookie
+      name: myunivokai_admin_refresh
+      description: >-
+        httpOnly, Secure, SameSite=Lax cookie holding the rotating opaque
+        refresh token, scoped to the refresh path only.
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required: [account, accessExpiresAt, refreshExpiresAt]
+      properties:
+        account: { $ref: "#/components/schemas/Account" }
+        accessExpiresAt: { type: string, format: date-time }
+        refreshExpiresAt: { type: string, format: date-time }
+    Account:
+      type: object
+      additionalProperties: false
+      required: [accountId, email, kind, roles, permissions, isSuperAdmin, disabled, createdAt]
+      properties:
+        accountId: { type: string }
+        email: { type: string, format: email }
+        kind: { type: string, enum: [staff, end_user] }
+        roles: { type: array, items: { type: string } }
+        permissions: { type: array, items: { type: string } }
+        isSuperAdmin: { type: boolean }
+        disabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    TraitScores:
+      type: object
+      additionalProperties: false
+      required: [creativity, discipline, curiosity, energy, focus]
+      properties:
+        creativity: { type: integer, minimum: 0, maximum: 100 }
+        discipline: { type: integer, minimum: 0, maximum: 100 }
+        curiosity: { type: integer, minimum: 0, maximum: 100 }
+        energy: { type: integer, minimum: 0, maximum: 100 }
+        focus: { type: integer, minimum: 0, maximum: 100 }
+    DistributionSlice:
+      type: object
+      additionalProperties: false
+      required: [value, count]
+      properties:
+        value: { type: string }
+        count: { type: integer }
+    FamilyTotals:
+      type: object
+      additionalProperties: false
+      required: [family, worldCount, publishedCount, variantCount, jobCount, failedJobCount]
+      properties:
+        family: { type: string, enum: [universe, nature] }
+        worldCount: { type: integer }
+        publishedCount: { type: integer }
+        variantCount: { type: integer }
+        jobCount: { type: integer }
+        failedJobCount: { type: integer }
+    Delta:
+      type: object
+      additionalProperties: false
+      description: >-
+        One measure against the equivalent period before it. The absolute
+        values travel with the percentage because a percentage alone is
+        unreadable at low volume — +100% is two becoming four, and the card
+        cannot say which without them.
+      required: [current, previous, changePercent, hasBaseline]
+      properties:
+        current: { type: integer }
+        previous: { type: integer }
+        changePercent: { type: number }
+        hasBaseline:
+          type: boolean
+          description: >-
+            False when the preceding period holds no data at all, which is not
+            the same as a previous value of zero. A client MUST render "no
+            baseline" rather than a percentage when this is false.
+    TelemetryComparison:
+      type: object
+      additionalProperties: false
+      description: >-
+        The window measured against the one of the same width immediately
+        before it. Absent from the response entirely when that window holds
+        nothing.
+      required: [previousWindowStart, requests, errors, p95DurationMs]
+      properties:
+        previousWindowStart: { type: string, format: date-time }
+        requests: { $ref: "#/components/schemas/Delta" }
+        errors:
+          allOf: [{ $ref: "#/components/schemas/Delta" }]
+          description: >-
+            The error COUNT, not the rate. Two rates subtract into a
+            percentage-POINT difference, and reporting that as a percent change
+            is the most common way a card like this ends up lying.
+        p95DurationMs: { $ref: "#/components/schemas/Delta" }
+    AnalyticsComparison:
+      type: object
+      additionalProperties: false
+      description: >-
+        A rolling period against the one before it. Always present, and always
+        the same width regardless of the `days` parameter: the range picker
+        scopes the distributions and the funnel, while "vs yesterday" is a
+        fixed question.
+      required: [periodHours, worlds, publishedWorlds, jobs, failedJobs]
+      properties:
+        periodHours: { type: integer }
+        worlds: { $ref: "#/components/schemas/Delta" }
+        publishedWorlds: { $ref: "#/components/schemas/Delta" }
+        jobs: { $ref: "#/components/schemas/Delta" }
+        failedJobs: { $ref: "#/components/schemas/Delta" }
+    JobHealth:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          totalJobs,
+          completedJobs,
+          failedJobs,
+          inFlightJobs,
+          failureRatePercent,
+          averageDurationMs,
+          p50DurationMs,
+          p95DurationMs,
+          slowestDurationMs,
+          measuredJobCount,
+          publishRatePercent,
+          multiVariantPercent,
+        ]
+      properties:
+        totalJobs: { type: integer }
+        completedJobs: { type: integer }
+        failedJobs: { type: integer }
+        inFlightJobs: { type: integer }
+        failureRatePercent: { type: number }
+        averageDurationMs: { type: integer }
+        p50DurationMs:
+          type: integer
+          description: >-
+            Exact, unlike telemetry-service's interpolated pair —
+            analytics-service has every job's own duration and computes
+            PERCENTILE_CONT over it.
+        p95DurationMs: { type: integer }
+        slowestDurationMs: { type: integer }
+        measuredJobCount:
+          type: integer
+          description: Jobs that reached a terminal state and therefore have a duration.
+        publishRatePercent: { type: number }
+        multiVariantPercent: { type: number }
+    ServiceStartList:
+      type: object
+      additionalProperties: false
+      required: [starts, pageSize, totalCount]
+      properties:
+        starts:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [service, instanceId, version, bootDurationMs, startedAt]
+            properties:
+              service: { type: string }
+              instanceId: { type: string }
+              version:
+                type: string
+                description: Commit the process was built from, or the literal "unknown" when the build supplied none. Never guessed.
+              bootDurationMs:
+                type: integer
+                description: Process start to ready-to-serve. On a scale-to-zero host this is what decides whether Retry-After is long enough.
+              startedAt: { type: string, format: date-time }
+        pageSize: { type: integer }
+        nextCursor: { type: string }
+        totalCount: { type: integer }
+    TelemetrySink:
+      type: object
+      description: >-
+        On every telemetry response, not only the ones that fail to answer, so
+        the screen reads one field to decide whether to draw charts or a link
+        instead of inferring intent from a missing array.
+      required: [sink, chartsAvailable]
+      properties:
+        sink: { type: string, enum: [postgres, otlp] }
+        chartsAvailable:
+          type: boolean
+          description: False when the sink stores nothing locally and cannot answer a range query.
+        dashboardUrl:
+          type: string
+          description: >-
+            Where to look instead when chartsAvailable is false. Absent means
+            nobody configured one, which the screen states plainly rather than
+            rendering a dead link.
+    TelemetryVolumePoint:
+      type: object
+      additionalProperties: false
+      required: [bucketStart, requestCount, errorCount, p95DurationMs]
+      properties:
+        bucketStart: { type: string, format: date-time }
+        requestCount: { type: integer }
+        errorCount: { type: integer }
+        p95DurationMs: { type: integer }
+    TelemetryOverview:
+      allOf:
+        - { $ref: "#/components/schemas/TelemetrySink" }
+        - type: object
+          required:
+            [
+              hours,
+              generatedAt,
+              totalRequests,
+              errorRequests,
+              errorRatePercent,
+              averageDurationMs,
+              p50DurationMs,
+              p95DurationMs,
+              slowestDurationMs,
+              percentileIsInterpolated,
+              statusMix,
+              volumePoints,
+              hourlyPoints,
+              hourOfDay,
+              trafficFunnel,
+              errorCodeTop,
+              backends,
+              cache,
+              wakeSignals,
+            ]
+          properties:
+            hours: { type: integer }
+            generatedAt: { type: string, format: date-time }
+            totalRequests: { type: integer }
+            errorRequests: { type: integer, description: 5xx only. }
+            errorRatePercent: { type: number }
+            averageDurationMs: { type: integer }
+            p50DurationMs:
+              type: integer
+              description: >-
+                The median, always reported beside the p95. The gap between the
+                two is the finding: a low median under a high tail is a slow
+                minority, and two high numbers are a slow platform. Either
+                number alone cannot tell those apart.
+            p95DurationMs: { type: integer }
+            slowestDurationMs: { type: integer }
+            percentileIsInterpolated:
+              type: boolean
+              description: >-
+                Always true when charts are available. The percentile is a
+                linear interpolation across fixed histogram edges, and a p95
+                that looks exact and is not is worse than no p95.
+            statusMix:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [statusClass, requestCount]
+                properties:
+                  statusClass: { type: integer, minimum: 1, maximum: 5 }
+                  requestCount: { type: integer }
+            volumePoints:
+              type: array
+              description: >-
+                Minute resolution — a 7-day window holds 10,080 of these.
+              items: { $ref: "#/components/schemas/TelemetryVolumePoint" }
+            hourlyPoints:
+              type: array
+              description: >-
+                The same traffic rolled up to the hour, which is what a trend
+                line should be drawn from.
+              items: { $ref: "#/components/schemas/TelemetryVolumePoint" }
+            peakHour:
+              allOf: [{ $ref: "#/components/schemas/TelemetryVolumePoint" }]
+              description: >-
+                The busiest single hour in the window. Absent when the window
+                holds nothing at all.
+            hourOfDay:
+              type: array
+              description: >-
+                Traffic by hour of day, summed across every day in the window —
+                "when is this platform reliably busy", which the timeline
+                cannot answer. Only hours that saw traffic are returned.
+              items:
+                type: object
+                additionalProperties: false
+                required: [hour, requestCount, errorCount, p95DurationMs]
+                properties:
+                  hour: { type: integer, minimum: 0, maximum: 23, description: UTC. }
+                  requestCount: { type: integer }
+                  errorCount: { type: integer }
+                  p95DurationMs: { type: integer }
+            comparison:
+              $ref: "#/components/schemas/TelemetryComparison"
+            trafficFunnel:
+              type: array
+              description: >-
+                How far the traffic got. Each stage strictly contains the next:
+                everything that arrived, the part of it the client asked for
+                correctly (4xx removed), and the part of that this platform
+                answered (5xx removed). A client may rely on the counts being
+                non-increasing.
+              items:
+                type: object
+                additionalProperties: false
+                required: [stage, label, count, percentOfEntry]
+                properties:
+                  stage:
+                    type: string
+                    enum: [received, accepted, served]
+                  label: { type: string }
+                  count: { type: integer }
+                  percentOfEntry:
+                    type: number
+                    description: >-
+                      Against the FIRST stage, never the previous one. Never
+                      above 100, because every stage is a subset of the entry.
+            errorCodeTop:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [errorCode, count]
+                properties:
+                  errorCode: { type: string }
+                  count: { type: integer }
+            backends:
+              type: array
+              description: >-
+                Round-trip time per backend service, which end-to-end response
+                time cannot answer: a request under /api/{family}/worlds
+                reaches universe or nature depending on the family, and both
+                wear the same route template.
+              items:
+                type: object
+                additionalProperties: false
+                required:
+                  [service, requestCount, errorCount, averageDurationMs, p95DurationMs, slowestDurationMs]
+                properties:
+                  service: { type: string }
+                  requestCount: { type: integer }
+                  errorCount: { type: integer, description: Includes no-responders and timeouts. }
+                  averageDurationMs: { type: integer }
+                  p95DurationMs: { type: integer }
+                  slowestDurationMs: { type: integer }
+            cache:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [namespace, hits, misses, hitRatePercent]
+                properties:
+                  namespace: { type: string, enum: ["job:v1", "world:v1", "share:v1"] }
+                  hits: { type: integer }
+                  misses:
+                    type: integer
+                    description: >-
+                      A Redis failure counts as neither a hit nor a miss. It
+                      sends the request to the backend the same way a miss
+                      does, but folding it in would make an outage read as a
+                      cache that stopped working.
+                  hitRatePercent: { type: number }
+            wakeSignals:
+              type: array
+              description: >-
+                SERVICE_WAKING responses per time bucket — an approximation of
+                the wake-conversion rate joined on time proximity, not a
+                per-request causal trace. The UI must say so.
+              items: { $ref: "#/components/schemas/TelemetryVolumePoint" }
+            oldestBucketStart:
+              type: string
+              format: date-time
+              description: >-
+                What actually exists in the store, which is not always what was
+                asked for. A service asleep for a week has no data for most of
+                a 24-hour window, and a chart that does not say so reads as "no
+                traffic" rather than "no data".
+    TelemetryRouteList:
+      allOf:
+        - { $ref: "#/components/schemas/TelemetrySink" }
+        - type: object
+          required: [hours, generatedAt, percentileIsInterpolated, routes]
+          properties:
+            hours: { type: integer }
+            generatedAt: { type: string, format: date-time }
+            percentileIsInterpolated: { type: boolean }
+            routes:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required:
+                  [
+                    routePattern,
+                    method,
+                    requestCount,
+                    errorCount,
+                    errorRatePercent,
+                    averageDurationMs,
+                    p95DurationMs,
+                    slowestDurationMs,
+                  ]
+                properties:
+                  routePattern:
+                    type: string
+                    description: A chi route TEMPLATE, never a raw path.
+                  method: { type: string }
+                  requestCount: { type: integer }
+                  errorCount: { type: integer }
+                  errorRatePercent: { type: number }
+                  averageDurationMs: { type: integer }
+                  p95DurationMs: { type: integer }
+                  slowestDurationMs: { type: integer }
+    WakeStats:
+      type: object
+      additionalProperties: false
+      required: [days, services, platform]
+      properties:
+        days: { type: integer }
+        services:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [service, totalWakes, dailyWakes, lastSeenAt, consecutiveFailedWakes, wakeable]
+            properties:
+              service: { type: string }
+              totalWakes: { type: integer }
+              dailyWakes:
+                type: object
+                description: UTC day (YYYY-MM-DD) to wake count, zero-filled across the window.
+                additionalProperties: { type: integer }
+              lastSeenAt:
+                type: [string, "null"]
+                format: date-time
+                description: >-
+                  Last moment the service is known to have answered. Null means
+                  never observed, which is not the same as long asleep — a
+                  freshly deployed gateway has no observation yet.
+              consecutiveFailedWakes:
+                type: integer
+                description: >-
+                  Wake calls sent with no reply since. A non-zero value is a
+                  service the gateway keeps trying to start and cannot; it
+                  clears itself once the service answers. Past a small
+                  threshold the gateway stops answering SERVICE_WAKING for it
+                  and reports SERVICE_UNAVAILABLE instead, because telling a
+                  client to retry something that is not coming back is worse
+                  than saying so.
+              wakeable:
+                type: boolean
+                description: Whether a wake target is configured for this service.
+        platform:
+          type: object
+          additionalProperties: false
+          required: [name, retryAfterSeconds, wakeableServiceCount]
+          properties:
+            name: { type: string, description: The selected wake adapter; "none" on an always-on host. }
+            retryAfterSeconds: { type: integer }
+            wakeableServiceCount: { type: integer }
+    Overview:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          days,
+          totalWorlds,
+          totalPublished,
+          worldsInWindow,
+          families,
+          jobHealth,
+          archetypeTop,
+          worldStyleTop,
+          moodTop,
+          errorCodeTop,
+          averageTraitScores,
+          generatedAt,
+          comparison,
+          generationFunnel,
+          hourOfDay,
+          rarity,
+        ]
+      properties:
+        days: { type: integer }
+        totalWorlds: { type: integer }
+        totalPublished: { type: integer }
+        worldsInWindow: { type: integer }
+        families: { type: array, items: { $ref: "#/components/schemas/FamilyTotals" } }
+        jobHealth: { $ref: "#/components/schemas/JobHealth" }
+        archetypeTop: { type: array, items: { $ref: "#/components/schemas/DistributionSlice" } }
+        worldStyleTop: { type: array, items: { $ref: "#/components/schemas/DistributionSlice" } }
+        moodTop: { type: array, items: { $ref: "#/components/schemas/DistributionSlice" } }
+        errorCodeTop: { type: array, items: { $ref: "#/components/schemas/DistributionSlice" } }
+        averageTraitScores: { $ref: "#/components/schemas/TraitScores" }
+        generatedAt: { type: string, format: date-time }
+        oldestProjectedWorld: { type: string, format: date-time }
+        comparison: { $ref: "#/components/schemas/AnalyticsComparison" }
+        generationFunnel:
+          type: array
+          description: >-
+            Every stage measured over the SAME set of jobs — the ones submitted
+            inside the window — which is what makes the four counts a funnel
+            rather than four unrelated totals.
+          items:
+            type: object
+            additionalProperties: false
+            required: [stage, label, count, percentOfEntry]
+            properties:
+              stage: { type: string, enum: [submitted, completed, projected, published] }
+              label: { type: string }
+              count: { type: integer }
+              percentOfEntry:
+                type: number
+                description: Against the FIRST stage, never the previous one.
+        hourOfDay:
+          type: array
+          description: >-
+            Job submissions by hour of day, summed across every day in the
+            window. Only hours that saw a job are returned; a client fills the
+            rest with zeroes, because a 24-slot axis is a rendering concern.
+          items:
+            type: object
+            additionalProperties: false
+            required: [hour, jobCount]
+            properties:
+              hour: { type: integer, minimum: 0, maximum: 23, description: UTC. }
+              jobCount: { type: integer }
+        peakHour:
+          type: object
+          additionalProperties: false
+          description: Absent when no job was submitted in the window.
+          required: [hour, jobCount]
+          properties:
+            hour: { type: integer, minimum: 0, maximum: 23 }
+            jobCount: { type: integer }
+        rarity: { $ref: "#/components/schemas/RarityReport" }
+    RarityReport:
+      type: object
+      additionalProperties: false
+      description: >-
+        How often each rare feature ACTUALLY came up, measured by replaying the
+        renderer's own seeded lottery over the seeds of real worlds. A rare
+        feature is never stored — it is re-derived on every render from the
+        selected variant's seed — so this is the only way the question has an
+        answer at all, and it is deliberately not a read of the configured
+        probability.
+      required: [features, unmeasuredWorlds]
+      properties:
+        unmeasuredWorlds:
+          type: integer
+          description: >-
+            Worlds in the window carrying no variant seed, and so in no
+            denominator below. Stated rather than hidden: these are not
+            evidence of a low rate, they are worlds the lottery cannot be
+            replayed for.
+        features:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              [
+                key,
+                label,
+                family,
+                configuredPercent,
+                eligibleWorlds,
+                observedCount,
+                observedPercent,
+              ]
+            properties:
+              key: { type: string }
+              label: { type: string }
+              family: { type: string, enum: [universe, nature] }
+              configuredPercent:
+                type: number
+                description: What the generator is tuned to produce.
+              eligibleWorlds:
+                type: integer
+                description: >-
+                  The denominator — worlds of this feature's family, in the
+                  window, that carry a seed. Per-feature rather than global
+                  because a forest cannot roll a black hole.
+              observedCount: { type: integer }
+              observedPercent: { type: number }
+              species:
+                type: array
+                description: >-
+                  Absent for features with no varieties. Shares are against this
+                  feature's own hits, so they sum to 100%.
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [key, label, count, percentOfHits]
+                  properties:
+                    key: { type: string }
+                    label: { type: string }
+                    count: { type: integer }
+                    percentOfHits: { type: number }
+    TimeseriesPoint:
+      type: object
+      additionalProperties: false
+      required: [day, worldCount, publishedCount, jobCount, failedJobCount]
+      properties:
+        day: { type: string, format: date-time }
+        worldCount: { type: integer }
+        publishedCount: { type: integer }
+        jobCount: { type: integer }
+        failedJobCount: { type: integer }
+    Timeseries:
+      type: object
+      additionalProperties: false
+      required: [days, points]
+      properties:
+        days: { type: integer }
+        points: { type: array, items: { $ref: "#/components/schemas/TimeseriesPoint" } }
+    World:
+      type: object
+      additionalProperties: false
+      description: >-
+        The projected world. Every field here is on the analytics data-boundary
+        allow list; the submitted form, the generated profile, the world quote
+        and the scene config never cross into this service and can never appear
+        on this route.
+      required:
+        [
+          worldId,
+          family,
+          nickname,
+          archetype,
+          sceneName,
+          mood,
+          worldStyle,
+          favoriteColors,
+          traitScores,
+          variantCount,
+          selectedVariantNo,
+          isPublished,
+          revision,
+          sourceJobId,
+          worldCreatedAt,
+          projectedAt,
+        ]
+      properties:
+        worldId: { type: string, format: uuid }
+        family: { type: string, enum: [universe, nature] }
+        nickname: { type: string }
+        role: { type: string }
+        archetype: { type: string }
+        sceneName: { type: string }
+        mood: { type: string }
+        worldStyle: { type: string }
+        favoriteColors: { type: array, items: { type: string } }
+        traitScores: { $ref: "#/components/schemas/TraitScores" }
+        variantCount: { type: integer }
+        selectedVariantNo: { type: integer }
+        isPublished: { type: boolean }
+        publishedAt: { type: string, format: date-time }
+        revision: { type: integer }
+        sourceJobId: { type: string }
+        worldCreatedAt: { type: string, format: date-time }
+        projectedAt: { type: string, format: date-time }
+    WorldPage:
+      type: object
+      additionalProperties: false
+      required: [worlds, totalCount, pageSize]
+      properties:
+        worlds: { type: array, items: { $ref: "#/components/schemas/World" } }
+        nextCursor:
+          type: string
+          description: Absent on the last page.
+        totalCount: { type: integer }
+        pageSize: { type: integer }
+    WorldDetail:
+      type: object
+      additionalProperties: false
+      required: [world, jobs]
+      properties:
+        world:
+          allOf:
+            - $ref: "#/components/schemas/World"
+            - type: object
+              description: >-
+                The list row plus the two identifiers a table has no room for.
+                Both are already on the allow list — World carries sourceJobId
+                and Job carries profileId and dnaVersionId — so the detail view
+                exposes nothing new, it only shows them together.
+              properties:
+                profileId: { type: string, format: uuid }
+                dnaVersionId: { type: string, format: uuid }
+        jobs:
+          type: array
+          description: >-
+            Newest first, capped at 50. Joined on world_id rather than followed
+            from sourceJobId, because a world accumulates jobs after creation
+            and the source job is only the first of them.
+          items: { $ref: "#/components/schemas/Job" }
+    Job:
+      type: object
+      additionalProperties: false
+      required: [jobId, status, createdAt]
+      properties:
+        jobId: { type: string }
+        family: { type: string, enum: [universe, nature] }
+        status: { type: string, enum: [queued, processing, completed, failed] }
+        errorCode: { type: string }
+        errorMessage: { type: string }
+        worldId: { type: string }
+        profileId: { type: string }
+        dnaVersionId: { type: string }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        durationMs:
+          type: integer
+          description: Absent while the job is still in flight.
+    JobPage:
+      type: object
+      additionalProperties: false
+      required: [jobs, totalCount, pageSize]
+      properties:
+        jobs: { type: array, items: { $ref: "#/components/schemas/Job" } }
+        nextCursor:
+          type: string
+          description: Absent on the last page.
+        totalCount: { type: integer }
+        pageSize: { type: integer }
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: array, items: { type: object } }
+        requestId: { type: string }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: "#/components/schemas/ErrorBody" }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthorized:
+      description: Missing, invalid, expired or revoked session
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: Authenticated, but the account holds none of the required permissions
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: >-
+        No such record in the read model. On analytics routes this is not
+        necessarily a wrong id: the projection is eventually consistent, so a
+        record created moments ago may not have arrived yet.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unavailable:
+      description: >-
+        auth-service, analytics-service or a required edge dependency could not
+        be reached. SERVICE_WAKING means the service was asleep, the gateway has
+        started it, and the request never arrived — retry after Retry-After.
+        This is the common case on the admin surface, which is used rarely
+        enough that its services are usually idle. SERVICE_UNAVAILABLE means a
+        real fault that retrying will not fix.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying. Sent with SERVICE_WAKING only.
+          required: false
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }

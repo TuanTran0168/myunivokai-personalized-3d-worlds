@@ -1,6 +1,6 @@
 import type { ArrangementPieceId } from "@/features/audio/arrangements";
 import type { SampledInstrumentKey } from "@/features/audio/instrumentSamples";
-import { isForestScene, pointsOfInterestFromScene, randomFromSeed } from "./scene";
+import { isForestScene, isOceanScene, pointsOfInterestFromScene, randomFromSeed } from "./scene";
 import type { SceneConfig } from "./types";
 
 // --- Ambient soundscape recipe -----------------------------------------------
@@ -114,6 +114,27 @@ const PERFORMANCE_SEED_SUFFIX = "-ambient-performance";
 const FALLBACK_SCENE_SEED = "myunivokai-silent";
 const UNIVERSE_FAMILY_KEY = "universe";
 const FOREST_FAMILY_KEY = "forest";
+const OCEAN_FAMILY_KEY = "ocean";
+
+/**
+ * Which family's tables a scene is arranged from.
+ *
+ * This replaced an `isForest: boolean` threaded through three resolvers. A
+ * boolean has exactly two answers, so an ocean world arrived as "not forest"
+ * and was arranged as a solar system - a lowpass space bed under a sea. That
+ * failed no test, because nothing asserted what a third family sounded like.
+ */
+type AmbientFamily = typeof UNIVERSE_FAMILY_KEY | typeof FOREST_FAMILY_KEY | typeof OCEAN_FAMILY_KEY;
+
+function ambientFamilyForScene(scene: SceneConfig): AmbientFamily {
+  if (isForestScene(scene)) {
+    return FOREST_FAMILY_KEY;
+  }
+  if (isOceanScene(scene)) {
+    return OCEAN_FAMILY_KEY;
+  }
+  return UNIVERSE_FAMILY_KEY;
+}
 
 const MASTER_GAIN = 0.6;
 
@@ -185,6 +206,20 @@ const DEFAULT_FOREST_IDENTITY: MusicalIdentity = {
   instrument: "kalimba"
 };
 
+// Keyed by the current, which is the ocean's counterpart of the forest's
+// weather. Still water gets the slowest piece in the catalogue and the
+// longest-ringing instrument, because that is what a motionless sea sounds
+// like; surge gets the running sixteenths.
+const OCEAN_IDENTITY_BY_CURRENT: Record<string, MusicalIdentity> = {
+  still: { pieceId: "satie-gymnopedie-3", instrument: "vibraphone" },
+  drift: { pieceId: "debussy-clair-de-lune", instrument: "harp" },
+  surge: { pieceId: "bach-prelude-c-major", instrument: "glockenspiel" }
+};
+const DEFAULT_OCEAN_IDENTITY: MusicalIdentity = {
+  pieceId: "debussy-clair-de-lune",
+  instrument: "harp"
+};
+
 // The harmony instrument is always softer and longer-ringing than the melody it
 // sits under, and never the same one — two layers of a single timbre read as one
 // muddled layer rather than as two.
@@ -245,6 +280,14 @@ const TIME_OF_DAY_TRANSPOSE_SEMITONES: Record<string, number> = {
   day: 0,
   goldenHour: -2,
   dusk: -5
+};
+// Depth transposes downward, which is the one musical idea this family gets for
+// free: going deeper and going lower are the same gesture, and a listener hears
+// it without being told what it means.
+const DEPTH_ZONE_TRANSPOSE_SEMITONES: Record<string, number> = {
+  sunlitShallows: 0,
+  twilightReach: -4,
+  abyss: -9
 };
 
 const SEED_TRANSPOSE_CHOICES = [-2, 0, 0, 2, 3];
@@ -386,6 +429,18 @@ const FOREST_BASE_BED: BedCharacter = {
   sweepDepthHertz: 300
 };
 
+// Water is a close, filtered space: a bandpass bed like the forest's, but lower,
+// quieter and slower. The abyss is not louder than the reef - it is emptier,
+// which the current modifiers below are what express.
+const OCEAN_BASE_BED: BedCharacter = {
+  gain: 0.068,
+  filterType: "bandpass",
+  filterFrequencyHertz: 520,
+  filterQuality: 1.1,
+  sweepRateHertz: 0.045,
+  sweepDepthHertz: 180
+};
+
 type WeatherBedModifier = {
   gainMultiplier: number;
   frequencyMultiplier: number;
@@ -408,6 +463,12 @@ const WEATHER_BED_MODIFIERS: Record<string, WeatherBedModifier> = {
   // measured as effectively white noise, burying the music it sits under.
   rain: { gainMultiplier: 1.25, frequencyMultiplier: 1.3, qualityMultiplier: 0.8, sweepRateMultiplier: 1.5 },
   snow: { gainMultiplier: 0.7, frequencyMultiplier: 0.6, qualityMultiplier: 0.6, sweepRateMultiplier: 0.55 }
+};
+
+const CURRENT_BED_MODIFIERS: Record<string, WeatherBedModifier> = {
+  still: { gainMultiplier: 0.7, frequencyMultiplier: 0.75, qualityMultiplier: 1.3, sweepRateMultiplier: 0.5 },
+  drift: NEUTRAL_WEATHER_BED_MODIFIER,
+  surge: { gainMultiplier: 1.3, frequencyMultiplier: 1.35, qualityMultiplier: 0.8, sweepRateMultiplier: 1.8 }
 };
 
 const DEFAULT_WEATHER_INTENSITY = 0.5;
@@ -458,41 +519,69 @@ function resolveDnaSignals(scene: SceneConfig): { pointCount: number; averageEne
   };
 }
 
-function resolveMusicalIdentity(scene: SceneConfig, isForest: boolean): MusicalIdentity {
-  if (!isForest) {
-    const theme = typeof scene.theme === "string" ? scene.theme : "";
-    return UNIVERSE_IDENTITY_BY_THEME[theme] ?? DEFAULT_UNIVERSE_IDENTITY;
+function resolveMusicalIdentity(scene: SceneConfig, family: AmbientFamily): MusicalIdentity {
+  if (family === FOREST_FAMILY_KEY) {
+    const weatherKind = typeof scene.weather?.kind === "string" ? scene.weather.kind : "";
+    return FOREST_IDENTITY_BY_WEATHER[weatherKind] ?? DEFAULT_FOREST_IDENTITY;
   }
-  const weatherKind = typeof scene.weather?.kind === "string" ? scene.weather.kind : "";
-  return FOREST_IDENTITY_BY_WEATHER[weatherKind] ?? DEFAULT_FOREST_IDENTITY;
+  if (family === OCEAN_FAMILY_KEY) {
+    const currentKind = typeof scene.current?.kind === "string" ? scene.current.kind : "";
+    return OCEAN_IDENTITY_BY_CURRENT[currentKind] ?? DEFAULT_OCEAN_IDENTITY;
+  }
+  const theme = typeof scene.theme === "string" ? scene.theme : "";
+  return UNIVERSE_IDENTITY_BY_THEME[theme] ?? DEFAULT_UNIVERSE_IDENTITY;
 }
 
-function resolveSceneTransposeSemitones(scene: SceneConfig, isForest: boolean): number {
-  if (!isForest) {
-    return 0;
+function resolveSceneTransposeSemitones(scene: SceneConfig, family: AmbientFamily): number {
+  if (family === FOREST_FAMILY_KEY) {
+    const seasonKind = typeof scene.season?.kind === "string" ? scene.season.kind : "";
+    const timeOfDayKey = typeof scene.lighting?.timeOfDay === "string" ? scene.lighting.timeOfDay : "";
+    return (SEASON_TRANSPOSE_SEMITONES[seasonKind] ?? 0) + (TIME_OF_DAY_TRANSPOSE_SEMITONES[timeOfDayKey] ?? 0);
   }
-  const seasonKind = typeof scene.season?.kind === "string" ? scene.season.kind : "";
-  const timeOfDayKey = typeof scene.lighting?.timeOfDay === "string" ? scene.lighting.timeOfDay : "";
-  return (SEASON_TRANSPOSE_SEMITONES[seasonKind] ?? 0) + (TIME_OF_DAY_TRANSPOSE_SEMITONES[timeOfDayKey] ?? 0);
+  if (family === OCEAN_FAMILY_KEY) {
+    const zone = typeof scene.depth?.zone === "string" ? scene.depth.zone : "";
+    return DEPTH_ZONE_TRANSPOSE_SEMITONES[zone] ?? 0;
+  }
+  return 0;
 }
 
-function resolveBedCharacter(scene: SceneConfig, isForest: boolean): BedCharacter {
-  if (!isForest) {
-    const theme = typeof scene.theme === "string" ? scene.theme : "";
-    return UNIVERSE_BED_BY_THEME[theme] ?? DEFAULT_UNIVERSE_BED;
+function resolveBedCharacter(scene: SceneConfig, family: AmbientFamily): BedCharacter {
+  if (family === FOREST_FAMILY_KEY) {
+    const weatherKind = typeof scene.weather?.kind === "string" ? scene.weather.kind : "";
+    const rawIntensity = scene.weather?.intensity;
+    return blendBedCharacter(
+      FOREST_BASE_BED,
+      WEATHER_BED_MODIFIERS[weatherKind] ?? NEUTRAL_WEATHER_BED_MODIFIER,
+      typeof rawIntensity === "number" ? rawIntensity : DEFAULT_WEATHER_INTENSITY
+    );
   }
-  const weatherKind = typeof scene.weather?.kind === "string" ? scene.weather.kind : "";
-  const modifier = WEATHER_BED_MODIFIERS[weatherKind] ?? NEUTRAL_WEATHER_BED_MODIFIER;
-  const rawIntensity = scene.weather?.intensity;
-  const intensity = clampToRange(typeof rawIntensity === "number" ? rawIntensity : DEFAULT_WEATHER_INTENSITY, 0, 1);
+  if (family === OCEAN_FAMILY_KEY) {
+    const currentKind = typeof scene.current?.kind === "string" ? scene.current.kind : "";
+    const rawIntensity = scene.current?.intensity;
+    return blendBedCharacter(
+      OCEAN_BASE_BED,
+      CURRENT_BED_MODIFIERS[currentKind] ?? NEUTRAL_WEATHER_BED_MODIFIER,
+      typeof rawIntensity === "number" ? rawIntensity : DEFAULT_WEATHER_INTENSITY
+    );
+  }
+  const theme = typeof scene.theme === "string" ? scene.theme : "";
+  return UNIVERSE_BED_BY_THEME[theme] ?? DEFAULT_UNIVERSE_BED;
+}
+
+/**
+ * A base bed pushed toward a modifier by how strong the weather or the current
+ * is. Extracted when the ocean arrived: the forest already did exactly this,
+ * and two copies of it would have been two places to get the blend wrong.
+ */
+function blendBedCharacter(base: BedCharacter, modifier: WeatherBedModifier, rawIntensity: number): BedCharacter {
+  const intensity = clampToRange(rawIntensity, 0, 1);
   return {
-    gain: FOREST_BASE_BED.gain * blendTowardNeutral(modifier.gainMultiplier, intensity),
-    filterType: FOREST_BASE_BED.filterType,
-    filterFrequencyHertz:
-      FOREST_BASE_BED.filterFrequencyHertz * blendTowardNeutral(modifier.frequencyMultiplier, intensity),
-    filterQuality: FOREST_BASE_BED.filterQuality * blendTowardNeutral(modifier.qualityMultiplier, intensity),
-    sweepRateHertz: FOREST_BASE_BED.sweepRateHertz * blendTowardNeutral(modifier.sweepRateMultiplier, intensity),
-    sweepDepthHertz: FOREST_BASE_BED.sweepDepthHertz
+    gain: base.gain * blendTowardNeutral(modifier.gainMultiplier, intensity),
+    filterType: base.filterType,
+    filterFrequencyHertz: base.filterFrequencyHertz * blendTowardNeutral(modifier.frequencyMultiplier, intensity),
+    filterQuality: base.filterQuality * blendTowardNeutral(modifier.qualityMultiplier, intensity),
+    sweepRateHertz: base.sweepRateHertz * blendTowardNeutral(modifier.sweepRateMultiplier, intensity),
+    sweepDepthHertz: base.sweepDepthHertz
   };
 }
 
@@ -518,7 +607,8 @@ export function ambientSoundscapeSignature(scene?: SceneConfig): string {
   const seed = String(scene.seed ?? FALLBACK_SCENE_SEED);
   const { pointCount, averageEnergy } = resolveDnaSignals(scene);
   const dnaPart = `${pointCount}|${averageEnergy.toFixed(1)}`;
-  if (isForestScene(scene)) {
+  const family = ambientFamilyForScene(scene);
+  if (family === FOREST_FAMILY_KEY) {
     return [
       seed,
       FOREST_FAMILY_KEY,
@@ -527,6 +617,16 @@ export function ambientSoundscapeSignature(scene?: SceneConfig): string {
       String(scene.lighting?.timeOfDay ?? ""),
       String(scene.weather?.kind ?? ""),
       String(scene.weather?.intensity ?? "")
+    ].join("|");
+  }
+  if (family === OCEAN_FAMILY_KEY) {
+    return [
+      seed,
+      OCEAN_FAMILY_KEY,
+      dnaPart,
+      String(scene.depth?.zone ?? ""),
+      String(scene.current?.kind ?? ""),
+      String(scene.current?.intensity ?? "")
     ].join("|");
   }
   return [seed, UNIVERSE_FAMILY_KEY, dnaPart, String(scene.theme ?? ""), String(scene.postFX?.bloomIntensity ?? "")].join(
@@ -543,17 +643,17 @@ export function buildAmbientSoundscapeRecipe(scene?: SceneConfig): AmbientSounds
   const resolvedScene = scene ?? {};
   const seed = String(resolvedScene.seed ?? FALLBACK_SCENE_SEED);
   const nextRandomValue = randomFromSeed(`${seed}${AMBIENT_AUDIO_SEED_SUFFIX}`);
-  const isForest = isForestScene(resolvedScene);
+  const family = ambientFamilyForScene(resolvedScene);
   const { pointCount, averageEnergy } = resolveDnaSignals(resolvedScene);
   const energyRatio = averageEnergy / MAXIMUM_POINT_ENERGY;
 
-  const identity = resolveMusicalIdentity(resolvedScene, isForest);
+  const identity = resolveMusicalIdentity(resolvedScene, family);
   const harmonyInstrument = HARMONY_INSTRUMENT_BY_MELODY[identity.instrument];
 
   const seedTranspose =
     SEED_TRANSPOSE_CHOICES[Math.floor(nextRandomValue() * SEED_TRANSPOSE_CHOICES.length)] ?? 0;
   const transposeSemitones = clampToRange(
-    resolveSceneTransposeSemitones(resolvedScene, isForest) + seedTranspose,
+    resolveSceneTransposeSemitones(resolvedScene, family) + seedTranspose,
     MINIMUM_TRANSPOSE_SEMITONES,
     MAXIMUM_TRANSPOSE_SEMITONES
   );
@@ -587,7 +687,7 @@ export function buildAmbientSoundscapeRecipe(scene?: SceneConfig): AmbientSounds
     melodyGain * MAXIMUM_BASS_TO_MELODY_GAIN_RATIO
   );
 
-  const bedCharacter = resolveBedCharacter(resolvedScene, isForest);
+  const bedCharacter = resolveBedCharacter(resolvedScene, family);
   const toneJitter = 1 + (nextRandomValue() * 2 - 1) * TONE_JITTER_RATIO;
   const energyToneMultiplier = MINIMUM_ENERGY_TONE_MULTIPLIER + energyRatio * ENERGY_TONE_MULTIPLIER_SPREAD;
 

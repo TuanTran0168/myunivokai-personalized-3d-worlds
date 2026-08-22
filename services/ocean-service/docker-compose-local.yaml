@@ -1,0 +1,66 @@
+services:
+  ocean-migrate:
+    build:
+      context: ../..
+      dockerfile: services/ocean-service/Dockerfile.local
+    command: ["go", "run", "./cmd/migrate"]
+    environment:
+      DATABASE_URL: postgresql://${OCEAN_DATABASE_USER:-myunivokai_ocean_app}:${OCEAN_DATABASE_PASSWORD:-myunivokai_local_ocean}@postgres:5432/${OCEAN_DATABASE_NAME:-myunivokai_ocean}?sslmode=disable
+      DATABASE_DIRECT_URL: postgresql://${OCEAN_DATABASE_USER:-myunivokai_ocean_app}:${OCEAN_DATABASE_PASSWORD:-myunivokai_local_ocean}@postgres:5432/${OCEAN_DATABASE_NAME:-myunivokai_ocean}?sslmode=disable
+      MIGRATIONS_DIR: /workspace/services/ocean-service/migrations
+    volumes:
+      - ../..:/workspace
+      - ocean-service-go-cache:/go/pkg/mod
+    restart: on-failure
+    networks: [backend]
+
+  ocean-service:
+    build:
+      context: ../..
+      dockerfile: services/ocean-service/Dockerfile.local
+    env_file:
+      - ./.env.local
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      PUBLIC_WEB_URL: http://localhost:${WEB_PORT:-41300}/ocean
+      DATABASE_URL: postgresql://${OCEAN_DATABASE_USER:-myunivokai_ocean_app}:${OCEAN_DATABASE_PASSWORD:-myunivokai_local_ocean}@postgres:5432/${OCEAN_DATABASE_NAME:-myunivokai_ocean}?sslmode=disable
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      NATS_USERNAME: ${NATS_OCEAN_USERNAME:-myunivokai_ocean}
+      NATS_PASSWORD: ${NATS_OCEAN_PASSWORD:-myunivokai_local_ocean}
+      NATS_ACK_WAIT: ${NATS_ACK_WAIT:-2m}
+      NATS_MAX_DELIVER: ${NATS_MAX_DELIVER:-5}
+      NATS_FETCH_BATCH_SIZE: ${NATS_FETCH_BATCH_SIZE:-1}
+      NATS_FETCH_MAX_WAIT: ${NATS_FETCH_MAX_WAIT:-1s}
+      NATS_RETRY_DELAY: ${NATS_RETRY_DELAY:-2s}
+      NATS_CONNECT_TIMEOUT: ${NATS_CONNECT_TIMEOUT:-5s}
+      NATS_RECONNECT_WAIT: ${NATS_RECONNECT_WAIT:-2s}
+      NATS_PUBLISH_TIMEOUT: ${NATS_PUBLISH_TIMEOUT:-5s}
+      NATS_QUERY_TIMEOUT: ${NATS_QUERY_TIMEOUT:-2500ms}
+      OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-500ms}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+      SERVICE_SHUTDOWN_TIMEOUT: ${SERVICE_SHUTDOWN_TIMEOUT:-15s}
+      # Left unset this reports "unknown": a bind-mounted repo does not give the
+      # Go toolchain a usable VCS stamp inside the container, and no host
+      # supplies a commit locally. `make local-up` exports the working tree's
+      # own describe, so the Fleet screen names the code that is actually
+      # running instead of a placeholder.
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
+    volumes:
+      - ../..:/workspace
+      - ocean-service-go-cache:/go/pkg/mod
+    depends_on:
+      ocean-migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "sh", "-c", "kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
+networks:
+  backend:
+    name: myunivokai-local-backend
+
+volumes:
+  ocean-service-go-cache:

@@ -46,6 +46,12 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       SERVICE_SHUTDOWN_TIMEOUT: ${SERVICE_SHUTDOWN_TIMEOUT:-15s}
+      # Left unset this reports "unknown": a bind-mounted repo does not give the
+      # Go toolchain a usable VCS stamp inside the container, and no host
+      # supplies a commit locally. `make local-up` exports the working tree's
+      # own describe, so the Fleet screen names the code that is actually
+      # running instead of a placeholder.
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
     volumes:
       - ../..:/workspace
       - dna-service-go-cache:/go/pkg/mod

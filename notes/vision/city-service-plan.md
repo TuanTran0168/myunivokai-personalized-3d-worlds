@@ -8,6 +8,26 @@
 > `-worker` suffix), it consumes NATS commands/queries, and it receives canonical
 > DNA snapshots from `dna-service` rather than owning another AI/DNA pipeline.
 
+> **Read-model amendment — 2026-08-07:** a family service is now also an event
+> publisher for the admin read model, and this is the easiest thing to forget
+> because **nothing fails when you do** — City worlds simply never appear in
+> the admin app. `city-service` must therefore, from its first migration:
+>
+> - carry `worlds.revision INTEGER NOT NULL DEFAULT 1`;
+> - bump that revision and write a `world.changed` outbox row **inside the same
+>   transaction** as every mutation (variant create, variant select, publish);
+> - attach the world's first `contracts.WorldSnapshot` to its `completed` event
+>   rather than publishing a separate one;
+> - add `city` to `contracts.WorldFamily` and its `WorldChangedEventSubject()`;
+> - copy `internal/repositories/world_snapshot.go` and
+>   `world_snapshot_test.go` from `universe-service` — the test asserts every
+>   mutating store method leaves an event behind, and is the only thing that
+>   catches the omission.
+>
+> No stream or NATS ACL change is needed: the events stream and
+> `analytics-service`'s consumer both filter on wildcards. See
+> [analytics-service-plan.md](analytics-service-plan.md).
+
 > **Document status:** Approved implementation plan
 > **Last source review:** 2026-07-22
 

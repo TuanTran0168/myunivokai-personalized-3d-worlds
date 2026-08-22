@@ -4,9 +4,10 @@ import type { WorldFamily } from "./types";
  * Family-aware route building, in ONE place.
  *
  * Share pages are SYMMETRIC: every family sits under its own prefix,
- * /universe/share/worlds/{slug} and /nature/share/worlds/{slug}. Universe used
- * to be un-prefixed, which made the two families inconsistent and meant the
- * deploy guide's PUBLIC_WEB_URL differed in shape between services.
+ * /universe/share/worlds/{slug}, /nature/share/worlds/{slug} and
+ * /ocean/share/worlds/{slug}. Universe used to be un-prefixed, which made the
+ * families inconsistent and meant the deploy guide's PUBLIC_WEB_URL differed in
+ * shape between services.
  *
  * The old un-prefixed /share/worlds/{slug} route was removed outright (owner
  * decision: pre-existing share links are not worth carrying). Each service's
@@ -19,13 +20,19 @@ import type { WorldFamily } from "./types";
 
 export const WORLD_FAMILY_QUERY_PARAMETER = "family";
 
+// Universe is the default family and the only one whose world page carries no
+// query parameter, so it is absent here on purpose: this set is "the families
+// that have to say who they are".
+const PREFIXED_WORLD_FAMILIES: readonly WorldFamily[] = ["nature", "ocean"];
+
 export function worldFamilyFromQueryValue(value: string | null | undefined): WorldFamily {
-  return value === "nature" ? "nature" : "universe";
+  const family = PREFIXED_WORLD_FAMILIES.find((candidate) => candidate === value);
+  return family ?? "universe";
 }
 
 export function worldPagePath(worldIdentifier: string, family: WorldFamily): string {
   const basePath = `/worlds/${encodeURIComponent(worldIdentifier)}`;
-  return family === "nature" ? `${basePath}?${WORLD_FAMILY_QUERY_PARAMETER}=nature` : basePath;
+  return family === "universe" ? basePath : `${basePath}?${WORLD_FAMILY_QUERY_PARAMETER}=${family}`;
 }
 
 export function sharePagePath(shareSlug: string, family: WorldFamily): string {

@@ -17,7 +17,6 @@ const (
 	clientIdleTimeToLive = 10 * time.Minute
 	cleanupInterval      = time.Minute
 	fallbackRetrySeconds = 1
-	globalRateLimitRoute = "global"
 )
 
 type DistributedLimiter interface {
@@ -37,7 +36,14 @@ type perClientRateLimiter struct {
 	lastCleanupTime   time.Time
 }
 
-func RateLimit(distributedLimiter DistributedLimiter, requestsPerSecond float64, burst int) func(http.Handler) http.Handler {
+// RateLimit builds a rate-limit middleware bucketed by routeKey and client
+// IP. routeKey must differ between independently-policed route groups (the
+// product group and the admin group use "product" and "admin") — the
+// underlying Redis key is <prefix>:rate:<routeKey>:<clientIP>, so two groups
+// sharing a routeKey would share one token bucket even with different
+// requestsPerSecond/burst arguments, silently applying whichever group's
+// parameters wrote to it last.
+func RateLimit(distributedLimiter DistributedLimiter, routeKey string, requestsPerSecond float64, burst int) func(http.Handler) http.Handler {
 	fallbackLimiter := &perClientRateLimiter{
 		requestsPerSecond: requestsPerSecond,
 		burst:             burst,
@@ -47,7 +53,7 @@ func RateLimit(distributedLimiter DistributedLimiter, requestsPerSecond float64,
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 			clientIdentifier := httpx.ClientIP(request.Context())
-			allowed, retryDelay, err := distributedLimiter.Allow(request.Context(), globalRateLimitRoute, clientIdentifier, requestsPerSecond, burst)
+			allowed, retryDelay, err := distributedLimiter.Allow(request.Context(), routeKey, clientIdentifier, requestsPerSecond, burst)
 			if err != nil {
 				log.Warn().Err(err).Msg("Redis rate limiter unavailable; using local fallback")
 				allowed = fallbackLimiter.allow(clientIdentifier)

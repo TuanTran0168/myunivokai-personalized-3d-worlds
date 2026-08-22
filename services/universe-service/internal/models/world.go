@@ -26,6 +26,10 @@ type World struct {
 	SelectedVariantID *string        `json:"selectedVariantId,omitempty"`
 	CreatedAt         time.Time      `json:"createdAt"`
 	UpdatedAt         time.Time      `json:"updatedAt"`
+	// Revision increments on every mutation and is never rendered to a
+	// product client — it exists so the analytics read model can order
+	// snapshots that JetStream may deliver twice or out of order.
+	Revision int `json:"-"`
 }
 
 type WorldVariant struct {

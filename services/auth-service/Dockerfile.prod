@@ -1,0 +1,18 @@
+FROM golang:1.25-alpine AS builder
+WORKDIR /workspace/services/auth-service
+COPY contracts/go /workspace/contracts/go
+COPY services/auth-service/go.mod services/auth-service/go.sum ./
+RUN go mod download
+COPY services/auth-service .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/auth-service ./cmd/service && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/bootstrap ./cmd/bootstrap
+
+FROM alpine:3.22 AS runtime
+RUN apk add --no-cache ca-certificates && addgroup -S app && adduser -S -G app app
+COPY --from=builder --chown=app:app /out/auth-service /app/auth-service
+COPY --from=builder --chown=app:app /out/migrate /app/migrate
+COPY --from=builder --chown=app:app /out/bootstrap /app/bootstrap
+COPY --from=builder --chown=app:app /workspace/services/auth-service/migrations /app/migrations
+USER app:app
+CMD ["/app/auth-service"]

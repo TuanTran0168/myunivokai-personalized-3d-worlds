@@ -73,11 +73,18 @@ func (store *PostgresStore) CreateWorld(ctx context.Context, world models.World,
 	variant.IsSelected = true
 	world.SelectedVariantID = &variant.ID
 	world.Visibility = "private"
+	world.Revision = 1
 	if _, err := transaction.Exec(ctx, `UPDATE worlds SET selected_variant_id=$1 WHERE id=$2`, variant.ID, world.ID); err != nil {
 		return WorldBundle{}, err
 	}
+	// The completed event carries the world's first snapshot rather than a
+	// separate world.changed event being published alongside it: analytics
+	// then has one projection function, with `completed` as revision 1 and
+	// `world.changed` as every revision after it.
+	createdSnapshot := newWorldSnapshot(world, 1, variant.VariantNo, variant.Seed, nil)
 	completedEnvelope := contracts.NewEnvelope(world.SourceJobID, contracts.FamilyCompletedData{
-		Family: contracts.WorldFamilyUniverse, ProfileID: world.ProfileID, DNAVersionID: world.DNAVersionID, WorldID: world.ID,
+		Family: contracts.WorldFamilyUniverse, ProfileID: world.ProfileID, DNAVersionID: world.DNAVersionID,
+		WorldID: world.ID, Snapshot: &createdSnapshot,
 	})
 	completedPayload, err := json.Marshal(completedEnvelope)
 	if err != nil {
@@ -158,15 +165,30 @@ func (store *PostgresStore) GetWorldsByIDs(ctx context.Context, worldIDs []strin
 	return bundles, nil
 }
 
+// AddVariant runs in a transaction so the new variant and the world-change
+// event it produces commit together — the same atomicity CreateWorld has
+// always had. Before analytics-service this method wrote no event and needed
+// no transaction.
 func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant) (models.WorldVariant, error) {
 	configJSON, err := json.Marshal(variant.Config)
 	if err != nil {
 		return models.WorldVariant{}, fmt.Errorf("marshal scene config: %w", err)
 	}
-	row := store.pool.QueryRow(ctx, `INSERT INTO world_variants (world_id, variant_no, seed, config)
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return models.WorldVariant{}, err
+	}
+	defer transaction.Rollback(ctx)
+	row := transaction.QueryRow(ctx, `INSERT INTO world_variants (world_id, variant_no, seed, config)
 		VALUES ($1,$2,$3,$4) RETURNING id::text, world_id::text, created_at`, worldID, variant.VariantNo, variant.Seed, configJSON)
 	if err := row.Scan(&variant.ID, &variant.WorldID, &variant.CreatedAt); err != nil {
 		return models.WorldVariant{}, mapConstraintViolation(err)
+	}
+	if err := recordWorldChange(ctx, transaction, worldID); err != nil {
+		return models.WorldVariant{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return models.WorldVariant{}, err
 	}
 	return variant, nil
 }
@@ -187,12 +209,19 @@ func (store *PostgresStore) SelectVariant(ctx context.Context, worldID, variantI
 	if _, err := transaction.Exec(ctx, `UPDATE worlds SET selected_variant_id=$1, updated_at=NOW() WHERE id=$2`, variantID, worldID); err != nil {
 		return models.WorldVariant{}, err
 	}
+	if err := recordWorldChange(ctx, transaction, worldID); err != nil {
+		return models.WorldVariant{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return models.WorldVariant{}, err
 	}
 	return variant, nil
 }
 
+// PublishWorld stays idempotent: a world that already has a share row is
+// returned unchanged, with no revision bump and no event. Emitting a
+// world-change snapshot for a re-publish would describe a state change that
+// did not happen.
 func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug string) (models.World, error) {
 	var existingSlug string
 	err := store.pool.QueryRow(ctx, `SELECT share_slug FROM world_shares WHERE world_id=$1`, worldID).Scan(&existingSlug)
@@ -203,10 +232,18 @@ func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return models.World{}, err
 	}
-	if _, err := store.pool.Exec(ctx, `INSERT INTO world_shares (world_id, share_slug) VALUES ($1,$2)`, worldID, shareSlug); err != nil {
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return models.World{}, err
+	}
+	defer transaction.Rollback(ctx)
+	if _, err := transaction.Exec(ctx, `INSERT INTO world_shares (world_id, share_slug) VALUES ($1,$2)`, worldID, shareSlug); err != nil {
 		return models.World{}, mapConstraintViolation(err)
 	}
-	if _, err := store.pool.Exec(ctx, `UPDATE worlds SET updated_at=NOW() WHERE id=$1`, worldID); err != nil {
+	if err := recordWorldChange(ctx, transaction, worldID); err != nil {
+		return models.World{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
 		return models.World{}, err
 	}
 	bundle, err := store.GetWorld(ctx, worldID)
@@ -246,7 +283,7 @@ func (store *PostgresStore) Ping(ctx context.Context) error {
 const worldSelectColumns = `w.id::text, w.source_job_id, w.profile_id::text, w.dna_version_id::text,
 	w.nickname, COALESCE(w.role,''), w.visual_intent, w.dna_snapshot, w.archetype, w.scene_name, w.quote,
 	CASE WHEN s.id IS NULL THEN 'private' ELSE 'public' END, s.share_slug, w.selected_variant_id::text,
-	w.created_at, w.updated_at`
+	w.created_at, w.updated_at, w.revision`
 
 const variantSelectColumns = `id::text, world_id::text, variant_no, seed, config, COALESCE(thumbnail_url,''), is_selected, created_at`
 
@@ -259,7 +296,7 @@ func scanWorld(scanner rowScanner) (models.World, error) {
 	var visualIntentJSON, dnaJSON []byte
 	if err := scanner.Scan(&world.ID, &world.SourceJobID, &world.ProfileID, &world.DNAVersionID, &world.Nickname, &world.Role,
 		&visualIntentJSON, &dnaJSON, &world.Archetype, &world.SceneName, &world.Quote, &world.Visibility, &world.ShareSlug,
-		&world.SelectedVariantID, &world.CreatedAt, &world.UpdatedAt); err != nil {
+		&world.SelectedVariantID, &world.CreatedAt, &world.UpdatedAt, &world.Revision); err != nil {
 		return models.World{}, err
 	}
 	if err := json.Unmarshal(visualIntentJSON, &world.VisualIntent); err != nil {

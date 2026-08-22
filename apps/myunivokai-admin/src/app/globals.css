@@ -1,0 +1,395 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* House palette, v3 — dark liquid glass, grounded in apps/myunivokai-web's
+   own tokens (globals.css "The Vitrine + Liquid Glass") rather than invented
+   from scratch: same void/paper/brass triad, same brass-rgb, same hairline
+   border. v2 was a neutral light dashboard (Linear/Vercel/Stripe) — reviewed
+   again against a real reference (a frosted-dark-glass smart-home dashboard)
+   and the light version simply had nothing colorful behind it for a blur to
+   reveal, so translucency read as invisible. This version gives glass an
+   actual backdrop to work with (the void + brass glow below) and asked for
+   every card to be glass, not just the nav layer — a deliberate departure
+   from Apple's own "glass is nav-only" rule, chosen for this app on purpose.
+   There is no light/dark toggle yet (ThemeProvider is wired for one later),
+   so only one set of values is defined — same as myunivokai-web, which ships
+   a single dark theme with no toggle either. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+  --font-heading: var(--font-space-grotesk);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Same brass as apps/myunivokai-web and the shared BrandMark gradient's
+     middle stop (#C9A35B = rgb(201 163 91)) — one brand accent across both
+     apps, not two similar-but-different metallic yellows. */
+  --brass-rgb: 201 163 91;
+  --brass: rgb(var(--brass-rgb));
+  --ink: #1b1402;
+  --vermillion: #e0573a;
+  --sage: #a3b899;
+
+  --background: #08080a;
+  --foreground: #f2eee6;
+  /* Glass tint colors, not final backgrounds — Card/header/sidebar apply
+     these through .glass-panel's backdrop-filter recipe, see below. */
+  --card: #131217;
+  --card-foreground: #f2eee6;
+  --popover: #17161d;
+  --popover-foreground: #f2eee6;
+  --primary: var(--brass);
+  --primary-foreground: var(--ink);
+  --secondary: #17161d;
+  --secondary-foreground: #f2eee6;
+  --muted: #17161d;
+  --muted-foreground: #a79d8a;
+  --accent: rgb(var(--brass-rgb) / 0.14);
+  --accent-foreground: #e4cf9c;
+  --destructive: var(--vermillion);
+  /* The sage already carrying "published" in --chart-3, promoted to a named
+     role. A movement badge needs a good/bad pair, and reaching for a stock
+     emerald would have put a colour on these screens that appears nowhere
+     else in the brand. */
+  --success: var(--sage);
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.16);
+  --ring: var(--brass);
+  --chart-1: var(--brass);
+  --chart-2: #818cf8;
+  --chart-3: var(--sage);
+  --chart-4: #a1a1aa;
+  --chart-5: var(--vermillion);
+  --radius: 0.625rem;
+  --sidebar: rgba(19, 18, 23, 0.6);
+  --sidebar-foreground: #f2eee6;
+  --sidebar-primary: var(--brass);
+  --sidebar-primary-foreground: var(--ink);
+  --sidebar-accent: rgb(var(--brass-rgb) / 0.14);
+  --sidebar-accent-foreground: #e4cf9c;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: var(--brass);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* ---------- The void ----------
+   A static backdrop for glass to actually reveal. The first version of this
+   put one small glow near the very top of the page and a starfield spaced
+   3px apart — screenshotted against the real dashboard, the glow never
+   reached the cards further down the page (nothing colorful behind them,
+   so the blur had nothing to show), and 3px spacing meant a dot on nearly
+   every pixel, which reads as flat grain, not stars. Two glows now spread
+   warmth across more of the viewport (top-center, larger; a second, softer
+   one bottom-right so scrolled content still has something behind it), and
+   the starfield is three layers at 90–220px spacing with offset positions
+   so the dots scatter instead of lining up into a visible grid. Fixed so
+   none of it scrolls away from under a translucent header/sidebar/card.
+   Deliberately static otherwise: the first pass's roaming animated blobs
+   were themselves called out as "too much animation". */
+body {
+  margin: 0;
+  background-color: var(--background);
+  background-image:
+    radial-gradient(ellipse 70% 55% at 50% 0%, rgb(var(--brass-rgb) / 0.22), transparent 68%),
+    radial-gradient(ellipse 60% 50% at 100% 100%, rgb(var(--brass-rgb) / 0.14), transparent 70%),
+    radial-gradient(circle, rgba(255, 255, 255, 0.55) 1px, transparent 1px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.4) 1px, transparent 1px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.3) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    100% 100%,
+    160px 160px,
+    210px 210px,
+    95px 95px;
+  background-position:
+    0 0,
+    0 0,
+    0 0,
+    55px 90px,
+    20px 140px;
+  background-repeat: no-repeat, no-repeat, repeat, repeat, repeat;
+  background-attachment: fixed, fixed, fixed, fixed, fixed;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+/* ---------- Shimmer skeleton ----------
+   A directional light sweep replaces the default pulse. The 200% width
+   gradient slides across to simulate a loading scan — much closer to
+   Linear/Notion's skeleton treatment than a simple opacity blink. */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 25%,
+    color-mix(in srgb, var(--muted-foreground) 8%, var(--muted)) 50%,
+    var(--muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+/* ---------- Card interactive ----------
+   Applied to cards that function as clickable/hoverable surfaces.
+   Subtle lift + ring intensification on hover; the transform is tiny
+   (translateY -1px) so it reads as "alive" not "bouncy". */
+.card-interactive {
+  transition: box-shadow 200ms ease, transform 200ms ease;
+}
+
+.card-interactive:hover {
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.3);
+  transform: translateY(-1px);
+}
+
+/* ---------- Panel reveal ----------
+   Panels settle in one after another instead of the whole page appearing at
+   once. The delays are small and CAPPED at the eighth child: a stagger that
+   keeps growing turns a long page into a queue, and by the ninth panel the
+   reader is waiting rather than watching.
+
+   Done in CSS with nth-child rather than with a motion component per panel so
+   that adding a section to a page costs nothing — the container declares the
+   behaviour once and every child inherits it. `both` keeps the from-state
+   applied during the delay, without which every panel flashes at full opacity
+   before its turn.
+
+   The easing is a decelerating cubic, not ease-out: the panels arrive quickly
+   and stop softly, which is what reads as "settling" rather than "sliding". */
+@keyframes panel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.stagger-children > * {
+  animation: panel-reveal 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stagger-children > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.stagger-children > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+.stagger-children > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+.stagger-children > *:nth-child(4) {
+  animation-delay: 110ms;
+}
+.stagger-children > *:nth-child(5) {
+  animation-delay: 135ms;
+}
+.stagger-children > *:nth-child(6) {
+  animation-delay: 155ms;
+}
+.stagger-children > *:nth-child(n + 7) {
+  animation-delay: 170ms;
+}
+
+/* ---------- Row hover ----------
+   Table and list rows that are not links still benefit from a hover response:
+   it confirms which row the pointer is on in a dense grid. Background only, no
+   transform — a row that lifts drags its neighbours' alignment with it. */
+.row-interactive {
+  transition: background-color 140ms ease;
+}
+.row-interactive:hover {
+  background-color: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+/* ---------- Header glow ----------
+   A second, smaller brass radial behind the sticky header only, layered on
+   top of the void's own glow for a touch more warmth right where the eye
+   lands first. Constant motion behind a data table was itself part of the
+   "too much animation" complaint, so this doesn't drift or pulse. */
+.header-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.header-glow::before {
+  content: "";
+  position: absolute;
+  top: -60%;
+  left: -10%;
+  width: 40%;
+  height: 220%;
+  background: radial-gradient(circle, rgb(var(--brass-rgb) / 0.18), transparent 70%);
+  filter: blur(48px);
+}
+
+/* SidebarInset (ui/sidebar.tsx) paints its own opaque `bg-background` fill,
+   which — being a solid color, not the gradient below — sat directly behind
+   every header/sidebar/card inside it and hid body's void glow completely
+   (confirmed via screenshot: content-area glass looked flat while the
+   mobile Sheet overlay, which has no such wrapper between it and the page,
+   visibly blurred what was behind it). Transparent here lets body's own
+   background paint through to wherever a descendant's backdrop-filter
+   samples it. */
+[data-slot="sidebar-inset"] {
+  background-color: transparent;
+}
+
+/* ---------- Glass chrome ----------
+   Every floating surface — header, sidebar, and (per this pass) ordinary
+   Card content — shares one frosted-dark-glass material: the void shows
+   through as blur+saturate, a diagonal specular highlight marks the top-left
+   the way real glass catches light, a faint brass inner ring keeps the brand
+   accent present at the edge, and a soft dark lift shadow seats it above the
+   void. Card reuses this class directly (see card.tsx) rather than a
+   duplicate recipe — one material, applied everywhere the reference asked
+   for it, not one-off per component. */
+.glass-panel,
+[data-sidebar="sidebar"] {
+  /* No `position` declared here on purpose: [data-sidebar="sidebar"] is the
+     mobile Sheet's own popup element, which sets its OWN `fixed` via a
+     Tailwind utility — a `position: relative` here has equal specificity
+     and comes later in the cascade, so it silently overrode `fixed` and
+     collapsed the mobile drawer into normal document flow (confirmed via a
+     real screenshot: the sheet rendered as a small block pinned near the
+     bottom-left instead of a full-height overlay). Callers that need a
+     positioning context for their own absolutely-positioned children (the
+     header's `.header-glow`) already set `relative` themselves. */
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 42%),
+    rgba(19, 18, 23, 0.48);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px rgb(var(--brass-rgb) / 0.1),
+    0 24px 60px -20px rgba(0, 0, 0, 0.65);
+}
+
+/* Apple's "Increased Contrast" behavior for glass: render as a flat surface
+   with a real border instead of a translucent material, since blur reduces
+   text contrast against whatever scrolls underneath. */
+@media (prefers-contrast: more) {
+  .glass-panel,
+  [data-sidebar="sidebar"] {
+    background: var(--card);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+    border: 1px solid var(--border);
+  }
+}
+
+/* ---------- Scroll edge effect ----------
+   The header stays sticky while content scrolls under it; this is the
+   "soft" scroll-edge style — a short gradient fade right below the header
+   so a row of text doesn't end in a hard visual seam against the glass. */
+.scroll-edge-fade {
+  position: sticky;
+  top: 3.5rem; /* header height, h-14 */
+  z-index: 5;
+  height: 1rem;
+  margin-bottom: -1rem;
+  background: linear-gradient(to bottom, var(--background), transparent);
+  pointer-events: none;
+}
+
+/* ---------- Login background pattern ----------
+   Subtle dot grid behind the login page. CSS-only, no extra asset. */
+.login-dots {
+  background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header-glow::before {
+    display: none;
+  }
+  .skeleton-shimmer {
+    animation: none;
+  }
+  .card-interactive {
+    transition: none;
+  }
+  .card-interactive:hover {
+    transform: none;
+  }
+  /* The reveal is removed rather than shortened. A reader who asked the
+     operating system for no motion is not asking for less of it. */
+  .stagger-children > * {
+    animation: none;
+  }
+  .row-interactive {
+    transition: none;
+  }
+}

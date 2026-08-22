@@ -1,0 +1,28 @@
+services:
+  myunivokai-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    env_file:
+      - ./.env.local
+    environment:
+      ADMIN_GATEWAY_BASE_URL: ${ADMIN_GATEWAY_BASE_URL:-http://api-gateway:41800}
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "${ADMIN_PORT:-41900}:41900"
+    volumes:
+      - .:/app
+      - myunivokai-admin-node-modules:/app/node_modules
+      - myunivokai-admin-next-cache:/app/.next
+    restart: unless-stopped
+    networks: [edge, backend]
+
+networks:
+  edge:
+    name: myunivokai-local-edge
+  backend:
+    name: myunivokai-local-backend
+
+volumes:
+  myunivokai-admin-node-modules:
+  myunivokai-admin-next-cache:

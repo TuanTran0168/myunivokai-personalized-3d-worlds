@@ -32,6 +32,18 @@ services:
       NATURE_DATABASE_NAME: ${NATURE_DATABASE_NAME:-myunivokai_nature}
       NATURE_DATABASE_USER: ${NATURE_DATABASE_USER:-myunivokai_nature_app}
       NATURE_DATABASE_PASSWORD: ${NATURE_DATABASE_PASSWORD:-myunivokai_local_nature}
+      OCEAN_DATABASE_NAME: ${OCEAN_DATABASE_NAME:-myunivokai_ocean}
+      OCEAN_DATABASE_USER: ${OCEAN_DATABASE_USER:-myunivokai_ocean_app}
+      OCEAN_DATABASE_PASSWORD: ${OCEAN_DATABASE_PASSWORD:-myunivokai_local_ocean}
+      AUTH_DATABASE_NAME: ${AUTH_DATABASE_NAME:-myunivokai_auth}
+      AUTH_DATABASE_USER: ${AUTH_DATABASE_USER:-myunivokai_auth_app}
+      AUTH_DATABASE_PASSWORD: ${AUTH_DATABASE_PASSWORD:-myunivokai_local_auth}
+      ANALYTICS_DATABASE_NAME: ${ANALYTICS_DATABASE_NAME:-myunivokai_analytics}
+      ANALYTICS_DATABASE_USER: ${ANALYTICS_DATABASE_USER:-myunivokai_analytics_app}
+      ANALYTICS_DATABASE_PASSWORD: ${ANALYTICS_DATABASE_PASSWORD:-myunivokai_local_analytics}
+      TELEMETRY_DATABASE_NAME: ${TELEMETRY_DATABASE_NAME:-myunivokai_telemetry}
+      TELEMETRY_DATABASE_USER: ${TELEMETRY_DATABASE_USER:-myunivokai_telemetry_app}
+      TELEMETRY_DATABASE_PASSWORD: ${TELEMETRY_DATABASE_PASSWORD:-myunivokai_local_telemetry}
     volumes:
       - ./postgres/init-databases.sh:/scripts/init-databases.sh:ro
     entrypoint: ["/bin/sh", "/scripts/init-databases.sh"]
@@ -52,6 +64,14 @@ services:
       NATS_UNIVERSE_PASSWORD: ${NATS_UNIVERSE_PASSWORD:-myunivokai_local_universe}
       NATS_NATURE_USERNAME: ${NATS_NATURE_USERNAME:-myunivokai_nature}
       NATS_NATURE_PASSWORD: ${NATS_NATURE_PASSWORD:-myunivokai_local_nature}
+      NATS_OCEAN_USERNAME: ${NATS_OCEAN_USERNAME:-myunivokai_ocean}
+      NATS_OCEAN_PASSWORD: ${NATS_OCEAN_PASSWORD:-myunivokai_local_ocean}
+      NATS_AUTH_USERNAME: ${NATS_AUTH_USERNAME:-myunivokai_auth}
+      NATS_AUTH_PASSWORD: ${NATS_AUTH_PASSWORD:-myunivokai_local_auth}
+      NATS_ANALYTICS_USERNAME: ${NATS_ANALYTICS_USERNAME:-myunivokai_analytics}
+      NATS_ANALYTICS_PASSWORD: ${NATS_ANALYTICS_PASSWORD:-myunivokai_local_analytics}
+      NATS_TELEMETRY_USERNAME: ${NATS_TELEMETRY_USERNAME:-myunivokai_telemetry}
+      NATS_TELEMETRY_PASSWORD: ${NATS_TELEMETRY_PASSWORD:-myunivokai_local_telemetry}
       NATS_BOOTSTRAP_USERNAME: ${NATS_BOOTSTRAP_USERNAME:-myunivokai_bootstrap}
       NATS_BOOTSTRAP_PASSWORD: ${NATS_BOOTSTRAP_PASSWORD:-myunivokai_local_bootstrap}
     ports:

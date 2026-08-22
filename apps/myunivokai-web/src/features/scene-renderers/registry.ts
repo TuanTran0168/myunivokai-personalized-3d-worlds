@@ -17,6 +17,8 @@ const importSolarSystemRenderer = () =>
   import("./solar-system/SolarSystemRenderer").then((module) => ({ default: module.SolarSystemRenderer }));
 const importForestRenderer = () =>
   import("./forest/ForestRenderer").then((module) => ({ default: module.ForestRenderer }));
+const importOceanRenderer = () =>
+  import("./ocean/OceanRenderer").then((module) => ({ default: module.OceanRenderer }));
 
 /**
  * React.lazy, deliberately NOT next/dynamic.
@@ -37,6 +39,7 @@ const importForestRenderer = () =>
  */
 const SolarSystemRenderer = lazy(importSolarSystemRenderer);
 const ForestRenderer = lazy(importForestRenderer);
+const OceanRenderer = lazy(importOceanRenderer);
 
 /**
  * Two-level renderer resolution:
@@ -53,7 +56,8 @@ const ForestRenderer = lazy(importForestRenderer);
  * SCENE_TYPE_RENDERER_REGISTRY. The backend contract does not change.
  */
 const SCENE_TYPE_RENDERER_REGISTRY: Record<string, SceneRendererComponent> = {
-  forest: ForestRenderer
+  forest: ForestRenderer,
+  ocean: OceanRenderer
 };
 
 const SCENE_RENDERER_REGISTRY: Record<string, SceneRendererComponent> = {
@@ -98,6 +102,15 @@ export function resolveSceneTypeRenderer(scene?: SceneConfig): SceneRendererComp
  * Safe to call repeatedly; the module registry resolves a loaded chunk from
  * cache.
  */
+const RENDERER_IMPORTS_BY_FAMILY: Record<WorldFamily, () => Promise<unknown>> = {
+  universe: importSolarSystemRenderer,
+  nature: importForestRenderer,
+  ocean: importOceanRenderer
+};
+
 export function prefetchSceneRendererForFamily(family: WorldFamily): void {
-  void (family === "nature" ? importForestRenderer() : importSolarSystemRenderer());
+  // A record typed by WorldFamily rather than a ternary chain: the compiler
+  // refuses to let a new family be added without a chunk to prefetch, where a
+  // ternary would silently warm the solar system for it instead.
+  void RENDERER_IMPORTS_BY_FAMILY[family]();
 }

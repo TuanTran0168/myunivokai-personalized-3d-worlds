@@ -1,0 +1,67 @@
+services:
+  analytics-migrate:
+    build:
+      context: ../..
+      dockerfile: services/analytics-service/Dockerfile.local
+    command: ["go", "run", "./cmd/migrate"]
+    env_file:
+      - ./.env.local
+    environment:
+      DATABASE_URL: postgresql://${ANALYTICS_DATABASE_USER:-myunivokai_analytics_app}:${ANALYTICS_DATABASE_PASSWORD:-myunivokai_local_analytics}@postgres:5432/${ANALYTICS_DATABASE_NAME:-myunivokai_analytics}?sslmode=disable
+      DATABASE_DIRECT_URL: postgresql://${ANALYTICS_DATABASE_USER:-myunivokai_analytics_app}:${ANALYTICS_DATABASE_PASSWORD:-myunivokai_local_analytics}@postgres:5432/${ANALYTICS_DATABASE_NAME:-myunivokai_analytics}?sslmode=disable
+      MIGRATIONS_DIR: /workspace/services/analytics-service/migrations
+    volumes:
+      - ../..:/workspace
+      - analytics-service-go-cache:/go/pkg/mod
+    restart: on-failure
+    networks: [backend]
+
+  analytics-service:
+    build:
+      context: ../..
+      dockerfile: services/analytics-service/Dockerfile.local
+    env_file:
+      - ./.env.local
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql://${ANALYTICS_DATABASE_USER:-myunivokai_analytics_app}:${ANALYTICS_DATABASE_PASSWORD:-myunivokai_local_analytics}@postgres:5432/${ANALYTICS_DATABASE_NAME:-myunivokai_analytics}?sslmode=disable
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      NATS_USERNAME: ${NATS_ANALYTICS_USERNAME:-myunivokai_analytics}
+      NATS_PASSWORD: ${NATS_ANALYTICS_PASSWORD:-myunivokai_local_analytics}
+      NATS_CONNECT_TIMEOUT: ${NATS_CONNECT_TIMEOUT:-5s}
+      NATS_RECONNECT_WAIT: ${NATS_RECONNECT_WAIT:-2s}
+      NATS_QUERY_TIMEOUT: ${NATS_QUERY_TIMEOUT:-2500ms}
+      NATS_ACK_WAIT: ${NATS_ACK_WAIT:-2m}
+      # A larger fetch batch than the family services use on purpose: those
+      # pull one composition at a time because each one runs a long build,
+      # while a projection is a single small upsert and batching them keeps
+      # the read model close to real time after a restart.
+      NATS_FETCH_BATCH_SIZE: ${ANALYTICS_FETCH_BATCH_SIZE:-25}
+      NATS_FETCH_MAX_WAIT: ${NATS_FETCH_MAX_WAIT:-1s}
+      NATS_RETRY_DELAY: ${NATS_RETRY_DELAY:-2s}
+      SERVICE_SHUTDOWN_TIMEOUT: ${SERVICE_SHUTDOWN_TIMEOUT:-15s}
+      # Left unset this reports "unknown": a bind-mounted repo does not give the
+      # Go toolchain a usable VCS stamp inside the container, and no host
+      # supplies a commit locally. `make local-up` exports the working tree's
+      # own describe, so the Fleet screen names the code that is actually
+      # running instead of a placeholder.
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
+    volumes:
+      - ../..:/workspace
+      - analytics-service-go-cache:/go/pkg/mod
+    depends_on:
+      analytics-migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "sh", "-c", "kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
+networks:
+  backend:
+    name: myunivokai-local-backend
+
+volumes:
+  analytics-service-go-cache:

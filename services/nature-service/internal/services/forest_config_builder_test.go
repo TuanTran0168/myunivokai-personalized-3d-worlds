@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 
+	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/models"
 )
 
@@ -375,5 +377,37 @@ func assertWithin(t *testing.T, name string, value, minimum, maximum float64) {
 	}
 	if math.IsNaN(value) {
 		t.Fatalf("%s is NaN", name)
+	}
+}
+
+// The rare-wildlife lottery does not draw from the variant seed directly: the
+// renderer seeds it off the terrain's placementSeed, which this builder
+// composes. contracts.RarityCatalogue therefore hard-codes that middle segment
+// so analytics-service can replay the same stream from the variant seed alone.
+//
+// Nothing structural connects the two — this builder could rename its suffix
+// tomorrow and every test here would still pass while the admin app quietly
+// started reporting rates for a stream no forest ever used. This is that
+// connection.
+func TestPlacementSeedMatchesTheRarityContract(t *testing.T) {
+	const variantSeed = "NAT-RARITY-STREAM"
+	config := NewForestConfigBuilder().Build(BuildForestConfigInput{
+		DNA:       buildTestNatureDNA(3),
+		Seed:      variantSeed,
+		VariantNo: 1,
+		Input:     models.VisualIntent{Mood: "reflective"},
+	})
+	expectedPlacementSeed := variantSeed + terrainScatterSeedSuffix
+	if config.Terrain.PlacementSeed != expectedPlacementSeed {
+		t.Fatalf("terrain placement seed = %q, want %q", config.Terrain.PlacementSeed, expectedPlacementSeed)
+	}
+	for _, feature := range contracts.RarityCatalogue {
+		if feature.Family != contracts.WorldFamilyNature {
+			continue
+		}
+		if !strings.HasPrefix(feature.SeedSuffix, terrainScatterSeedSuffix) {
+			t.Fatalf("rarity feature %q draws from %q, which does not start with this builder's %q — analytics would replay a stream this forest never used",
+				feature.Key, feature.SeedSuffix, terrainScatterSeedSuffix)
+		}
 	}
 }

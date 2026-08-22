@@ -222,6 +222,21 @@ config):
 Đây là mẫu "rare feature theo DNA" tái dùng được: roll seeded off world seed, tô
 lại asset sẵn có — không cần asset mới, không đụng contract.
 
+**Xác suất và danh sách species giờ nằm ở `src/lib/rarity.ts`**, không phải ở
+`forestModels.ts`. `forestModels.ts` chỉ còn giữ phần *hình thức* (model, màu
+lông, scale) và map theo key. Lý do: species được chọn theo **index**
+(`floor(roll * length)`), nên đảo thứ tự danh sách sẽ gán lại species cho mọi
+world đã sinh ra — và admin app (màn `/rarity`) replay đúng lottery này bằng Go
+để đo tỉ lệ thực tế, nên hai bên phải dùng chung một danh sách có thứ tự.
+
+Một chi tiết dễ vấp: `ForestWildlife` nhận `worldSeed` = `terrain.placementSeed`
+= `<variant seed>-forest-terrain-scatter`, nên stream thật của con chim là
+`<variant seed>-forest-terrain-scatter-forest-special-bird`. Đó là tai nạn của
+đường dây truyền tham số chứ không phải quyết định — nhưng nó là stream mà các
+forest đã render thật sự dùng, nên `contracts/go/contracts_rarity.go` phải replay
+đúng chuỗi đó. `TestPlacementSeedMatchesTheRarityContract` bên nature-service giữ
+hai bên khớp nhau.
+
 ## Loại 3 — Địa hình, chân trời, thời tiết
 
 ### Địa hình + "giết mảnh vuông khi zoom xa" (P6)

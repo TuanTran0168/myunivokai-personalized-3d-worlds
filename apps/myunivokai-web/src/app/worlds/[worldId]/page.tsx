@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, use, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Copy, Download, ExternalLink, Loader2, RefreshCw, Rocket } from "lucide-react";
 import { toast } from "sonner";
@@ -21,16 +21,21 @@ import { VariantList } from "@/components/VariantList";
 import { useWorldChromeCollapse, WorldChromeToggle } from "@/components/WorldChromeToggle";
 import { WORLD_PANELS_ELEMENT_ID } from "@/lib/formRailCollapse";
 
+// `params` is a Promise from Next 15 onward. This file is "use client", so it
+// cannot await — React's `use` is the documented equivalent, and it works on 14
+// as well, which is why this lands ahead of the version bump. See
+// notes/vision/frontend-modernization-research.md#the-exact-code-change-all-three-files.
 type PageProps = {
-  params: {
+  params: Promise<{
     worldId: string;
-  };
+  }>;
 };
 
 // useSearchParams requires a Suspense boundary during prerendering; the
 // wrapper reads ?family=nature (nature-service worlds) and hands the resolved
 // family to the actual page.
 export default function WorldPage({ params }: PageProps) {
+  const { worldId } = use(params);
   return (
     <Suspense
       fallback={
@@ -39,7 +44,7 @@ export default function WorldPage({ params }: PageProps) {
         </main>
       }
     >
-      <WorldPageWithFamily worldId={params.worldId} />
+      <WorldPageWithFamily worldId={worldId} />
     </Suspense>
   );
 }

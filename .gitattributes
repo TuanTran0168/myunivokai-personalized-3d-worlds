@@ -1,5 +1,10 @@
 *.sh text eol=lf
 Dockerfile* text eol=lf
+# sqlx checksums a migration file byte-for-byte, so a CRLF checkout on Windows
+# makes `sqlx::migrate!` refuse to start against a database migrated from an LF
+# checkout: "migration 1 was previously applied but has been modified". goose
+# does not checksum, so the Go services never noticed. Pinned for every service.
+*.sql text eol=lf
 
 # GitHub Linguist Overrides - Go #1, TypeScript #2
 notes/** linguist-documentation=true
@@ -21,4 +26,16 @@ apps/myunivokai-web/next.config.* linguist-generated=true
 # Exclude 3D scene renderers infrastructure (~450KB TS) from language stats so Go ranks #1
 apps/myunivokai-web/src/features/scene-renderers/** linguist-detectable=false
 
+
+# apps/myunivokai-admin: same Go-stays-#1 policy as myunivokai-web above
+apps/myunivokai-admin/public/** linguist-vendored=true
+apps/myunivokai-admin/next-env.d.ts linguist-generated=true
+apps/myunivokai-admin/next.config.* linguist-generated=true
+apps/myunivokai-admin/vitest.config.ts linguist-generated=true
+apps/myunivokai-admin/components.json linguist-generated=true
+# shadcn/ui-generated component library (~39KB) — copied boilerplate, not
+# hand-written app logic, same reasoning as the myunivokai-web line above.
+apps/myunivokai-admin/src/components/ui/** linguist-vendored=true
+apps/myunivokai-admin/src/hooks/use-mobile.ts linguist-vendored=true
+apps/myunivokai-admin/src/lib/utils.ts linguist-vendored=true
 

@@ -63,4 +63,4 @@ alone are 30 MB.
 
 The converter is not kept in the repository — it runs once per asset and needs no
 runtime dependency. Its steps are recorded here and in
-[notes/fe/ambient-audio-mechanism.md](../../../../../notes/fe/ambient-audio-mechanism.md).
+[notes/fe/ambient-audio-mechanism.md](../../../../../../notes/fe/ambient-audio-mechanism.md).

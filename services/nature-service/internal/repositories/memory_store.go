@@ -17,15 +17,20 @@ type MemoryStore struct {
 	variants map[string][]models.WorldVariant
 	slugs    map[string]string
 	jobs     map[string]string
-	outbox   []OutboxMessage
+	// publishedAt stands in for the world_shares.created_at column the
+	// Postgres store reads, so a snapshot built here carries the same
+	// publish timestamp the real one would.
+	publishedAt map[string]time.Time
+	outbox      []OutboxMessage
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		worlds:   map[string]models.World{},
-		variants: map[string][]models.WorldVariant{},
-		slugs:    map[string]string{},
-		jobs:     map[string]string{},
+		worlds:      map[string]models.World{},
+		variants:    map[string][]models.WorldVariant{},
+		slugs:       map[string]string{},
+		jobs:        map[string]string{},
+		publishedAt: map[string]time.Time{},
 	}
 }
 
@@ -44,6 +49,7 @@ func (s *MemoryStore) CreateWorld(ctx context.Context, world models.World, varia
 	}
 	world.CreatedAt = now
 	world.UpdatedAt = now
+	world.Revision = 1
 	variant.WorldID = world.ID
 	variant.CreatedAt = now
 	variant.IsSelected = true
@@ -51,8 +57,10 @@ func (s *MemoryStore) CreateWorld(ctx context.Context, world models.World, varia
 	s.worlds[world.ID] = world
 	s.variants[world.ID] = []models.WorldVariant{variant}
 	s.jobs[world.SourceJobID] = world.ID
+	createdSnapshot := newWorldSnapshot(world, 1, variant.VariantNo, variant.Seed, nil)
 	completedEnvelope := contracts.NewEnvelope(world.SourceJobID, contracts.FamilyCompletedData{
-		Family: contracts.WorldFamilyNature, ProfileID: world.ProfileID, DNAVersionID: world.DNAVersionID, WorldID: world.ID,
+		Family: contracts.WorldFamilyNature, ProfileID: world.ProfileID, DNAVersionID: world.DNAVersionID,
+		WorldID: world.ID, Snapshot: &createdSnapshot,
 	})
 	payload, err := json.Marshal(completedEnvelope)
 	if err != nil {
@@ -103,6 +111,9 @@ func (s *MemoryStore) AddVariant(ctx context.Context, worldID string, variant mo
 	variant.WorldID = worldID
 	variant.CreatedAt = time.Now().UTC()
 	s.variants[worldID] = append(s.variants[worldID], variant)
+	if err := s.recordWorldChange(worldID); err != nil {
+		return models.WorldVariant{}, err
+	}
 	return variant, nil
 }
 
@@ -130,6 +141,9 @@ func (s *MemoryStore) SelectVariant(ctx context.Context, worldID, variantID stri
 	world.SelectedVariantID = &variantID
 	world.UpdatedAt = time.Now().UTC()
 	s.worlds[worldID] = world
+	if err := s.recordWorldChange(worldID); err != nil {
+		return models.WorldVariant{}, err
+	}
 	return selected, nil
 }
 
@@ -140,7 +154,8 @@ func (s *MemoryStore) PublishWorld(ctx context.Context, worldID, slug string) (m
 	if !ok {
 		return models.World{}, ErrNotFound
 	}
-	if world.ShareSlug == nil {
+	alreadyPublished := world.ShareSlug != nil
+	if !alreadyPublished {
 		if existingWorldID, slugTaken := s.slugs[slug]; slugTaken && existingWorldID != worldID {
 			return models.World{}, ErrConflict
 		}
@@ -150,7 +165,57 @@ func (s *MemoryStore) PublishWorld(ctx context.Context, worldID, slug string) (m
 	world.UpdatedAt = time.Now().UTC()
 	s.worlds[worldID] = world
 	s.slugs[*world.ShareSlug] = worldID
-	return world, nil
+	// Mirrors PostgresStore.PublishWorld: a re-publish changes nothing, so
+	// it bumps no revision and emits no event.
+	if alreadyPublished {
+		return world, nil
+	}
+	s.publishedAt[worldID] = world.UpdatedAt
+	if err := s.recordWorldChange(worldID); err != nil {
+		return models.World{}, err
+	}
+	return s.worlds[worldID], nil
+}
+
+// recordWorldChange mirrors the Postgres path's bump-load-emit sequence so a
+// test written against either store proves the same behaviour. Callers hold
+// the write lock.
+func (s *MemoryStore) recordWorldChange(worldID string) error {
+	world, ok := s.worlds[worldID]
+	if !ok {
+		return ErrNotFound
+	}
+	world.Revision++
+	world.UpdatedAt = time.Now().UTC()
+	s.worlds[worldID] = world
+	selectedVariantNo := 0
+	selectedVariantSeed := ""
+	for _, variant := range s.variants[worldID] {
+		if world.SelectedVariantID != nil && variant.ID == *world.SelectedVariantID {
+			selectedVariantNo = variant.VariantNo
+			selectedVariantSeed = variant.Seed
+		}
+	}
+	var publishedAt *time.Time
+	if published, found := s.publishedAt[worldID]; found {
+		publishedAt = &published
+	}
+	snapshot := newWorldSnapshot(world, len(s.variants[worldID]), selectedVariantNo, selectedVariantSeed, publishedAt)
+	subject, err := snapshot.Family.WorldChangedEventSubject()
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(contracts.NewEnvelope(snapshot.SourceJobID, contracts.FamilyWorldChangedData{Snapshot: snapshot}))
+	if err != nil {
+		return err
+	}
+	s.outbox = append(s.outbox, OutboxMessage{
+		ID:        uuid.NewString(),
+		MessageID: WorldChangedMessageID(snapshot.WorldID, snapshot.Revision),
+		Subject:   subject,
+		Payload:   payload,
+	})
+	return nil
 }
 
 func (s *MemoryStore) GetPublicWorld(ctx context.Context, slug string) (WorldBundle, error) {

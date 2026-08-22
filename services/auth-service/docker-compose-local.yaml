@@ -1,0 +1,79 @@
+services:
+  auth-migrate:
+    build:
+      context: ../..
+      dockerfile: services/auth-service/Dockerfile.local
+    command: ["go", "run", "./cmd/migrate"]
+    env_file:
+      - ./.env.local
+    environment:
+      DATABASE_URL: postgresql://${AUTH_DATABASE_USER:-myunivokai_auth_app}:${AUTH_DATABASE_PASSWORD:-myunivokai_local_auth}@postgres:5432/${AUTH_DATABASE_NAME:-myunivokai_auth}?sslmode=disable
+      DATABASE_DIRECT_URL: postgresql://${AUTH_DATABASE_USER:-myunivokai_auth_app}:${AUTH_DATABASE_PASSWORD:-myunivokai_local_auth}@postgres:5432/${AUTH_DATABASE_NAME:-myunivokai_auth}?sslmode=disable
+      MIGRATIONS_DIR: /workspace/services/auth-service/migrations
+    volumes:
+      - ../..:/workspace
+      - auth-service-go-cache:/go/pkg/mod
+    restart: on-failure
+    networks: [backend]
+
+  auth-service:
+    build:
+      context: ../..
+      dockerfile: services/auth-service/Dockerfile.local
+    env_file:
+      - ./.env.local
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql://${AUTH_DATABASE_USER:-myunivokai_auth_app}:${AUTH_DATABASE_PASSWORD:-myunivokai_local_auth}@postgres:5432/${AUTH_DATABASE_NAME:-myunivokai_auth}?sslmode=disable
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      NATS_USERNAME: ${NATS_AUTH_USERNAME:-myunivokai_auth}
+      NATS_PASSWORD: ${NATS_AUTH_PASSWORD:-myunivokai_local_auth}
+      NATS_CONNECT_TIMEOUT: ${NATS_CONNECT_TIMEOUT:-5s}
+      NATS_RECONNECT_WAIT: ${NATS_RECONNECT_WAIT:-2s}
+      NATS_QUERY_TIMEOUT: ${NATS_QUERY_TIMEOUT:-2500ms}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-myunivokai_local_redis}@redis:6379/0
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-myunivokai}
+      # The fallback is the same throwaway local-only seed committed in this
+      # service's own .env.local (never used outside this Docker network,
+      # never valid in any deployed environment) — matching the
+      # NATS/Postgres password fallbacks above rather than a blank default,
+      # so standalone runs of this compose file still work. Set a real
+      # value in the root .env.local for the integrated stack; see
+      # services/auth-service/README.md.
+      AUTH_ACCESS_PRIVATE_KEY: ${AUTH_ACCESS_PRIVATE_KEY:-DqpJxFDKPBAtKTcKpCXuSq7LJj0bDD/eILTTuIM8c0E=}
+      AUTH_ACCESS_TOKEN_TTL: ${AUTH_ACCESS_TOKEN_TTL:-10m}
+      AUTH_REFRESH_TOKEN_TTL: ${AUTH_REFRESH_TOKEN_TTL:-336h}
+      AUTH_TOKEN_VERSION_CACHE_TTL: ${AUTH_TOKEN_VERSION_CACHE_TTL:-360h}
+      AUTH_ARGON2_MEMORY_KIB: ${AUTH_ARGON2_MEMORY_KIB:-19456}
+      AUTH_ARGON2_ITERATIONS: ${AUTH_ARGON2_ITERATIONS:-2}
+      AUTH_ARGON2_PARALLELISM: ${AUTH_ARGON2_PARALLELISM:-1}
+      AUTH_ARGON2_SALT_LENGTH: ${AUTH_ARGON2_SALT_LENGTH:-16}
+      AUTH_ARGON2_KEY_LENGTH: ${AUTH_ARGON2_KEY_LENGTH:-32}
+      AUTH_MAX_FAILED_ATTEMPTS: ${AUTH_MAX_FAILED_ATTEMPTS:-5}
+      AUTH_LOCKOUT_DURATION: ${AUTH_LOCKOUT_DURATION:-15m}
+      SERVICE_SHUTDOWN_TIMEOUT: ${SERVICE_SHUTDOWN_TIMEOUT:-15s}
+      # Left unset this reports "unknown": a bind-mounted repo does not give the
+      # Go toolchain a usable VCS stamp inside the container, and no host
+      # supplies a commit locally. `make local-up` exports the working tree's
+      # own describe, so the Fleet screen names the code that is actually
+      # running instead of a placeholder.
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
+    volumes:
+      - ../..:/workspace
+      - auth-service-go-cache:/go/pkg/mod
+    depends_on:
+      auth-migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "sh", "-c", "kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
+networks:
+  backend:
+    name: myunivokai-local-backend
+
+volumes:
+  auth-service-go-cache:

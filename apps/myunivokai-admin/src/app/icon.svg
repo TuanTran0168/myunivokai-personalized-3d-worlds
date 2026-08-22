@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Tab icon: the same mark as apps/myunivokai-web/src/app/icon.svg, reused
+       verbatim (down to the recut-for-16px stroke weight) rather than
+       inventing a second symbol for this app — see brand-mark.tsx for why. -->
+  <defs>
+    <linearGradient id="myunivokai-admin-icon-ridge" x1="56" y1="132" x2="456" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E4CF9C" />
+      <stop offset="0.55" stop-color="#C9A35B" />
+      <stop offset="1" stop-color="#A8843F" />
+    </linearGradient>
+    <linearGradient id="myunivokai-admin-icon-disc" x1="296" y1="112" x2="404" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F2EEE6" />
+      <stop offset="0.5" stop-color="#E4CF9C" />
+      <stop offset="1" stop-color="#C9A35B" />
+    </linearGradient>
+  </defs>
+  <circle cx="350" cy="166" r="68" fill="url(#myunivokai-admin-icon-disc)" />
+  <polyline
+    points="76,396 176,220 256,292 334,180 436,396"
+    fill="none"
+    stroke="url(#myunivokai-admin-icon-ridge)"
+    stroke-width="62"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

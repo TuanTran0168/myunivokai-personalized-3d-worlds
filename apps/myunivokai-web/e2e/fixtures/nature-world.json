@@ -1,0 +1,223 @@
+{
+  "world": {
+    "id": "7c6b5a49-3827-4160-9e5d-4c3b2a1908f7",
+    "nickname": "Nova",
+    "title": "The Amberfall Sanctuary",
+    "summary": "I tend what matters and let the rest fall.",
+    "status": "published",
+    "shareSlug": "nature-baseline-0001",
+    "selectedVariantId": "5f4e3d2c-1b0a-4998-8776-655443322110",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "publishedAt": "2026-01-01T00:00:00Z"
+  },
+  "variants": [
+    {
+      "id": "5f4e3d2c-1b0a-4998-8776-655443322110",
+      "worldId": "7c6b5a49-3827-4160-9e5d-4c3b2a1908f7",
+      "name": "Variant 1",
+      "seed": "VAR-BASELINE-FRST",
+      "config": {
+        "schemaVersion": "1.2",
+        "sceneType": "forest",
+        "sceneName": "The Amberfall Sanctuary",
+        "archetype": "Grove Keeper",
+        "quote": "I tend what matters and let the rest fall.",
+        "theme": "aurora",
+        "palette": {
+          "background": "#0A120C",
+          "primary": "#8B5CF6",
+          "secondary": "#06B6D4",
+          "accent": "#FACC15",
+          "gradient": [
+            "#8B5CF6",
+            "#06B6D4",
+            "#FACC15"
+          ]
+        },
+        "season": {
+          "kind": "summer",
+          "foliageColors": [
+            "#3E7C3F",
+            "#5B9E52",
+            "#77B366"
+          ],
+          "groundKind": "grass"
+        },
+        "lighting": {
+          "timeOfDay": "day",
+          "sunElevationRadians": 1.05,
+          "sunAzimuthRadians": 3.08,
+          "sunColor": "#FFF6E5",
+          "ambientColor": "#9DB4C8",
+          "hdriKey": "nature-hdri-day",
+          "exposure": 0.95,
+          "fogColor": "#C4D2BE",
+          "fogDensity": 0
+        },
+        "terrain": {
+          "placementSeed": "NAT-GOLDEN-FOCUSED-forest-terrain-scatter",
+          "clearingRadius": 9.16,
+          "treelineRadius": 38.47,
+          "hillAmplitude": 2.07,
+          "hillFrequency": 0.039,
+          "pathEnabled": false,
+          "rockCount": 15,
+          "grassTuftCountDesktop": 981,
+          "grassTuftCountMobile": 343
+        },
+        "trees": {
+          "placementSeed": "NAT-GOLDEN-FOCUSED-forest-tree-placement",
+          "countDesktop": 267,
+          "countMobile": 106,
+          "speciesMix": [
+            {
+              "modelKey": "tree-oak",
+              "weight": 0.45
+            },
+            {
+              "modelKey": "tree-birch",
+              "weight": 0.3
+            },
+            {
+              "modelKey": "tree-pine",
+              "weight": 0.25
+            }
+          ],
+          "scaleMin": 0.81,
+          "scaleMax": 1.35,
+          "foliageTintStrength": 0.57,
+          "windStrength": 0.61,
+          "windDirectionRadians": 3.68,
+          "windGustFrequency": 0.34
+        },
+        "weather": {
+          "kind": "rain",
+          "intensity": 0.93,
+          "cloudCoverage": 0.69,
+          "rainDropCountDesktop": 6720,
+          "rainDropCountMobile": 2016,
+          "snowflakeCountDesktop": 0,
+          "snowflakeCountMobile": 0
+        },
+        "wildlife": {
+          "groundAnimals": [
+            {
+              "modelKey": "animal-boar",
+              "count": 3,
+              "pathSeed": "NAT-GOLDEN-FOCUSED-forest-animal-0",
+              "walkSpeed": 0.48,
+              "scale": 0.97
+            },
+            {
+              "modelKey": "animal-rabbit",
+              "count": 1,
+              "pathSeed": "NAT-GOLDEN-FOCUSED-forest-animal-1",
+              "walkSpeed": 0.55,
+              "scale": 0.86
+            },
+            {
+              "modelKey": "animal-deer",
+              "count": 3,
+              "pathSeed": "NAT-GOLDEN-FOCUSED-forest-animal-2",
+              "walkSpeed": 0.65,
+              "scale": 1.1
+            },
+            {
+              "modelKey": "animal-bear",
+              "count": 3,
+              "pathSeed": "NAT-GOLDEN-FOCUSED-forest-animal-3",
+              "walkSpeed": 0.73,
+              "scale": 1.01
+            }
+          ],
+          "birdFlocks": [
+            {
+              "modelKey": "bird-forest",
+              "birdCount": 6,
+              "pathSeed": "NAT-GOLDEN-FOCUSED-forest-birds-0",
+              "altitudeMin": 5.49,
+              "altitudeMax": 13.78,
+              "flightSpeed": 0.78,
+              "pattern": "crossing"
+            }
+          ]
+        },
+        "ambientParticles": {
+          "fallingLeafCount": 0,
+          "blossomPetalCount": 0,
+          "fireflyCount": 0,
+          "snowDustCount": 0
+        },
+        "landmarks": [
+          {
+            "key": "landmark-1",
+            "name": "Landmark 1",
+            "meaning": "A meaningful place in the forest.",
+            "kind": "heartTree",
+            "angleRadians": -0.06,
+            "radiusFromCenter": 7.62,
+            "accentColor": "#06B6D4",
+            "energy": 60
+          },
+          {
+            "key": "landmark-2",
+            "name": "Landmark 2",
+            "meaning": "A meaningful place in the forest.",
+            "kind": "lanternShrine",
+            "angleRadians": 2,
+            "radiusFromCenter": 7.08,
+            "accentColor": "#FACC15",
+            "energy": 65
+          },
+          {
+            "key": "landmark-3",
+            "name": "Landmark 3",
+            "meaning": "A meaningful place in the forest.",
+            "kind": "standingStone",
+            "angleRadians": 4.24,
+            "radiusFromCenter": 5.12,
+            "accentColor": "#8B5CF6",
+            "energy": 70
+          }
+        ],
+        "camera": {
+          "distance": 19.78,
+          "fov": 50
+        },
+        "postFX": {
+          "bloomIntensity": 0.61,
+          "grade": {
+            "hueRadians": 0,
+            "saturation": 0.18,
+            "brightness": 0.02,
+            "contrast": 0.06
+          }
+        },
+        "hud": {
+          "showTraitBars": true,
+          "showLabels": true
+        },
+        "assets": {
+          "catalogVersion": "nature-1",
+          "modelKeys": [
+            "tree-oak",
+            "tree-birch",
+            "tree-pine",
+            "rock-mossy",
+            "animal-boar",
+            "animal-rabbit",
+            "animal-deer",
+            "animal-bear",
+            "bird-forest",
+            "landmark-heart-tree",
+            "landmark-lantern-shrine",
+            "landmark-standing-stone"
+          ],
+          "hdriKey": "nature-hdri-day"
+        }
+      },
+      "selected": true,
+      "createdAt": "2026-01-01T00:00:00Z"
+    }
+  ]
+}

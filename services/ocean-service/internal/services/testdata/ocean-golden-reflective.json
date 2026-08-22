@@ -1,0 +1,212 @@
+{
+  "schemaVersion": "1.4",
+  "sceneType": "ocean",
+  "sceneName": "The Lantern Trench",
+  "archetype": "Tidekeeper",
+  "quote": "I go down slowly, and I come back with light.",
+  "theme": "aurora",
+  "palette": {
+    "background": "#01070F",
+    "primary": "#8B5CF6",
+    "secondary": "#06B6D4",
+    "accent": "#FACC15",
+    "gradient": [
+      "#8B5CF6",
+      "#06B6D4",
+      "#FACC15"
+    ]
+  },
+  "depth": {
+    "metres": 2208.58,
+    "seafloorMetres": 2214.05,
+    "zone": "abyss"
+  },
+  "water": {
+    "fogColor": "#030914",
+    "fogDensity": 0.071,
+    "visibilityMetres": 14,
+    "tintStrength": 0.95,
+    "jerlovWaterType": "I",
+    "windSpeedMetresPerSecond": 5
+  },
+  "lighting": {
+    "surfaceLightColor": "#0F1F33",
+    "surfaceElevationRadians": 0.67,
+    "surfaceAzimuthRadians": 4.92,
+    "godRayStrength": 0,
+    "causticStrength": 0,
+    "ambientColor": "#050D17",
+    "exposure": 1.43
+  },
+  "seafloor": {
+    "placementSeed": "OCN-GOLDEN-DEEP-ocean-seafloor-scatter",
+    "basinRadius": 32.97,
+    "ridgeAmplitude": 2.5,
+    "ridgeFrequency": 0.039,
+    "rockCount": 23,
+    "sedimentTuftCountDesktop": 455,
+    "sedimentTuftCountMobile": 159
+  },
+  "current": {
+    "kind": "drift",
+    "intensity": 0.33,
+    "directionRadians": 5.04,
+    "gustFrequency": 0.32,
+    "marineSnowCountDesktop": 971,
+    "marineSnowCountMobile": 291
+  },
+  "flora": {
+    "placementSeed": "OCN-GOLDEN-DEEP-ocean-flora-placement",
+    "countDesktop": 180,
+    "countMobile": 72,
+    "speciesMix": [
+      {
+        "modelKey": "flora-tubeworm",
+        "weight": 0.45
+      },
+      {
+        "modelKey": "flora-glass-sponge",
+        "weight": 0.35
+      },
+      {
+        "modelKey": "flora-sea-pen",
+        "weight": 0.2
+      }
+    ],
+    "scaleMin": 0.88,
+    "scaleMax": 1.7,
+    "swayStrength": 0.24,
+    "depthTintStrength": 0.88
+  },
+  "fauna": {
+    "schools": [
+      {
+        "modelKey": "fish-lanternfish",
+        "count": 18,
+        "pathSeed": "OCN-GOLDEN-DEEP-ocean-school-0",
+        "depthBandMin": 7.03,
+        "depthBandMax": 13.14,
+        "swimSpeed": 0.76,
+        "cohesion": 0.53,
+        "separation": 0.38
+      }
+    ],
+    "drifters": [
+      {
+        "modelKey": "drifter-siphonophore",
+        "count": 6,
+        "pathSeed": "OCN-GOLDEN-DEEP-ocean-drifter-0",
+        "pulseRate": 0.25,
+        "emissiveColor": "#818CF8"
+      },
+      {
+        "modelKey": "drifter-siphonophore",
+        "count": 7,
+        "pathSeed": "OCN-GOLDEN-DEEP-ocean-drifter-1",
+        "pulseRate": 0.62,
+        "emissiveColor": "#22D3EE"
+      }
+    ],
+    "giants": []
+  },
+  "bioluminescence": {
+    "planktonCount": 1222,
+    "bloomIntensity": 0.41,
+    "emissiveColors": [
+      "#22D3EE",
+      "#818CF8",
+      "#4ADE80"
+    ],
+    "flickerSeed": "OCN-GOLDEN-DEEP-ocean-biolum-flicker"
+  },
+  "landmarks": [
+    {
+      "key": "landmark-1",
+      "name": "Landmark 1",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "kelpCathedral",
+      "angleRadians": -0.2,
+      "radiusFromCenter": 40.67,
+      "heightAboveFloor": 5.99,
+      "accentColor": "#06B6D4",
+      "energy": 60
+    },
+    {
+      "key": "landmark-2",
+      "name": "Landmark 2",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "abyssalTrench",
+      "angleRadians": 1.42,
+      "radiusFromCenter": 53.99,
+      "heightAboveFloor": 3.77,
+      "accentColor": "#FACC15",
+      "energy": 65
+    },
+    {
+      "key": "landmark-3",
+      "name": "Landmark 3",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "whaleFall",
+      "angleRadians": 2.57,
+      "radiusFromCenter": 38.46,
+      "heightAboveFloor": 0.4,
+      "accentColor": "#8B5CF6",
+      "energy": 70
+    },
+    {
+      "key": "landmark-4",
+      "name": "Landmark 4",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "sunkenRelic",
+      "angleRadians": 3.76,
+      "radiusFromCenter": 51.36,
+      "heightAboveFloor": 4.79,
+      "accentColor": "#06B6D4",
+      "energy": 75
+    },
+    {
+      "key": "landmark-5",
+      "name": "Landmark 5",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "hydrothermalVent",
+      "angleRadians": 4.88,
+      "radiusFromCenter": 53.25,
+      "heightAboveFloor": 5.93,
+      "accentColor": "#FACC15",
+      "energy": 80
+    }
+  ],
+  "camera": {
+    "distance": 22.25,
+    "fov": 55
+  },
+  "postFX": {
+    "bloomIntensity": 0.61,
+    "grade": {
+      "hueRadians": 0.05,
+      "saturation": -0.13,
+      "brightness": 0.06,
+      "contrast": 0.12
+    }
+  },
+  "hud": {
+    "showTraitBars": true,
+    "showLabels": true
+  },
+  "assets": {
+    "catalogVersion": "ocean-1",
+    "modelKeys": [
+      "flora-tubeworm",
+      "flora-glass-sponge",
+      "flora-sea-pen",
+      "rock-basalt",
+      "fish-lanternfish",
+      "drifter-siphonophore",
+      "landmark-kelp-cathedral",
+      "landmark-abyssal-trench",
+      "landmark-whale-fall",
+      "landmark-sunken-relic",
+      "landmark-hydrothermal-vent"
+    ]
+  }
+}

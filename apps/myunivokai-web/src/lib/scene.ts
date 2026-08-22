@@ -98,20 +98,27 @@ export function planetsFromScene(scene?: SceneConfig): PlanetSceneConfig[] {
 }
 
 export const FOREST_SCENE_TYPE = "forest";
+export const OCEAN_SCENE_TYPE = "ocean";
 
 export function isForestScene(scene?: SceneConfig): boolean {
   return scene?.sceneType === FOREST_SCENE_TYPE;
 }
 
+export function isOceanScene(scene?: SceneConfig): boolean {
+  return scene?.sceneType === OCEAN_SCENE_TYPE;
+}
+
 /**
  * The scene's clickable point-of-interest layer, family-agnostic: universe
- * scenes expose planets, forest scenes expose landmarks adapted into the same
- * PlanetSceneConfig shape (name/meaning/color/energy). Every HUD component
- * (details panel, hover tooltip, camera focus) consumes this instead of
- * planetsFromScene so both families get the full interaction layer for free.
+ * scenes expose planets, forest and ocean scenes expose landmarks adapted into
+ * the same PlanetSceneConfig shape (name/meaning/color/energy). Every HUD
+ * component (details panel, hover tooltip, camera focus) consumes this instead
+ * of planetsFromScene, so a new family gets the full interaction layer for free
+ * — which is why the ocean needed one branch here and no change at all to
+ * CameraRig or PlanetPositionTracker.
  */
 export function pointsOfInterestFromScene(scene?: SceneConfig): PlanetSceneConfig[] {
-  if (!isForestScene(scene)) {
+  if (!isForestScene(scene) && !isOceanScene(scene)) {
     return planetsFromScene(scene);
   }
   if (!Array.isArray(scene?.landmarks)) {

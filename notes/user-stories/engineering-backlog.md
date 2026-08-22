@@ -319,9 +319,13 @@ Tasks:
 
 ## EPIC-S3-CITY-001 — Add City on the stable platform
 
-Status: Planned after Sprint 2 gates
+Status: Planned after Sprint 2 gates. **Moved from 2026-08-19 to 2026-09-09 on
+2026-08-15**, when the owner brought Ocean forward. Nothing about the scope
+below changed; only the date did. Its open asset-budget question — CyArk's
+UNESCO scans are CC BY-NC 4.0 and Ancient Egypt sits behind Synty's paywall —
+is still open and still gates the multi-civilisation ambition.
 Priority: P1
-Sprint: [Sprint 3 — starts 2026-08-19](../sprints/sprint-03-2026-08-19/README.md)
+Sprint: [Sprint 3 — starts 2026-09-09](../sprints/sprint-03-2026-09-09/README.md)
 
 As a returning visitor,
 I want the same DNA rendered as a high-fidelity personal city,
@@ -353,9 +357,205 @@ Tasks:
 - [ ] Add deterministic high-fidelity renderer and complete public flow.
 - [ ] Extend Compose/deployment/monitoring and pass production smoke.
 
+## EPIC-S6-OCEAN-001 — Add Ocean as the third family
+
+Status: Implemented; deployed verification outstanding
+Priority: P1
+Sprint: [Sprint 6 — starts 2026-08-19](../sprints/sprint-06-2026-08-19/README.md)
+Design: [ocean-service-plan.md](../vision/ocean-service-plan.md)
+
+As a returning visitor,
+I want the same DNA rendered as a personal sea at a real depth,
+so that Myunivokai offers a portrait medium whose whole character comes from
+one axis the other families do not have.
+
+Scenario: Add a bounded context without changing existing consumers
+
+Given the versioned canonical DNA and subject conventions
+When Ocean is introduced
+Then `myunivokai-ocean` owns `myunivokai_ocean`, Ocean commands/queries/events
+and its deterministic builder
+And DNA dispatch adds Ocean without modifying Universe/Nature behaviour
+And the gateway selects Ocean through its subject registry, registered above the
+unsupported-family catch-all
+And the frontend lazy-loads `sceneType: ocean` as its own chunk.
+
+Scenario: Depth is measured physics, not a table of three presets
+
+Given the measured light-attenuation anchors (45% at 1 m, 16% at 10 m, 5% at
+40 m, 1% at 100 m, nothing at 1000 m)
+When a world is built at any depth
+Then water colour, fog, visibility, god rays and caustics are DERIVED from that
+depth and then STORED, so re-tuning the curve never changes an existing world
+And god rays and caustics reach exactly zero at the sunlight floor without any
+depth test anywhere in the builder or the renderer
+And a single-exponential fit is rejected by a test, because it misses the 10 m
+measurement by three orders of magnitude while looking entirely plausible.
+
+Scenario: The preview does not lie about the world it promises
+
+Given the create form renders a live WebGL preview before anything is generated
+When the preview builder and the Go builder are compared
+Then everything the depth curve decides is byte-identical across the two
+languages, pinned by the Go builder's own golden fixtures
+And the seeded halves stay only plausible, exactly as the forest preview does.
+
+Tasks:
+
+- [x] `WorldFamilyOcean`, five subject switches, scene schema and fixtures.
+- [x] `ocean-service` with revision, inbox/outbox and the snapshot drift guard.
+- [x] The depth curve, its eight tests, and four goldens across three zones.
+- [x] Gateway route and handler, wake target, local Compose, CI job.
+- [x] Procedural renderer, preview builder, share route, product flow, audio.
+- [x] Four rarity entries in Go and TypeScript against the shared fixture.
+- [x] `render.yaml` block on the free tier (owner-approved 2026-08-15).
+- [ ] Deployed smoke across the full lifecycle, recorded with commit and time.
+- [ ] Confirm an ocean world reaches `myunivokai_analytics` in production.
+- [ ] Owner-approved screenshots at all three depth zones as the regression
+      baseline.
+
+## EPIC-S4-AUTH-001 — Staff identity and the internal admin app
+
+Status: Ready
+Priority: P0
+Sprint: [Sprint 4 — starts 2026-08-06](../sprints/sprint-04-2026-08-06/README.md)
+
+As a staff member,
+I want a dedicated identity service and an internal admin app separate from the
+3D product,
+so that I can log in, be granted exactly the roles I need, and browse
+records without the panel becoming a second, worse way to reach production
+data.
+
+Scenario: Staff identity never touches ownership
+
+Given no visitor identity exists yet
+When auth-service and the admin app are built
+Then no `owner_account_id` column is added anywhere
+And access/refresh tokens carry `audience: "admin"`, disjoint from any future
+`audience: "web"` token
+And [`DEFERRED-AUTH-001`](#deferred-auth-001--define-identity-before-authentication)
+remains untouched — staff auth answers "may this actor act?", not "who owns
+this row?".
+
+Scenario: One gateway, two blast radii kept apart
+
+Given the existing public gateway gains an `/api/admin` route group
+When the admin route group is exercised
+Then every route rejects an unauthenticated request by default, proven by an
+enumerating router test
+And the admin group's CORS, rate limits and NATS admin-publish permissions
+are isolated from the product group.
+
+Epic exit:
+
+- [ ] Every Sprint 4 `S4-AUTH-*` story below is Verified.
+- [ ] The admin app renders zero content without a valid staff session.
+- [ ] `role:manage`'s lockout guards are proven by test, not by convention.
+
+Sprint stories: [S4-AUTH-001 through S4-AUTH-006](../sprints/sprint-04-2026-08-06/user-stories.md#epic-s4-auth-001--staff-identity-and-the-internal-admin-app)
+
+Source: [auth-and-admin-plan.md](../vision/auth-and-admin-plan.md)
+
+## EPIC-S4-ANALYTICS-001 — A read model for the admin app
+
+Status: Ready
+Priority: P0
+Sprint: [Sprint 4 — starts 2026-08-06](../sprints/sprint-04-2026-08-06/README.md)
+
+As a staff member,
+I want the admin app's reads served by a dedicated analytics read model rather
+than a live fan-out across dna, universe and nature,
+so that an admin page only ever waits on analytics and auth, and a sleeping
+domain service never blanks a screen it has nothing to do with.
+
+Scenario: The read model is the only writer to its own database
+
+Given events already flow through `MYUNIVOKAI_EVENTS`
+When analytics-service is built
+Then it is the only writer to its own database, fed solely by its own event
+consumer
+And every HTTP or NATS path into it is read-only
+And no domain service ever receives a request on an admin read path.
+
+Scenario: Close the event gap before it becomes permanent
+
+Given variant creation, variant selection and publish emit no event today
+When Sprint 4 starts
+Then universe and nature begin emitting a revision-stamped `WorldSnapshot` on
+every mutation before analytics-service exists to consume it
+And no event needed for a later admin screen is lost to JetStream's 7-day
+retention window.
+
+Epic exit:
+
+- [ ] Every Sprint 4 `S4-ANALYTICS-*` story below is Verified.
+- [ ] `analytics-service`'s schema has no `outbox_messages` table.
+- [ ] The admin dashboard, worlds table and jobs table read from analytics only.
+
+Sprint stories: [S4-ANALYTICS-001 through S4-ANALYTICS-007](../sprints/sprint-04-2026-08-06/user-stories.md#epic-s4-analytics-001--a-read-model-for-the-admin-app)
+
+Source: [analytics-service-plan.md](../vision/analytics-service-plan.md)
+
+## EPIC-S5-TELEMETRY-001 — Operational telemetry and the first Rust service
+
+Status: Implemented — not Verified. Source and automated checks exist for every
+story; the Rust crates have never been compiled (no toolchain on the authoring
+machine) and nothing is deployed. See
+[Sprint 5 §Honest status](../sprints/sprint-05-2026-08-13/user-stories.md#honest-status).
+Priority: P1
+Sprint: [Sprint 5 — starts 2026-08-13](../sprints/sprint-05-2026-08-13/README.md)
+
+As a platform operator,
+I want the platform to measure its own request volume, latency, error mix,
+per-backend round-trip time and cache hit rate,
+so that questions this repository's own research already names as
+unanswerable — which routes are used, whether `Retry-After: 15` is long
+enough, whether the Redis cache earns its keep — stop being unanswerable.
+
+Scenario: Aggregate before the network, never after
+
+Given a gateway serving any volume of requests
+When telemetry is enabled
+Then the gateway aggregates in memory and publishes one envelope per interval
+And no design anywhere in this track puts a broker publish on the request path
+And every bucket is keyed on a route template, never a raw path.
+
+Scenario: A second language is bounded rather than accidental
+
+Given `telemetry-service` is written in Rust while every other service is Go
+When the wire contract changes in either language
+Then the shared fixture test fails in CI rather than at runtime
+And `notes/be/source-overview.md` states why one service is not Go, so the
+next reader does not read it as an accident.
+
+Scenario: One switch, two destinations
+
+Given `TELEMETRY_SINK`
+When it is set to `postgres` or `otlp`
+Then the same envelopes land in this repository's own schema or in Grafana
+Cloud, chosen once at startup
+And the admin app says which one it is looking at rather than rendering an
+empty chart when the answer lives elsewhere.
+
+Epic exit:
+
+- [ ] Every Sprint 5 `S5-TELEMETRY-*` story is Verified.
+- [x] The gateway's telemetry path is off by default and provably inert when
+      off — `TestWithNoCollectorTheRequestPathRecordsNothing`.
+- [x] `myunivokai-admin` renders request volume, status mix and per-route p95,
+      with the p95's interpolation stated on the screen rather than in a
+      tooltip.
+
+Sprint stories: [S5-TELEMETRY-001 through S5-TELEMETRY-009](../sprints/sprint-05-2026-08-13/user-stories.md#epic-s5-telemetry-001--operational-telemetry-and-the-first-rust-service)
+
+Source: [telemetry-service-plan.md](../vision/telemetry-service-plan.md)
+
 ## DEFERRED-AUTH-001 — Define identity before authentication
 
-Status: Deferred by owner decision on 2026-07-22
+Status: Deferred by owner decision on 2026-07-22. **Unaffected by Sprint 4** —
+staff identity in `EPIC-S4-AUTH-001` never adds ownership; see that epic's
+first scenario.
 Priority: Discovery
 
 As a future account holder,

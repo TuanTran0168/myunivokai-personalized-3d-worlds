@@ -7,16 +7,21 @@ import { buildShareWorldMetadata } from "@/features/share/shareWorldMetadata";
 // historical un-prefixed /share/worlds/[shareSlug] was removed outright, so
 // universe-service's PUBLIC_WEB_URL must carry the /universe prefix.
 
+// `params` is a Promise from Next 15 onward, and awaiting one is legal on 14
+// too — which is why this change lands ahead of the version bump rather than
+// inside it. See notes/vision/frontend-modernization-research.md#the-15--16-hop.
 type PageProps = {
-  params: {
+  params: Promise<{
     shareSlug: string;
-  };
+  }>;
 };
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  return buildShareWorldMetadata("universe", params.shareSlug);
+  const { shareSlug } = await params;
+  return buildShareWorldMetadata("universe", shareSlug);
 }
 
-export default function UniverseShareWorldPage({ params }: PageProps) {
-  return <ShareWorldView shareSlug={params.shareSlug} family="universe" />;
+export default async function UniverseShareWorldPage({ params }: PageProps) {
+  const { shareSlug } = await params;
+  return <ShareWorldView shareSlug={shareSlug} family="universe" />;
 }

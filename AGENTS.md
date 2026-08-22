@@ -33,6 +33,7 @@ Before writing code or committing, read the docs in `notes/`:
 - `notes/fe/threejs-scene-architecture.md` — three.js principles, the sceneType-first renderer registry, how to add new scene types (read before touching 3D code)
 - `notes/fe/forest-render-mechanism.md` — forest/nature asset pipeline, GLB/animation gotchas, the Sketchfab download constraint (read before touching forest 3D or assets)
 - `notes/be/source-overview.md` — Go API layers, AI provider switching, response shapes (read for BE tasks)
+- `notes/be/rust-service-architecture.md` — the module layout, error-handling split, testing rules and no-ORM decision behind `services/telemetry-service`, the one service not written in Go (read before touching Rust)
 - `notes/ops/render-deployment.md` — step-by-step Render deploy runbook (read before deploying)
 
 ## Commands

@@ -6,7 +6,8 @@ const SUPPORTED_GATEWAY_PROTOCOLS = new Set(["http:", "https:"]);
 
 const API_PATH_PREFIX_BY_FAMILY: Record<WorldFamily, string> = {
   universe: "/api/universe",
-  nature: "/api/nature"
+  nature: "/api/nature",
+  ocean: "/api/ocean"
 };
 
 export function normalizeGatewayBaseUrl(value: string): string {

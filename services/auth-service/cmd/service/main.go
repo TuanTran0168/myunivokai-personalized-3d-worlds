@@ -1,0 +1,118 @@
+package main
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/config"
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/db"
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/messaging"
+	authredis "github.com/myunivokai/myunivokai/services/auth-service/internal/redis"
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/repositories"
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/security"
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/services"
+	"github.com/rs/zerolog/log"
+)
+
+const (
+	defaultMigrationsDirectory = "migrations"
+	defaultHealthCheckPort     = "8080"
+)
+
+// startHealthServer binds a port immediately so Render's free-tier cold
+// start has an inbound HTTP target - see
+// notes/vision/service-wake-mechanism.md#healthz-is-a-start-signal-not-a-readiness-signal.
+// It answers 200 before the messaging runtime has finished Run().
+func startHealthServer() *http.Server {
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		port = defaultHealthCheckPort
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(responseWriter http.ResponseWriter, _ *http.Request) {
+		responseWriter.WriteHeader(http.StatusOK)
+	})
+	server := &http.Server{Addr: ":" + port, Handler: mux}
+	go func() {
+		log.Info().Str("addr", server.Addr).Msg("auth health server listening")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal().Err(err).Msg("auth health server failed")
+		}
+	}()
+	return server
+}
+
+func main() {
+	processStartedAt := time.Now()
+	serviceConfig, err := config.Load()
+	if err != nil {
+		log.Fatal().Err(err).Msg("load auth service configuration")
+	}
+	migrationDatabaseURL := serviceConfig.DatabaseDirectURL
+	if migrationDatabaseURL == "" {
+		migrationDatabaseURL = serviceConfig.DatabaseURL
+	}
+	migrationsDirectory := os.Getenv("MIGRATIONS_DIR")
+	if migrationsDirectory == "" {
+		migrationsDirectory = defaultMigrationsDirectory
+	}
+	if err := db.Migrate(migrationDatabaseURL, migrationsDirectory); err != nil {
+		log.Fatal().Err(err).Msg("run auth database migrations")
+	}
+	log.Info().Msg("auth database migrations complete")
+	healthServer := startHealthServer()
+	defer func() { _ = healthServer.Close() }()
+	runtimeContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	databasePool, err := db.Connect(runtimeContext, serviceConfig)
+	if err != nil {
+		log.Fatal().Err(err).Msg("connect auth database")
+	}
+	defer databasePool.Close()
+
+	redisClient, err := authredis.NewClient(serviceConfig.RedisURL, serviceConfig.RedisKeyPrefix)
+	if err != nil {
+		log.Fatal().Err(err).Msg("connect auth redis client")
+	}
+	defer func() { _ = redisClient.Close() }()
+
+	store := repositories.NewPostgresStore(databasePool)
+	if err := services.SyncPermissionsAndSeedRoles(runtimeContext, store); err != nil {
+		log.Fatal().Err(err).Msg("sync auth permissions and seed roles")
+	}
+	log.Info().Msg("auth permission sync complete")
+
+	passwordHasher := security.NewPasswordHasher(
+		serviceConfig.Argon2MemoryKiB, serviceConfig.Argon2Iterations, serviceConfig.Argon2Parallelism,
+		serviceConfig.Argon2SaltLength, serviceConfig.Argon2KeyLength,
+	)
+	tokenIssuer := security.NewTokenIssuer(serviceConfig.AccessTokenPrivateKey, serviceConfig.AccessTokenTTL)
+	authService, err := services.NewAuthService(store, passwordHasher, tokenIssuer, redisClient, serviceConfig)
+	if err != nil {
+		log.Fatal().Err(err).Msg("construct auth service")
+	}
+
+	messagingRuntime, err := messaging.NewRuntime(serviceConfig, authService)
+	if err != nil {
+		log.Fatal().Err(err).Msg("connect auth messaging runtime")
+	}
+	if err := messagingRuntime.Run(runtimeContext); err != nil {
+		log.Fatal().Err(err).Msg("start auth messaging runtime")
+	}
+	// Announced after Run, because "ready" here means subscriptions are
+	// registered - a boot time measured to any earlier point would flatter
+	// the cold start it exists to measure. Never fatal: this process is
+	// here to serve, not to describe itself.
+	if err := messagingRuntime.PublishServiceStarted(runtimeContext, time.Since(processStartedAt)); err != nil {
+		log.Error().Err(err).Msg("announce auth service start")
+	}
+	log.Info().Msg("auth service ready")
+	<-runtimeContext.Done()
+	messagingRuntime.Close()
+}

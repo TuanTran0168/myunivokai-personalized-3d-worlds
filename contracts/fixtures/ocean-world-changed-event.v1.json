@@ -1,0 +1,27 @@
+{
+  "jobId": "01K0EXAMPLE000000000000021",
+  "timestamp": "2026-08-14T09:14:02Z",
+  "data": {
+    "snapshot": {
+      "worldId": "01K0EXAMPLE000000000000024",
+      "family": "ocean",
+      "profileId": "01K0EXAMPLE000000000000022",
+      "dnaVersionId": "01K0EXAMPLE000000000000023",
+      "sourceJobId": "01K0EXAMPLE000000000000021",
+      "revision": 3,
+      "nickname": "Mai",
+      "role": "Marine Biologist",
+      "archetype": "Tidekeeper",
+      "sceneName": "Mai's Lantern Trench",
+      "mood": "reflective",
+      "worldStyle": "aurora",
+      "favoriteColors": ["#22D3EE", "#818CF8"],
+      "traitScores": { "creativity": 78, "discipline": 82, "curiosity": 93, "energy": 61, "focus": 87 },
+      "variantCount": 3,
+      "selectedVariantNo": 2,
+      "variantSeed": "VAR-01K-2-4QF2",
+      "publishedAt": "2026-08-14T09:13:55Z",
+      "worldCreatedAt": "2026-08-14T09:11:30Z"
+    }
+  }
+}

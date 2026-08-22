@@ -2,13 +2,14 @@
 
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Suspense, useMemo, useRef, useState } from "react";
-import { AgXToneMapping } from "three";
+import { ACESFilmicToneMapping, AgXToneMapping } from "three";
 import type { Vector3 } from "three";
 import type { PlanetSceneConfig, SceneConfig } from "@/lib/types";
-import { backgroundColorFromScene, isForestScene, pointsOfInterestFromScene, CANONICAL_FALLBACK_SEED } from "@/lib/scene";
+import { backgroundColorFromScene, isForestScene, isOceanScene, pointsOfInterestFromScene, CANONICAL_FALLBACK_SEED } from "@/lib/scene";
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { resolveSceneRenderer, resolveSceneTypeRenderer } from "@/features/scene-renderers/registry";
 import { FallbackUniverseRenderer } from "@/features/scene-renderers/fallback/FallbackUniverseRenderer";
+import { oceanCameraFraming as oceanCameraFramingFor } from "@/features/scene-renderers/ocean/oceanMath";
 import { forestShoreCameraFraming } from "@/features/scene-renderers/forest/forestMath";
 import {
   cameraDistanceFromConfig,
@@ -21,6 +22,7 @@ import { CameraRig } from "@/features/scene-renderers/shared/CameraRig";
 import { CanvasLoader } from "@/features/scene-renderers/shared/CanvasLoader";
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
 import { PlanetPositionTrackerContext } from "@/features/scene-renderers/shared/PlanetPositionTracker";
+import { TerrainHeightSamplerContext, type TerrainHeightSampler } from "@/features/scene-renderers/shared/TerrainHeightSampler";
 
 // planetIdentityKey is deliberately NOT re-exported here. It is a pure string
 // helper, and re-exporting it made this module — with three.js behind it — a
@@ -104,6 +106,9 @@ export function UniverseCanvas({
   const ambientSoundscape = useAmbientSoundscape(scene, enableAmbientSound);
   const [hoveredPlanet, setHoveredPlanet] = useState<PlanetSceneConfig | null>(null);
   const planetPositionTrackerReference = useRef<Map<string, Vector3>>(new Map());
+  // Only a family with a ground plane the camera can clip through (currently
+  // ocean) ever writes into this; CameraRig's clamp is a no-op while it is null.
+  const terrainHeightSamplerReference = useRef<TerrainHeightSampler>({ current: null });
   // Readiness is DERIVED from the remount key instead of reset in an effect:
   // the same render that swaps the canvas already sees isSceneReady=false,
   // so the veil covers the swap without a single black frame leaking through.
@@ -124,6 +129,7 @@ export function UniverseCanvas({
   const SceneRenderer =
     sceneTypeRenderer ?? (hasConfiguredPointsOfInterest ? resolveSceneRenderer(scene?.theme) : FallbackUniverseRenderer);
   const isForestFamilyScene = isForestScene(scene);
+  const isOceanFamilyScene = isOceanScene(scene);
 
   // Forest scenes open from the lake's near bank instead of above its middle:
   // the framing is derived from the lake the renderer builds, which the
@@ -133,9 +139,23 @@ export function UniverseCanvas({
     () => (isForestFamilyScene ? forestShoreCameraFraming(scene?.terrain, cameraFieldOfView) : null),
     [isForestFamilyScene, scene?.terrain, cameraFieldOfView]
   );
+  // The ocean frames itself for the same reason the forest does: the shared
+  // framing points the camera down at a target, and in a medium you are inside
+  // that aims at the floor underwater and past the horizon in air.
+  const oceanCameraFraming = isOceanFamilyScene
+    ? oceanCameraFramingFor(
+        cameraDistance,
+        scene?.depth?.metres ?? 20,
+        scene?.water?.visibilityMetres ?? 30,
+        scene?.lighting?.surfaceAzimuthRadians,
+        scene?.depth?.seafloorMetres,
+      )
+    : null;
   const cameraPosition: [number, number, number] = forestCameraFraming
     ? [0, forestCameraFraming.height, forestCameraFraming.distance]
-    : universeCameraPosition(scene?.camera);
+    : oceanCameraFraming
+      ? [oceanCameraFraming.x, oceanCameraFraming.y, oceanCameraFraming.z]
+      : universeCameraPosition(scene?.camera);
 
   const hoveredPlanetKey = hoveredPlanet
     ? planetIdentityKey(
@@ -163,18 +183,34 @@ export function UniverseCanvas({
         <Canvas
           key={canvasRemountKey}
           camera={{ position: cameraPosition, fov: cameraFieldOfView }}
-          // Only the forest family casts real shadows (sun through the tree
-          // canopy); universe scenes are emissive-lit and skip the shadow pass.
-          shadows={isForestFamilyScene ? "soft" : false}
+          // The forest (sun through the canopy) and the ocean (a single key
+          // light through water) both cast real shadows; universe scenes are
+          // emissive-lit and have no ground to receive one, so they skip the
+          // pass. The ocean was missing from this list for its whole life, which
+          // made every castShadow/receiveShadow in its rig inert — and a seabed
+          // with no contact shadow is why its boulders read as flat blobs
+          // sitting ON a plane rather than resting IN sediment.
+          shadows={isForestFamilyScene || isOceanFamilyScene ? "soft" : false}
           dpr={devicePixelRatioRange}
           // AgX rolls hot highlights off more gracefully than the default ACES
           // (no neon clipping on lit planets); sky layers opt out via
           // toneMapped={false} and are unaffected.
-          gl={{ preserveDrawingBuffer, powerPreference: "high-performance", toneMapping: AgXToneMapping }}
+          //
+          // The ocean is the exception, and it is not a preference. That family's
+          // whole grade was designed and proven against three.js's own ACES at a
+          // per-depth `toneMappingExposure` — the adaptation curve IS the
+          // exposure — so it needs the curve the design was measured with, not a
+          // second one applied on top of it.
+          gl={{
+            preserveDrawingBuffer,
+            powerPreference: "high-performance",
+            toneMapping: isOceanFamilyScene ? ACESFilmicToneMapping : AgXToneMapping,
+          }}
           onPointerMissed={() => onSelectPlanet?.(null)}
         >
           <color attach="background" args={[backgroundColor]} />
           <PlanetPositionTrackerContext.Provider value={planetPositionTrackerReference.current}>
+          <TerrainHeightSamplerContext.Provider value={terrainHeightSamplerReference.current}>
             <Suspense fallback={<CanvasLoader />}>
               <SceneRenderer
                 scene={scene ?? {}}
@@ -184,7 +220,24 @@ export function UniverseCanvas({
                 onHoverPlanet={setHoveredPlanet}
                 onSelectPlanet={onSelectPlanet}
               />
-              <PostEffects postFX={scene?.postFX} theme={scene?.theme} ambientOcclusion={isForestFamilyScene} />
+              {/* The ocean renders STRAIGHT TO THE CANVAS, with no composer.
+                  Not a tuning choice — a correctness one. EffectComposer sets
+                  gl.toneMapping = NoToneMapping on mount and expects a
+                  <ToneMapping> effect in the chain, which this one has never
+                  had. So for the ocean's whole life its tone curve was a
+                  passthrough, `toneMappingExposure` was read by nothing, and
+                  every linear value above 1 clipped flat to white — the cause
+                  of every washed-out ocean frame reported so far.
+                  Bypassing the chain restores the renderer's own ACES, makes
+                  the per-depth exposure live again, and removes the need for
+                  the hand-injected curve that stood in for it. */}
+              {isOceanFamilyScene ? null : (
+                <PostEffects
+                  postFX={scene?.postFX}
+                  theme={scene?.theme}
+                  ambientOcclusion={isForestFamilyScene}
+                />
+              )}
               <SceneReadySignal onSceneReady={() => setLastReadyCanvasKey(canvasRemountKey)} />
             </Suspense>
             <CameraRig
@@ -193,7 +246,9 @@ export function UniverseCanvas({
               maximumDistance={isForestFamilyScene ? FOREST_MAXIMUM_CAMERA_DISTANCE : undefined}
               maximumPolarAngleRadians={isForestFamilyScene ? FOREST_MAXIMUM_POLAR_ANGLE_RADIANS : undefined}
               keyboardMoveEnabled={enableKeyboardMove}
+              restingTarget={oceanCameraFraming?.target}
             />
+          </TerrainHeightSamplerContext.Provider>
           </PlanetPositionTrackerContext.Provider>
         </Canvas>
       </div>

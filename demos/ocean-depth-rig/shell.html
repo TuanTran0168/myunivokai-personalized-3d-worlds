@@ -1,0 +1,347 @@
+<title>Ocean Depth Rig</title>
+
+<style>
+  /* ---------------------------------------------------------------
+     Committed single-theme design, on purpose: this page exists to
+     judge dark underwater imagery, and a light ground would destroy
+     the viewer's read of the value ladder the study is about. Every
+     colour is painted explicitly so the page holds on any host.
+     Palette: deep-water ink ground, cool light text, one amber accent
+     — the complement of teal, and the one hue the research says
+     survives only in the near field.
+     --------------------------------------------------------------- */
+  :root {
+    --ink: #06121a;
+    --ink-panel: #0b1e29;
+    --ink-raise: #102a37;
+    --hair: #1c3846;
+    --text: #cadce3;
+    --muted: #6d8b99;
+    --accent: #f2a24b;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--mono);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #view {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    background: var(--ink);
+  }
+
+  /* The rail is an instrument panel, not a sidebar: monospaced, tabular,
+     hairline-ruled, with the numbers doing the talking. */
+  .rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 19.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.05rem;
+    padding: 1.3rem 1.25rem;
+    box-sizing: border-box;
+    overflow-y: auto;
+    background: linear-gradient(to right, rgba(6, 18, 26, 0.94), rgba(6, 18, 26, 0.82));
+    border-right: 1px solid var(--hair);
+    backdrop-filter: blur(6px);
+  }
+
+  .masthead { display: flex; flex-direction: column; gap: 0.4rem; }
+  .eyebrow {
+    font-size: 0.625rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+  .standfirst {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+
+  .block { display: flex; flex-direction: column; gap: 0.55rem; }
+  .block > h2 {
+    margin: 0;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--hair);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .field label {
+    font-size: 0.6875rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+  input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+  input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .presets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.35rem; }
+  .presets button {
+    padding: 0.45rem 0.3rem;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    line-height: 1.3;
+    color: var(--text);
+    background: var(--ink-panel);
+    border: 1px solid var(--hair);
+    border-radius: 2px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .presets button:hover { background: var(--ink-raise); }
+  .presets button.on { border-color: var(--accent); color: var(--accent); }
+  .presets button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .presets button small { display: block; color: var(--muted); font-size: 0.5625rem; }
+  .presets button.on small { color: var(--accent); }
+
+  #waterout {
+    font-size: 0.75rem;
+    line-height: 1.6;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  #waterout b { color: var(--text); font-weight: 600; }
+  #waterout .type { color: var(--accent); }
+
+  #seastate {
+    font-size: 0.75rem;
+    line-height: 1.6;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  #seastate b { color: var(--text); font-weight: 600; }
+  #seastate .force { color: var(--accent); }
+
+  #readout {
+    font-size: 0.75rem;
+    line-height: 1.6;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  #readout b { color: var(--text); font-weight: 600; }
+  #readout .census { color: var(--accent); }
+
+  #swatch {
+    width: 100%;
+    height: 1.3rem;
+    border: 1px solid var(--hair);
+    border-radius: 2px;
+  }
+
+  /* The layer numbers are not decoration: they are the render order from §7 of
+     the research doc. An amber dot marks a layer the real renderer does not
+     have — which is the argument of the study. */
+  .layers { display: flex; flex-direction: column; gap: 0.05rem; }
+  .layer {
+    display: grid;
+    grid-template-columns: 1.4rem 1fr auto;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.26rem 0.1rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  .layer:hover { background: var(--ink-panel); }
+  .layer .ord { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .layer input { margin: 0; accent-color: var(--accent); justify-self: end; }
+  .layer input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .layer.new .name::after {
+    content: "";
+    display: inline-block;
+    width: 0.4rem;
+    height: 0.4rem;
+    margin-left: 0.4rem;
+    border-radius: 50%;
+    background: var(--accent);
+    vertical-align: 0.05rem;
+  }
+
+  .legend { font-size: 0.6875rem; line-height: 1.6; color: var(--muted); }
+  .legend code {
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    color: var(--text);
+    background: var(--ink-raise);
+    padding: 0.05rem 0.2rem;
+    border-radius: 2px;
+  }
+  .legend .dot {
+    display: inline-block;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: var(--accent);
+    vertical-align: 0.05rem;
+  }
+
+  @media (max-width: 46rem) {
+    .rail {
+      right: 0;
+      bottom: 0;
+      top: auto;
+      width: auto;
+      max-height: 60vh;
+      border-right: 0;
+      border-top: 1px solid var(--hair);
+    }
+  }
+</style>
+
+<canvas id="view" aria-label="Interactive underwater style study"></canvas>
+
+<aside class="rail">
+  <div class="masthead">
+    <span class="eyebrow">Myunivokai · ocean family</span>
+    <h1>Depth rig</h1>
+    <p class="standfirst">
+      Depth is a place, not a colour. Two numbers decide what is in frame: how
+      far down you are, and how far down the seabed is. Move them apart and the
+      floor vanishes; move them together and it returns. Take the first one past
+      zero and you leave the water altogether.
+    </p>
+  </div>
+
+  <div class="block">
+    <h2>Bathymetry</h2>
+    <div class="field">
+      <label for="depth"><span>you are</span><span>metres down · below 0 = in the air</span></label>
+      <input id="depth" type="range" min="-30" max="3000" step="1" value="-22" aria-label="Viewer depth in metres, negative for above the water" />
+    </div>
+    <div class="field">
+      <label for="bathymetry"><span>seabed at</span><span>metres down</span></label>
+      <input id="bathymetry" type="range" min="2" max="4200" step="1" value="3700" aria-label="Seafloor depth in metres" />
+    </div>
+    <div class="presets">
+      <button type="button" data-viewer="-22" data-floor="3700" data-sun="32" data-yaw="118" data-wind="12" data-water="2" class="on">Above water<small>22 m up / BF 6</small></button>
+      <button type="button" data-viewer="-12" data-floor="3700" data-sun="5" data-yaw="0" data-wind="6" data-water="2">Golden hour<small>12 m up / BF 4</small></button>
+      <button type="button" data-viewer="8" data-floor="15" data-sun="58" data-wind="4" data-water="1">Reef<small>8 m / bed 15 m</small></button>
+      <button type="button" data-viewer="17" data-floor="3700" data-sun="46" data-wind="9" data-water="2">Open water<small>17 m / bed 3.7 km</small></button>
+      <button type="button" data-viewer="142" data-floor="3904" data-water="1">Twilight<small>142 m / bed 3.9 km</small></button>
+      <button type="button" data-viewer="2448" data-floor="2455" data-water="0">Abyssal plain<small>2448 m / bed 2455 m</small></button>
+    </div>
+  </div>
+
+  <div class="block">
+    <h2>Sea state</h2>
+    <div class="field">
+      <label for="wind"><span>wind at 10 m</span><span>metres per second</span></label>
+      <input id="wind" type="range" min="0" max="24" step="0.5" value="12" aria-label="Wind speed at ten metres, in metres per second" />
+    </div>
+    <div id="seastate"></div>
+    <p class="legend">
+      Wind is the only input. Wave height, peak wavelength and how much of the
+      surface is white all follow from it: <code>Pierson–Moskowitz</code> for the
+      spectrum, <code>Monahan</code> for the whitecaps. Eight Gerstner components
+      are drawn from that spectrum, and foam appears where their Jacobian folds.
+    </p>
+  </div>
+
+  <div class="block">
+    <h2>The sun</h2>
+    <div class="field">
+      <label for="sun"><span>elevation</span><span>degrees above horizon</span></label>
+      <input id="sun" type="range" min="1" max="80" step="1" value="32" aria-label="Sun elevation in degrees above the horizon" />
+    </div>
+    <p class="legend">
+      One sun, two media. Above water it is the Preetham atmosphere — the same
+      analytic daylight model three.js ships in <code>Sky.js</code>. Below water
+      Snell's law bends it toward the zenith, and the view up through the window
+      is that same sky, un-refracted per pixel.
+    </p>
+  </div>
+
+  <div class="block">
+    <h2>The water itself</h2>
+    <div class="field">
+      <label for="water"><span>Jerlov type</span><span>clear → turbid</span></label>
+      <input id="water" type="range" min="0" max="8" step="1" value="2" aria-label="Jerlov water type, clearest to most turbid" />
+    </div>
+    <div id="waterout"></div>
+    <p class="legend">
+      Jerlov's 1976 classification, by downwelling attenuation <code>Kd</code>.
+      Clarity is a property of the water, not of the depth: what runs out as you
+      descend is the sun. Coastal water is green rather than merely darker,
+      because what makes it turbid absorbs blue hardest.
+    </p>
+  </div>
+
+  <div class="block">
+    <h2>Derived by the curve</h2>
+    <div id="readout"></div>
+    <div id="swatch"></div>
+  </div>
+
+  <div class="block">
+    <h2>Layer stack</h2>
+    <div class="layers">
+      <label class="layer new"><span class="ord">02</span><span class="name">Far silhouettes</span><input type="checkbox" data-layer="silhouettes" checked /></label>
+      <label class="layer"><span class="ord">03</span><span class="name">Seabed</span><input type="checkbox" data-layer="seabed" checked /></label>
+      <label class="layer"><span class="ord">04</span><span class="name">Kelp + sponges</span><input type="checkbox" data-layer="flora" checked /></label>
+      <label class="layer"><span class="ord">05</span><span class="name">Animals</span><input type="checkbox" data-layer="fauna" checked /></label>
+      <label class="layer"><span class="ord">06</span><span class="name">God rays</span><input type="checkbox" data-layer="godrays" checked /></label>
+      <label class="layer"><span class="ord">07</span><span class="name">Plankton, 3 sizes</span><input type="checkbox" data-layer="particles" checked /></label>
+      <label class="layer new"><span class="ord">08</span><span class="name">Foreground frame</span><input type="checkbox" data-layer="foreground" checked /></label>
+      <label class="layer new"><span class="ord">09</span><span class="name">Surface, both faces</span><input type="checkbox" data-layer="surface" checked /></label>
+      <label class="layer new"><span class="ord">09b</span><span class="name">Whitecaps</span><input type="checkbox" data-layer="foam" checked /></label>
+      <label class="layer new"><span class="ord">10</span><span class="name">Bubble streams</span><input type="checkbox" data-layer="bubbles" checked /></label>
+      <label class="layer new"><span class="ord">--</span><span class="name">Complementary fill</span><input type="checkbox" data-layer="fill" checked /></label>
+    </div>
+    <p class="legend">
+      <span class="dot"></span> the renderer does not have this layer yet.
+      Species appear only where they can live: dolphins need air, lanternfish
+      need the mesopelagic, reef fish need a reef. Above the waterline the
+      medium is air, so nothing is dark and distance is haze. Drag to look
+      around.
+    </p>
+  </div>
+</aside>
+
+<script>
+  window.THREE = (function () {
+    var module = { exports: {} };
+    var exports = module.exports;
+    /*__THREE_CJS__*/
+    return module.exports;
+  })();
+</script>
+
+<script>
+  /*__GLTF_LOADER__*/
+</script>
+
+<script>
+  /*__MODELS__*/
+</script>
+
+<script>
+  /*__OCEAN_SCENE__*/
+</script>

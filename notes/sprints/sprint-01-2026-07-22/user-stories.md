@@ -179,10 +179,50 @@ Still unproven, and deliberately left unchecked:
 
 - public lifecycle smoke for both families (create → job → world → publish →
   share) against production;
-- negative NATS ACL and least-privilege database tests;
 - failure/retry smoke proving an accepted job is never silently lost;
-- two Gateway instances sharing one Redis rate-limit policy;
 - a tested rollback.
+
+**Corrected 2026-08-14.** Two further lines stood in that list for weeks after
+the decisions that killed them, so each re-reading of this story reported them
+as outstanding work. They are not outstanding; they are answered, and the
+answers are worth more than the checkboxes were.
+
+*"Negative NATS ACL and least-privilege database tests."* There is no
+production ACL to test negatively. Every service authenticates to Synadia as
+**one shared account user with no publish allow-list**, decided and recorded on
+2026-08-07 in
+[the production guide §1](../../ops/production-deployment-guide.md); the
+per-service permission blocks in `infra/nats/nats-server.conf` are local-only,
+as that file's own first line says. The honest statement is not "untested" but
+the consequence already written in the guide: the rule *"analytics-service
+publishes no domain subject"* **is enforced by ACL locally and by code alone in
+production**. That is a real and permanent property of this deployment, and it
+belongs in a design note rather than in a to-do list, because no test will ever
+tick it. The same shape applies to database least privilege: each service holds
+its own Neon database and connection string, but the per-role grants exist in
+local Compose only.
+
+*"Two Gateway instances sharing one Redis rate-limit policy."* Every block in
+`render.yaml` is `plan: free`, which has no horizontal scaling, so this cannot
+be exercised **in production** on the infrastructure this project has chosen,
+and stays that way until someone pays for a plan that runs two instances. That
+half is a cost consequence, not a gap in the work.
+
+The other half is still open, and separating them is the point of keeping this
+line rather than deleting it: **the policy is provable locally today.**
+`S1-LOCAL-001` already exercises real behaviour against real dependencies in
+Compose, and the same stack can publish a port range instead of a single port
+and run `--scale api-gateway=2` against the one Redis it already starts. What
+that would prove is not hypothetical. The token bucket is a Lua script
+evaluated atomically inside Redis
+(`services/api-gateway/internal/edge/redis.go`), keyed on route plus client and
+taking its clock from `redis.call('TIME')` rather than from the calling
+gateway, so two instances with skewed clocks still draw from one bucket. The
+design is right by construction and the gateway suite covers the script's
+arithmetic — but no one has yet watched two processes actually share a limit,
+and the fallback path in `middleware/rate_limit.go` means a Redis failure
+silently returns the system to per-process counting, which is exactly the
+condition this check exists to notice.
 
 Reachability is not a lifecycle. Four healthy processes and a live Redis/NATS
 connection say the fleet is up; they say nothing about whether a generation job
@@ -191,7 +231,31 @@ is automated.
 
 ## S1-SECURITY-001 — Remove vulnerable frontend runtime dependencies
 
-Status: Required before production cutover
+Status: **Mostly done, 2026-08-14, and one acceptance line deliberately left
+open.** `myunivokai-web` is on `next@15.5.23` / React 19.2.8 / R3F 9.7.0, which
+closes **all 21** `next` advisories — the premise below that Next **16** is the
+available remediation was wrong, and the correction is in
+[frontend-modernization-research.md](../../vision/frontend-modernization-research.md):
+`npm audit` prints `16.x` because `fixAvailable` reports the `latest` tag rather
+than the minimum sufficient version.
+
+What is done: the upgrade, the async route params, and visual regression
+evidence — twelve before/after screenshots of both families, committed under
+`apps/myunivokai-web/e2e/reference/`, which is the "browser regression evidence"
+this story asked for and the repo previously had no way to produce.
+
+What is NOT done, and why: `npm audit --omit=dev --audit-level=high` still exits
+non-zero. Three advisories remain and **none is against `next`** — they are
+`postcss@8.4.31` and `sharp@0.34.5`, pinned inside next's own dependency tree.
+Only Next 16 replaces that postcss. Neither is reachable from this app: postcss
+runs at build time, and `next/image` is used exactly once, with `unoptimized`,
+so the Image Optimizer that loads sharp never runs. Closing the last line
+literally means taking Route B, which is a separate decision with its own risk —
+Turbopack, ESLint 9 flat config, and `params` becoming fatal — not a
+continuation of this one.
+
+ESLint flat config is likewise not done and not needed: `next@15.5.23` accepts
+ESLint 8. It becomes required at Next 16.
 
 As an operator, I want the deployed web runtime free of known high-severity
 dependency advisories so passing functional tests is not mistaken for

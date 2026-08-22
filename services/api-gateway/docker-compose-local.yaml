@@ -22,10 +22,42 @@ services:
       REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-myunivokai}
       RATE_LIMIT_REQUESTS_PER_SECOND: ${RATE_LIMIT_REQUESTS_PER_SECOND:-2}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-20}
+      # /api/admin is off by default in production until apps/myunivokai-admin
+      # exists (S4-AUTH-004); local dev turns it on so the route group and its
+      # tests actually run against a live stack. See
+      # notes/vision/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
+      ADMIN_ROUTES_ENABLED: ${ADMIN_ROUTES_ENABLED:-true}
+      ADMIN_ALLOWED_ORIGIN: http://localhost:${ADMIN_PORT:-41900}
+      ADMIN_RATE_LIMIT_REQUESTS_PER_SECOND: ${ADMIN_RATE_LIMIT_REQUESTS_PER_SECOND:-10}
+      ADMIN_RATE_LIMIT_BURST: ${ADMIN_RATE_LIMIT_BURST:-50}
+      # Public half of AUTH_ACCESS_PRIVATE_KEY (auth-service/.env.local) —
+      # never the private key itself. Comma-separated so a key-rotation
+      # drill can list both the outgoing and incoming key at once (S4-AUTH-005).
+      ADMIN_ACCESS_PUBLIC_KEYS: ${ADMIN_ACCESS_PUBLIC_KEYS}
+      ADMIN_TOKEN_VERSION_CACHE_TTL: ${ADMIN_TOKEN_VERSION_CACHE_TTL:-360h}
       JOB_CACHE_TTL: ${JOB_CACHE_TTL:-30s}
       WORLD_CACHE_TTL: ${WORLD_CACHE_TTL:-60s}
       SHARE_CACHE_TTL: ${SHARE_CACHE_TTL:-60s}
       SERVICE_SHUTDOWN_TIMEOUT: ${SERVICE_SHUTDOWN_TIMEOUT:-15s}
+      # Left unset this reports "unknown": a bind-mounted repo does not give the
+      # Go toolchain a usable VCS stamp inside the container, and no host
+      # supplies a commit locally. `make local-up` exports the working tree's
+      # own describe, so the Fleet screen names the code that is actually
+      # running instead of a placeholder.
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
+      # Left at "none" deliberately. Containers here do not sleep, so there is
+      # nothing to wake — and a stopped service should look like an outage
+      # locally, not like a cold start: `docker compose stop dna-service`
+      # must still produce SERVICE_UNAVAILABLE so an integration test can tell
+      # a broken service from a slow one. See
+      # notes/vision/service-wake-mechanism.md.
+      SERVICE_WAKE_PLATFORM: ${SERVICE_WAKE_PLATFORM:-none}
+      # Off by default here too, so the local stack behaves like the shipped
+      # configuration. Set TELEMETRY_ENABLED=true in .env.local to watch
+      # telemetry-service fill up, which is also the only way to exercise the
+      # admin Telemetry screen locally.
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-false}
+      TELEMETRY_FLUSH_INTERVAL: ${TELEMETRY_FLUSH_INTERVAL:-60s}
     ports:
       - "${GATEWAY_PORT:-41800}:41800"
     volumes:

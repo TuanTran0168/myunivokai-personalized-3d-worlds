@@ -1,449 +1,413 @@
 # Myunivokai
 
-AI-powered personal 3D universe generator.
+> *Have you ever wondered what a world built from who you are would look like?*  
+> **Myunivokai** (*My Universe? OK, AI!*) transforms your personality into an AI-generated 3D world that's uniquely yours.
 
-A visitor describes themselves once.
-The platform creates a canonical ProfileDNA from that input.
-Then it composes a **Universe** (Solar System) or a **Nature** (Forest) world
-and renders it as an interactive 3D scene right in the browser.
+Describe yourself once. The platform synthesizes a canonical **ProfileDNA** from your narrative, then deterministically composes an interactive 3D scene — a **Universe** (Solar System), **Nature** (Forest), or **Ocean** (Deep Sea) — rendered directly in your browser with procedural ambient soundscapes.
 
 ---
 
 ## Architecture
 
 ```mermaid
+---
+config:
+  theme: base
+  themeVariables:
+    primaryColor: "#ffffff"
+    primaryTextColor: "#1e293b"
+    primaryBorderColor: "#e2e8f0"
+    lineColor: "#94a3b8"
+    clusterBkg: "#fafafa"
+    clusterBorder: "#e2e8f0"
+    titleColor: "#475569"
+    edgeLabelBackground: "#ffffff"
+    fontSize: 14px
+---
 flowchart TB
-  %% Class Definitions & Layer Colors
-  classDef clientStyle fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e40af;
-  classDef edgeStyle fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#166534;
-  classDef infraStyle fill:#fffbe6,stroke:#d97706,stroke-width:2px,color:#92400e;
-  classDef domainStyle fill:#faf5ff,stroke:#9333ea,stroke-width:2px,color:#6b21a8;
-  classDef aiStyle fill:#fdf2f8,stroke:#db2777,stroke-width:2px,color:#9d174d;
-  classDef dbStyle fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#075985;
+  classDef clientStyle fill:#ffffff,stroke:#6366f1,stroke-width:2px,color:#1e293b
+  classDef edgeStyle fill:#ffffff,stroke:#10b981,stroke-width:2px,color:#1e293b
+  classDef infraStyle fill:#ffffff,stroke:#f97316,stroke-width:2px,color:#1e293b
+  classDef domainStyle fill:#ffffff,stroke:#8b5cf6,stroke-width:2px,color:#1e293b
+  classDef platformStyle fill:#ffffff,stroke:#14b8a6,stroke-width:2px,color:#1e293b
+  classDef aiStyle fill:#ffffff,stroke:#ec4899,stroke-width:2px,color:#1e293b
+  classDef dbStyle fill:#ffffff,stroke:#0ea5e9,stroke-width:2px,color:#1e293b
 
-  subgraph clientLayer ["Layer 1 - Client"]
-    browser["<b>Browser</b><br/>User Interface"]:::clientStyle
-    web["<b>Myunivokai Web</b><br/><i>Next.js + React Three Fiber</i>"]:::clientStyle
-    browser --> web
+  subgraph clientLayer ["Layer 1 — Clients"]
+    web["<b>Myunivokai Web</b><br/><i>[Next.js 15] [React Three Fiber]</i>"]:::clientStyle
+    admin["<b>Myunivokai Admin</b><br/><i>[Next.js 15] · staff only</i>"]:::clientStyle
   end
 
-  subgraph edgeLayer ["Layer 2 - Edge"]
-    gateway["<b>API Gateway</b><br/><i>Only Public Backend</i>"]:::edgeStyle
+  subgraph edgeLayer ["Layer 2 — Edge"]
+    gateway["<b>API Gateway</b><br/><i>[Go]</i><br/>Only Public Backend"]:::edgeStyle
   end
 
-  subgraph infrastructureLayer ["Layer 3 - Shared Infrastructure"]
-    redis[("<b>Redis</b><br/>Distributed Rate Limit & Cache")]:::infraStyle
-    nats["<b>NATS</b><br/>JetStream Commands & Core NATS Queries"]:::infraStyle
+  subgraph infrastructureLayer ["Layer 3 — Shared Infrastructure"]
+    redis[("<b>Redis</b><br/>Rate Limits, Caches & tokenVersion")]:::infraStyle
+    nats["<b>NATS</b><br/>JetStream Commands, Core NATS Queries & Events"]:::infraStyle
   end
 
-  subgraph domainLayer ["Layer 4 - Domain Services"]
-    dna["<b>DNA Service</b><br/>AI Orchestration & Root Jobs"]:::domainStyle
-    universe["<b>Universe Service</b><br/>Solar System Composition"]:::domainStyle
-    nature["<b>Nature Service</b><br/>Forest Composition"]:::domainStyle
+  subgraph domainLayer ["Layer 4 — Domain & Platform Services"]
+    subgraph worldServices ["World Generation"]
+      dna["<b>DNA Service</b><br/><i>[Go]</i><br/>AI Orchestration & Root Jobs"]:::domainStyle
+      universe["<b>Universe Service</b><br/><i>[Go]</i><br/>Solar System Composition"]:::domainStyle
+      nature["<b>Nature Service</b><br/><i>[Go]</i><br/>Forest Composition"]:::domainStyle
+      ocean["<b>Ocean Service</b><br/><i>[Go]</i><br/>Deep Sea Composition"]:::domainStyle
+    end
+    subgraph platformServices ["Platform & Admin"]
+      auth["<b>Auth Service</b><br/><i>[Go]</i><br/>Staff Identity & RBAC"]:::platformStyle
+      analytics["<b>Analytics Service</b><br/><i>[Go]</i><br/>Admin Read Model"]:::platformStyle
+      telemetry["<b>Telemetry Service</b><br/><i>[Rust]</i><br/>Platform Read Model"]:::platformStyle
+    end
   end
 
-  subgraph integrationLayer ["Layer 5 - AI Integration"]
-    providers["<b>AI Providers</b><br/><code>ai.Provider</code> (Mock / Gemini / OpenAI)"]:::aiStyle
+  subgraph integrationLayer ["Layer 5 — AI Integration"]
+    subgraph aiProviders ["AI Providers · ai.Provider"]
+      mock["Mock"]:::aiStyle
+      gemini["Gemini"]:::aiStyle
+      openai["OpenAI"]:::aiStyle
+    end
   end
 
-  subgraph persistenceLayer ["Layer 6 - Service-Owned Persistence"]
+  subgraph persistenceLayer ["Layer 6 — Service-Owned Persistence"]
     dnaDatabase[("<b>PostgreSQL</b><br/><code>myunivokai_dna</code>")]:::dbStyle
     universeDatabase[("<b>PostgreSQL</b><br/><code>myunivokai_universe</code>")]:::dbStyle
     natureDatabase[("<b>PostgreSQL</b><br/><code>myunivokai_nature</code>")]:::dbStyle
+    oceanDatabase[("<b>PostgreSQL</b><br/><code>myunivokai_ocean</code>")]:::dbStyle
+    authDatabase[("<b>PostgreSQL</b><br/><code>myunivokai_auth</code>")]:::dbStyle
+    analyticsDatabase[("<b>PostgreSQL</b><br/><code>myunivokai_analytics</code>")]:::dbStyle
+    telemetryDatabase[("<b>PostgreSQL</b><br/><code>myunivokai_telemetry</code>")]:::dbStyle
+    grafana["<b>Grafana Cloud</b><br/>OTLP · the other sink"]:::dbStyle
   end
 
   web -->|"HTTPS"| gateway
+  admin -->|"HTTPS"| gateway
   gateway <-->|"Rate Limit & Cache"| redis
   gateway <-->|"Commands, Queries & Events"| nats
+
   nats <-->|"Generate DNA & Track Root Jobs"| dna
   nats <-->|"Compose & Manage Universe Worlds"| universe
   nats <-->|"Compose & Manage Nature Worlds"| nature
-  dna -->|"ai.Provider Interface"| providers
-  dna -->|"Owns Schema"| dnaDatabase
-  universe -->|"Owns Schema"| universeDatabase
-  nature -->|"Owns Schema"| natureDatabase
+  nats <-->|"Compose & Manage Ocean Worlds"| ocean
+  nats <-->|"Staff Identity, Roles & Audit"| auth
+  nats -->|"Events In, Admin Queries Answered"| analytics
+  nats -->|"Rollups In, Telemetry Queries Answered"| telemetry
+
+  dna -.->|"ai.Provider Interface"| aiProviders
+  dna -.->|"Owns Schema"| dnaDatabase
+  universe -.->|"Owns Schema"| universeDatabase
+  nature -.->|"Owns Schema"| natureDatabase
+  ocean -.->|"Owns Schema"| oceanDatabase
+  auth -.->|"Owns Schema"| authDatabase
+  analytics -.->|"Owns Schema"| analyticsDatabase
+  telemetry -.->|"TELEMETRY_SINK=postgres"| telemetryDatabase
+  telemetry -.->|"TELEMETRY_SINK=otlp"| grafana
+
+  style clientLayer fill:#eef2ff,stroke:#6366f1,stroke-width:2px,color:#4338ca
+  style edgeLayer fill:#ecfdf5,stroke:#10b981,stroke-width:2px,color:#047857
+  style infrastructureLayer fill:#fff7ed,stroke:#f97316,stroke-width:2px,color:#c2410c
+  style domainLayer fill:#f5f3ff,stroke:#8b5cf6,stroke-width:2px,color:#6d28d9
+  style worldServices fill:#faf5ff,stroke:#c4b5fd,stroke-width:1px,color:#7c3aed
+  style platformServices fill:#f0fdfa,stroke:#5eead4,stroke-width:1px,color:#0f766e
+  style integrationLayer fill:#fdf2f8,stroke:#ec4899,stroke-width:2px,color:#be185d
+  style aiProviders fill:#fce7f3,stroke:#f9a8d4,stroke-width:1px,color:#be185d
+  style persistenceLayer fill:#ecfeff,stroke:#06b6d4,stroke-width:2px,color:#0e7490
+
+  linkStyle 0,1 stroke:#334155,stroke-width:2px
+  linkStyle 2,3 stroke:#64748b,stroke-width:1.5px
+  linkStyle 4,5,6,7,8 stroke:#f97316,stroke-width:1.5px,stroke-dasharray:5 5
+  linkStyle 9,10 stroke:#f97316,stroke-width:1.5px,stroke-dasharray:5 5
+  linkStyle 11 stroke:#ec4899,stroke-width:1.5px,stroke-dasharray:5 5
+  linkStyle 12,13,14,15,16,17,18 stroke:#0284c7,stroke-width:1.5px,stroke-dasharray:5 5
+  linkStyle 19 stroke:#10b981,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-- The diagram shows ownership, not request sequence.
-- Each service owns its own PostgreSQL database; nothing reads another's tables.
-- Redis belongs to the gateway alone — caching and rate limits, never job queuing.
-- Only the gateway is public; NATS, Redis and every domain service are private.
-- Domain services are NATS workers with no HTTP business API.
-
-| Service | What it does |
+| Line style | Meaning |
 | --- | --- |
-| `services/api-gateway` | The only public-facing backend. Validates input, publishes commands to NATS, returns `202 + jobId`, and manages Redis caching. |
-| `services/dna-service` | Handles AI orchestration, root generation jobs, ProfileDNA versioning, and the transactional outbox. |
-| `services/universe-service` | Computes deterministic solar-system worlds and variants from a seed. No AI calls. |
-| `services/nature-service` | Computes deterministic forest worlds and variants from a seed. No AI calls. |
-| `contracts` | Shared OpenAPI spec, JSON Schemas, NATS subject names, and Go types used across services. |
-| `infra` | Local development infrastructure: PostgreSQL, NATS JetStream, Redis, ACL config, and bootstrap scripts. |
+| **Solid dark** | HTTPS (Clients → Gateway) |
+| **Solid grey** | Rate limit, cache & NATS dispatch (Gateway ↔ Redis / NATS) |
+| **Dotted orange** | Commands, queries & events (NATS ↔ services) |
+| **Dotted pink** | AI provider call (`dna-service` → `ai.Provider`) |
+| **Dotted blue** | Owns schema (service → PostgreSQL) |
+| **Dashed green** | Telemetry sink (`TELEMETRY_SINK=otlp` → Grafana Cloud) |
 
----
+- **Strict Data Boundaries**: Each service owns its own PostgreSQL database; no service ever queries another's tables directly.
+- **Single Public Entry**: Only `api-gateway` is exposed to the internet. NATS, Redis, and all domain services remain private.
+- **Async Workers**: Domain services are headless NATS workers with no public HTTP business API.
+- **CQRS Read Models**: `analytics-service` and `telemetry-service` are read models that consume events from NATS and answer queries without waking or waiting on domain services.
+- **AI Isolation**: AI providers sit strictly behind `dna-service`. All world generation (`universe`, `nature`, `ocean`) is 100% deterministic mathematical composition.
 
-## Generation flow
-
-- `POST /api/{family}/worlds` — gateway validates, rate-limits, publishes to JetStream.
-- Gateway answers **202 Accepted** with a `jobId`; it never waits for the world.
-- `dna-service` consumes the command and calls the AI provider for a ProfileDNA.
-- `dna-service` stores the root job, then emits a compose command for the family.
-- `universe-service` or `nature-service` composes the world from a seed — no AI.
-- The family service stores the world plus variant 1 and emits a completion event.
-- `dna-service` consumes that event and marks the root job done.
-- Frontend polls `GET /api/jobs/{jobId}`, then loads the world and renders it.
-
-`{family}` is `universe` or `nature`. Both families use identical request shapes.
-
-## World lifecycle after generation
-
-- `GET /api/{family}/worlds/{id}` — the private dashboard read, cached in Redis.
-- `POST /api/{family}/worlds/{id}/variants` — new seed, new scene, zero AI cost.
-- `POST /api/{family}/worlds/{id}/variants/{variantId}/select` — pick what is shown.
-- `POST /api/{family}/worlds/{id}/publish` — mint the share slug once, then reuse it.
-- `GET /api/{family}/share/worlds/{slug}` — public, privacy-safe, cached in Redis.
-- Frontend share pages live at `/universe/share/worlds/{slug}` and `/nature/share/worlds/{slug}`.
-
-## Gateway caching and invalidation
-
-- Three Redis namespaces: `job:v1`, `world:v1`, `share:v1`.
-- `world:v1` is keyed by world id; `share:v1` is keyed by share slug.
-- Every mutation deletes `world:v1` before and after the call.
-- A mutation cannot derive the slug from a world id, so the domain service
-  returns `shareSlug` in its response and the gateway deletes `share:v1` with it.
-- Without that, selecting a variant left the share page serving the previous
-  scene for a whole TTL — which looked like the share losing scene features.
-
----
-
-## Key design decisions
-
-### AI only generates the semantic profile — all 3D numbers are deterministic
-
-- The AI produces concepts: archetype, narrative, mood, energy, palette intent.
-- Every rendering number comes from the seed inside safe mathematical bounds.
-- That covers orbit radii, planet sizes, forest density and lighting angles.
-- Alternative variants therefore cost **zero AI calls**.
-- The same seed always produces the same scene, on any page, forever.
-- `Math.random()` is banned in scene code; the frontend mirrors the seeded PRNG.
-
-### Every world plays music, and the same DNA arranges it
-
-- The notes are **real compositions in the public domain**, shipped as note data.
-- Six pieces — Satie, Bach, Debussy — 84 kB for all six; a world fetches one.
-- The sound comes from CC0 recorded instruments: 39 samples, 1.27 MB total.
-- The DNA chooses the piece, the instruments, the tempo, the key and how full
-  the chords are; the seed chooses the opening phrase, the room and the timing.
-- `Math.random()` is banned here exactly as in scene code — same seed, same
-  performance, on every page and every reload.
-- Famous modern songs are not an option however freely their sheet music
-  circulates: a composition is copyrighted for 70 years after the composer's
-  death, and playing it with our own samples is what a sync licence covers.
-- Audio never reaches for a provider, so swapping to a live AI changes nothing
-  on this path. See [notes/fe/ambient-audio-mechanism.md](notes/fe/ambient-audio-mechanism.md).
-
-### Single public edge with interchangeable AI providers
-
-- The browser talks to the gateway and nothing else.
-- `Gemini`, `OpenAI` and `mock` sit behind one `ai.Provider` interface.
-- Switching provider is an environment variable, not a code change.
-- `mock` runs the whole flow with no API key, and is what tests use.
-
----
-
-## Core concepts
-
-| Concept | What it means |
+| Service | Responsibility |
 | --- | --- |
-| **ProfileDNA** | The AI-generated semantic profile: archetype, narrative, traits, energy, facets, palette intent, atmosphere. This is the only thing AI produces. |
-| **World Seed** | A deterministic seed computed by the backend. Same seed = same 3D scene. No randomness in rendering code. |
-| **World Scene Config** | The full numeric recipe for a 3D scene (planets, orbits, lighting, palette, mood). Computed from the seed, completely AI-free. |
-| **Variant** | An alternative scene config for the same world. Generated from a new seed at zero AI cost. One variant is marked as the selected one. |
-| **Mood Scene Profiles** | Per-mood rendering parameters, mirrored in both Go and TypeScript to keep visuals consistent. |
-| **Share Slug** | Publishing mints one permanent slug per world. Republishing reuses it. |
-| **Ambient Soundscape** | The music a world plays: a public-domain score performed by recorded instrument samples, with the piece, the instruments, the tempo, the key and the chord density all resolved from the DNA and the seed. |
-| **Rare Features** | Black hole, binary suns, meteor shower. Rolled on the frontend from the seed, never stored, so the same seed must reach every page. |
-| **Async Job & Polling** | Gateway returns `202 + jobId`. Frontend polls `GET /api/jobs/{jobId}` until the result is ready. |
+| `services/api-gateway` | **[Go]** The only public-facing backend. Validates input, dispatches commands to NATS, returns `202 + jobId`, and manages Redis caching. |
+| `services/dna-service` | **[Go]** Handles AI orchestration (`ai.Provider`), root generation jobs, immutable `ProfileDNA` versioning, and the transactional outbox. |
+| `services/universe-service` | **[Go]** Computes deterministic solar-system worlds and variants from a seed. No AI calls. |
+| `services/nature-service` | **[Go]** Computes deterministic forest worlds and variants from a seed. No AI calls. |
+| `services/ocean-service` | **[Go]** Computes deterministic deep-sea worlds from a seed and depth curve. No AI calls. |
+| `services/auth-service` | **[Go]** Staff identity: authentication, token rotation, RBAC, and audit logs (Core NATS request-reply). |
+| `services/analytics-service` | **[Go]** The admin CQRS read model. Consumes JetStream events and answers admin metrics/projection queries. |
+| `services/telemetry-service` | **[Rust]** The platform read model. Ingests minute-by-minute rollups from the gateway, storing metrics in Postgres or forwarding to Grafana Cloud. |
 
 ---
 
-## Tech stack
+## Database Architecture & ERD
 
-### Backend
+Myunivokai strictly enforces the **Database-per-Service** pattern. Each microservice manages its own schema via explicit SQL migrations.
+Dưới đây là toàn cảnh Database Schema của hệ thống, được quy hoạch phân mảnh theo Vùng (Domain Regions), trải dàn hàng ngang để quan sát toàn bộ kiến trúc.
 
-| Technology | Role |
-| --- | --- |
-| **Go** | All backend services |
-| **chi** | HTTP router (API Gateway) |
-| **pgxpool** | PostgreSQL connection pooling (DNA, Universe, Nature) |
-| **NATS JetStream** | Durable command/event messaging between services |
-| **Core NATS** | Lightweight request-reply queries |
-| **Redis** | Distributed rate limiting and response caching (Gateway) |
-| **zerolog** | Structured JSON logging |
+```text
+=======================================================================================================================================================
+                                                     REGION 1: WORLD GENERATION SERVICES (Family)
+=======================================================================================================================================================
+ [ myunivokai_dna ]                                                               [ myunivokai_{family} ] (universe, nature, ocean)
++--------------------------+ 1      N +--------------------------+               +--------------------------+
+| PROFILES                 |----------| DNA_VERSIONS             |               | WORLDS                   |
++--------------------------+          +--------------------------+               +--------------------------+
+| * id (PK)                |          | * id (PK)                |               | * id (PK)                |          +--------------------------+
+|   raw_input              |          |   profile_id (FK)        |               |   source_job_id (UK)     | 1      N | WORLD_VARIANTS           |
+|   created_at             |          |   source_job_id (UK)     |               |   profile_id             |----------|                          |
+|   updated_at             |          |   version_number         |               |   dna_version_id         |          +--------------------------+
++--------------------------+          |   profile_dna            |               |   nickname               |          | * id (PK)                |
+             | 1                      |   created_at             |               |   role                   |          |   world_id (FK)          |
+             |                        +--------------------------+               |   visual_intent          |          |   variant_no             |
+             |                                     | 1                           |   dna_snapshot           |          |   seed                   |
+             | N (has many)                        |                             |   archetype              |          |   config                 |
++--------------------------+                       |                             |   scene_name             |          |   thumbnail_url          |
+| GENERATION_JOBS          |-----------------------+ 0..1 (produces)             |   quote                  |          |   is_selected            |
++--------------------------+                                                     |   revision               |          |   created_at             |
+| * job_id (PK)            |                                                     |   selected_variant_id(FK)|<-+       +--------------------------+
+|   family                 |                                                     |   created_at             |  |                    |
+|   profile_id (FK)        |                                                     |   updated_at             |  | 0..1               | 1 (selected)
+|   status                 |                                                     +--------------------------+  +--------------------+
+|   dna_version_id (FK)    |                                                                  | 1
+|   world_id               |                                                                  |
+|   error_code             |                                                                  | 0..1 (shares)
+|   error_message          |                                                     +--------------------------+
+|   created_at             |                                                     | WORLD_SHARES             |
+|   completed_at           |                                                     +--------------------------+
++--------------------------+                                                     | * id (PK)                |
+             | 1                                                                 |   world_id (FK)          |
+             |                                                                   |   share_slug (UK)        |
+             | N (tracks)                                                        |   created_at             |
++--------------------------+                                                     +--------------------------+
+| AI_GENERATION_ATTEMPTS   |
++--------------------------+                                                     +--------------------------+          +--------------------------+
+| * id (PK)                |                                                     | INBOX_MESSAGES           |          | OUTBOX_MESSAGES          |
+|   job_id (FK)            |                                                     +--------------------------+          +--------------------------+
+|   provider               |                                                     | * message_id (PK)        |          | * id (PK)                |
+|   model                  |                                                     |   subject                |          |   message_id (UK)        |
+|   input_hash             |                                                     |   job_id                 |          |   subject                |
+|   request_json           |                                                     |   processed_at           |          |   payload                |
+|   response_json          |                                                     +--------------------------+          |   published_at           |
+|   usage_json             |                                                                                           +--------------------------+
+|   latency_ms             |
+|   status                 |
+|   created_at             |
++--------------------------+
 
-### Frontend
++--------------------------+          +--------------------------+
+| INBOX_MESSAGES           |          | OUTBOX_MESSAGES          |
++--------------------------+          +--------------------------+
+| * message_id (PK)        |          | * id (PK)                |
+|   subject                |          |   message_id (UK)        |
+|   job_id                 |          |   subject                |
+|   processed_at           |          |   payload                |
++--------------------------+          |   published_at           |
+                                      +--------------------------+
 
-| Technology | Role |
-| --- | --- |
-| **Next.js 14** | App Router, SSR, API route proxies |
-| **React 18 + TypeScript** | UI components and type safety |
-| **React Three Fiber** | three.js integration for 3D rendering |
-| **@react-three/drei** | three.js helpers and abstractions |
-| **@react-three/postprocessing** | Post-processing effects (bloom, vignette) |
-| **Web Audio API** | Ambient music: sampled instruments, convolution reverb, lookahead scheduling |
-| **Tailwind CSS** | Styling with custom design tokens (Vitrine + Liquid Glass) |
-| **vitest** | Unit testing |
 
-### Infrastructure
+=======================================================================================================================================================
+                                                     REGION 2: PLATFORM & ADMIN SERVICES
+=======================================================================================================================================================
+ [ myunivokai_auth ]                                                                              [ myunivokai_analytics ]   [ myunivokai_telemetry ]
++--------------------------+ 1      N +--------------------------+ N      1 +--------------------------+ +--------------------------+ +--------------------------+
+| ACCOUNTS                 |----------| ACCOUNT_ROLES            |----------| ROLES                    | | JOB_PROJECTIONS          | | HTTP_ROLLUPS             |
++--------------------------+          +--------------------------+          +--------------------------+ +--------------------------+ +--------------------------+
+| * id (PK)                |          | * account_id (PK, FK)    |          | * id (PK)                | | * job_id (PK)            | | * bucket_start (PK)      |
+|   email (UK)             |          | * role_id (PK, FK)       |          |   name (UK)              | |   family                 | | * route_pattern (PK)     |
+|   password_hash          |          +--------------------------+          |   audience               | |   status                 | | * method (PK)            |
+|   kind                   |                                                |   is_system              | |   error_code             | | * status_class (PK)      |
+|   is_super_admin         |          +--------------------------+ 1      N |   created_at             | |   world_id               | |   request_count          |
+|   disabled               |          | PERMISSIONS              |----------+--------------------------+ |   created_at             | |   duration_sum_ms        |
+|   token_version          |          +--------------------------+          | ROLE_PERMISSIONS         | |   completed_at           | |   duration_max_ms        |
+|   failed_attempts        |          | * id (PK)                |          +--------------------------+ |   duration_ms            | |   histogram              |
+|   locked_until           |          |   codename (UK)          |          | * role_id (PK, FK)       | |   projected_at           | +--------------------------+
+|   created_at             |          |   audience               |          | * permission_id (PK, FK) | +--------------------------+ 
++--------------------------+          |   is_system              |          +--------------------------+                              +--------------------------+
+     | 1            | 1               |   created_at             |                                       +--------------------------+ | NATS_ROLLUPS             |
+     |              |                 +--------------------------+                                       | WORLD_PROJECTIONS        | +--------------------------+
+     | N            | N                                                                                  +--------------------------+ | * bucket_start (PK)      |
++--------------------------+          +--------------------------+                                       | * world_id (PK)          | | * service (PK)           |
+| REFRESH_TOKENS           |          | AUDIT_EVENTS             |                                       |   family                 | |   request_count          |
++--------------------------+          +--------------------------+                                       |   profile_id             | |   duration_sum_ms        |
+| * id (PK)                |          | * id (PK)                |                                       |   dna_version_id         | |   error_count            |
+|   account_id (FK)        |          |   actor_id (FK)          |                                       |   source_job_id          | |   histogram              |
+|   family_id              |          |   action                 |                                       |   revision               | +--------------------------+
+|   token_hash (UK)        |          |   target                 |                                       |   nickname               |
+|   used_at                |          |   result                 |                                       |   archetype              | +--------------------------+
+|   revoked_at             |          |   occurred_at            |                                       |   mood                   | | CACHE_ROLLUPS            |
+|   expires_at             |          +--------------------------+                                       |   world_style            | +--------------------------+
++--------------------------+                                                                             |   favorite_colors        | | * bucket_start (PK)      |
+                                                                                                         |   trait_creativity       | | * namespace (PK)         |
+                                                                                                         |   trait_energy           | |   hits                   |
+                                                                                                         |   variant_count          | |   misses                 |
+                                                                                                         |   is_published           | +--------------------------+
+                                                                                                         |   world_created_at       |
+                                                                                                         |   projected_at           | +--------------------------+
+                                                                                                         +--------------------------+ | ERROR_CODE_ROLLUPS       |
+                                                                                                                                      +--------------------------+
+                                                                                                         +--------------------------+ | * bucket_start (PK)      |
+                                                                                                         | INBOX_MESSAGES           | | * error_code (PK)        |
+                                                                                                         +--------------------------+ |   count                  |
+                                                                                                         | * message_id (PK)        | +--------------------------+
+                                                                                                         |   subject                |
+                                                                                                         |   job_id                 |
+                                                                                                         |   processed_at           |
+                                                                                                         +--------------------------+
+```
 
-| Technology | Role |
-| --- | --- |
-| **PostgreSQL 17** | 3 isolated databases, one per domain service |
-| **Neon** | Managed PostgreSQL hosting (production) |
-| **NATS 2.11** | Managed messaging (production) |
-| **Redis 7.4** | Managed cache (production) |
-| **Docker Compose** | Local full-stack development |
-| **Render** | Production hosting (web services + background workers) |
-| **GitHub Actions** | CI quality gates on every PR |
+---
+## How a Request Travels
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Web as Myunivokai Web
+  participant Gateway as API Gateway
+  participant NATS as NATS JetStream
+  participant DNA as DNA Service
+  participant Family as Universe / Nature / Ocean Service
+
+  Web->>Gateway: POST /api/{family}/worlds
+  Gateway->>NATS: publish generate command
+  Gateway-->>Web: 202 Accepted + jobId
+  Note over Gateway,Web: The gateway never blocks waiting for world composition.
+  NATS->>DNA: generate command
+  DNA->>DNA: ProfileDNA from AI provider
+  DNA->>NATS: publish compose command
+  NATS->>Family: compose command
+  Family->>Family: compose from seed (zero AI calls)
+  Family->>NATS: publish completed event
+  NATS->>DNA: completed event, root job done
+  loop Polling until terminal
+    Web->>Gateway: GET /api/jobs/{jobId}
+  end
+  Web->>Gateway: GET /api/{family}/worlds/{id}
+```
 
 ---
 
-## Prerequisites
+## Core Concepts
 
-- **Docker Desktop** with Compose v2.20+ (required for local development).
-- **Go 1.23+** — only needed if running backend services outside Docker.
-- **Node.js 20+** with npm — only needed if running frontend outside Docker.
+| Concept | Description |
+| --- | --- |
+| **ProfileDNA** | The AI-generated semantic profile: archetype, narrative, traits, energy, facets, and palette intent. This is the **only** output AI produces. |
+| **World Seed** | A deterministic numeric seed. Same seed = identical 3D scene on any device. Randomness is forbidden in 3D rendering code. |
+| **World Scene Config** | The complete numeric tree for 3D rendering (objects, geometry, shaders, lighting). Computed deterministically from the seed with zero AI cost. |
+| **Variant** | An alternative scene config for the same world generated from a new seed at zero AI cost. |
+| **Ambient Soundscape** | Procedural music synthesized in-browser via Web Audio API using public-domain compositions and real instrument samples arranged by the DNA. |
+| **Rare Features** | Special features (black holes, binary suns, deep trenches) rolled client-side from the seed. |
+| **Async Job & Polling** | Gateway returns `202 + jobId`. The frontend polls `GET /api/jobs/{jobId}` until generation is complete. |
 
 ---
 
-## Run locally — full stack
+## Tech Stack
 
-Everything in Docker: databases, messaging, all backend services, the frontend.
+| Area | Technologies |
+| --- | --- |
+| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js, Web Audio API, Tailwind CSS |
+| **Backend** | Go (chi, pgxpool, zerolog), Rust (`telemetry-service`, sqlx, tokio) |
+| **Messaging & Cache** | NATS JetStream (durable events & commands), Core NATS (request-reply), Redis (rate limiting & cache) |
+| **Persistence** | PostgreSQL 17 (Database-per-service on Neon in production), Raw SQL (No ORM) |
+| **AI Providers** | Google Gemini, OpenAI, Mock provider (pluggable via `ai.Provider` interface) |
+| **Infrastructure** | Docker Compose (local), Render (production), GitHub Actions (CI) |
 
-**Step 1.** Copy the environment template (skip if `.env.local` already exists):
+---
 
-```powershell
+## Quickstart — Run Locally
+
+### Prerequisites
+- **Docker Desktop** (with Compose v2.20+)
+- **Go 1.23+** and **Node.js 20+** (only if developing outside Docker)
+
+### 1. Start the Full Stack
+
+```bash
+# 1. Initialize local environment (uses local-only credentials)
 cp .env.example .env.local
+
+# 2. Start all services, databases, and message brokers
+make local-up
+# or: docker compose --env-file .env.local -f docker-compose-local.yaml up --build
 ```
 
-- The repo ships a working `.env.local` with local-only credentials.
+### 2. Service Endpoints
 
-**Step 2.** Start all services:
+| Service | URL | Role |
+| --- | --- | --- |
+| **Web App** | http://localhost:41300 | 3D World generator & viewer |
+| **Admin Console** | http://localhost:41900 | Staff management dashboard |
+| **API Gateway** | http://localhost:41800 | Public API endpoint (`/api/v1/healthz`) |
 
-```powershell
-docker compose --env-file .env.local -f docker-compose-local.yaml up --build
+### 3. Create First Admin Account
+
+```bash
+docker compose --env-file .env.local -f docker-compose-local.yaml exec auth-service go run ./cmd/bootstrap --email admin@myunivokai.local --password "ChangeMe12345Local"
 ```
+Log in to the Admin Console at `http://localhost:41900/login` with your bootstrap credentials.
 
-- `--env-file .env.local` is **required**, not cosmetic.
-- Compose auto-loads a root `.env` when the flag is absent.
-- A root `.env` outranks the `env_file:` entries under `include:`.
-- Anyone holding a deploy-shaped `.env` then boots the local stack against
-  production NATS, production Redis and the live AI provider — silently.
-- Verify what you are about to start: `docker compose --env-file .env.local -f docker-compose-local.yaml config`.
-- `make local-up` passes the flag for you.
+### 4. Stop the Stack
 
-**Step 3.** Wait for the containers to report healthy, then open:
-
-| Component | URL |
-| --- | --- |
-| Web (frontend) | http://localhost:41300 |
-| API Gateway | http://localhost:41800 |
-| Liveness probe | http://localhost:41800/api/v1/healthz |
-| Readiness probe | http://localhost:41800/api/v1/readyz |
-
-**Step 4.** Stop everything:
-
-```powershell
+```bash
 make local-down
 ```
 
-### Published ports
-
-- Deliberately off the usual numbers so the stack never fights another project.
-- Nothing here uses `3000`, `8080`, `5432`, `6379` or `4222` on the host.
-- Change any of them in `.env.local`; the compose files read the variables.
-
-| Host port | Service | Container port |
-| ---: | --- | ---: |
-| 41300 | Web (frontend) | 41300 |
-| 41800 | API Gateway | 41800 |
-| 15432 | PostgreSQL | 5432 |
-| 14222 | NATS client | 4222 |
-| 18222 | NATS monitoring | 8222 |
-| 16379 | Redis | 6379 |
-
-- Domain services publish no host port at all — they are NATS workers.
-- Production ports come from the platform's `PORT`, untouched by these values.
-
 ---
 
-## Run locally — single service
-
-For iterating on one service while infrastructure runs in Docker.
-
-**Step 1.** Start shared infrastructure only:
-
-```powershell
-docker compose --env-file infra/.env.local -f infra/docker-compose-local.yaml up -d
-```
-
-**Step 2.** Start the service you are working on (example: universe-service):
-
-```powershell
-docker compose --env-file services/universe-service/.env.local `
-  -f services/universe-service/docker-compose-local.yaml up --build
-```
-
-- Each service compose file joins the shared `myunivokai-local-backend` network.
-- Each expects infrastructure to be running already.
-- The frontend outside Docker: `cd apps/myunivokai-web; npm run dev` (port 41300).
-
----
-
-## Environment files
-
-- `.env.local` holds real local-only values and is tracked in git.
-- `.env.example` is the template with placeholders.
-- A root `.env` is gitignored and belongs to whoever deploys — never to the stack.
-- **Never** put managed or production secrets in `.env.local`.
-
-### Which file is used where
-
-| Environment file | Loaded by | What it configures |
-| --- | --- | --- |
-| `.env.local` (root) | Root `docker-compose-local.yaml` | Everything. Master config for all services + infra in full-stack mode. |
-| `infra/.env.local` | `infra/docker-compose-local.yaml` | PostgreSQL, NATS, and Redis only. Used when running infra standalone. |
-| `services/api-gateway/.env.local` | `services/api-gateway/docker-compose-local.yaml` | NATS connection, Redis, rate limits, cache TTLs. |
-| `services/dna-service/.env.local` | `services/dna-service/docker-compose-local.yaml` | Database, NATS, AI provider config, API keys. |
-| `services/universe-service/.env.local` | `services/universe-service/docker-compose-local.yaml` | Database, NATS, outbox settings. |
-| `services/nature-service/.env.local` | `services/nature-service/docker-compose-local.yaml` | Database, NATS, outbox settings. |
-| `apps/myunivokai-web/.env.local` | Web compose file and `npm run dev` | Just `NEXT_PUBLIC_GATEWAY_BASE_URL`. |
-
-### How full-stack mode resolves variables
-
-- The root `docker-compose-local.yaml` is an `include:` aggregator, nothing more.
-- Each `include:` entry names the root `.env.local` for interpolation.
-- Each child compose file also loads its own `.env.local` via `env_file:`.
-- Root-level variables win over child ones through Compose interpolation.
-- A root `.env` wins over all of it, which is why the `--env-file` flag matters.
-
-### Why NATS credentials are prefixed in the root file
-
-- One root file has to hold credentials for every service at once.
-- Prefixed names (`NATS_GATEWAY_USERNAME`) avoid collisions between them.
-- Each service compose file maps the prefixed name to the plain one its binary reads.
-
-```yaml
-# In services/api-gateway/docker-compose-local.yaml:
-environment:
-  NATS_USERNAME: ${NATS_GATEWAY_USERNAME:-myunivokai_gateway}
-  NATS_PASSWORD: ${NATS_GATEWAY_PASSWORD:-myunivokai_local_gateway}
-```
-
-### Production
-
-- Render sets every variable through its dashboard; `render.yaml` lists which.
-- Database URLs, NATS URLs and API keys are configured per service, by hand.
-- The service port comes from Render's `PORT`, so local port choices never leak.
-
----
-
-## Repository layout
+## Repository Layout
 
 ```txt
 .
-├── AGENTS.md                         # Agent instructions and stack rules
-├── Makefile                          # Build and test shortcuts
-├── render.yaml                       # Render deployment blueprint
-├── docker-compose-local.yaml         # Root aggregator for local full-stack development
-├── .env.example                      # Full-stack environment template
 ├── apps/
-│   └── myunivokai-web/               # Next.js 14 + React Three Fiber frontend
-│       ├── .env.example              # Template: NEXT_PUBLIC_GATEWAY_BASE_URL
-│       ├── Dockerfile.prod           # Production container
-│       ├── public/                   # Static assets: GLB models, textures, audio samples and scores
-│       └── src/
-│           ├── app/                  # App Router pages and API route proxies
-│           ├── components/           # Shared UI components (Vitrine + Liquid Glass)
-│           ├── features/             # Feature modules and scene renderers
-│           │   ├── audio/            # Instrument samples, arrangements, the performing graph
-│           │   └── scene-renderers/  # SceneType registry (solar-system/, forest/, fallback/)
-│           └── lib/                  # API clients, polling hooks, state utilities
+│   ├── myunivokai-web/               # Next.js 15 + React Three Fiber 3D client
+│   └── myunivokai-admin/             # Next.js 15 staff management console
 ├── services/
-│   ├── api-gateway/                  # Public HTTP edge service
-│   │   ├── .env.example              # Template: NATS, Redis, rate limits, cache TTLs
-│   │   ├── Dockerfile.prod
-│   │   ├── cmd/gateway/              # Entry point
-│   │   └── internal/                 # Routes, NATS broker, Redis rate limiter
-│   ├── dna-service/                  # AI orchestration background worker
-│   │   ├── .env.example              # Template: Database, NATS, AI provider, API keys
-│   │   ├── Dockerfile.prod
-│   │   └── internal/                 # AI providers, database, validation
-│   ├── universe-service/             # Solar-system world generator worker
-│   │   ├── .env.example              # Template: Database, NATS, outbox
-│   │   ├── Dockerfile.prod
-│   │   └── internal/                 # Seed/PRNG math, models, database
-│   └── nature-service/               # Forest world generator worker
-│       ├── .env.example              # Template: Database, NATS, outbox
-│       ├── Dockerfile.prod
-│       └── internal/                 # Seed/PRNG math, models, database
-├── contracts/                        # Cross-service API and messaging contracts
-│   ├── go/                           # Shared Go types and NATS subject names
-│   ├── openapi.yaml                  # REST API specification
-│   ├── scenes/                       # Scene configuration samples
-│   └── schemas/                      # JSON Schemas for ProfileDNA
-├── infra/                            # Local development infrastructure
-│   ├── .env.example                  # Template: PostgreSQL, NATS, Redis credentials
-│   ├── docker-compose-local.yaml     # PostgreSQL, NATS JetStream, Redis containers
-│   ├── nats/                         # NATS server config and JetStream bootstrap
-│   ├── postgres/                     # Init scripts and multi-database setup
-│   └── redis/                        # Redis configuration
-└── notes/                            # Engineering documentation
-    ├── README.md                     # Documentation index
-    ├── be/ & fe/                     # Backend and frontend architecture overviews
-    ├── coding/                       # Git conventions and coding style rules
-    └── vision/ & sprints/            # Architecture specs and sprint plans
+│   ├── api-gateway/                  # Public Go edge gateway (routing, rate limiting, caching)
+│   ├── dna-service/                  # AI orchestration worker (ProfileDNA synthesis)
+│   ├── universe-service/             # Solar System 3D world generator (Go)
+│   ├── nature-service/               # Forest 3D world generator (Go)
+│   ├── ocean-service/                # Deep Sea 3D world generator (Go)
+│   ├── auth-service/                 # Staff identity, RBAC & token rotation (Go)
+│   ├── analytics-service/            # Admin CQRS read model (Go)
+│   └── telemetry-service/            # Platform metrics read model (Rust)
+├── contracts/                        # Cross-service schemas, Go contracts & OpenAPI specifications
+├── infra/                            # Local development Docker Compose, NATS & PostgreSQL configs
+└── notes/                            # Comprehensive engineering and architecture documentation
 ```
 
-The layout is designed for growth.
-New services like `services/city-service` or new clients like `apps/mobile-app`
-can be added without touching existing messaging contracts or database boundaries.
+### Root Configs & Files
 
----
-
-## Quality gates
-
-```powershell
-# Backend — contracts
-cd contracts/go; go test ./...
-
-# Backend — api-gateway
-cd ../../services/api-gateway; go test ./...; go vet ./...; go build ./...
-
-# Backend — dna-service
-cd ../dna-service; go test ./...; go vet ./...; go build ./...
-
-# Backend — universe-service
-cd ../universe-service; go test ./...; go vet ./...; go build ./...
-
-# Backend — nature-service
-cd ../nature-service; go test ./...; go vet ./...; go build ./...
-
-# Frontend
-cd ../../apps/myunivokai-web; npm run typecheck; npm run lint; npm test; npm run build
-npm audit --omit=dev --audit-level=high
-```
+| File | Purpose |
+| --- | --- |
+| `AGENTS.md` | Core instructions, mission, and strict rules for AI assistants operating in this repository. |
+| `docker-compose-local.yaml` | Local development environment orchestrating all services, databases, and brokers. |
+| `Makefile` | CLI shortcuts for common development workflows (e.g., `make local-up`, `make local-down`). |
+| `render.yaml` | Infrastructure-as-Code (IaC) configuration for deploying services and databases to Render. |
+| `.env.example` | Template demonstrating all required environment variables for the system. |
+| `.gitignore` / `.gitattributes` | Source control definitions for ignored paths and git text handling. |
 
 ---
 
 ## Documentation
 
-Internal engineering docs live in the `notes/` folder.
-See [notes/README.md](notes/README.md) for the full index.
+Comprehensive internal engineering documents are maintained in the [`notes/`](notes/README.md) folder.
 
-Key docs:
-- [coding/git-convention.md](notes/coding/git-convention.md) — branch naming and commit format
-- [coding/coding-style.md](notes/coding/coding-style.md) — code style rules
-- [be/source-overview.md](notes/be/source-overview.md) — backend architecture
-- [fe/source-overview.md](notes/fe/source-overview.md) — frontend architecture
-- [fe/ambient-audio-mechanism.md](notes/fe/ambient-audio-mechanism.md) — how the music is made, and how to audition it
-- [contracts/openapi.yaml](contracts/openapi.yaml) — API specification
+Key references:
+- [`notes/coding/git-convention.md`](notes/coding/git-convention.md) — Mandatory branch naming and commit conventions
+- [`notes/coding/coding-style.md`](notes/coding/coding-style.md) — Code style rules (no hardcoded values, clean names)
+- [`notes/be/source-overview.md`](notes/be/source-overview.md) — Backend architecture & microservice patterns
+- [`notes/be/request-lifecycle.md`](notes/be/request-lifecycle.md) — Detailed request paths & cache invalidation
+- [`notes/be/design-decisions.md`](notes/be/design-decisions.md) — Design rationales (AI boundaries, deterministic math, public domain music)
+- [`notes/fe/source-overview.md`](notes/fe/source-overview.md) — Frontend architecture & 3D scene registry
+- [`notes/fe/threejs-scene-architecture.md`](notes/fe/threejs-scene-architecture.md) — 3D scene rendering principles
+- [`notes/ops/production-deployment-guide.md`](notes/ops/production-deployment-guide.md) — Full production deployment runbook

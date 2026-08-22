@@ -1,0 +1,203 @@
+{
+  "schemaVersion": "1.4",
+  "sceneType": "ocean",
+  "sceneName": "The Lantern Trench",
+  "archetype": "Tidekeeper",
+  "quote": "I go down slowly, and I come back with light.",
+  "theme": "aurora",
+  "palette": {
+    "background": "#06283A",
+    "primary": "#8B5CF6",
+    "secondary": "#06B6D4",
+    "accent": "#FACC15",
+    "gradient": [
+      "#8B5CF6",
+      "#06B6D4",
+      "#FACC15"
+    ]
+  },
+  "depth": {
+    "metres": -9.51,
+    "seafloorMetres": 31.66,
+    "zone": "sunlitShallows"
+  },
+  "water": {
+    "fogColor": "#8CDBEB",
+    "fogDensity": 0.011,
+    "visibilityMetres": 11.85,
+    "tintStrength": 0.15,
+    "jerlovWaterType": "3C",
+    "windSpeedMetresPerSecond": 8.05
+  },
+  "lighting": {
+    "surfaceLightColor": "#FFF7E6",
+    "surfaceElevationRadians": 0.65,
+    "surfaceAzimuthRadians": 2.96,
+    "godRayStrength": 1,
+    "causticStrength": 1,
+    "ambientColor": "#4D7981",
+    "exposure": 1.03
+  },
+  "seafloor": {
+    "placementSeed": "OCN-GOLDEN-SURFACE-4-ocean-seafloor-scatter",
+    "basinRadius": 28.64,
+    "ridgeAmplitude": 3.73,
+    "ridgeFrequency": 0.043,
+    "rockCount": 14,
+    "sedimentTuftCountDesktop": 680,
+    "sedimentTuftCountMobile": 237
+  },
+  "current": {
+    "kind": "surge",
+    "intensity": 0.49,
+    "directionRadians": 2.18,
+    "gustFrequency": 0.35,
+    "marineSnowCountDesktop": 1334,
+    "marineSnowCountMobile": 400
+  },
+  "flora": {
+    "placementSeed": "OCN-GOLDEN-SURFACE-4-ocean-flora-placement",
+    "countDesktop": 104,
+    "countMobile": 41,
+    "speciesMix": [
+      {
+        "modelKey": "flora-kelp-giant",
+        "weight": 0.4
+      },
+      {
+        "modelKey": "flora-seagrass",
+        "weight": 0.3
+      },
+      {
+        "modelKey": "flora-coral-staghorn",
+        "weight": 0.3
+      }
+    ],
+    "scaleMin": 0.73,
+    "scaleMax": 1.35,
+    "swayStrength": 0.54,
+    "depthTintStrength": 0.49
+  },
+  "fauna": {
+    "schools": [
+      {
+        "modelKey": "fish-barracuda",
+        "count": 20,
+        "pathSeed": "OCN-GOLDEN-SURFACE-4-ocean-school-0",
+        "depthBandMin": 5.18,
+        "depthBandMax": 8.41,
+        "swimSpeed": 0.83,
+        "cohesion": 0.81,
+        "separation": 0.42
+      },
+      {
+        "modelKey": "fish-ray",
+        "count": 19,
+        "pathSeed": "OCN-GOLDEN-SURFACE-4-ocean-school-1",
+        "depthBandMin": 3.89,
+        "depthBandMax": 6.86,
+        "swimSpeed": 0.63,
+        "cohesion": 0.62,
+        "separation": 0.55
+      }
+    ],
+    "drifters": [
+      {
+        "modelKey": "drifter-moon-jelly",
+        "count": 12,
+        "pathSeed": "OCN-GOLDEN-SURFACE-4-ocean-drifter-0",
+        "pulseRate": 0.34,
+        "emissiveColor": "#8FF3D2"
+      }
+    ],
+    "giants": []
+  },
+  "bioluminescence": {
+    "planktonCount": 133,
+    "bloomIntensity": 0.64,
+    "emissiveColors": [
+      "#8FF3D2",
+      "#B6ECFF"
+    ],
+    "flickerSeed": "OCN-GOLDEN-SURFACE-4-ocean-biolum-flicker"
+  },
+  "landmarks": [
+    {
+      "key": "landmark-1",
+      "name": "Landmark 1",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "kelpCathedral",
+      "angleRadians": 0.12,
+      "radiusFromCenter": 48.03,
+      "heightAboveFloor": 1.8,
+      "accentColor": "#06B6D4",
+      "energy": 60
+    },
+    {
+      "key": "landmark-2",
+      "name": "Landmark 2",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "sunkenRelic",
+      "angleRadians": 1.62,
+      "radiusFromCenter": 33.61,
+      "heightAboveFloor": 1.05,
+      "accentColor": "#FACC15",
+      "energy": 65
+    },
+    {
+      "key": "landmark-3",
+      "name": "Landmark 3",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "hydrothermalVent",
+      "angleRadians": 3.34,
+      "radiusFromCenter": 49.68,
+      "heightAboveFloor": 0.93,
+      "accentColor": "#8B5CF6",
+      "energy": 70
+    },
+    {
+      "key": "landmark-4",
+      "name": "Landmark 4",
+      "meaning": "A meaningful place in the sea.",
+      "kind": "coralGarden",
+      "angleRadians": 4.65,
+      "radiusFromCenter": 54.71,
+      "heightAboveFloor": 2.51,
+      "accentColor": "#06B6D4",
+      "energy": 75
+    }
+  ],
+  "camera": {
+    "distance": 22.76,
+    "fov": 55
+  },
+  "postFX": {
+    "bloomIntensity": 0.75,
+    "grade": {
+      "hueRadians": 0.02,
+      "saturation": 0.11,
+      "brightness": 0.03,
+      "contrast": 0.02
+    }
+  },
+  "hud": {
+    "showTraitBars": true,
+    "showLabels": true
+  },
+  "assets": {
+    "catalogVersion": "ocean-1",
+    "modelKeys": [
+      "flora-kelp-giant",
+      "flora-seagrass",
+      "flora-coral-staghorn",
+      "rock-basalt",
+      "fish-barracuda",
+      "fish-ray",
+      "drifter-moon-jelly",
+      "landmark-kelp-cathedral",
+      "landmark-sunken-relic",
+      "landmark-hydrothermal-vent",
+      "landmark-coral-garden"
+    ]
+  }
+}

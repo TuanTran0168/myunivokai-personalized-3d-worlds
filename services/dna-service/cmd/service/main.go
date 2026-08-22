@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/myunivokai/myunivokai/services/dna-service/internal/aifactory"
 	"github.com/myunivokai/myunivokai/services/dna-service/internal/config"
@@ -42,6 +43,7 @@ func startHealthServer() *http.Server {
 }
 
 func main() {
+	processStartedAt := time.Now()
 	serviceConfig, err := config.Load()
 	if err != nil {
 		log.Fatal().Err(err).Msg("load dna service configuration")
@@ -79,6 +81,13 @@ func main() {
 	}
 	if err := messagingRuntime.Run(runtimeContext); err != nil {
 		log.Fatal().Err(err).Msg("start DNA messaging runtime")
+	}
+	// Announced after Run, because "ready" here means subscriptions are
+	// registered - a boot time measured to any earlier point would flatter
+	// the cold start it exists to measure. Never fatal: this process is
+	// here to serve, not to describe itself.
+	if err := messagingRuntime.PublishServiceStarted(runtimeContext, time.Since(processStartedAt)); err != nil {
+		log.Error().Err(err).Msg("announce dna service start")
 	}
 	log.Info().Msg("dna service ready")
 	<-runtimeContext.Done()

@@ -147,26 +147,16 @@ export function SizedStarPoints({
 
   return (
     <points frustumCulled={false} renderOrder={renderOrder}>
+      {/* `args` rather than array/itemSize/count as separate props. Under R3F v9
+          these are constructor arguments — `new BufferAttribute(array, itemSize)`
+          — and `count` is derived from them, so passing the three as props left
+          the attribute constructed with no data at all. v8 tolerated it; v9's
+          types are what caught it. */}
       <bufferGeometry key={geometryKey}>
-        <bufferAttribute
-          attach="attributes-position"
-          count={stars.positions.length / 3}
-          array={stars.positions}
-          itemSize={3}
-        />
-        <bufferAttribute
-          attach="attributes-starColor"
-          count={stars.colors.length / 3}
-          array={stars.colors}
-          itemSize={3}
-        />
-        <bufferAttribute attach="attributes-starSize" count={stars.sizes.length} array={stars.sizes} itemSize={1} />
-        <bufferAttribute
-          attach="attributes-twinklePhase"
-          count={stars.twinklePhases.length}
-          array={stars.twinklePhases}
-          itemSize={1}
-        />
+        <bufferAttribute attach="attributes-position" args={[stars.positions, 3]} />
+        <bufferAttribute attach="attributes-starColor" args={[stars.colors, 3]} />
+        <bufferAttribute attach="attributes-starSize" args={[stars.sizes, 1]} />
+        <bufferAttribute attach="attributes-twinklePhase" args={[stars.twinklePhases, 1]} />
       </bufferGeometry>
       <shaderMaterial
         vertexShader={STAR_VERTEX_SHADER}

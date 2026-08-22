@@ -1,0 +1,16 @@
+FROM golang:1.25-alpine AS builder
+WORKDIR /workspace/services/analytics-service
+COPY contracts/go /workspace/contracts/go
+COPY services/analytics-service/go.mod services/analytics-service/go.sum ./
+RUN go mod download
+COPY services/analytics-service .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/analytics-service ./cmd/service && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
+
+FROM alpine:3.22 AS runtime
+RUN apk add --no-cache ca-certificates && addgroup -S app && adduser -S -G app app
+COPY --from=builder --chown=app:app /out/analytics-service /app/analytics-service
+COPY --from=builder --chown=app:app /out/migrate /app/migrate
+COPY --from=builder --chown=app:app /workspace/services/analytics-service/migrations /app/migrations
+USER app:app
+CMD ["/app/analytics-service"]

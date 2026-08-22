@@ -1,0 +1,16 @@
+# The local image, mirroring every other service's: dependencies are baked in,
+# the source is bind-mounted by Compose, and the process is started from source
+# so an edit needs a restart rather than a rebuild.
+#
+# Unlike the Go services this cannot skip the build - `cargo run` compiles.
+# The registry and target caches are named Compose volumes (see
+# docker-compose-local.yaml) so only the first start pays for it.
+FROM rust:1-slim-bookworm
+
+WORKDIR /workspace/services/telemetry-service
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends build-essential pkg-config \
+    && rm --recursive --force /var/lib/apt/lists/*
+
+CMD ["cargo", "run"]

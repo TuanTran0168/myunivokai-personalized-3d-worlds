@@ -1,0 +1,31 @@
+[package]
+name = "myunivokai-contracts"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+description = "Hand-maintained Rust mirror of contracts/go, for services written in Rust"
+
+# Hand-maintained on purpose, not generated from contracts/go. A change to the
+# wire shape is then a conscious edit in two places rather than a generated
+# file nobody reads — and tests/telemetry_fixture.rs decodes the same
+# contracts/fixtures/*.json file the Go suite validates, so the two cannot
+# disagree without CI failing. See notes/vision/telemetry-service-plan.md.
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# serde-well-known is what supplies time::serde::rfc3339, which is the format
+# Go's time.Time marshals to. Nothing here uses a local clock, so no feature
+# beyond parsing and formatting is enabled.
+time = { version = "0.3", default-features = false, features = [
+    "std",
+    "macros",
+    "serde",
+    "serde-well-known",
+    "formatting",
+    "parsing",
+] }
+
+[lints.rust]
+unsafe_code = "forbid"

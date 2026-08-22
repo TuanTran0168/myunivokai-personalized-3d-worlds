@@ -1,0 +1,79 @@
+{
+  "jobId": "01K0EXAMPLE000000000000021:2026-08-13T09:14:00Z",
+  "timestamp": "2026-08-13T09:15:00Z",
+  "data": {
+    "instanceId": "01K0EXAMPLE000000000000021",
+    "bucketStart": "2026-08-13T09:14:00Z",
+    "bucketDurationMs": 60000,
+    "buckets": [
+      {
+        "routePattern": "/api/universe/worlds",
+        "method": "POST",
+        "statusClass": 2,
+        "requestCount": 12,
+        "durationSumMs": 4820,
+        "durationMaxMs": 910,
+        "histogram": [0, 0, 1, 3, 5, 2, 1, 0]
+      },
+      {
+        "routePattern": "/api/universe/worlds/{worldID}",
+        "method": "GET",
+        "statusClass": 2,
+        "requestCount": 34,
+        "durationSumMs": 1190,
+        "durationMaxMs": 128,
+        "histogram": [8, 11, 9, 4, 2, 0, 0, 0]
+      },
+      {
+        "routePattern": "/api/universe/worlds/{worldID}",
+        "method": "GET",
+        "statusClass": 5,
+        "requestCount": 3,
+        "durationSumMs": 96,
+        "durationMaxMs": 41,
+        "histogram": [0, 1, 1, 1, 0, 0, 0, 0],
+        "errorCodes": { "SERVICE_WAKING": 3 }
+      },
+      {
+        "routePattern": "/api/admin/telemetry/overview",
+        "method": "GET",
+        "statusClass": 2,
+        "requestCount": 5,
+        "durationSumMs": 640,
+        "durationMaxMs": 210,
+        "histogram": [0, 0, 0, 1, 2, 2, 0, 0]
+      }
+    ],
+    "natsBackendBuckets": [
+      {
+        "service": "universe",
+        "requestCount": 49,
+        "durationSumMs": 5210,
+        "durationMaxMs": 880,
+        "histogram": [4, 9, 12, 14, 7, 2, 1, 0],
+        "errorCount": 3
+      },
+      {
+        "service": "dna",
+        "requestCount": 12,
+        "durationSumMs": 3600,
+        "durationMaxMs": 940,
+        "histogram": [0, 0, 0, 2, 4, 4, 2, 0],
+        "errorCount": 0
+      },
+      {
+        "service": "analytics",
+        "requestCount": 5,
+        "durationSumMs": 420,
+        "durationMaxMs": 190,
+        "histogram": [0, 0, 1, 2, 2, 0, 0, 0],
+        "errorCount": 0
+      }
+    ],
+    "cacheBuckets": [
+      { "namespace": "job:v1", "hits": 21, "misses": 6 },
+      { "namespace": "world:v1", "hits": 30, "misses": 4 },
+      { "namespace": "share:v1", "hits": 0, "misses": 2 }
+    ]
+  }
+}

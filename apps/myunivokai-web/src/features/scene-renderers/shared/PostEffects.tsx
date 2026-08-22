@@ -107,9 +107,15 @@ export function PostEffects({ postFX, theme, ambientOcclusion = false }: PostEff
       radialModulation
       modulationOffset={CHROMATIC_ABERRATION_MODULATION_OFFSET}
     />,
-    <Vignette key="vignette" eskil={false} offset={VIGNETTE_OFFSET} darkness={VIGNETTE_DARKNESS} />,
+    <Vignette
+      key="vignette"
+      eskil={false}
+      offset={VIGNETTE_OFFSET}
+      darkness={VIGNETTE_DARKNESS}
+    />,
     <Noise key="noise" premultiply opacity={FILM_GRAIN_OPACITY} blendFunction={BlendFunction.SOFT_LIGHT} />
-  ].filter((effect): effect is JSX.Element => effect !== null);
+    // React 19 removed the global JSX namespace; it lives under React now.
+  ].filter((effect): effect is React.JSX.Element => effect !== null);
 
   return <EffectComposer multisampling={COMPOSER_MULTISAMPLING}>{effects}</EffectComposer>;
 }

@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -86,7 +87,7 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		{subject: contracts.NatureShareGetQuerySubject, handler: runtime.natsHandler.HandleShareGetQuery},
 	}
 	for _, binding := range queryBindings {
-		subscription, subscribeError := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, binding.handler)
+		subscription, subscribeError := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, runtime.loggedQuery(binding.handler))
 		if subscribeError != nil {
 			runtime.unsubscribeAll()
 			return fmt.Errorf("subscribe nature query %s: %w", binding.subject, subscribeError)
@@ -134,15 +135,22 @@ func (runtime *Runtime) consumeCompositions(ctx context.Context, subscription *n
 			continue
 		}
 		for _, message := range messages {
+			messageStartTime := time.Now()
 			if err := runtime.natsHandler.HandleComposition(ctx, message); err != nil {
 				metadata, metadataError := message.Metadata()
 				if metadataError == nil && int(metadata.NumDelivered) >= runtime.config.ConsumerMaximumDeliveries {
 					runtime.publishTerminalCompositionFailure(ctx, message)
 					continue
 				}
+				// Subject only, never the payload: a job/world/profile id inside it
+				// is not secret, but this line is meant to answer "is anything
+				// moving" at a glance, not to become a second place a body's shape
+				// has to be kept privacy-safe.
+				log.Warn().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Err(err).Msg("nature message processing failed, will retry")
 				_ = message.NakWithDelay(runtime.config.ConsumerRetryDelay)
 				continue
 			}
+			log.Info().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Msg("nature message processed")
 			_ = message.Ack()
 		}
 	}
@@ -206,5 +214,58 @@ func (runtime *Runtime) publishOutboxBatch(ctx context.Context) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// loggedQuery wraps a Core NATS query responder with one structured line per
+// request answered — the request-level signal this repo's HTTP services get
+// for free from middleware.Logging, which a bare NATS subscriber has no
+// equivalent of. Subject only, same reasoning as consumeCompositions()'s own
+// logging: it identifies which query ran without touching a payload that
+// might carry a world's contents.
+func (runtime *Runtime) loggedQuery(handler nats.MsgHandler) nats.MsgHandler {
+	return func(message *nats.Msg) {
+		start := time.Now()
+		handler(message)
+		log.Info().Str("subject", message.Subject).Dur("duration", time.Since(start)).Msg("nature query answered")
+	}
+}
+
+// PublishServiceStarted announces this boot so the read model can show it.
+//
+// A process cannot report its own death - an OOM kill or SIGKILL runs no
+// handler - so it reports the start, and a start nobody scheduled is the
+// evidence that a stop happened. That inference holds on any host, which is
+// why this is a durable event and not part of the gateway's wake mechanism:
+// waking belongs to one hosting tier, restarting belongs to running software.
+//
+// Published to JetStream rather than Core NATS because analytics-service is
+// usually asleep. A Core publish with no subscriber is simply lost, which
+// would leave the record empty for exactly the services that restart most.
+// The Msg-Id is the instance id, so a JetStream redelivery cannot become a
+// second boot.
+//
+// The caller must not treat a failure here as fatal. Announcing a start is
+// not why this process exists, and refusing to run because a telemetry
+// publish failed would turn an observability gap into an outage.
+func (runtime *Runtime) PublishServiceStarted(ctx context.Context, bootDuration time.Duration) error {
+	data := contracts.NewServiceStartedData(contracts.ServiceNameNature, bootDuration)
+	subject, err := contracts.ServiceStartedEventSubject(data.Service)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(contracts.NewEnvelope(data.InstanceID, data))
+	if err != nil {
+		return err
+	}
+	message := nats.NewMsg(subject)
+	message.Header.Set(nats.MsgIdHdr, data.InstanceID)
+	message.Data = payload
+	publishContext, cancel := context.WithTimeout(ctx, runtime.config.NATSPublishTimeout)
+	defer cancel()
+	if _, err := runtime.jetStream.PublishMsg(message, nats.Context(publishContext)); err != nil {
+		return err
+	}
+	log.Info().Str("instance_id", data.InstanceID).Str("version", data.Version).Int64("boot_ms", data.BootDurationMS).Msg("service start announced")
 	return nil
 }

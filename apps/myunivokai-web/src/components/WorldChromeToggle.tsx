@@ -95,7 +95,13 @@ type WorldChromeToggleProps = {
   /** The id of the region this controls, for `aria-controls`. */
   controlsElementId: string;
   noun: WorldChromeNoun;
-  buttonReference: React.RefObject<HTMLButtonElement>;
+  /**
+   * `| null` because React 19 types `useRef<T>(null)` as
+   * `RefObject<T | null>` — the ref genuinely is null until the element
+   * mounts, and 18's types simply lied about it. Widening the prop is the
+   * honest fix; narrowing at the call site would be re-telling the lie.
+   */
+  buttonReference: React.RefObject<HTMLButtonElement | null>;
   disabled?: boolean;
 };
 

@@ -1,10 +1,13 @@
 # FE Source Overview — apps/myunivokai-web
 
 > **Document status:** Active
-> **Last source review:** 2026-07-22
+> **Last source review:** 2026-08-14
 
-Next.js 14 App Router + TypeScript + Tailwind + React Three Fiber.
+Next.js 15 App Router + React 19 + TypeScript + Tailwind + React Three Fiber v9.
 Every page is a client component because of WebGL and localStorage.
+
+Route params are Promises (Next 15): the two share pages await them, and
+`worlds/[worldId]` — being `"use client"` — reads them with React's `use`.
 
 ## World families — one source, two scene worlds
 
@@ -108,8 +111,12 @@ selection syncs between canvas and panel via props (`selectedPlanetKey` +
   decoder because no local decoder path is configured.
 - Catalog tests do not yet validate every asset path, attribution entry, and
   byte budget.
-- The production dependency audit fails on the current Next 14 tree; framework
-  migration is a separate P0 task.
+- `npm audit` still reports three high advisories, and none is against `next`
+  itself any more. They are `postcss@8.4.31` and `sharp@0.34.5`, both pinned
+  inside next's own dependency tree and unreachable from this app: postcss runs
+  at build time, and `next/image` is used exactly once, with `unoptimized`, so
+  the Image Optimizer that would load sharp never runs. Replacing next's pinned
+  postcss needs Next 16.
 
 See `notes/user-stories/engineering-backlog.md` for Given/When/Then acceptance.
 
@@ -126,6 +133,14 @@ npm run build
 `npm run test` is a hard CI step between lint and build; this list omitted it
 until 2026-08-01, so a contributor following the old block could push a red
 build.
+
+`npm run shoot` is **not** in that list and must not be added to it. It
+photographs both scene families and writes to `e2e/shots/`, to be compared by
+eye against `e2e/reference/<stack>/` — the only instrument in this repo that
+can see the canvas. Run it either side of a dependency change, never as a gate:
+WebGL output moves with GPU and driver, so a pixel assertion in CI would report
+"different machine" far more often than "broken scene". See
+`apps/myunivokai-web/e2e/reference/README.md`.
 
 For integrated local development, root `docker-compose-local.yaml` builds this
 client with `NEXT_PUBLIC_GATEWAY_BASE_URL=http://localhost:41800`. The production

@@ -1,4 +1,5 @@
 import { CANONICAL_FALLBACK_SEED, planetsFromScene, randomFromSeed } from "@/lib/scene";
+import { RARITY_CATALOGUE } from "@/lib/rarity";
 import type { SceneConfig } from "@/lib/types";
 
 /**
@@ -10,6 +11,11 @@ import type { SceneConfig } from "@/lib/types";
  * The HUD label is part of the contract: a rare roll nobody notices is a
  * wasted lottery. Both the world page and the share page surface displayName
  * via RareFeatureBadge whenever a feature is present.
+ *
+ * The probabilities and seed suffixes themselves now live in lib/rarity.ts,
+ * the one table that also drives the admin app's observed-rate panel. Two
+ * copies of "5%" would mean the dashboard could report a rate against a
+ * probability this renderer stopped using.
  */
 
 export type RareFeatureKey = "meteor-shower" | "binary-sun" | "black-hole";
@@ -19,19 +25,21 @@ export type RareFeatureDefinition = {
   /** Shown in the HUD badge; app UI language is English. */
   displayName: string;
   probability: number;
+  seedSuffix: string;
 };
 
-export const RARE_FEATURE_PROBABILITIES: RareFeatureDefinition[] = [
-  { key: "meteor-shower", displayName: "Meteor Shower", probability: 0.05 },
-  { key: "binary-sun", displayName: "Binary Suns", probability: 0.03 },
-  // Deliberately the loudest of the three: it is the most spectacular feature
-  // and the owner wants it findable while tuning the scene, not a true rarity.
-  { key: "black-hole", displayName: "Black Hole", probability: 0.4 }
-];
+export const RARE_FEATURE_PROBABILITIES: RareFeatureDefinition[] = RARITY_CATALOGUE.filter(
+  (feature) => feature.family === "universe"
+).map((feature) => ({
+  key: feature.key as RareFeatureKey,
+  displayName: feature.label,
+  probability: feature.probability,
+  seedSuffix: feature.seedSuffix
+}));
 
 export function resolveRareFeatures(seed: string): RareFeatureDefinition[] {
   return RARE_FEATURE_PROBABILITIES.filter((definition) => {
-    const random = randomFromSeed(`${seed}-rare-feature-${definition.key}`);
+    const random = randomFromSeed(`${seed}${definition.seedSuffix}`);
     return random() < definition.probability;
   });
 }

@@ -1,0 +1,54 @@
+# Two stages, the same shape every other service here uses. Render builds and
+# runs a container; it has no opinion about the language inside it, which is
+# why a second language needed no second deployment procedure.
+#
+# Two decisions this file makes that the Go ones never had to:
+#
+# 1. NO DATABASE IS NEEDED TO BUILD. `sqlx`'s `query!` macros would check SQL
+#    against a live schema during `cargo build`, which the builder stage has
+#    none of - the usual answer is SQLX_OFFLINE plus a committed `.sqlx/` cache
+#    that goes stale silently and fails the BUILD rather than a test. This
+#    service uses sqlx's runtime API instead, so there is nothing to prepare
+#    and no DATABASE_URL here. `sqlx::migrate!` is still used and needs no
+#    database: it reads the migrations directory at compile time and embeds it,
+#    which is also why the runtime stage below copies no migrations.
+#
+# 2. THE RUNTIME IS DEBIAN, NOT ALPINE. The Go services get a static binary for
+#    free from CGO_ENABLED=0 and run it on Alpine. Rust would need the
+#    x86_64-unknown-linux-musl target and a musl toolchain for every transitive
+#    C dependency to match that. The ~25 MB of extra image is irrelevant on
+#    this hosting tier; a build that only fails in CI is not. See
+#    notes/sprints/sprint-05-2026-08-13/README.md.
+
+FROM rust:1-slim-bookworm AS builder
+WORKDIR /workspace/services/telemetry-service
+
+# ring (via rustls) compiles C. The slim image carries a linker but not a full
+# toolchain, and the failure it produces otherwise names an object file rather
+# than a missing package.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends build-essential pkg-config \
+    && rm --recursive --force /var/lib/apt/lists/*
+
+# The contracts crate is a path dependency, so it has to exist at the same
+# relative location it does in the repository.
+COPY contracts/rust /workspace/contracts/rust
+COPY services/telemetry-service .
+
+# --locked, not a bare build: Cargo.lock is committed for this binary, so the
+# deploy resolves the exact dependency versions CI tested rather than whatever
+# is newest at build time. A lock file out of step with Cargo.toml fails here
+# instead of shipping a different dependency tree than the one that was tested.
+RUN cargo build --release --locked
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates \
+    && rm --recursive --force /var/lib/apt/lists/* \
+    && groupadd --system app \
+    && useradd --system --gid app --no-create-home app
+COPY --from=builder --chown=app:app \
+    /workspace/services/telemetry-service/target/release/telemetry-service \
+    /app/telemetry-service
+USER app:app
+CMD ["/app/telemetry-service"]

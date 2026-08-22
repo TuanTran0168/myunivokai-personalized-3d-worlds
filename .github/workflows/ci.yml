@@ -40,6 +40,9 @@ jobs:
       - name: Lint OpenAPI
         run: npx --yes @redocly/cli@2.20.0 lint contracts/openapi.yaml
         working-directory: .
+      - name: Lint Admin OpenAPI
+        run: npx --yes @redocly/cli@2.20.0 lint contracts/openapi-admin.yaml
+        working-directory: .
 
   backend-checks:
     name: Backend (go vet + test)
@@ -83,6 +86,27 @@ jobs:
       - name: Build
         run: go build ./...
 
+  ocean-service-checks:
+    name: Ocean service (go vet + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ocean-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/ocean-service/go.mod
+          cache-dependency-path: services/ocean-service/go.sum
+      - name: Verify modules
+        run: go mod verify
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build ./...
+
   dna-service-checks:
     name: DNA service (go vet + test + build)
     runs-on: ubuntu-latest
@@ -103,6 +127,103 @@ jobs:
         run: go test ./...
       - name: Build
         run: go build ./...
+
+  auth-service-checks:
+    name: Auth service (go vet + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/auth-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/auth-service/go.mod
+          cache-dependency-path: services/auth-service/go.sum
+      - name: Verify modules
+        run: go mod verify
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build ./...
+
+  analytics-service-checks:
+    name: Analytics service (go vet + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/analytics-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/analytics-service/go.mod
+          cache-dependency-path: services/analytics-service/go.sum
+      - name: Verify modules
+        run: go mod verify
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build ./...
+
+  contracts-rust-checks:
+    name: Contracts (Rust mirror — fmt + clippy + fixture test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Rust toolchain
+        run: rustup component add rustfmt clippy
+      # The drift guard. tests/telemetry_fixture.rs decodes the same
+      # contracts/fixtures/*.json file the Go suite validates in
+      # contract-checks above, so a wire shape changed in one language and not
+      # the other fails one of these two jobs instead of a production decode.
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Build
+        run: cargo build --release
+
+  telemetry-service-checks:
+    name: Telemetry service (Rust — fmt + clippy + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/telemetry-service
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Rust toolchain
+        run: rustup component add rustfmt clippy
+      # No database and no broker. The logic is tested against an in-memory
+      # repository (idempotency, two-instance accumulation, window clamping,
+      # error-rate arithmetic, retention, ack-versus-nak); the SQL is tested as
+      # TEXT only — that every SUM is cast off numeric, that every conflict
+      # clause accumulates, that retention covers all five tables.
+      #
+      # Stated here because a suite that passes without a database is otherwise
+      # read as proving the queries run. What proves that is the local pipeline
+      # check in services/telemetry-service/README.md.
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      # --locked matches what Render's Dockerfile runs. Cargo.lock is committed
+      # for this binary, so CI and the deploy resolve the same dependency tree;
+      # a lock file out of step with Cargo.toml fails here rather than shipping
+      # something nobody tested.
+      - name: Build
+        run: cargo build --release --locked
 
   api-gateway-checks:
     name: API gateway (go vet + test + build)
@@ -146,6 +267,34 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
+      - name: Test
+        run: npm run test
+      - name: Build
+        run: npm run build
+
+  admin-app-checks:
+    name: Admin app (typecheck + lint + boundary + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/myunivokai-admin
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/myunivokai-admin/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Check import boundary (no myunivokai-web, no three.js)
+        run: npm run check:boundary
       - name: Test
         run: npm run test
       - name: Build

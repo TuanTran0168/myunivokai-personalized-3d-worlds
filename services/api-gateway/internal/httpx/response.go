@@ -39,6 +39,11 @@ func WriteError(responseWriter http.ResponseWriter, request *http.Request, statu
 }
 
 func WriteErrorWithDetails(responseWriter http.ResponseWriter, request *http.Request, status int, code, message string, details any) {
+	// The response written below is unchanged by this line. It only leaves the
+	// code where the telemetry middleware can read it after the handler chain
+	// returns, and does nothing at all when no recorder was installed - which
+	// is every request when TELEMETRY_ENABLED is off.
+	recordErrorCode(request.Context(), code)
 	WriteJSON(responseWriter, status, ErrorEnvelope{Error: ErrorBody{
 		Code:      code,
 		Message:   message,

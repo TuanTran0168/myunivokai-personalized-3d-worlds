@@ -19,6 +19,8 @@ const UNIVERSE_THEMES = ["cosmic-galaxy", "nebula", "crystal", "aurora", "cyber-
 const FOREST_WEATHERS = ["clear", "sunRays", "overcast", "rain", "snow"];
 const FOREST_SEASONS = ["spring", "summer", "autumn", "winter"];
 const FOREST_TIMES_OF_DAY = ["day", "goldenHour", "dusk"];
+const OCEAN_CURRENTS = ["still", "drift", "surge"];
+const OCEAN_ZONES = ["sunlitShallows", "twilightReach", "abyss"];
 
 const UNIVERSE_SCENE: SceneConfig = {
   seed: "seed-universe-001",
@@ -33,6 +35,16 @@ function forestScene(overrides: Partial<SceneConfig> = {}): SceneConfig {
     season: { kind: "summer" },
     lighting: { timeOfDay: "day" },
     weather: { kind: "clear", intensity: 0.5 },
+    ...overrides
+  };
+}
+
+function oceanScene(overrides: Partial<SceneConfig> = {}): SceneConfig {
+  return {
+    seed: "seed-ocean-001",
+    sceneType: "ocean",
+    depth: { metres: 16.7, zone: "sunlitShallows" },
+    current: { kind: "drift", intensity: 0.5 },
     ...overrides
   };
 }
@@ -63,7 +75,20 @@ function everySupportedScene(): SceneConfig[] {
       )
     )
   );
-  return [...universeScenes, ...forestScenes];
+  // The ocean sweep is here rather than only in its own describe block on
+  // purpose: everything below - shipped samples, no doubled timbre, the gain
+  // band, the register floors - is an invariant of the ARRANGER, not of a
+  // family, and a family missing from this list is a family none of them cover.
+  const oceanScenes = OCEAN_CURRENTS.flatMap((current) =>
+    OCEAN_ZONES.map((zone) =>
+      oceanScene({
+        seed: `sweep-${current}-${zone}`,
+        current: { kind: current, intensity: 0.7 },
+        depth: { metres: 100, zone }
+      })
+    )
+  );
+  return [...universeScenes, ...forestScenes, ...oceanScenes];
 }
 
 describe("determinism", () => {
@@ -388,5 +413,70 @@ describe("the forest bed follows the weather", () => {
     );
     expect(Number.isFinite(recipe.bedGain)).toBe(true);
     expect(Number.isFinite(recipe.performance.beatsPerMinute)).toBe(true);
+  });
+});
+
+// The ocean family arrived after a boolean `isForest` had been threaded through
+// three resolvers. A boolean has two answers, so an ocean scene was silently
+// arranged as a solar system - the right notes over a lowpass space bed, under
+// a sea. Nothing failed, because nothing asserted what a third family sounded
+// like. These are that assertion.
+describe("the ocean family", () => {
+  it("is arranged from its own tables, not the universe's", () => {
+    const ocean = buildAmbientSoundscapeRecipe(oceanScene());
+    const universe = buildAmbientSoundscapeRecipe({ ...UNIVERSE_SCENE, seed: "seed-ocean-001" });
+    expect(ocean.bedFilterType).toBe("bandpass");
+    expect(universe.bedFilterType).toBe("lowpass");
+    expect(ocean.performance.pieceId).not.toBe(universe.performance.pieceId);
+  });
+
+  it("gives every current a real piece and a real instrument", () => {
+    for (const kind of OCEAN_CURRENTS) {
+      const recipe = buildAmbientSoundscapeRecipe(oceanScene({ current: { kind, intensity: 0.5 } }));
+      expect(ARRANGEMENT_PIECE_IDS).toContain(recipe.performance.pieceId);
+      expect(SAMPLED_INSTRUMENT_NOTE_NAMES[recipe.performance.melody.instrument]?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("gives different currents different music", () => {
+    const pieces = new Set(
+      OCEAN_CURRENTS.map(
+        (kind) => buildAmbientSoundscapeRecipe(oceanScene({ current: { kind, intensity: 0.5 } })).performance.pieceId
+      )
+    );
+    expect(pieces.size).toBeGreaterThan(1);
+  });
+
+  // The one musical idea this family gets for free: going deeper and going
+  // lower are the same gesture.
+  it("drops the key as the world goes deeper", () => {
+    const keys = OCEAN_ZONES.map(
+      (zone) =>
+        buildAmbientSoundscapeRecipe(oceanScene({ depth: { metres: 100, zone } })).performance.transposeSemitones
+    );
+    expect(keys[1]).toBeLessThan(keys[0]);
+    expect(keys[2]).toBeLessThan(keys[1]);
+  });
+
+  // Still water is not louder than surge, and the abyss is not busier than the
+  // reef. A bed that ignored the current would make all three sound the same.
+  it("opens the bed with the current", () => {
+    const still = buildAmbientSoundscapeRecipe(oceanScene({ current: { kind: "still", intensity: 1 } }));
+    const surge = buildAmbientSoundscapeRecipe(oceanScene({ current: { kind: "surge", intensity: 1 } }));
+    expect(surge.bedGain).toBeGreaterThan(still.bedGain);
+    expect(surge.bedFilterFrequencyHertz).toBeGreaterThan(still.bedFilterFrequencyHertz);
+    expect(surge.bedSweepRateHertz).toBeGreaterThan(still.bedSweepRateHertz);
+  });
+
+  it("changes its signature when the depth or the current changes", () => {
+    const base = ambientSoundscapeSignature(oceanScene());
+    expect(ambientSoundscapeSignature(oceanScene({ depth: { metres: 2400, zone: "abyss" } }))).not.toBe(base);
+    expect(ambientSoundscapeSignature(oceanScene({ current: { kind: "surge", intensity: 0.5 } }))).not.toBe(base);
+  });
+
+  it("survives a config with no depth and no current instead of throwing", () => {
+    const recipe = buildAmbientSoundscapeRecipe({ seed: "seed-ocean-bare", sceneType: "ocean" });
+    expect(ARRANGEMENT_PIECE_IDS).toContain(recipe.performance.pieceId);
+    expect(recipe.bedFilterType).toBe("bandpass");
   });
 });

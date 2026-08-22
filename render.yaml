@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://render.com/schema/render.yaml.json
-# Managed NATS, Redis, and three Neon URLs are supplied through the dashboard.
+# Managed NATS, Redis, and four Neon URLs are supplied through the dashboard.
 # Domain names describe responsibilities; Render's `worker` type describes the process.
 services:
 # =============================================================================
@@ -60,6 +60,90 @@ services:
       - key: WORLD_CACHE_TTL
         value: 60s
       - key: SHARE_CACHE_TTL
+        value: 60s
+      # Off until apps/myunivokai-admin exists (S4-AUTH-004) and
+      # ADMIN_ALLOWED_ORIGIN is filled in below — flipping this to "true"
+      # with an empty/wildcard origin fails config validation and the whole
+      # gateway (product routes included) refuses to start. See
+      # notes/vision/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
+      - key: ADMIN_ROUTES_ENABLED
+        value: "false"
+      - key: ADMIN_ALLOWED_ORIGIN
+        sync: false
+      - key: ADMIN_RATE_LIMIT_REQUESTS_PER_SECOND
+        value: "10"
+      - key: ADMIN_RATE_LIMIT_BURST
+        value: "50"
+      # Public half of myunivokai-auth's AUTH_ACCESS_PRIVATE_KEY, never the
+      # private key itself. Comma-separated for key rotation (S4-AUTH-005):
+      # list the new key alongside the outgoing one until every session has
+      # re-authenticated, then remove the old one.
+      - key: ADMIN_ACCESS_PUBLIC_KEYS
+        sync: false
+      - key: ADMIN_TOKEN_VERSION_CACHE_TTL
+        value: 360h
+      # Every service below is a pure NATS consumer with no inbound HTTP, and
+      # a free instance wakes only on inbound HTTP — so nothing in normal
+      # operation ever wakes one, and a query against a sleeping service gets
+      # an instant no-responders reply. "http" makes the gateway start them
+      # on demand; see notes/vision/service-wake-mechanism.md.
+      #
+      # This is a hosting workaround with an explicit exit: on a paid plan or
+      # a real background worker, set this to "none" and nothing else changes.
+      # Every service announces its own boot on
+      # myunivokai.events.<name>.service.started.v1 and analytics-service
+      # stores it. The version reported comes from SERVICE_VERSION when set,
+      # otherwise from Render's own RENDER_GIT_COMMIT, otherwise "unknown" -
+      # a container image carries no Go VCS stamp, and a wrong version is
+      # worse than an absent one. Set this only to override the commit.
+      # - key: SERVICE_VERSION
+      #   sync: false
+      - key: SERVICE_WAKE_PLATFORM
+        value: http
+      # sync: false rather than hardcoded .onrender.com URLs, so moving a
+      # service to another host is a dashboard edit instead of a repo change.
+      # A service left unset is simply not wakeable and keeps reporting plain
+      # SERVICE_UNAVAILABLE. Validated at startup: scheme + host, no path.
+      #
+      # LEAVE THESE BLANK ON THE FIRST SYNC OF THIS BLUEPRINT. They must be the
+      # services' PUBLIC URLs, which do not exist until this same sync has
+      # created the services - and fromService/property: host cannot be used
+      # instead, because that yields the private hostname and Render free web
+      # services cannot receive private network traffic at all, so a request
+      # there would never wake anything. Fill them in after the first deploy
+      # and redeploy the gateway; it starts fine without them and logs which
+      # services it can actually reach on every boot.
+      - key: DNA_SERVICE_URL
+        sync: false
+      - key: UNIVERSE_SERVICE_URL
+        sync: false
+      - key: NATURE_SERVICE_URL
+        sync: false
+      - key: OCEAN_SERVICE_URL
+        sync: false
+      - key: AUTH_SERVICE_URL
+        sync: false
+      - key: ANALYTICS_SERVICE_URL
+        sync: false
+      - key: TELEMETRY_SERVICE_URL
+        sync: false
+      - key: SERVICE_WAKE_TIMEOUT
+        value: 5s
+      - key: SERVICE_WAKE_LOCK_TTL
+        value: 60s
+      - key: SERVICE_WAKE_RETRY_AFTER
+        value: 15s
+      # Off until myunivokai-telemetry exists and has been verified — with it
+      # off the gateway registers no telemetry middleware, runs no ticker and
+      # publishes nothing, so this is the same request path the previous
+      # deploy served. Flipping it to "true" starts filling
+      # MYUNIVOKAI_EVENTS with one rollup envelope per minute whether or not
+      # a consumer exists yet, which is deliberate: envelopes accumulate on
+      # the stream the same way analytics' events did before that service was
+      # built. See notes/vision/telemetry-service-plan.md.
+      - key: TELEMETRY_ENABLED
+        value: "false"
+      - key: TELEMETRY_FLUSH_INTERVAL
         value: 60s
 
   - type: web
@@ -165,9 +249,266 @@ services:
         sync: false
 
   - type: web
+    name: myunivokai-auth
+    runtime: docker
+    dockerfilePath: ./services/auth-service/Dockerfile.prod
+    dockerContext: .
+    plan: free
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: MIGRATIONS_DIR
+        value: /app/migrations
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_DIRECT_URL
+        sync: false
+      - key: NATS_URL
+        sync: false
+      - key: NATS_USERNAME
+        sync: false
+      - key: NATS_PASSWORD
+        sync: false
+      - key: NATS_CONNECT_TIMEOUT
+        value: 5s
+      - key: NATS_RECONNECT_WAIT
+        value: 2s
+      - key: NATS_QUERY_TIMEOUT
+        value: 2500ms
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_KEY_PREFIX
+        value: myunivokai
+      # Ed25519 seed, base64-encoded — generate ONE PER ENVIRONMENT
+      # (`openssl rand -base64 32`), never reuse the local-dev value, never
+      # put a real value in this file. Rotation: add a second key to the
+      # gateway's accepted-public-keys list before removing the old one, so
+      # no session is force-logged-out — see
+      # notes/vision/auth-and-admin-plan.md#tokens.
+      - key: AUTH_ACCESS_PRIVATE_KEY
+        sync: false
+      - key: AUTH_ACCESS_TOKEN_TTL
+        value: 10m
+      - key: AUTH_REFRESH_TOKEN_TTL
+        value: 336h
+      - key: AUTH_TOKEN_VERSION_CACHE_TTL
+        value: 360h
+      - key: AUTH_INVITE_TOKEN_TTL
+        value: 168h
+      - key: AUTH_ARGON2_MEMORY_KIB
+        value: "19456"
+      - key: AUTH_ARGON2_ITERATIONS
+        value: "2"
+      - key: AUTH_ARGON2_PARALLELISM
+        value: "1"
+      - key: AUTH_ARGON2_SALT_LENGTH
+        value: "16"
+      - key: AUTH_ARGON2_KEY_LENGTH
+        value: "32"
+      - key: AUTH_MAX_FAILED_ATTEMPTS
+        value: "5"
+      - key: AUTH_LOCKOUT_DURATION
+        value: 15m
+
+  # The admin read model. Consumes myunivokai.events.>, writes its own Neon
+  # database, answers myunivokai.queries.analytics.>. It publishes no domain
+  # subject and calls no other service, so it has no outbox settings and no
+  # provider keys — see notes/vision/analytics-service-plan.md.
+  #
+  # BEFORE MERGING THIS TO main: create the Neon database and fill
+  # DATABASE_URL / DATABASE_DIRECT_URL in the Render dashboard, and link this
+  # service to the myunivokai-shared-env group (NATS_URL + the nats.creds
+  # secret file) the same way every other service already is. NATS_USERNAME /
+  # NATS_PASSWORD stay unset — production is one shared Synadia user with no
+  # per-service allow-list; infra/nats/nats-server.conf's per-user ACL blocks
+  # are LOCAL ONLY (see that file's own top comment and
+  # notes/ops/production-deployment-guide.md §1). Without the database vars
+  # the service crash-loops on first boot. This is also the sixth free web
+  # service on the account — verify the instance-hour budget first. The
+  # runbook is services/analytics-service/README.md.
+  - type: web
+    name: myunivokai-analytics
+    runtime: docker
+    dockerfilePath: ./services/analytics-service/Dockerfile.prod
+    dockerContext: .
+    plan: free
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: MIGRATIONS_DIR
+        value: /app/migrations
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_DIRECT_URL
+        sync: false
+      - key: NATS_URL
+        sync: false
+      - key: NATS_USERNAME
+        sync: false
+      - key: NATS_PASSWORD
+        sync: false
+      - key: NATS_CONNECT_TIMEOUT
+        value: 5s
+      - key: NATS_RECONNECT_WAIT
+        value: 2s
+      - key: NATS_QUERY_TIMEOUT
+        value: 2500ms
+      - key: NATS_ACK_WAIT
+        value: 2m
+      # Larger than the family services' batch of 1: a projection is one small
+      # upsert rather than a long scene build, and batching keeps the read
+      # model close to real time after a restart replays a backlog.
+      - key: NATS_FETCH_BATCH_SIZE
+        value: "25"
+      - key: NATS_FETCH_MAX_WAIT
+        value: 1s
+      - key: NATS_RETRY_DELAY
+        value: 2s
+      - key: SERVICE_SHUTDOWN_TIMEOUT
+        value: 15s
+
+  # Operational telemetry, and the one service in this repository written in
+  # Rust. Consumes myunivokai.events.telemetry.http.v1, writes its own Neon
+  # database, answers myunivokai.queries.telemetry.>. It publishes no domain
+  # subject and calls no other service — see
+  # notes/vision/telemetry-service-plan.md and
+  # services/telemetry-service/README.md.
+  #
+  # BEFORE MERGING THIS TO main: this is the SEVENTH free web service on the
+  # account — verify the instance-hour budget first, the same caution already
+  # on record for myunivokai-analytics as the sixth. Create the Neon database
+  # and fill DATABASE_URL / DATABASE_DIRECT_URL in the dashboard, and link this
+  # service to the myunivokai-shared-env group (NATS_URL + the nats.creds
+  # secret file) the same way every other service already is. NATS_USERNAME /
+  # NATS_PASSWORD stay unset — production is one shared Synadia user with no
+  # per-service allow-list; infra/nats/nats-server.conf's per-user ACL blocks
+  # are LOCAL ONLY. Without the database vars the service crash-loops on first
+  # boot, deliberately: a telemetry service that starts with no storage looks
+  # identical to a working one until somebody opens the screen.
+  #
+  # Then set TELEMETRY_SERVICE_URL on myunivokai-gateway (blank on first sync,
+  # like the other five) and TELEMETRY_ENABLED=true, and redeploy the gateway.
+  #
+  # No MIGRATIONS_DIR: sqlx embeds the migrations into the binary at compile
+  # time, so this container cannot start with migrations that do not match its
+  # own code.
+  - type: web
+    name: myunivokai-telemetry
+    runtime: docker
+    dockerfilePath: ./services/telemetry-service/Dockerfile.prod
+    dockerContext: .
+    plan: free
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      # postgres | otlp. postgres is the only sink the admin Telemetry screen
+      # can render from; otlp forwards to Grafana Cloud and answers no range
+      # query at all, which the screen shows as a link rather than an empty
+      # chart. Switching sinks needs no code change and no redeploy of
+      # anything else.
+      - key: TELEMETRY_SINK
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_DIRECT_URL
+        sync: false
+      # Deliberately lower than the Go services' 10. This service opens one
+      # short transaction per minute and a handful of reads per admin page
+      # load; a free Neon project's connection budget is better spent on the
+      # services in the product path.
+      - key: DATABASE_MAX_CONNS
+        value: "5"
+      - key: NATS_URL
+        sync: false
+      - key: NATS_USERNAME
+        sync: false
+      - key: NATS_PASSWORD
+        sync: false
+      - key: NATS_CONNECT_TIMEOUT
+        value: 5s
+      - key: NATS_QUERY_TIMEOUT
+        value: 2500ms
+      - key: NATS_ACK_WAIT
+        value: 2m
+      - key: NATS_MAX_ACK_PENDING
+        value: "1000"
+      - key: NATS_RETRY_DELAY
+        value: 2s
+      # Retention is a delete, not a policy document. There is no
+      # rollup-of-rollups: a bucket is already one minute wide, so the only
+      # thing old data becomes is deleted.
+      - key: TELEMETRY_RETENTION_DAYS
+        value: "90"
+      - key: TELEMETRY_RETENTION_SWEEP_INTERVAL
+        value: 6h
+      # TELEMETRY_SINK=otlp only. Authentication goes in the standard
+      # OTEL_EXPORTER_OTLP_HEADERS variable so Grafana Cloud's own snippet
+      # works unchanged rather than being translated by hand.
+      - key: TELEMETRY_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
+      - key: TELEMETRY_DASHBOARD_URL
+        sync: false
+      - key: SERVICE_SHUTDOWN_TIMEOUT
+        value: 15s
+      - key: RUST_LOG
+        value: info
+
+  - type: web
     name: myunivokai-nature
     runtime: docker
     dockerfilePath: ./services/nature-service/Dockerfile.prod
+    dockerContext: .
+    plan: free
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: MIGRATIONS_DIR
+        value: /app/migrations
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_DIRECT_URL
+        sync: false
+      - key: NATS_URL
+        sync: false
+      - key: NATS_USERNAME
+        sync: false
+      - key: NATS_PASSWORD
+        sync: false
+      - key: NATS_CONNECT_TIMEOUT
+        value: 5s
+      - key: NATS_RECONNECT_WAIT
+        value: 2s
+      - key: NATS_PUBLISH_TIMEOUT
+        value: 5s
+      - key: NATS_ACK_WAIT
+        value: 2m
+      - key: NATS_MAX_DELIVER
+        value: "5"
+      - key: NATS_FETCH_BATCH_SIZE
+        value: "1"
+      - key: NATS_FETCH_MAX_WAIT
+        value: 1s
+      - key: NATS_RETRY_DELAY
+        value: 2s
+      - key: NATS_QUERY_TIMEOUT
+        value: 2500ms
+      - key: OUTBOX_POLL_INTERVAL
+        value: 500ms
+      - key: OUTBOX_BATCH_SIZE
+        value: "50"
+      - key: PUBLIC_WEB_URL
+        sync: false
+
+  - type: web
+    name: myunivokai-ocean
+    runtime: docker
+    dockerfilePath: ./services/ocean-service/Dockerfile.prod
     dockerContext: .
     plan: free
     autoDeployTrigger: checksPass

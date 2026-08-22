@@ -1,0 +1,25 @@
+{
+  "jobId": "01K0EXAMPLE000000000000011",
+  "timestamp": "2026-07-22T12:06:10Z",
+  "data": {
+    "snapshot": {
+      "worldId": "01K0EXAMPLE000000000000014",
+      "family": "nature",
+      "profileId": "01K0EXAMPLE000000000000012",
+      "dnaVersionId": "01K0EXAMPLE000000000000013",
+      "sourceJobId": "01K0EXAMPLE000000000000011",
+      "revision": 2,
+      "nickname": "Linh",
+      "archetype": "Steady Gardener",
+      "sceneName": "Linh's Quiet Grove",
+      "mood": "reflective",
+      "worldStyle": "aurora",
+      "favoriteColors": ["#34D399"],
+      "traitScores": { "creativity": 64, "discipline": 88, "curiosity": 71, "energy": 55, "focus": 90 },
+      "variantCount": 2,
+      "selectedVariantNo": 1,
+      "variantSeed": "WLD-ABC1234567",
+      "worldCreatedAt": "2026-07-22T12:05:40Z"
+    }
+  }
+}

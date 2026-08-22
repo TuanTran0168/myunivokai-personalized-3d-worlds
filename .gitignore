@@ -33,7 +33,11 @@ go.work.sum
 !services/dna-service/.env.local
 !services/api-gateway/.env.local
 !apps/myunivokai-web/.env.local
+!apps/myunivokai-admin/.env.local
 !infra/.env.local
+!services/auth-service/.env.local
+!services/analytics-service/.env.local
+!services/telemetry-service/.env.local
 !.env.local
 
 # Node / Next.js
@@ -44,6 +48,18 @@ dist/
 # Go build artifacts
 bin/
 
+# Rust build artifacts. One `target/` per crate — contracts/rust and
+# services/telemetry-service are separate crates, the same way each Go service
+# has its own go.mod.
+target/
+
+# A library crate's lock file is ignored and a binary's is committed, which is
+# Cargo's own convention: the lock only takes effect for the thing being built,
+# so contracts/rust's would never be read by anyone, while
+# services/telemetry-service's is what makes a Render build resolve the exact
+# versions CI tested.
+contracts/rust/Cargo.lock
+
 # Editor/IDE
 # .idea/
 # .vscode/
@@ -52,3 +68,25 @@ bin/
 *.tsbuildinfo
 
 .vscode
+
+# Playwright's own run artefacts: traces, videos, retries, the HTML report.
+# Large, per-run, and reproducible by re-running the suite.
+apps/myunivokai-web/playwright-report/
+apps/myunivokai-web/test-results/
+
+# e2e/shots/ is deliberately NOT ignored.
+#
+# It used to be, with the reasoning that WebGL output is GPU-dependent and the
+# images only matter for one afternoon. The first half is wrong: playwright.config
+# forces --use-angle=swiftshader, so every frame is a SOFTWARE render and two
+# machines running the same commit produce the same pixels. That is what makes
+# them worth keeping.
+#
+# The second half is wrong too. This repository's scene work has produced a run
+# of bugs that only an image could show — water rendering grey, a frame clipped
+# flat to white, fish above the waterline, a street lamp on the seabed — and in
+# every case the question asked afterwards was "when did this start". Committed
+# frames answer it; a local folder that is wiped on every checkout does not.
+
+# Demo builds: three.js is spliced in at build time, never committed.
+demos/*/dist/

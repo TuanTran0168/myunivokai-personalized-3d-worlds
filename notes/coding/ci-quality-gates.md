@@ -9,7 +9,9 @@
 ## Contract job
 
 The shared Go module runs module verification, vet, test, and build. The same
-job lints `contracts/openapi.yaml` with the pinned Redocly CLI version.
+job lints **both** `contracts/openapi.yaml` and `contracts/openapi-admin.yaml`
+with the pinned Redocly CLI version — the admin spec is deliberately a separate
+document so the public API spec never advertises staff routes.
 
 Its tests also **enforce** the JSON Schemas rather than only parsing them
 (`contracts/go/schema_conformance_test.go`): the committed fixtures and both
@@ -51,12 +53,14 @@ sky, belt, sun and grade — one theme would fix a fifth of the surface.
 
 ## Backend jobs
 
-Four independent jobs run in:
+Six independent jobs run in:
 
 - `services/dna-service`;
 - `services/universe-service`;
 - `services/nature-service`;
-- `services/api-gateway`.
+- `services/api-gateway`;
+- `services/auth-service`;
+- `services/analytics-service`.
 
 Each runs:
 
@@ -64,11 +68,21 @@ Each runs:
 go mod verify -> go vet ./... -> go test ./... -> go build ./...
 ```
 
-## Frontend job
+## Frontend jobs
+
+Two, one per app:
 
 ```txt
+# apps/myunivokai-web
 npm ci -> npm run typecheck -> npm run lint -> npm run test -> npm run build
+
+# apps/myunivokai-admin
+npm ci -> npm run typecheck -> npm run lint -> npm run check:boundary -> npm run test -> npm run build
 ```
+
+`check:boundary` is the admin app's own gate and exists only there: it fails
+the build on any import of `apps/myunivokai-web` or three.js, which is the
+only mechanical way to keep "the two apps share no code" true over time.
 
 Go and npm dependency caches are enabled, and the concurrency group cancels a
 superseded run on the same ref.
@@ -81,12 +95,19 @@ requiring the containers to start.
 
 ## Branch protection
 
-Require all seven jobs before merging to `staging` or `main`:
+Require all ten jobs before merging to `staging` or `main`:
 
 - `Contracts (lint + vet + test + build)`;
-- `Backend (go vet + test)` (legacy display name; the job now also builds);
+- `Backend (go vet + test)` (legacy display name; this is universe-service, and the job now also builds);
 - `Nature service (go vet + test)` (legacy display name; also builds);
 - `DNA service (go vet + test + build)`;
+- `Auth service (go vet + test + build)`;
+- `Analytics service (go vet + test + build)`;
 - `API gateway (go vet + test + build)`;
 - `Frontend (typecheck + lint + test + build)`;
+- `Admin app (typecheck + lint + boundary + test + build)`;
 - `Local Compose configuration`.
+
+Adding a Go module means adding a job here **and** in the branch-protection
+list — a module with no job is not covered by anything, and a job missing from
+the required list can go red without blocking a merge.

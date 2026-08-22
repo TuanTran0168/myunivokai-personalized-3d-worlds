@@ -82,7 +82,7 @@ func (handler *NATSHandler) HandleFamilyResult(ctx context.Context, message *nat
 	}
 
 	switch message.Subject {
-	case contracts.UniverseCompletedEventSubject, contracts.NatureCompletedEventSubject:
+	case contracts.UniverseCompletedEventSubject, contracts.NatureCompletedEventSubject, contracts.OceanCompletedEventSubject:
 		var envelope contracts.Envelope[contracts.FamilyCompletedData]
 		if err := decodeEnvelope(message.Data, &envelope); err != nil {
 			return fmt.Errorf("decode family completion: %w", err)
@@ -91,7 +91,7 @@ func (handler *NATSHandler) HandleFamilyResult(ctx context.Context, message *nat
 			return errors.New("family completion data does not match its subject")
 		}
 		return handler.generationService.CompleteFamily(ctx, messageID, message.Subject, envelope)
-	case contracts.UniverseFailedEventSubject, contracts.NatureFailedEventSubject:
+	case contracts.UniverseFailedEventSubject, contracts.NatureFailedEventSubject, contracts.OceanFailedEventSubject:
 		var envelope contracts.Envelope[contracts.FamilyFailedData]
 		if err := decodeEnvelope(message.Data, &envelope); err != nil {
 			return fmt.Errorf("decode family failure: %w", err)
@@ -111,6 +111,8 @@ func familyForResultSubject(subject string) (contracts.WorldFamily, error) {
 		return contracts.WorldFamilyUniverse, nil
 	case contracts.NatureCompletedEventSubject, contracts.NatureFailedEventSubject:
 		return contracts.WorldFamilyNature, nil
+	case contracts.OceanCompletedEventSubject, contracts.OceanFailedEventSubject:
+		return contracts.WorldFamilyOcean, nil
 	default:
 		return "", fmt.Errorf("unsupported family result subject %q", subject)
 	}

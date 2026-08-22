@@ -1,0 +1,56 @@
+services:
+  # No separate migrate service, unlike analytics-service. sqlx embeds the
+  # migrations into the binary at compile time and the process runs them at
+  # startup, so there is no second image to keep in step and no MIGRATIONS_DIR
+  # to point at the wrong directory.
+  telemetry-service:
+    build:
+      context: ../..
+      dockerfile: services/telemetry-service/Dockerfile.local
+    env_file:
+      - ./.env.local
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      # postgres is the default sink for the same reason it is the default in
+      # production: the shipped configuration must reach nobody else's
+      # infrastructure until an operator opts in, and it is the only sink the
+      # admin Telemetry screen can render from.
+      TELEMETRY_SINK: ${TELEMETRY_SINK:-postgres}
+      DATABASE_URL: postgresql://${TELEMETRY_DATABASE_USER:-myunivokai_telemetry_app}:${TELEMETRY_DATABASE_PASSWORD:-myunivokai_local_telemetry}@postgres:5432/${TELEMETRY_DATABASE_NAME:-myunivokai_telemetry}?sslmode=disable
+      DATABASE_DIRECT_URL: postgresql://${TELEMETRY_DATABASE_USER:-myunivokai_telemetry_app}:${TELEMETRY_DATABASE_PASSWORD:-myunivokai_local_telemetry}@postgres:5432/${TELEMETRY_DATABASE_NAME:-myunivokai_telemetry}?sslmode=disable
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      NATS_USERNAME: ${NATS_TELEMETRY_USERNAME:-myunivokai_telemetry}
+      NATS_PASSWORD: ${NATS_TELEMETRY_PASSWORD:-myunivokai_local_telemetry}
+      NATS_CONNECT_TIMEOUT: ${NATS_CONNECT_TIMEOUT:-5s}
+      NATS_QUERY_TIMEOUT: ${NATS_QUERY_TIMEOUT:-2500ms}
+      NATS_ACK_WAIT: ${NATS_ACK_WAIT:-2m}
+      NATS_RETRY_DELAY: ${NATS_RETRY_DELAY:-2s}
+      # Six hours between sweeps locally is the same as production. A local
+      # stack rarely lives long enough to reach the second one, and that is
+      # fine: the first tick fires immediately.
+      TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-90}
+      TELEMETRY_RETENTION_SWEEP_INTERVAL: ${TELEMETRY_RETENTION_SWEEP_INTERVAL:-6h}
+      SERVICE_SHUTDOWN_TIMEOUT: ${SERVICE_SHUTDOWN_TIMEOUT:-15s}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - ../..:/workspace
+      # Two caches, not one. The registry holds downloaded crates and the
+      # target directory holds compiled artifacts; without the second, every
+      # container restart recompiles the whole dependency tree.
+      - telemetry-service-cargo-registry:/usr/local/cargo/registry
+      - telemetry-service-cargo-target:/workspace/services/telemetry-service/target
+    healthcheck:
+      test: ["CMD", "sh", "-c", "kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
+networks:
+  backend:
+    name: myunivokai-local-backend
+
+volumes:
+  telemetry-service-cargo-registry:
+  telemetry-service-cargo-target:

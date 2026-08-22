@@ -27,6 +27,7 @@ const (
 	profileDNASchemaPath      = "../schemas/profile-dna.schema.json"
 	personalityDNASchemaPath  = "../schemas/personality-dna.schema.json"
 	forestSceneSchemaPath     = "../scenes/forest-scene-config.schema.json"
+	oceanSceneSchemaPath      = "../scenes/ocean-scene-config.schema.json"
 	universeSceneSchemaPath   = "../schemas/world-scene-config.schema.json"
 
 	// world-input and world-scene-config declare no $id, so the compiler needs
@@ -42,6 +43,7 @@ const (
 	personalityDNAReferenceURL = "https://myunivokai.local/contracts/personality-dna.schema.json"
 
 	forestGoldenSceneGlob   = "../../services/nature-service/internal/services/testdata/forest-golden-*.json"
+	oceanGoldenSceneGlob    = "../../services/ocean-service/internal/services/testdata/ocean-golden-*.json"
 	universeGoldenSceneGlob = "../../services/universe-service/internal/services/testdata/universe-golden-*.json"
 )
 
@@ -99,6 +101,10 @@ func TestForestGoldenScenesConformToTheSceneContract(t *testing.T) {
 	validateGoldenScenes(t, compileSchema(t, forestSceneSchemaPath, ""), forestGoldenSceneGlob, "forest")
 }
 
+func TestOceanGoldenScenesConformToTheSceneContract(t *testing.T) {
+	validateGoldenScenes(t, compileSchema(t, oceanSceneSchemaPath, ""), oceanGoldenSceneGlob, "ocean")
+}
+
 func TestUniverseGoldenScenesConformToTheSceneContract(t *testing.T) {
 	validateGoldenScenes(t, compileSchema(t, universeSceneSchemaPath, universeSceneSchemaURL), universeGoldenSceneGlob, "universe")
 }
@@ -140,6 +146,41 @@ func TestSchemaValidationRejectsBrokenForestScenes(t *testing.T) {
 		},
 		"unknown enum member": func(document map[string]any) {
 			document["season"].(map[string]any)["kind"] = "monsoon"
+		},
+		"schema version bumped without updating the contract": func(document map[string]any) {
+			document["schemaVersion"] = "9.9"
+		},
+	})
+}
+
+// The ocean schema is the one most worth proving is not vacuous: nearly every
+// value in it is COMPUTED rather than picked from a table, so a widened bound
+// would be invisible on inspection.
+func TestSchemaValidationRejectsBrokenOceanScenes(t *testing.T) {
+	assertMutationsAreRejected(t, compileSchema(t, oceanSceneSchemaPath, ""), oceanGoldenSceneGlob, map[string]func(map[string]any){
+		"missing required section": func(document map[string]any) {
+			delete(document, "depth")
+		},
+		"a depth no world is ever placed at": func(document map[string]any) {
+			document["depth"].(map[string]any)["metres"] = 9000
+		},
+		"a zone that does not exist": func(document map[string]any) {
+			document["depth"].(map[string]any)["zone"] = "hadal"
+		},
+		"water that is clearer than the curve allows": func(document map[string]any) {
+			document["water"].(map[string]any)["visibilityMetres"] = 400
+		},
+		"a colour that is not a hex triplet": func(document map[string]any) {
+			document["water"].(map[string]any)["fogColor"] = "deep blue"
+		},
+		"a species that cannot be rendered": func(document map[string]any) {
+			document["flora"].(map[string]any)["speciesMix"] = []any{map[string]any{"modelKey": "flora-anglerfish", "weight": 1}}
+		},
+		"a sky this family does not have": func(document map[string]any) {
+			document["assets"].(map[string]any)["catalogVersion"] = "nature-1"
+		},
+		"scene rendered by the wrong family": func(document map[string]any) {
+			document["sceneType"] = "forest"
 		},
 		"schema version bumped without updating the contract": func(document map[string]any) {
 			document["schemaVersion"] = "9.9"

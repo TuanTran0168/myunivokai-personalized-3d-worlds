@@ -6,6 +6,12 @@ import { useEffect, useMemo, useRef } from "react";
 import { Vector3 } from "three";
 import type { OrbitControls as OrbitControlsImplementation } from "three-stdlib";
 import { usePlanetPositionTracker } from "./PlanetPositionTracker";
+import { useTerrainHeightSampler } from "./TerrainHeightSampler";
+
+// How far above the sampled terrain the lens must stay. Small enough that
+// approaching the seabed still feels like approaching it, large enough that
+// the near clip plane and the sand stop fighting.
+const MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES = 1.5;
 
 const ORBIT_CONTROLS_MINIMUM_DISTANCE = 2.5;
 const ORBIT_CONTROLS_MAXIMUM_DISTANCE = 26;
@@ -42,6 +48,18 @@ type CameraRigProps = {
   maximumPolarAngleRadians?: number;
   /** Decorative canvases (gallery backdrop) opt out of keyboard movement. */
   keyboardMoveEnabled?: boolean;
+  /**
+   * Where the camera rests its aim when nothing is selected.
+   *
+   * Defaults to the scene centre, which is right for a solar system seen from
+   * outside and wrong for a medium the camera is INSIDE. An ocean camera has to
+   * aim relative to itself — 60 degrees up into Snell's window, or down along a
+   * glitter path — and a target pinned to the origin makes every such angle come
+   * out roughly halved, because the horizontal run to the origin is the orbit
+   * radius no matter what pitch was asked for. Families that know where they
+   * want to look pass it; nothing else changes.
+   */
+  restingTarget?: { x: number; y: number; z: number };
 };
 
 /**
@@ -55,10 +73,12 @@ export function CameraRig({
   minimumDistance = ORBIT_CONTROLS_MINIMUM_DISTANCE,
   maximumDistance = ORBIT_CONTROLS_MAXIMUM_DISTANCE,
   maximumPolarAngleRadians = ORBIT_CONTROLS_MAXIMUM_POLAR_ANGLE,
-  keyboardMoveEnabled = true
+  keyboardMoveEnabled = true,
+  restingTarget
 }: CameraRigProps) {
   const orbitControlsReference = useRef<OrbitControlsImplementation>(null);
   const planetPositionTracker = usePlanetPositionTracker();
+  const terrainHeightSampler = useTerrainHeightSampler();
   const desiredTarget = useMemo(() => new Vector3(), []);
   const camera = useThree((state) => state.camera);
 
@@ -101,6 +121,15 @@ export function CameraRig({
     };
   }, [keyboardMoveEnabled]);
 
+  // Snapped on the first frame, never lerped in from the scene centre.
+  //
+  // OrbitControls derives the camera position from (target, spherical offset) on
+  // every update, so MOVING the target drags the camera with it. Lerping the
+  // target 20 m forward therefore also walked the camera 20 m forward — which,
+  // in an ocean, walked it into the boulder field and filled the frame with one
+  // white rock face. The offset has to be right from the first update instead.
+  const appliedRestingTargetRef = useRef<string | null>(null);
+
   const scratchForward = useMemo(() => new Vector3(), []);
   const scratchRight = useMemo(() => new Vector3(), []);
   const scratchMove = useMemo(() => new Vector3(), []);
@@ -109,6 +138,15 @@ export function CameraRig({
     const orbitControls = orbitControlsReference.current;
     if (!orbitControls) {
       return;
+    }
+
+    if (restingTarget) {
+      const key = `${restingTarget.x},${restingTarget.y},${restingTarget.z}`;
+      if (appliedRestingTargetRef.current !== key) {
+        appliedRestingTargetRef.current = key;
+        orbitControls.target.set(restingTarget.x, restingTarget.y, restingTarget.z);
+        orbitControls.update();
+      }
     }
 
     const selectedPlanetPosition = selectedPlanetKey ? planetPositionTracker.get(selectedPlanetKey) : undefined;
@@ -160,12 +198,40 @@ export function CameraRig({
         orbitControls.target.add(scratchMove);
       }
     } else if (!hasFreeRoamedRef.current) {
-      // Idle and never roamed: gently keep the target at the scene center
-      // (preserves the original deselect-returns-to-center feel).
+      // Idle and never roamed: gently keep the target where the family wants it,
+      // which is the scene centre unless one asked for its own aim.
       const frameLerpFactor = 1 - Math.exp(-CAMERA_FOCUS_LERP_SPEED * deltaTimeSeconds);
-      orbitControls.target.lerp(SCENE_CENTER, frameLerpFactor);
+      if (restingTarget) {
+        desiredTarget.set(restingTarget.x, restingTarget.y, restingTarget.z);
+        orbitControls.target.lerp(desiredTarget, frameLerpFactor);
+      } else {
+        orbitControls.target.lerp(SCENE_CENTER, frameLerpFactor);
+      }
     }
     orbitControls.update();
+
+    // Terrain clamp, last, so it corrects whatever this frame's zoom/orbit/pan
+    // just produced rather than something a later step could still undo. Only
+    // a family with a ground plane (ocean) ever sets the sampler; every other
+    // family's clamp here is a no-op.
+    //
+    // Shifting camera.position AND orbitControls.target by the same delta —
+    // not position alone — is the same technique the WASD block above already
+    // uses to move the rig without changing what it is looking at: OrbitControls
+    // derives position from (target, spherical offset), so translating both by
+    // one vector preserves the offset and therefore the view, while translating
+    // position alone would silently re-pitch the camera toward whatever it had
+    // just been clamped away from.
+    const sampleTerrainHeight = terrainHeightSampler.current;
+    if (sampleTerrainHeight) {
+      const minimumY = sampleTerrainHeight(camera.position.x, camera.position.z) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES;
+      if (camera.position.y < minimumY) {
+        const deltaY = minimumY - camera.position.y;
+        camera.position.y += deltaY;
+        orbitControls.target.y += deltaY;
+        orbitControls.update();
+      }
+    }
   });
 
   return (

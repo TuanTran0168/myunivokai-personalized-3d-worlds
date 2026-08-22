@@ -1,0 +1,81 @@
+[package]
+name = "telemetry-service"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+description = "Consumes the gateway's HTTP/NATS/cache rollups and answers admin telemetry queries"
+
+# The one service in this repository that is not written in Go. See
+# notes/be/source-overview.md for why, and notes/vision/rust-adoption-research.md
+# for what was rejected in its favour.
+
+[dependencies]
+myunivokai-contracts = { path = "../../contracts/rust" }
+
+anyhow = "1"
+async-nats = "0.38"
+async-trait = "0.1"
+axum = "0.8"
+dotenvy = "0.15"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+time = { version = "0.3", features = ["macros", "serde", "serde-well-known"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "signal",
+    "time",
+    "sync",
+    "net",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# rustls rather than native-tls: Neon and Synadia are both TLS-only, and a
+# pure-Rust TLS stack keeps the runtime image free of an OpenSSL the Go
+# services never needed either.
+#
+# The `query!` macros are deliberately NOT used. They check SQL against a live
+# database during `cargo build`, which would mean either a database in the
+# Render builder stage or a committed `.sqlx/` cache that has to be regenerated
+# by hand on every SQL edit and fails the BUILD when it goes stale. The runtime
+# API costs compile-time SQL verification and buys a hermetic build; see this
+# service's README. `sqlx::migrate!` is still a macro but reads only the
+# migrations directory, so it needs no database.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
+    "postgres",
+    "time",
+    "json",
+    "migrate",
+    "macros",
+] }
+
+# The OTLP sink. Pre-aggregated rollups are pushed as counters rather than
+# replayed through a histogram instrument - see sinks/otlp.rs for why that is
+# the honest shape rather than a shortcut.
+opentelemetry = { version = "0.27", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.27", features = ["metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", default-features = false, features = [
+    "metrics",
+    "grpc-tonic",
+    "tls",
+    "tls-webpki-roots",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "test-util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+# A telemetry service that is asleep most of the time pays for its binary size
+# in cold-start seconds, which is the metric that matters on this hosting tier.
+strip = true
+lto = "thin"
+codegen-units = 1

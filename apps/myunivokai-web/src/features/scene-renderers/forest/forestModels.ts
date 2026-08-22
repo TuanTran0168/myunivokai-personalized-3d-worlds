@@ -1,4 +1,5 @@
 import { mergeBufferGeometries } from "three-stdlib";
+import { rarityFeature } from "@/lib/rarity";
 import {
   Box3,
   BufferGeometry,
@@ -136,14 +137,36 @@ export type SpecialAnimalDefinition = {
   emissiveIntensity: number;
   scale: number;
 };
-export const SPECIAL_ANIMAL_DEFINITIONS: SpecialAnimalDefinition[] = [
-  { key: "white-stag", label: "White Stag", baseModelKey: "animal-stag", coatColor: "#EFF3F7", emissiveIntensity: 0.35, scale: 1.15 },
-  { key: "golden-fox", label: "Golden Fox", baseModelKey: "animal-fox", coatColor: "#F6C445", emissiveIntensity: 0.5, scale: 1.1 },
-  { key: "spirit-wolf", label: "Spirit Wolf", baseModelKey: "animal-wolf", coatColor: "#9FD0E8", emissiveIntensity: 0.55, scale: 1.1 },
-  { key: "verdant-stag", label: "Verdant Stag", baseModelKey: "animal-stag", coatColor: "#7BE0A3", emissiveIntensity: 0.45, scale: 1.1 }
-];
+
+// A species in the catalogue with no appearance here would otherwise spread
+// `undefined` into a definition and render an untextured, unscaled body. This
+// turns that into a module-load failure, which the build catches rather than a
+// viewer does.
+function requireAppearance<T>(appearances: Record<string, T>, key: string): T {
+  const appearance = appearances[key];
+  if (!appearance) {
+    throw new Error(`rare species "${key}" is in the rarity catalogue with no appearance defined`);
+  }
+  return appearance;
+}
+
+// Coat and model per species. The LIST — which species exist and in what order
+// — comes from lib/rarity.ts instead, because the species is picked by index
+// (`floor(roll * length)`): a list that lived here could be reordered without
+// the admin app's observed-rate panel noticing, and every past world would
+// silently change species.
+const SPECIAL_ANIMAL_APPEARANCE: Record<string, Omit<SpecialAnimalDefinition, "key" | "label">> = {
+  "white-stag": { baseModelKey: "animal-stag", coatColor: "#EFF3F7", emissiveIntensity: 0.35, scale: 1.15 },
+  "golden-fox": { baseModelKey: "animal-fox", coatColor: "#F6C445", emissiveIntensity: 0.5, scale: 1.1 },
+  "spirit-wolf": { baseModelKey: "animal-wolf", coatColor: "#9FD0E8", emissiveIntensity: 0.55, scale: 1.1 },
+  "verdant-stag": { baseModelKey: "animal-stag", coatColor: "#7BE0A3", emissiveIntensity: 0.45, scale: 1.1 }
+};
+const SPECIAL_ANIMAL_FEATURE = rarityFeature("forest-special-animal");
+export const SPECIAL_ANIMAL_DEFINITIONS: SpecialAnimalDefinition[] = (SPECIAL_ANIMAL_FEATURE.species ?? []).map(
+  (species) => ({ ...species, ...requireAppearance(SPECIAL_ANIMAL_APPEARANCE, species.key) })
+);
 // ~40% of worlds host one rare animal; a second roll picks the species.
-export const SPECIAL_ANIMAL_PROBABILITY = 0.4;
+export const SPECIAL_ANIMAL_PROBABILITY = SPECIAL_ANIMAL_FEATURE.probability;
 
 // Hover/detail display names for the interactive wildlife layer.
 export const ANIMAL_DISPLAY_NAMES: Record<string, string> = {
@@ -189,13 +212,20 @@ export type SpecialBirdDefinition = {
   emissiveIntensity: number;
   scale: number;
 };
-export const SPECIAL_BIRD_DEFINITIONS: SpecialBirdDefinition[] = [
-  { key: "firebird", label: "Firebird", plumageColor: "#FF6A1F", emissiveIntensity: 1.4, scale: 2.4 },
-  { key: "azure-macaw", label: "Azure Macaw", plumageColor: "#2E7DE0", emissiveIntensity: 0.5, scale: 1.8 },
-  { key: "golden-eagle", label: "Golden Raptor", plumageColor: "#E8B54B", emissiveIntensity: 0.6, scale: 2.6 }
-];
+
+// Same split as the rare animals above: appearance here, the ordered species
+// list in lib/rarity.ts.
+const SPECIAL_BIRD_APPEARANCE: Record<string, Omit<SpecialBirdDefinition, "key" | "label">> = {
+  firebird: { plumageColor: "#FF6A1F", emissiveIntensity: 1.4, scale: 2.4 },
+  "azure-macaw": { plumageColor: "#2E7DE0", emissiveIntensity: 0.5, scale: 1.8 },
+  "golden-eagle": { plumageColor: "#E8B54B", emissiveIntensity: 0.6, scale: 2.6 }
+};
+const SPECIAL_BIRD_FEATURE = rarityFeature("forest-special-bird");
+export const SPECIAL_BIRD_DEFINITIONS: SpecialBirdDefinition[] = (SPECIAL_BIRD_FEATURE.species ?? []).map(
+  (species) => ({ ...species, ...requireAppearance(SPECIAL_BIRD_APPEARANCE, species.key) })
+);
 // ~35% of worlds get a special crosser; which species is a second seeded roll.
-export const SPECIAL_BIRD_PROBABILITY = 0.35;
+export const SPECIAL_BIRD_PROBABILITY = SPECIAL_BIRD_FEATURE.probability;
 
 // Poly Haven CC0 pure-sky HDRIs (1k .hdr), self-hosted — image-based
 // environment lighting keyed by the config's lighting.hdriKey.

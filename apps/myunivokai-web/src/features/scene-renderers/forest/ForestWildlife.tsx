@@ -13,6 +13,7 @@ import type {
   PlanetSceneConfig
 } from "@/lib/types";
 import { randomFromSeed } from "@/lib/scene";
+import { FOREST_SPECIAL_ANIMAL_STREAM_SUFFIX, FOREST_SPECIAL_BIRD_STREAM_SUFFIX } from "@/lib/rarity";
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { usePlanetPositionTracker } from "@/features/scene-renderers/shared/PlanetPositionTracker";
 import { clearingRadiusFromTerrain, treelineRadiusFromTerrain, type TerrainHeightSampler } from "./forestMath";
@@ -102,8 +103,13 @@ type ForestWildlifeProps = {
 
 // A per-world seeded roll: ~SPECIAL_BIRD_PROBABILITY of forests get one rare
 // crosser, and a second roll picks which species. Returns null otherwise.
+//
+// worldSeed here is the terrain placementSeed, so the full stream from the
+// variant seed is `<variant>-forest-terrain-scatter-forest-special-bird`. That
+// whole chain is what lib/rarity.ts replays for the admin app's observed-rate
+// panel, which is why the suffix is a shared constant rather than a literal.
 function resolveSpecialBird(worldSeed: string): SpecialBirdDefinition | null {
-  const nextRandomValue = randomFromSeed(worldSeed + "-forest-special-bird");
+  const nextRandomValue = randomFromSeed(worldSeed + FOREST_SPECIAL_BIRD_STREAM_SUFFIX);
   if (nextRandomValue() >= SPECIAL_BIRD_PROBABILITY) {
     return null;
   }
@@ -113,7 +119,7 @@ function resolveSpecialBird(worldSeed: string): SpecialBirdDefinition | null {
 
 // The rare ground animal ("động vật quý hiếm"), same seeded pattern.
 function resolveSpecialAnimal(worldSeed: string): SpecialAnimalDefinition | null {
-  const nextRandomValue = randomFromSeed(worldSeed + "-forest-special-animal");
+  const nextRandomValue = randomFromSeed(worldSeed + FOREST_SPECIAL_ANIMAL_STREAM_SUFFIX);
   if (nextRandomValue() >= SPECIAL_ANIMAL_PROBABILITY) {
     return null;
   }

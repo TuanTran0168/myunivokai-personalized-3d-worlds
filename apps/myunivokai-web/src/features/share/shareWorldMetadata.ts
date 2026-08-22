@@ -40,6 +40,12 @@ const COPY_BY_FAMILY: Record<WorldFamily, FamilyCopy> = {
     fallbackDescription:
       "A one-of-a-kind living 3D forest generated from a personality. Explore it, then create your own.",
     genericSceneName: "A personal forest"
+  },
+  ocean: {
+    fallbackTitle: "A personal sea — Myunivokai",
+    fallbackDescription:
+      "A one-of-a-kind 3D sea generated from a personality — reef, twilight or abyss. Explore it, then create your own.",
+    genericSceneName: "A personal sea"
   }
 };
 
