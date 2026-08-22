@@ -86,13 +86,21 @@ services:
         value: 60s
       - key: SHARE_CACHE_TTL
         value: 60s
-      # Off until apps/myunivokai-admin exists (S4-AUTH-004) and
-      # ADMIN_ALLOWED_ORIGIN is filled in below — flipping this to "true"
-      # with an empty/wildcard origin fails config validation and the whole
-      # gateway (product routes included) refuses to start. See
+      # Turned on 2026-08-22 for the full production deploy. Requires BOTH
+      # ADMIN_ALLOWED_ORIGIN and ADMIN_ACCESS_PUBLIC_KEYS (below, sync:false)
+      # to already hold real values on the live Render dashboard — an
+      # empty/wildcard origin or an empty key list fails config validation
+      # and the whole gateway (product routes included) refuses to start. As
+      # of this edit: ADMIN_ALLOWED_ORIGIN was set live via the Render API to
+      # https://myunivokai-admin.vercel.app. ADMIN_ACCESS_PUBLIC_KEYS and
+      # auth-service's own AUTH_ACCESS_PRIVATE_KEY were generated the same
+      # day but could NOT be set via the API (blocked by an automated
+      # safety check on writing key-shaped secrets) — confirm both are set
+      # on the dashboard before this file is merged/deployed to main, or
+      # the gateway will crash-loop on boot. See
       # notes/vision/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
       - key: ADMIN_ROUTES_ENABLED
-        value: "false"
+        value: "true"
       - key: ADMIN_ALLOWED_ORIGIN
         sync: false
       - key: ADMIN_RATE_LIMIT_REQUESTS_PER_SECOND
