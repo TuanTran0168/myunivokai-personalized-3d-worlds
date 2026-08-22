@@ -1,6 +1,26 @@
 # yaml-language-server: $schema=https://render.com/schema/render.yaml.json
 # Managed NATS, Redis, and four Neon URLs are supplied through the dashboard.
 # Domain names describe responsibilities; Render's `worker` type describes the process.
+#
+# NATS_CREDENTIALS vs NATS_USERNAME/NATS_PASSWORD, verified against the live
+# account via the Render API on 2026-08-22: the dashboard-only env var group
+# "myunivokai-env-prod" holds NATS_URL + a nats.creds Secret File mounted at
+# NATS_CREDENTIALS=/etc/secrets/nats.creds, and is currently linked to only
+# FOUR services — myunivokai-dna, -nature, -universe, -analytics. Every
+# service's own messaging/runtime.go picks credentials with
+# `if NATSCredentialsFile != "" { UserCredentials(...) } else if NATSUsername
+# != "" { UserInfo(...) }` — so on a linked service, NATS_CREDENTIALS from the
+# group always wins and the NATS_USERNAME/NATS_PASSWORD sync:false entries
+# below are dead, never read. On an UNLINKED service (myunivokai-gateway,
+# -auth, -ocean, -telemetry as of this check) NATS_USERNAME/NATS_PASSWORD is
+# the only path — and the values that would go there (a Synadia NGS JWT
+# "name" as username, an NKEY seed as "password") do not actually mirror
+# NGS's real auth mechanism (JWT+NKey challenge-response, not a password).
+# Do not assume this fallback works without verifying it against a live
+# service. The reliable fix is linking the four missing services to
+# myunivokai-env-prod in the dashboard (blueprint sync cannot do this —
+# group membership has no render.yaml representation), not filling in
+# NATS_USERNAME/NATS_PASSWORD by hand.
 services:
 # =============================================================================
 # Note: The web frontend (myunivokai-web) is hosted on Vercel.
@@ -33,6 +53,11 @@ services:
         value: "true"
       - key: API_ALLOWED_ORIGINS
         sync: false
+      # NOT linked to myunivokai-env-prod as of the 2026-08-22 Render API
+      # check in this file's top comment — this service is on the
+      # NATS_USERNAME/NATS_PASSWORD fallback path, unverified against
+      # Synadia NGS's real JWT+NKey auth. Verify NATS actually connects
+      # before trusting this, or link the group instead.
       - key: NATS_URL
         sync: false
       - key: NATS_USERNAME
@@ -264,6 +289,8 @@ services:
         sync: false
       - key: DATABASE_DIRECT_URL
         sync: false
+      # NOT linked to myunivokai-env-prod as of the 2026-08-22 Render API
+      # check in this file's top comment — same caveat as myunivokai-gateway.
       - key: NATS_URL
         sync: false
       - key: NATS_USERNAME
@@ -316,17 +343,20 @@ services:
   # subject and calls no other service, so it has no outbox settings and no
   # provider keys — see notes/vision/analytics-service-plan.md.
   #
-  # BEFORE MERGING THIS TO main: create the Neon database and fill
-  # DATABASE_URL / DATABASE_DIRECT_URL in the Render dashboard, and link this
-  # service to the myunivokai-shared-env group (NATS_URL + the nats.creds
-  # secret file) the same way every other service already is. NATS_USERNAME /
-  # NATS_PASSWORD stay unset — production is one shared Synadia user with no
-  # per-service allow-list; infra/nats/nats-server.conf's per-user ACL blocks
-  # are LOCAL ONLY (see that file's own top comment and
-  # notes/ops/production-deployment-guide.md §1). Without the database vars
-  # the service crash-loops on first boot. This is also the sixth free web
-  # service on the account — verify the instance-hour budget first. The
-  # runbook is services/analytics-service/README.md.
+  # Service created on Render 2026-08-22 and already linked to the
+  # myunivokai-env-prod group (verified live via the Render API the same day
+  # — see this file's top comment). STILL OUTSTANDING: DATABASE_URL /
+  # DATABASE_DIRECT_URL are not filled in yet — the Neon database for
+  # analytics has not been created (deploy/single-container/.env's own
+  # ANALYTICS_DATABASE_URL is still a TODO for the same reason). Without them
+  # the service crash-loops on first boot. NATS_USERNAME / NATS_PASSWORD
+  # below stay unset on purpose: they are dead once the group is linked (see
+  # top comment) — production is one shared Synadia user with no per-service
+  # allow-list; infra/nats/nats-server.conf's per-user ACL blocks are LOCAL
+  # ONLY (see that file's own top comment and
+  # notes/ops/production-deployment-guide.md §1). This is also the sixth free
+  # web service on the account — verify the instance-hour budget. The runbook
+  # is services/analytics-service/README.md.
   - type: web
     name: myunivokai-analytics
     runtime: docker
@@ -376,17 +406,20 @@ services:
   # notes/vision/telemetry-service-plan.md and
   # services/telemetry-service/README.md.
   #
-  # BEFORE MERGING THIS TO main: this is the SEVENTH free web service on the
-  # account — verify the instance-hour budget first, the same caution already
-  # on record for myunivokai-analytics as the sixth. Create the Neon database
-  # and fill DATABASE_URL / DATABASE_DIRECT_URL in the dashboard, and link this
-  # service to the myunivokai-shared-env group (NATS_URL + the nats.creds
-  # secret file) the same way every other service already is. NATS_USERNAME /
-  # NATS_PASSWORD stay unset — production is one shared Synadia user with no
-  # per-service allow-list; infra/nats/nats-server.conf's per-user ACL blocks
-  # are LOCAL ONLY. Without the database vars the service crash-loops on first
-  # boot, deliberately: a telemetry service that starts with no storage looks
-  # identical to a working one until somebody opens the screen.
+  # Service created on Render 2026-08-22 (the SEVENTH free web service on the
+  # account — verify the instance-hour budget, the same caution already on
+  # record for myunivokai-analytics as the sixth) but, verified live via the
+  # Render API the same day, NOT YET LINKED to the myunivokai-env-prod group
+  # (see this file's top comment) — link it in the dashboard before relying
+  # on NATS. DATABASE_URL / DATABASE_DIRECT_URL already have real values (see
+  # deploy/single-container/.env's TELEMETRY_DATABASE_URL) — fill them in on
+  # the dashboard too. NATS_USERNAME / NATS_PASSWORD below stay unset on
+  # purpose: they are dead once the group is linked — production is one
+  # shared Synadia user with no per-service allow-list;
+  # infra/nats/nats-server.conf's per-user ACL blocks are LOCAL ONLY. Without
+  # the database vars the service crash-loops on first boot, deliberately: a
+  # telemetry service that starts with no storage looks identical to a
+  # working one until somebody opens the screen.
   #
   # Then set TELEMETRY_SERVICE_URL on myunivokai-gateway (blank on first sync,
   # like the other five) and TELEMETRY_ENABLED=true, and redeploy the gateway.
@@ -517,6 +550,12 @@ services:
         value: production
       - key: MIGRATIONS_DIR
         value: /app/migrations
+      # Service created on Render 2026-08-22, NOT linked to
+      # myunivokai-env-prod as of that day's API check (this file's top
+      # comment) — same caveat as myunivokai-gateway/-auth. DATABASE_URL /
+      # DATABASE_DIRECT_URL already have real values (see
+      # deploy/single-container/.env's OCEAN_DATABASE_URL, DB name is
+      # "myunivokai-ocean" with a hyphen, every other service uses "_").
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_DIRECT_URL
