@@ -13,12 +13,15 @@ Git history, links and deployment evidence.
 | [Sprint 04](sprint-04-2026-08-06/README.md) | 2026-08-06 | auth-service, the analytics read model and the internal admin app, in that priority order; the confirmed wake-mechanism defect is deliberately deferred |
 | [Sprint 05](sprint-05-2026-08-13/README.md) | 2026-08-13 | Operational telemetry end to end: the gateway's rollups, `telemetry-service` in Rust behind a dual-sink switch, and the admin Telemetry screen |
 | [Sprint 06](sprint-06-2026-08-19/README.md) | 2026-08-19 | Ocean as the third family: its own service, the depth curve as specified maths, and a procedural renderer |
+| [Sprint 07](sprint-07-2026-08-28/README.md) | 2026-08-28 | Create-form transitions, layout/responsive fixes, gallery ambient sync and depth-driven Ocean audio |
 | [Sprint 03](sprint-03-2026-09-09/README.md) | 2026-09-09 | City bounded-context and high-fidelity vertical slice on the new platform |
 
 Sprint numbers are allocation order, not calendar order, so the table is sorted
 by start date instead. Sprint 04 was scoped after Sprint 03 but runs alongside
 Sprint 02's resilience work; Sprint 05 sits between them. All three touch
 services and databases disjoint from City's, so none of them delays it.
+Sprint 07 is the same case again: it is FE-only, has no predecessor vision
+document, and touches none of Sprint 02/03's services or databases.
 
 Sprint 06 is the exception: it did not slot around Sprint 03, it MOVED it. On
 2026-08-15 the owner brought the Ocean family forward and pushed City from

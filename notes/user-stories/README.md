@@ -20,6 +20,7 @@ acceptance evidence live beside each dated sprint in `notes/sprints/*/user-stori
 | [Sprint 4 stories](../sprints/sprint-04-2026-08-06/user-stories.md) | auth-service, analytics read model and admin app commitments |
 | [Sprint 5 stories](../sprints/sprint-05-2026-08-13/user-stories.md) | telemetry-service commitments — the gateway rollups, the first Rust service, the admin Telemetry screen |
 | [Sprint 6](../sprints/sprint-06-2026-08-19/README.md) | Ocean as the third family — the epic carries the acceptance, so this sprint has no separate stories file |
+| [Sprint 7 stories](../sprints/sprint-07-2026-08-28/user-stories.md) | Create-form transitions, layout/responsive fixes, gallery ambient sync and depth-driven Ocean audio |
 
 The dated delivery commitments live in [../sprints/](../sprints/README.md).
 Sprint 1 is the complete platform migration, including local and production
