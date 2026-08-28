@@ -325,6 +325,39 @@ unpinched and unlit on the destination box.
 Still unwitnessed on real hardware, same as the first pass: both motions at
 speed. The swiftshader harness cannot render them fast enough to judge.
 
+Third owner pass (2026-08-29): the swipe the owner actually meant
+
+The sweep rail from the second pass answered the wrong question. Asked for
+"vuốt trái phải của điện thoại", it was read as a request about the loading
+indicator; the owner clarified that what should move is the WORLD — "vuốt 1 phát
+cả page luôn khi đổi world, nguyên mảng world luôn", the way a phone carries the
+next page in and macOS and Windows carry a window out.
+
+`features/transitions/swipeGesture.ts` + `SceneSwipe.tsx`, built to the same
+shape as the genie: a pure module for the numbers, a sibling overlay component
+driven by the scene container's ref. It runs on the create page's family switch
+and on the world page's variant select and regenerate.
+
+Three decisions, each with the reason it was not the obvious one:
+
+- **The still is captured by the CALLER**, one statement before the state
+  update, not by the component when it notices. By the time the component could
+  notice, React has swapped the canvas for the next world and the frame worth
+  keeping is gone. The create page had to opt into `preserveDrawingBuffer` for
+  this, as the world route already had for Export Image.
+- **CSS keyframes, not requestAnimationFrame.** This gesture runs at the exact
+  moment the next world is mounting, compiling shaders and uploading textures —
+  measured at over four seconds of blocked main thread on the world route in the
+  first pass. A JS animation writing `style.transform` per frame would be queued
+  behind all of it and sit frozen; a compositor animation keeps its frame rate
+  through a blocked main thread. Every number the keyframes use is written on by
+  the TypeScript module as a custom property, so the stylesheet holds the shape
+  of the gesture and not a second copy of its timing.
+- **Parallax, not a shared rail.** The arriving panel travels the full width and
+  the leaving one 32% of it, dimming to 0.35 and settling back to 0.94 scale.
+  Both panels moving together reads as a slideshow; the difference is what makes
+  it read as one screen sliding over another. Same ratio iOS uses.
+
 ### S7-FE-GALLERY-001 — Gallery ambient backdrop reflects the visitor's own worlds
 
 Status: Implemented (branch `fix/fe/sprint-07-experience-batch`; Verified needs real-device/browser evidence beyond this session's own Playwright checks)
@@ -501,3 +534,86 @@ Tasks:
       `frontend-plan.md` gap #4.
 - [ ] Verify: capture tier-3/desktop output before and after; confirm no
       visual regression on any of the three shipped families.
+
+Owner pass (2026-08-29): the runtime half, driven by a measurement
+
+The owner asked for 60 fps as a floor and for the machine's power to be used
+rather than budgeted — "60fps là tiêu chuẩn tối thiểu, cao hơn càng tốt. Tận
+dụng sức mạnh của máy". That is the opposite emphasis from this story as
+written, which is about making weak devices usable, so the runtime scenario was
+built and the `detect-gpu` tier classification was left alone. Nothing here
+lowers what a strong machine gets; a strong machine is measured and left at
+native resolution.
+
+**Measured first, on the real GPU.** Every earlier frame-rate claim in this repo
+was impossible to make because the Playwright suite forces swiftshader, which
+renders these scenes at roughly 1.5 fps. Headless Chromium launched with
+`--use-angle=d3d11 --enable-gpu --ignore-gpu-blocklist` gets the discrete GPU
+instead, verified by reading `UNMASKED_RENDERER_WEBGL` back out. On an
+RTX 4060 Laptop, against a production build:
+
+| condition | Universe | Forest | Ocean |
+| --- | --- | --- | --- |
+| 1600x900 dpr1 | 424 -> 427 | 100 -> 104 | ~2000 |
+| 1600x900 dpr2 | 146 -> **215** | **42 -> 70** | 675 -> 685 |
+| 2560x1440 dpr2 | 66 -> **100** | **11 -> 52** | ~300 |
+
+Eight of the nine hold 60 fps or better where six did before, and the worst case
+improved 4.7x. The one still short is the forest at genuine 4K, at 52 fps.
+
+**The diagnosis is the useful part.** Frame time scaled with pixel count while
+draw calls stayed at 83 and triangles at 4.1 million, unchanged, across a
+ten-fold range of resolutions. These scenes are FILL-RATE bound, not geometry
+bound, so LOD distances and instancing — the obvious levers — would have bought
+nothing. What was actually being paid per pixel:
+
+- An **8x-multisampled RGBA16F** composer target. At 5120x2880 its resolve alone
+  moves close to a gigabyte a frame, and its value falls away as the display's
+  own density rises: at dpr 2 the panel is already supersampling 4 device pixels
+  into every CSS pixel, so 8x on top is 32 samples per CSS pixel.
+- **N8AO at full resolution.** AO is a low-frequency term that darkens a crease
+  over tens of pixels, never one.
+
+Both now scale with the pixel ratio (`shared/renderQuality.ts`), and neither is
+a quality reduction in perceived terms — the scene still renders every native
+pixel. That pair alone took the forest from 42 to 57 at dpr 2 and from 11 to 30
+at 4K.
+
+**`AdaptiveResolution` is the safety net**, and it is deliberately narrower than
+this story's scenario asks for. It only ever gives resolution back, never climbs,
+and three attempts were needed to get it right — each failure measured:
+
+1. Seeded from the canvas's dpr CEILING of 3 rather than the renderer's actual
+   ratio, so the first "step down" computed 2.75 and RAISED the ratio on a
+   display at 2. A 30 fps forest went to 19.
+2. A climb rule. With vsync on, a scene holding 60 on a 60 Hz panel is
+   indistinguishable from one that could manage 200, so headroom cannot be read
+   from the frame rate — and guessing made the ratio hunt, resampling the whole
+   image on every swing. Removed; the controller is monotonic.
+3. Driven by drei's `PerformanceMonitor`, whose factor SATURATES: once fully
+   declined it stops firing `onChange`, so a scene needing three steps got one
+   and settled at 36 fps having been told it was finished. Replaced with a
+   `useFrame` window and a proportional jump — frame time is linear in pixels
+   and pixels go as the ratio squared, so `ratio * sqrt(fps / 60)` lands in one
+   adjustment instead of four.
+
+Plus one more that only a watch-it-converge run showed: with a 1.2 s warm-up and
+a single bad window, the universe family — 215 fps once running — walked itself
+from 3200x1800 down to 2000x1125 in the nine seconds after load, entirely on
+readings taken while it was still compiling shaders. It now waits for the
+scene-ready signal, then 2.5 s, then needs two consecutive slow windows. Watched
+again afterwards: universe and ocean are never touched at any resolution, and
+only the forest steps down.
+
+One hypothesis was tried and REJECTED by measurement rather than kept because it
+sounded right: basing multisampling on the DISPLAY's density instead of the
+renderer's, on the argument that a HiDPI panel hides the extra samples even when
+the render ratio has been dropped below it. It measured 37 fps against 47 on the
+forest at 4K. Rendering at ratio 1 and letting the browser upscale produces a
+dpr-1 image with dpr-1 aliasing, and multisampling is still what smooths it.
+
+Still open, and named rather than quietly dropped: the forest at 4K, 52 fps. It
+is 4.1 million triangles and 59 shader programs, and closing that gap means
+reducing what is IN the scene rather than how many pixels it is drawn into.
+The `detect-gpu` classification, the per-tier profiles and the WebGL failure
+boundary in the tasks above are all still unstarted.

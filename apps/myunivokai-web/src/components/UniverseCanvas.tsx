@@ -1,6 +1,6 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Suspense, useMemo, useRef, useState } from "react";
 import { ACESFilmicToneMapping, AgXToneMapping } from "three";
 import type { Vector3 } from "three";
@@ -24,6 +24,12 @@ import {
   CAMERA_SETTLE_DURATION_SECONDS
 } from "@/features/scene-renderers/shared/cameraIntro";
 import { CanvasLoader } from "@/features/scene-renderers/shared/CanvasLoader";
+import {
+  ADAPTIVE_SAMPLE_WINDOW_SECONDS,
+  ADAPTIVE_SLOW_WINDOWS_BEFORE_ACTING,
+  ADAPTIVE_WARM_UP_SECONDS,
+  adaptiveDevicePixelRatio
+} from "@/features/scene-renderers/shared/renderQuality";
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
 import { PlanetPositionTrackerContext } from "@/features/scene-renderers/shared/PlanetPositionTracker";
 import { TerrainHeightSamplerContext, type TerrainHeightSampler } from "@/features/scene-renderers/shared/TerrainHeightSampler";
@@ -50,7 +56,92 @@ const FOREST_MAXIMUM_POLAR_ANGLE_RADIANS = Math.PI * 0.492;
 // Render at native device resolution (the old 1.8 cap under-sampled every
 // HiDPI display — a uniform blur). Quality-first scope: weak devices are
 // explicitly out of scope for now.
+//
+// This is the CEILING, not a fixed setting. AdaptiveResolution below starts
+// here and only ever steps back from it when frames are actually being missed,
+// so a strong machine renders every pixel its display has and a 4K panel gets
+// whatever the GPU can hold sixty frames at.
 const CANVAS_DEVICE_PIXEL_RATIO_RANGE: [number, number] = [1, 3];
+
+/**
+ * Holds the frame rate at or above sixty by giving back resolution, and only
+ * resolution, and only when it has to.
+ *
+ * Measured on an RTX 4060 at 2560x1440 on a HiDPI display: the forest ran at 11
+ * frames a second. Its draw calls and triangle count were identical to the
+ * 100 fps case at 1600x900 — ten times the pixels, nine times the frame time,
+ * the same geometry — so what it is short of is fill rate, and the only lever
+ * that touches fill rate without touching what is IN the scene is how many
+ * pixels the scene is drawn into.
+ *
+ * Everything about the policy is in renderQuality.ts and unit-tested. What is
+ * here is the wiring: count frames over a window, hand the rate to the pure
+ * function, apply what it returns. The policy is MONOTONIC — it only ever gives
+ * resolution back — so there is nothing here to guard against oscillation.
+ *
+ * The frame counting is done here rather than with drei's PerformanceMonitor,
+ * and that was measured too. The monitor reports a FACTOR that saturates: once
+ * it has fully declined it stops firing `onChange`, so a scene needing three
+ * steps got one and settled at 36 fps having been told it was finished.
+ */
+function AdaptiveResolution({ isSceneReady }: { isSceneReady: boolean }) {
+  const setDpr = useThree((state) => state.setDpr);
+  const renderer = useThree((state) => state.gl);
+  // Seeded from what the renderer is ACTUALLY rendering at, never from the
+  // canvas's ceiling. Seeding it from the ceiling was measured and was worse
+  // than doing nothing: the range tops out at 3, a display at 2 starts there,
+  // and the first "step down" from the ceiling computed 2.75 — RAISING the
+  // ratio on a scene that was already too slow, taking a 30 fps forest to 19.
+  const samplingReference = useRef({
+    pixelRatio: renderer.getPixelRatio(),
+    frames: 0,
+    elapsedSeconds: 0,
+    warmUpSeconds: 0,
+    slowWindows: 0
+  });
+
+  useFrame((_, deltaSeconds) => {
+    // Named 'sampling', not 'window': shadowing the global inside a hot frame
+    // callback is exactly the kind of thing that reads fine and then bites.
+    const sampling = samplingReference.current;
+    if (!isSceneReady) {
+      return;
+    }
+    if (sampling.warmUpSeconds < ADAPTIVE_WARM_UP_SECONDS) {
+      sampling.warmUpSeconds += deltaSeconds;
+      return;
+    }
+    sampling.frames += 1;
+    sampling.elapsedSeconds += deltaSeconds;
+    if (sampling.elapsedSeconds < ADAPTIVE_SAMPLE_WINDOW_SECONDS) {
+      return;
+    }
+    const framesPerSecond = sampling.frames / sampling.elapsedSeconds;
+    sampling.frames = 0;
+    sampling.elapsedSeconds = 0;
+
+    const nextPixelRatio = adaptiveDevicePixelRatio(sampling.pixelRatio, framesPerSecond);
+    if (nextPixelRatio === sampling.pixelRatio) {
+      sampling.slowWindows = 0;
+      return;
+    }
+    // Two in a row, not one. A single slow window is a texture decode or a
+    // collection, and giving up resolution for one is permanent — measured
+    // walking a 219 fps universe down four steps on load-time readings alone.
+    sampling.slowWindows += 1;
+    if (sampling.slowWindows < ADAPTIVE_SLOW_WINDOWS_BEFORE_ACTING) {
+      return;
+    }
+    sampling.slowWindows = 0;
+    sampling.pixelRatio = nextPixelRatio;
+    // Re-arm the warm-up: reallocating every render target makes the next frame
+    // slow on its own, and measuring that would chase the change it just made.
+    sampling.warmUpSeconds = 0;
+    setDpr(nextPixelRatio);
+  });
+
+  return null;
+}
 
 /**
  * Mounts inside the scene's Suspense boundary, so its first rendered frame
@@ -298,6 +389,7 @@ export function UniverseCanvas({
                 }}
               />
             </Suspense>
+            <AdaptiveResolution isSceneReady={isSceneReady} />
             <CameraRig
               selectedPlanetKey={selectedPlanetKey ?? null}
               minimumDistance={isForestFamilyScene ? FOREST_MINIMUM_CAMERA_DISTANCE : undefined}

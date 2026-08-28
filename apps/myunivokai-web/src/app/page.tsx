@@ -9,6 +9,9 @@ import { UniverseCanvas } from "@/components/UniverseCanvas";
 import { GeneratingOverlay } from "@/components/GeneratingOverlay";
 import { StatusMessage } from "@/components/StatusMessage";
 import { ChipGroupWithCustom, type ChipGroupWithCustomHandle } from "@/components/ChipGroupWithCustom";
+import { SwatchChipGroup, type SwatchOption } from "@/components/SwatchChipGroup";
+import { SceneSwipe, captureSceneStill, type SceneSwipeRequest } from "@/features/transitions/SceneSwipe";
+import { isSceneSwipeWorthPlaying, swipeDirectionBetween } from "@/features/transitions/swipeGesture";
 import { ensureRange, toggleItem } from "@/lib/formSelection";
 import { activeSectionIndex, pickActiveSectionId } from "@/lib/formSectionProgress";
 import { FORM_RAIL_ELEMENT_ID } from "@/lib/formRailCollapse";
@@ -37,13 +40,13 @@ const traitOptions = ["curious", "builder", "focused", "creative", "calm", "expl
 // them); only the label/swatch changes so the card reads in the family's own
 // language — universe moods are cosmic, forest moods are seasonal (each label
 // names the season that mood leans toward in the forest builder).
-const moodOptions = [
+const moodOptions: readonly SwatchOption[] = [
   { label: "Cybernetic", value: "focused", swatch: "#3b82f6" },
   { label: "Nebula", value: "dreamy", swatch: "#a855f7" },
   { label: "Solar", value: "energetic", swatch: "#eab308" },
   { label: "Void", value: "reflective", swatch: "#ef4444" }
 ];
-const natureMoodOptions = [
+const natureMoodOptions: readonly SwatchOption[] = [
   { label: "Frostwood", value: "focused", swatch: "#93C5FD" },
   { label: "Blossom", value: "dreamy", swatch: "#F9A8D4" },
   { label: "Summer Meadow", value: "energetic", swatch: "#4ADE80" },
@@ -61,7 +64,7 @@ const natureMoodOptions = [
 // ocean_scene_profile.go for why turning that pin into a lean was deliberate.
 // See OCEAN_MOOD_PROFILES in lib/oceanScene.ts and oceanMoodProfiles in
 // ocean_scene_profile.go.
-const oceanMoodOptions = [
+const oceanMoodOptions: readonly SwatchOption[] = [
   { label: "Glass Shallows", value: "focused", swatch: "#5EEAD4" },
   { label: "Mesophotic Current", value: "dreamy", swatch: "#A78BFA" },
   { label: "Reef Crest", value: "energetic", swatch: "#F2B24C" },
@@ -77,7 +80,7 @@ const FAMILY_COPY: Record<
   {
     noun: string;
     moodLabel: string;
-    moodOptions: typeof moodOptions;
+    moodOptions: readonly SwatchOption[];
     chromeClassName: string;
     submitLabel: string;
     showsWorldStylePicker: boolean;
@@ -108,7 +111,7 @@ const FAMILY_COPY: Record<
     showsWorldStylePicker: false
   }
 };
-const styleOptions = [
+const styleOptions: readonly SwatchOption[] = [
   { label: "Cosmic", value: "cosmic-galaxy", swatch: "#8B5CF6" },
   { label: "Nebula", value: "nebula", swatch: "#a855f7" },
   { label: "Crystal", value: "crystal", swatch: "#22d3ee" },
@@ -238,6 +241,42 @@ export default function HomePage() {
 
   const railScrollReference = useRef<HTMLDivElement | null>(null);
   const [activeFormSectionId, setActiveFormSectionId] = useState<string | null>(null);
+
+  // The live world, and the swipe that carries one family off when another is
+  // picked. The container ref is what both the still capture and the incoming
+  // half of the gesture work against — the same shape the world route's genie
+  // reveal already uses.
+  const sceneContainerReference = useRef<HTMLDivElement | null>(null);
+  const [swipeRequest, setSwipeRequest] = useState<SceneSwipeRequest | null>(null);
+  const swipeTokenReference = useRef(0);
+
+  /**
+   * Change family, and swipe the old world off to do it.
+   *
+   * The still is captured HERE, before the state update, and that ordering is
+   * the whole trick: one `setWorldFamily` later React has swapped the canvas
+   * for the next family's and the frame worth keeping no longer exists. A
+   * capture that comes back null (no canvas yet, a cleared GL buffer, a
+   * zero-size box) simply means no swipe — the family still changes.
+   */
+  function handleSelectWorldFamily(nextFamily: WorldFamily) {
+    if (!isSceneSwipeWorthPlaying(worldFamily, nextFamily)) {
+      return;
+    }
+    const still = captureSceneStill(sceneContainerReference.current);
+    if (still) {
+      swipeTokenReference.current += 1;
+      setSwipeRequest({
+        still,
+        direction: swipeDirectionBetween(
+          familyOptions.findIndex((option) => option.value === worldFamily),
+          familyOptions.findIndex((option) => option.value === nextFamily)
+        ),
+        token: swipeTokenReference.current
+      });
+    }
+    setWorldFamily(nextFamily);
+  }
 
   // Drives the rail's section-progress indicator. Kept as a running map of
   // every section's own latest ratio rather than acting on each callback's
@@ -483,6 +522,7 @@ export default function HomePage() {
           the tablet tier up so the preview owns the screen and the rail floats over
           it. */}
       <div
+        ref={sceneContainerReference}
         className={`relative min-h-[320px] w-full md:absolute md:inset-0 md:h-full ${
           formRailCollapseState.reservesLayoutSpace ? "h-[46vh]" : "h-svh"
         }`}
@@ -493,6 +533,11 @@ export default function HomePage() {
           selectedPlanetKey={selectedPreviewPointKey}
           onSelectPlanet={handleSelectPreviewPoint}
           enableAmbientSound
+          // Read back by captureSceneStill when a family is switched. The world
+          // route already opts in for Export Image; here it is what makes the
+          // outgoing frame readable at all — without it the swipe would carry a
+          // transparent rectangle across the screen.
+          preserveDrawingBuffer
           // A settle, not a premiere: this preview re-solves its framing on
           // every option toggle, and the full opening move would replay in
           // full each time.
@@ -542,6 +587,11 @@ export default function HomePage() {
           </div>
         ) : null}
       </div>
+      <SceneSwipe
+        request={swipeRequest}
+        sceneContainerReference={sceneContainerReference}
+        onFinished={() => setSwipeRequest(null)}
+      />
 
       {/* Floating Liquid-Glass form rail: an in-flow card on phones (pulled up
           over the hero), a floating glass island from the tablet tier up,
@@ -571,16 +621,27 @@ export default function HomePage() {
         }`}
       >
       <section className="glass-panel glass-panel-glow glass-rise flex w-full flex-col overflow-hidden rounded-3xl md:h-full">
-          <div className="border-b border-white/5 px-5 pb-5 pt-5 sm:px-7">
-            <div className="mb-2 font-mono text-xs uppercase tracking-[0.2em] text-brass">Curate</div>
-            <h1 className="font-display text-3xl font-semibold text-paper">A portrait of you.</h1>
-            <p className="mt-2 text-sm text-grey">Your details are mounted as a world that is exactly, only, yours.</p>
-            {/* Lightweight sense-of-progress for the rail's long internal scroll —
+          {/* The rail's own masthead. It used to stack an eyebrow, a text-3xl
+              title, a two-line subtitle and the progress bar, which came to
+              169px — a third of the rail's 760px on a 900px-tall laptop went to
+              chrome before a single field. The title now shares its row with
+              the eyebrow, and the subtitle is dropped from `lg` up, where the
+              identity island opposite already says whose world this is and what
+              it was curated from. Below `lg` there is no island, so it stays. */}
+          <div className="border-b border-white/5 px-5 pb-3 pt-4 sm:px-7">
+            <div className="flex items-baseline gap-3">
+              <span className="font-mono text-xs uppercase tracking-[0.2em] text-brass">Curate</span>
+              <h1 className="font-display text-xl font-semibold leading-tight text-paper">A portrait of you.</h1>
+            </div>
+            <p className="mt-1.5 text-sm text-grey lg:hidden">
+              Your details are mounted as a world that is exactly, only, yours.
+            </p>
+            {/* Lightweight sense-of-progress for the rail's internal scroll —
                 one segment per field group, lit up through the one the visitor is
                 currently at. Purely a read of scroll position; it does not gate
                 navigation, so a visitor can still jump ahead by scrolling past it. */}
             <div
-              className="mt-4 flex gap-1"
+              className="mt-3 flex gap-1"
               role="progressbar"
               aria-label="Form section progress"
               aria-valuemin={1}
@@ -591,7 +652,7 @@ export default function HomePage() {
                 <span
                   key={sectionId}
                   aria-hidden="true"
-                  className={`h-1 flex-1 rounded-full transition-colors ${
+                  className={`h-[3px] flex-1 rounded-full transition-colors ${
                     index <= activeFormSectionPosition ? "bg-brass" : "bg-white/10"
                   }`}
                 />
@@ -600,39 +661,39 @@ export default function HomePage() {
           </div>
 
           <div ref={railScrollReference} className="rail-scroll min-h-0 flex-1 overflow-x-hidden md:overflow-y-auto">
-            <form id={CREATE_FORM_ELEMENT_ID} className="grid gap-5 px-5 py-6 sm:px-7" onSubmit={onSubmit}>
-              <div className="grid gap-3" data-form-section={PROGRESS_SECTION_IDS[0]}>
+            <form id={CREATE_FORM_ELEMENT_ID} className="grid gap-4 px-5 py-5 sm:px-7" onSubmit={onSubmit}>
+              <div className="grid gap-2.5" data-form-section={PROGRESS_SECTION_IDS[0]}>
                 <span className="font-mono text-xs uppercase tracking-widest text-brass">World Family</span>
                 {/* grid-cols-3, not -2: with exactly 3 options a 2-column grid always
                     orphans the third card alone on its own row. */}
-                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                <div className="grid grid-cols-3 gap-2">
                   {familyOptions.map((option) => {
                     const selected = worldFamily === option.value;
                     return (
                       <button
                         key={option.value}
                         type="button"
-                        onClick={() => setWorldFamily(option.value)}
+                        onClick={() => handleSelectWorldFamily(option.value)}
                         aria-pressed={selected}
-                        className={`focus-ring glass-panel tappable relative rounded-xl border-2 p-2.5 text-center sm:p-3 ${
+                        className={`focus-ring glass-panel tappable relative rounded-xl border-2 px-2 py-2.5 text-center ${
                           selected
                             ? "scale-[1.03] border-brass bg-brass/10 ring-2 ring-brass/40"
                             : "border-transparent hover:border-white/20"
                         }`}
                       >
                         {selected ? (
-                          <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-brass text-ink">
-                            <Check className="h-3 w-3" aria-hidden="true" />
+                          <span className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-brass text-ink">
+                            <Check className="h-2.5 w-2.5" aria-hidden="true" />
                           </span>
                         ) : null}
                         <option.Icon
-                          className={`mx-auto mb-2 h-6 w-6 sm:h-7 sm:w-7 ${selected ? "text-brass" : "text-on-surface-variant"}`}
+                          className={`mx-auto mb-1.5 h-6 w-6 ${selected ? "text-brass" : "text-on-surface-variant"}`}
                           aria-hidden="true"
                         />
                         <span className={`block text-sm ${selected ? "font-semibold text-brass" : "text-on-surface"}`}>
                           {option.label}
                         </span>
-                        <span className="mt-0.5 block text-[10px] text-on-surface-variant sm:text-[11px]">
+                        <span className="mt-0.5 block text-[10px] leading-tight text-on-surface-variant">
                           {option.description}
                         </span>
                       </button>
@@ -641,24 +702,28 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="grid gap-4">
-                <label className="grid gap-2" data-form-section={PROGRESS_SECTION_IDS[1]}>
+              {/* Nickname and Primary Role side by side. Two single-line inputs
+                  stacked cost 148px of a 508px scrollport to hold about twenty
+                  characters between them. They stay stacked below `sm`, where
+                  half a phone's width is not enough for either placeholder. */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1.5" data-form-section={PROGRESS_SECTION_IDS[1]}>
                   <span className="font-mono text-xs uppercase tracking-widest text-brass">Nickname</span>
                   <input
                     value={nickname}
                     onChange={(event) => setNickname(event.target.value)}
-                    className="focus-ring input-dark rounded-xl px-4 py-3 text-on-surface placeholder:text-outline"
+                    className="focus-ring input-dark rounded-xl px-3.5 py-2.5 text-on-surface placeholder:text-outline"
                     placeholder="e.g. Neo"
                     maxLength={32}
                   />
                 </label>
-                <label className="grid gap-2" data-form-section={PROGRESS_SECTION_IDS[2]}>
+                <label className="grid gap-1.5" data-form-section={PROGRESS_SECTION_IDS[2]}>
                   <span className="font-mono text-xs uppercase tracking-widest text-brass">Primary Role</span>
                   <input
                     value={role}
                     onChange={(event) => setRole(event.target.value)}
-                    className="focus-ring input-dark rounded-xl px-4 py-3 text-on-surface placeholder:text-outline"
-                    placeholder="e.g. Explorer, Creator"
+                    className="focus-ring input-dark rounded-xl px-3.5 py-2.5 text-on-surface placeholder:text-outline"
+                    placeholder="e.g. Explorer"
                     maxLength={80}
                   />
                 </label>
@@ -698,60 +763,37 @@ export default function HomePage() {
                 />
               </div>
 
-              <label className="grid gap-2" data-form-section={PROGRESS_SECTION_IDS[5]}>
+              <label className="grid gap-1.5" data-form-section={PROGRESS_SECTION_IDS[5]}>
                 <span className="font-mono text-xs uppercase tracking-widest text-brass">Goal</span>
+                {/* Still resizable, so anyone writing a long one can open it up. */}
                 <textarea
                   value={goal}
                   onChange={(event) => setGoal(event.target.value)}
-                  className="focus-ring input-dark min-h-24 resize-y rounded-xl px-4 py-3 text-on-surface placeholder:text-outline"
+                  className="focus-ring input-dark min-h-[68px] resize-y rounded-xl px-3.5 py-2.5 text-on-surface placeholder:text-outline"
                   placeholder="Build a beautiful AI product that feels personal and useful."
                   maxLength={220}
                 />
               </label>
 
-              <label className="grid gap-2" data-form-section={PROGRESS_SECTION_IDS[6]}>
+              <label className="grid gap-1.5" data-form-section={PROGRESS_SECTION_IDS[6]}>
                 <span className="font-mono text-xs uppercase tracking-widest text-brass">Hidden Challenge</span>
                 <input
                   value={challenge}
                   onChange={(event) => setChallenge(event.target.value)}
-                  className="focus-ring input-dark rounded-xl px-4 py-3 text-on-surface placeholder:text-outline"
+                  className="focus-ring input-dark rounded-xl px-3.5 py-2.5 text-on-surface placeholder:text-outline"
                   placeholder="e.g. I overthink product direction"
                   maxLength={220}
                 />
               </label>
 
-              <div className="grid gap-3" data-form-section={PROGRESS_SECTION_IDS[7]}>
-                <span className="font-mono text-xs uppercase tracking-widest text-brass">
-                  {FAMILY_COPY[worldFamily].moodLabel}
-                </span>
-                <div className="grid grid-cols-2 gap-3">
-                  {FAMILY_COPY[worldFamily].moodOptions.map((option) => {
-                    const selected = mood === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setMood(option.value)}
-                        aria-pressed={selected}
-                        className={`focus-ring glass-panel tappable relative rounded-xl border-2 p-3 text-center ${
-                          selected
-                            ? "scale-[1.03] border-secondary bg-secondary/15 ring-2 ring-secondary/40"
-                            : "border-transparent hover:border-white/20"
-                        }`}
-                      >
-                        {selected ? (
-                          <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-brass text-ink">
-                            <Check className="h-3 w-3" aria-hidden="true" />
-                          </span>
-                        ) : null}
-                        <span className="mb-2 block h-8 rounded" style={{ backgroundColor: option.swatch }} />
-                        <span className={`text-sm ${selected ? "font-semibold text-brass" : "text-on-surface"}`}>
-                          {option.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+              <div data-form-section={PROGRESS_SECTION_IDS[7]}>
+                <SwatchChipGroup
+                  fieldLabel={FAMILY_COPY[worldFamily].moodLabel}
+                  options={FAMILY_COPY[worldFamily].moodOptions}
+                  selected={mood}
+                  onSelect={setMood}
+                  accent="secondary"
+                />
               </div>
 
               {/* World Style only shapes universe visuals (sky/orbit themes);
@@ -759,38 +801,16 @@ export default function HomePage() {
                   mood/depth, so the section hides for both (their stored theme
                   keeps its default). */}
               <div
-                className={FAMILY_COPY[worldFamily].showsWorldStylePicker ? "grid gap-3" : "hidden"}
+                className={FAMILY_COPY[worldFamily].showsWorldStylePicker ? "" : "hidden"}
                 data-form-section={PROGRESS_SECTION_IDS[8]}
               >
-                <span className="font-mono text-xs uppercase tracking-widest text-brass">World Style</span>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {styleOptions.map((option) => {
-                    const selected = preferredWorldStyle === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setPreferredWorldStyle(option.value)}
-                        aria-pressed={selected}
-                        className={`focus-ring glass-panel tappable relative rounded-xl border-2 p-3 text-center ${
-                          selected
-                            ? "scale-[1.03] border-primary bg-primary/15 ring-2 ring-primary/40"
-                            : "border-transparent hover:border-white/20"
-                        }`}
-                      >
-                        {selected ? (
-                          <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-brass text-ink">
-                            <Check className="h-3 w-3" aria-hidden="true" />
-                          </span>
-                        ) : null}
-                        <span className="mb-2 block h-8 rounded" style={{ backgroundColor: option.swatch }} />
-                        <span className={`text-sm ${selected ? "font-semibold text-brass" : "text-on-surface"}`}>
-                          {option.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <SwatchChipGroup
+                  fieldLabel="World Style"
+                  options={styleOptions}
+                  selected={preferredWorldStyle}
+                  onSelect={setPreferredWorldStyle}
+                  accent="primary"
+                />
               </div>
 
               <div className="grid gap-2" data-form-section={PROGRESS_SECTION_IDS[9]}>
@@ -806,7 +826,7 @@ export default function HomePage() {
                         aria-label={color}
                         aria-pressed={selected}
                         onClick={() => toggleColor(color)}
-                        className={`focus-ring tappable h-11 w-11 rounded-xl border ${selected ? "scale-[1.06] border-primary ring-2 ring-primary/30" : "border-white/15 hover:border-white/30"}`}
+                        className={`focus-ring tappable h-10 w-10 rounded-xl border ${selected ? "scale-[1.06] border-primary ring-2 ring-primary/30" : "border-white/15 hover:border-white/30"}`}
                         style={{ backgroundColor: color }}
                       />
                     );

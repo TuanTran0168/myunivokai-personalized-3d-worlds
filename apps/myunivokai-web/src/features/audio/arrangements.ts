@@ -1,8 +1,15 @@
 // --- Written arrangements ----------------------------------------------------
 //
 // The notes the world actually plays are a real composition, not a random walk
-// across a scale. Six public-domain piano pieces ship as note data; the arranger
-// in lib/ambientSoundscape picks one and decides how it is performed.
+// across a scale. Twelve public-domain piano pieces ship as note data; the
+// arranger in lib/ambientSoundscape picks one and decides how it is performed.
+//
+// It was six, and six could not cover thirteen slots: Bach's C major prelude was
+// answering for four of them — two universe themes' worth of geometry AND a
+// clear forest AND snow — so worlds that share nothing else shared a tune. The
+// six added pieces are chosen against the slot they fill rather than for
+// variety's sake: the Raindrop prelude for rain, "By the Hearth" for snow,
+// Träumerei for the dreamy nebula.
 //
 // Why: the generated version was rejected as disjointed, and it was. Drawing a
 // consonant note at a random gap produces a note *sequence*; a melody needs a
@@ -23,16 +30,28 @@ export type ArrangementPieceId =
   | "satie-gymnopedie-2"
   | "satie-gymnopedie-3"
   | "bach-prelude-c-major"
+  | "bach-wtc2-prelude-c-major"
+  | "chopin-prelude-e-minor"
+  | "chopin-prelude-raindrop"
   | "debussy-arabesque-1"
-  | "debussy-clair-de-lune";
+  | "debussy-clair-de-lune"
+  | "schumann-traumerei"
+  | "scriabin-prelude-op11-1"
+  | "tchaikovsky-seasons-january";
 
 export const ARRANGEMENT_PIECE_IDS: ArrangementPieceId[] = [
   "satie-gymnopedie-1",
   "satie-gymnopedie-2",
   "satie-gymnopedie-3",
   "bach-prelude-c-major",
+  "bach-wtc2-prelude-c-major",
+  "chopin-prelude-e-minor",
+  "chopin-prelude-raindrop",
   "debussy-arabesque-1",
-  "debussy-clair-de-lune"
+  "debussy-clair-de-lune",
+  "schumann-traumerei",
+  "scriabin-prelude-op11-1",
+  "tchaikovsky-seasons-january"
 ];
 
 /**

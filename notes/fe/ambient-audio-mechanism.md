@@ -59,9 +59,24 @@ the notes had to come from a composer instead of a random number generator.
 5. **Space** — convolution reverb from a generated impulse response, plus a
    feedback delay. Without these, any synthesis reads as clinical.
 
-Six public-domain pieces (Satie ×3, Bach, Debussy ×2) and eight instruments. See
+Twelve public-domain pieces (Satie ×3, Bach ×2, Debussy ×2, Chopin ×2, Schumann,
+Scriabin, Tchaikovsky) and eight instruments. See
 [arrangements/ATTRIBUTION.md](../../apps/myunivokai-web/public/assets/audio/arrangements/ATTRIBUTION.md)
 and [audio/ATTRIBUTION.md](../../apps/myunivokai-web/public/assets/audio/ATTRIBUTION.md).
+
+It was six, and six could not cover thirteen slots — Bach's C major prelude was
+answering for four of them, so worlds that share nothing else shared a tune. The
+six added are each matched to the slot they fill: the Raindrop prelude for rain,
+"By the Hearth" for snow, Träumerei for the dreamy nebula.
+
+**The MIDI converter is now in the repository** at
+[tools/midi-to-arrangement.mjs](../../apps/myunivokai-web/tools/midi-to-arrangement.mjs),
+and the audition harness at
+[src/lib/ambientAudition.audition.ts](../../apps/myunivokai-web/src/lib/ambientAudition.audition.ts).
+Both were previously treated as throwaway. Rebuilding them to add six pieces was
+most of a day, and three of the converter's rules had to be recovered by trial
+against the shipped output — see ATTRIBUTION.md for what they are. Verified: the
+committed converter reproduces all six original note arrays byte for byte.
 
 **Famous modern songs are not an option**, however freely their sheet music
 circulates. The composition is under copyright for 70 years after the composer's
@@ -157,12 +172,17 @@ music; three versions shipped verified-and-wrong. Render it and listen:
 
 ```powershell
 cd apps/myunivokai-web
-npm install --no-save node-web-audio-api @breezystack/lamejs
-npx vitest run src/lib/renderAmbientPreview.test.ts --disable-console-intercept
+npm install --no-save node-web-audio-api
+npx vitest run --config vitest.audition.config.ts --disable-console-intercept
 ```
 
+The harness lives behind **its own vitest config** so `npm test` can never try to
+run it: `node-web-audio-api` is a `--no-save` development aid, and a missing
+optional dependency must not be able to fail CI. `vitest.config.ts` matches
+`src/**/*.test.ts`; the audition is `src/**/*.audition.ts`.
+
 The renderer drives the **real** graph module against a Node implementation of
-Web Audio and writes WAV files. Three things make it work:
+Web Audio. Three things make it work:
 
 - The graph schedules against `audioContext.currentTime` on a `setInterval`.
   Offline rendering has no wall clock, so the interval callback is captured and
@@ -172,10 +192,9 @@ Web Audio and writes WAV files. Three things make it work:
 - ESM resolves against the **script's** location, not the working directory, so the
   script has to sit inside `apps/myunivokai-web` to find its dev dependency.
 
-`node-web-audio-api` and `@breezystack/lamejs` are installed `--no-save` on
-purpose: they are development aids, not runtime or CI dependencies. Installing one
-`--no-save` package prunes a previously `--no-save`-installed one, so install both
-in the same command.
+`node-web-audio-api` is installed `--no-save` on purpose: a development aid, not
+a runtime or CI dependency. Installing one `--no-save` package prunes a
+previously `--no-save`-installed one, so install everything in one command.
 
 ### Measure, do not just listen
 
@@ -217,12 +236,33 @@ than by any gain: Bach is 549 notes in 35 bars where Gymnopédie No. 3 is 326 in
 
 ### Where it currently measures
 
-Ten worlds, 60 s each, master 0.6 × piece trim:
+Thirteen worlds, 60 s each, master 0.6 × piece trim, after the catalogue went
+from six pieces to twelve:
 
 | | Range |
 | --- | --- |
-| Onsets | 0.9–3.7 per second |
-| Peak | 0.29–0.61 — no clipping |
-| RMS | 0.0448–0.0715 — 1.60x spread |
-| Melody lead over accompaniment | 1.69x–4.05x — melody leads in all ten |
+| Onsets | 0.75–2.98 per second |
+| Peak | 0.25–0.57 — no clipping |
+| RMS | 0.0495–0.0895 — 1.81x spread |
+| Melody lead over accompaniment | 1.13x–2.63x — melody leads in all thirteen |
 | Bed | the quietest layer in every world |
+
+**Layer isolation earned its keep again on this pass.** Two of the six added
+pieces measured the accompaniment LOUDER than the tune on the first render —
+forest/clear at 0.70x and forest/overcast at 0.77x — and both had passed every
+assertion in the suite, because the suite checks gains and gain is not balance.
+Neither was fixed by a number: BWV 870 went to a different family and Chopin's
+E minor prelude was given a blown instrument. Then ocean/surge came back at
+1.03x, a tune technically ahead and not audibly so, and needed a third pass.
+
+**Do not add a piece without running this.** Three renders per world at roughly
+2.5 s each is about 100 seconds for the whole catalogue.
+
+### Tempo is not a rate
+
+A bare beats-per-minute bound used to be asserted, and across a catalogue this
+wide it means nothing: BWV 870 puts 3.9 note attacks on every beat where a
+Gymnopédie puts 0.79, so 30 bpm is busier in one piece than 58 is in the other.
+The unit test now asserts **onsets per second**, computed from the shipped
+arrangement's own note density — the same number this section reports, which is
+what makes a failing build checkable against a real listen.

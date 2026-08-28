@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ambientSoundscapeSignature,
@@ -5,7 +7,12 @@ import {
   SMALL_SPEAKER_BASS_FLOOR_MIDI,
   SMALL_SPEAKER_MELODY_FLOOR_MIDI
 } from "./ambientSoundscape";
-import { ARRANGEMENT_PIECE_IDS } from "@/features/audio/arrangements";
+import {
+  ARRANGEMENT_NOTE_START_BEAT_INDEX,
+  ARRANGEMENT_PIECE_IDS,
+  parseArrangement,
+  type ArrangementPieceId
+} from "@/features/audio/arrangements";
 import { SAMPLED_INSTRUMENT_NOTE_NAMES } from "@/features/audio/instrumentSamples";
 import type { SceneConfig } from "./types";
 
@@ -14,6 +21,35 @@ import type { SceneConfig } from "./types";
 // is checkable here. What it SOUNDS like is not — that is settled by rendering
 // the real graph offline and measuring, which is how three earlier versions were
 // found to be wrong while their tests were green.
+
+// The band the offline renders report across every world, widened a little at
+// each end so a tempo tweak of a few bpm is not a failing build.
+const SLOWEST_AMBIENT_ONSETS_PER_SECOND = 0.5;
+const FASTEST_AMBIENT_ONSETS_PER_SECOND = 3.5;
+const SECONDS_PER_MINUTE = 60;
+
+const ARRANGEMENT_DIRECTORY = join(process.cwd(), "public", "assets", "audio", "arrangements");
+const onsetsPerBeatByPiece = new Map<ArrangementPieceId, number>();
+
+/**
+ * How many times a second a note is STRUCK in this piece, per beat of tempo.
+ * A chord counts once — three notes on one downbeat is one attack to the ear,
+ * which is why this counts distinct start beats rather than notes.
+ */
+function noteOnsetsPerBeat(pieceId: ArrangementPieceId): number {
+  const cached = onsetsPerBeatByPiece.get(pieceId);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const arrangement = parseArrangement(
+    pieceId,
+    JSON.parse(readFileSync(join(ARRANGEMENT_DIRECTORY, `${pieceId}.json`), "utf8"))
+  );
+  const distinctOnsets = new Set(arrangement.notes.map((note) => note[ARRANGEMENT_NOTE_START_BEAT_INDEX]));
+  const onsetsPerBeat = distinctOnsets.size / arrangement.totalBeats;
+  onsetsPerBeatByPiece.set(pieceId, onsetsPerBeat);
+  return onsetsPerBeat;
+}
 
 const UNIVERSE_THEMES = ["cosmic-galaxy", "nebula", "crystal", "aurora", "cyber-orbit"];
 const FOREST_WEATHERS = ["clear", "sunRays", "overcast", "rain", "snow"];
@@ -229,10 +265,17 @@ describe("the balance", () => {
 
 describe("tempo", () => {
   it("stays slow enough to be ambience and fast enough to move", () => {
+    // Measured in NOTE ONSETS PER SECOND, not in beats per minute. A bare tempo
+    // bound was what this used to assert, and it does not mean anything across a
+    // catalogue this wide: Bach's BWV 870 puts 3.9 attacks on every beat where a
+    // Gymnopédie puts 0.79, so 30 bpm is busier in one piece than 58 is in the
+    // other. This is also the number the offline renders report, which is what
+    // makes a failure here checkable against a real listen.
     for (const scene of everySupportedScene()) {
-      const { beatsPerMinute } = buildAmbientSoundscapeRecipe(scene).performance;
-      expect(beatsPerMinute).toBeGreaterThanOrEqual(30);
-      expect(beatsPerMinute).toBeLessThanOrEqual(80);
+      const { pieceId, beatsPerMinute } = buildAmbientSoundscapeRecipe(scene).performance;
+      const onsetsPerSecond = (noteOnsetsPerBeat(pieceId) * beatsPerMinute) / SECONDS_PER_MINUTE;
+      expect(onsetsPerSecond).toBeGreaterThanOrEqual(SLOWEST_AMBIENT_ONSETS_PER_SECOND);
+      expect(onsetsPerSecond).toBeLessThanOrEqual(FASTEST_AMBIENT_ONSETS_PER_SECOND);
     }
   });
 

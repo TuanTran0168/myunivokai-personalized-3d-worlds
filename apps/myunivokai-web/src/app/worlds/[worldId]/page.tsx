@@ -16,6 +16,8 @@ import { PlanetDetailsPanel } from "@/components/PlanetDetailsPanel";
 import { RareFeatureBadge } from "@/components/RareFeatureBadge";
 import { UniverseCanvas } from "@/components/UniverseCanvas";
 import { GenieReveal } from "@/features/transitions/GenieReveal";
+import { SceneSwipe, captureSceneStill, type SceneSwipeRequest } from "@/features/transitions/SceneSwipe";
+import { isSceneSwipeWorthPlaying, swipeDirectionBetween } from "@/features/transitions/swipeGesture";
 import { takeWorldOpenOrigin, type WorldOpenOrigin } from "@/features/transitions/worldOpenOrigin";
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { prefetchSceneRendererForFamily } from "@/features/scene-renderers/registry";
@@ -68,6 +70,12 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   // collapsing region, so hiding the panels can never swallow one.
   const { collapseState, toggleCollapse, toggleButtonReference } = useWorldChromeCollapse({ worldFamily: family });
   const sceneContainerReference = useRef<HTMLDivElement>(null);
+
+  // The swipe that carries one variant off when another is picked. Same shape
+  // as the create page's family switch, and the same container ref the genie
+  // reveal already works against.
+  const [swipeRequest, setSwipeRequest] = useState<SceneSwipeRequest | null>(null);
+  const swipeTokenReference = useRef(0);
 
   // The rectangle the gallery card occupied, if a card is what opened this
   // world. Consumed on read, so a variant switch, a reload or a back-forward
@@ -153,6 +161,10 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     try {
       const variant = await api.regenerateVariant(worldId, family);
       await loadWorld();
+      // A variant that did not exist a moment ago has no position in the list
+      // to compare against, so swipeDirectionBetween's forward default is what
+      // carries it in — which is the right reading anyway: it is the next one.
+      requestVariantSwipe(variant.id);
       setActiveVariantId(variant.id);
       toast.success("Variant created.");
     } catch (err) {
@@ -162,8 +174,37 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     }
   }
 
+  /**
+   * Swipe the world that is on screen off, in the direction the variant list
+   * moved, and let the next one arrive from the other side.
+   *
+   * Captured before the state update for the same reason the create page does
+   * it there: one `setActiveVariantId` later the canvas has been swapped and
+   * the frame worth keeping is gone. A null capture is not an error — it just
+   * means this change is a plain cut, which is what it always used to be.
+   */
+  function requestVariantSwipe(nextVariantId: string) {
+    if (!world || !isSceneSwipeWorthPlaying(activeVariantId ?? "", nextVariantId)) {
+      return;
+    }
+    const still = captureSceneStill(sceneContainerReference.current);
+    if (!still) {
+      return;
+    }
+    swipeTokenReference.current += 1;
+    setSwipeRequest({
+      still,
+      direction: swipeDirectionBetween(
+        world.variants.findIndex((variant) => variant.id === activeVariantId),
+        world.variants.findIndex((variant) => variant.id === nextVariantId)
+      ),
+      token: swipeTokenReference.current
+    });
+  }
+
   async function selectCurrentVariant(variant: WorldVariant) {
     setAction("select");
+    requestVariantSwipe(variant.id);
     setActiveVariantId(variant.id);
     try {
       await api.selectVariant(worldId, variant.id, family);
@@ -278,6 +319,11 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
         origin={genieOrigin}
         sceneContainerReference={sceneContainerReference}
         onFinished={() => setHasRevealFinished(true)}
+      />
+      <SceneSwipe
+        request={swipeRequest}
+        sceneContainerReference={sceneContainerReference}
+        onFinished={() => setSwipeRequest(null)}
       />
 
       {/* HUD overlay — a normal scrolling column on mobile; on desktop it becomes

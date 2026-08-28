@@ -344,6 +344,50 @@ textarea {
   animation: sweep-rail 1450ms var(--glass-easing) infinite;
 }
 
+/* --- Whole-screen world swipe ------------------------------------------------
+
+   The gesture that carries one world off and brings the next one on. Both
+   halves are keyframes rather than a requestAnimationFrame loop on purpose:
+   this runs at the exact moment the next scene is mounting, compiling shaders
+   and uploading textures, and a main-thread animation would be queued behind
+   all of it. A compositor animation keeps its frame rate through a blocked main
+   thread — the difference between a 420 ms gesture and a 420 ms freeze.
+
+   Only `transform` and `opacity` are touched, so neither half ever asks for
+   layout or paint. Every number arrives as a custom property written on by
+   SceneSwipe from features/transitions/sceneSwipe.ts, which is what keeps the
+   gesture's timing in one place instead of two. */
+.scene-swipe-out {
+  animation: scene-swipe-out var(--scene-swipe-duration) var(--scene-swipe-easing) both;
+  will-change: transform, opacity;
+}
+
+.scene-swipe-in {
+  animation: scene-swipe-in var(--scene-swipe-duration) var(--scene-swipe-easing) both;
+  will-change: transform;
+}
+
+@keyframes scene-swipe-out {
+  from {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(calc(var(--scene-swipe-direction) * var(--scene-swipe-travel)))
+      scale(var(--scene-swipe-scale));
+    opacity: var(--scene-swipe-opacity);
+  }
+}
+
+@keyframes scene-swipe-in {
+  from {
+    transform: translateX(calc(var(--scene-swipe-direction) * -100%));
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 @keyframes sweep-rail {
   from {
     /* Fully clear of the near edge: the segment is 38% of the rail, so -105%
@@ -685,6 +729,14 @@ body[data-world-immersive="true"] .immersive-exit-right {
     width: 100%;
     animation: none;
     opacity: 0.45;
+  }
+  /* Belt and braces. SceneSwipe already declines to run at all under reduced
+     motion, so these classes should never be applied — but a swipe that DID
+     slip through would move a full-screen panel across the viewport, which is
+     the single most nauseating thing this interface can do. */
+  .scene-swipe-in,
+  .scene-swipe-out {
+    animation: none;
   }
   /* The collapsed selector is repeated in full on purpose: a bare
      .form-rail-collapse would not outrank the attribute rule above, and the

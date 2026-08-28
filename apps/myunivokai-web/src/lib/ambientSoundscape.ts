@@ -143,16 +143,30 @@ const MASTER_GAIN = 0.6;
 
 // Per-piece level trim, measured by rendering every world offline and comparing
 // RMS. Nothing else settles this: loudness here is driven by how many notes a
-// piece has per bar far more than by any gain, and the six span 3.5x — Bach's
-// prelude is 549 notes in 35 bars where Gymnopédie No. 3 is 326 in 60. Without
+// piece has per bar far more than by any gain, and the twelve span 4x — Bach's
+// BWV 870 is 833 notes in 34 bars where Gymnopédie No. 3 is 326 in 60. Without
 // these, moving between worlds on the create page steps in volume.
+//
+// Not guessable from note density either, which is why every one of these is a
+// measurement: Bach's BWV 846 is 15.7 notes a bar and trims to 0.87, Clair de
+// Lune is 20.5 and trims UP to 1.09.
 const PIECE_LEVEL_TRIM: Record<ArrangementPieceId, number> = {
   "satie-gymnopedie-1": 0.89,
   "satie-gymnopedie-2": 1.28,
   "satie-gymnopedie-3": 1.19,
   "bach-prelude-c-major": 0.87,
+  // 0.8 rather than the 0.87 that would match its RMS: BWV 870 renders the
+  // highest peak in the catalogue at 0.73, and headroom is worth the 1 dB.
+  "bach-wtc2-prelude-c-major": 0.8,
+  "chopin-prelude-e-minor": 0.99,
+  "chopin-prelude-raindrop": 0.97,
   "debussy-arabesque-1": 0.73,
-  "debussy-clair-de-lune": 1.09
+  "debussy-clair-de-lune": 1.09,
+  // Träumerei is the loudest of the twelve untrimmed — a thick four-voice
+  // texture in the middle of the register, where nothing masks anything.
+  "schumann-traumerei": 0.66,
+  "scriabin-prelude-op11-1": 0.92,
+  "tchaikovsky-seasons-january": 0.86
 };
 
 // REGISTER. Laptop and phone speakers roll off steeply below ~150 Hz. The first
@@ -183,8 +197,13 @@ const UNIVERSE_IDENTITY_BY_THEME: Record<string, MusicalIdentity> = {
   // Debussy's Arabesque is a curtain of light moving in one direction.
   aurora: { pieceId: "debussy-arabesque-1", instrument: "piano" },
   "cosmic-galaxy": { pieceId: "satie-gymnopedie-2", instrument: "harp" },
-  nebula: { pieceId: "satie-gymnopedie-1", instrument: "vibraphone" },
-  "cyber-orbit": { pieceId: "satie-gymnopedie-3", instrument: "saxello" }
+  // Träumerei is literally "Dreaming", and the dreamy mood is the one that
+  // builds a nebula. Satie sat here before, which meant the softest theme in
+  // the family and its most ordinary one played the same tune.
+  nebula: { pieceId: "schumann-traumerei", instrument: "vibraphone" },
+  // Scriabin's Op. 11 No. 1 runs five notes against three for its whole length:
+  // two rates that never line up, which is what an orbit full of machinery is.
+  "cyber-orbit": { pieceId: "scriabin-prelude-op11-1", instrument: "saxello" }
 };
 
 const DEFAULT_UNIVERSE_IDENTITY: MusicalIdentity = {
@@ -197,11 +216,28 @@ const FOREST_IDENTITY_BY_WEATHER: Record<string, MusicalIdentity> = {
   // Gymnopédie notes it measured 0.0084 RMS where a vibraphone measured 0.0704,
   // eight times quieter, and no gain fixes that without clipping the individual
   // notes. Running sixteenths keep a fast-decaying instrument sounding.
+  //
+  // BWV 870 was tried here to free 846 up, and measured the accompaniment
+  // LOUDER than the tune at 0.70x. 846 is almost bare — 67 bass and 70 harmony
+  // notes against 412 melody — which is the actual reason the kalimba survives
+  // it, and 870 has 376 harmony against 262 melody. It went to ocean/surge.
   clear: { pieceId: "bach-prelude-c-major", instrument: "kalimba" },
   sunRays: { pieceId: "debussy-clair-de-lune", instrument: "harp" },
-  overcast: { pieceId: "satie-gymnopedie-2", instrument: "piano" },
-  rain: { pieceId: "satie-gymnopedie-3", instrument: "recorder" },
-  snow: { pieceId: "bach-prelude-c-major", instrument: "glockenspiel" }
+  // Chopin's E minor prelude is a descending chromatic line over chords that
+  // barely change: grey, low and heavy without being sad about it.
+  //
+  // Recorder, not the piano this slot used to take. The piece is 77 melody
+  // notes under 350 accompaniment ones, so a decaying melody instrument loses
+  // it outright — measured 0.77x with piano, 0.75x with glockenspiel, 0.90x
+  // with saxello. A blown instrument holds its full level for the written
+  // duration, which is exactly the property that bars it from ACCOMPANYING and
+  // exactly what a melody this sparse needs. 1.30x.
+  overcast: { pieceId: "chopin-prelude-e-minor", instrument: "recorder" },
+  // The Raindrop, and not for the nickname: the repeated A-flat runs unbroken
+  // under the whole piece, which is what rain on a canopy actually is.
+  rain: { pieceId: "chopin-prelude-raindrop", instrument: "recorder" },
+  // "By the Hearth" — Tchaikovsky's January, written for a Petersburg winter.
+  snow: { pieceId: "tchaikovsky-seasons-january", instrument: "glockenspiel" }
 };
 
 const DEFAULT_FOREST_IDENTITY: MusicalIdentity = {
@@ -216,7 +252,15 @@ const DEFAULT_FOREST_IDENTITY: MusicalIdentity = {
 const OCEAN_IDENTITY_BY_CURRENT: Record<string, MusicalIdentity> = {
   still: { pieceId: "satie-gymnopedie-3", instrument: "vibraphone" },
   drift: { pieceId: "debussy-clair-de-lune", instrument: "harp" },
-  surge: { pieceId: "bach-prelude-c-major", instrument: "glockenspiel" }
+  // BWV 870 rather than 846: the same running motion, half again as many notes
+  // under each attack, and it leaves 846 to the crystal universe alone.
+  //
+  // Piano, not the glockenspiel this slot used to take. 870 carries 376 harmony
+  // notes against 262 melody ones and a bell has nothing to hold a line with
+  // through that — measured 1.03x, a tune that is technically ahead and not
+  // audibly so. A piano is the one melody instrument that both decays (so it
+  // can sit over a moving accompaniment) and has body enough to stay on top.
+  surge: { pieceId: "bach-wtc2-prelude-c-major", instrument: "piano" }
 };
 const DEFAULT_OCEAN_IDENTITY: MusicalIdentity = {
   pieceId: "debussy-clair-de-lune",
@@ -263,8 +307,21 @@ const PERFORMANCE_TEMPO_BY_PIECE: Record<ArrangementPieceId, TempoRange> = {
   "satie-gymnopedie-2": { minimumBeatsPerMinute: 46, maximumBeatsPerMinute: 60 },
   "satie-gymnopedie-3": { minimumBeatsPerMinute: 44, maximumBeatsPerMinute: 56 },
   "bach-prelude-c-major": { minimumBeatsPerMinute: 34, maximumBeatsPerMinute: 46 },
+  // 6.1 notes a beat against BWV 846's 3.9, but the same 3.9 distinct ONSETS a
+  // beat — the extra notes are chord tones under the same attacks. Onsets are
+  // what the kalimba needs to keep sounding, so it sits close to BWV 846 rather
+  // than being slowed to match a note count that is not what is heard.
+  "bach-wtc2-prelude-c-major": { minimumBeatsPerMinute: 30, maximumBeatsPerMinute: 40 },
+  "chopin-prelude-e-minor": { minimumBeatsPerMinute: 24, maximumBeatsPerMinute: 32 },
+  "chopin-prelude-raindrop": { minimumBeatsPerMinute: 32, maximumBeatsPerMinute: 42 },
   "debussy-arabesque-1": { minimumBeatsPerMinute: 52, maximumBeatsPerMinute: 68 },
-  "debussy-clair-de-lune": { minimumBeatsPerMinute: 40, maximumBeatsPerMinute: 52 }
+  "debussy-clair-de-lune": { minimumBeatsPerMinute: 40, maximumBeatsPerMinute: 52 },
+  "schumann-traumerei": { minimumBeatsPerMinute: 34, maximumBeatsPerMinute: 46 },
+  // Written Vivace at 140 and played at a fifth of that. Op. 11 No. 1 is five
+  // notes against three, and slow is the only speed at which that reads as two
+  // rates drifting rather than as a scramble.
+  "scriabin-prelude-op11-1": { minimumBeatsPerMinute: 26, maximumBeatsPerMinute: 36 },
+  "tchaikovsky-seasons-january": { minimumBeatsPerMinute: 26, maximumBeatsPerMinute: 36 }
 };
 
 // --- Key ---------------------------------------------------------------------

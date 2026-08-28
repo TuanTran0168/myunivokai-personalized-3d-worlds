@@ -60,8 +60,8 @@ const FIRST_NOTE_DELAY_SECONDS = 1.2;
 
 /**
  * A world opens on a downbeat at the start of a phrase. Four bars is the phrase
- * length in all six pieces, so snapping the rolled start position to a multiple
- * of it means a world never begins in the middle of a musical sentence.
+ * length across the catalogue, so snapping the rolled start position to a
+ * multiple of it means a world never begins in the middle of a musical sentence.
  */
 const PHRASE_BAR_COUNT = 4;
 
