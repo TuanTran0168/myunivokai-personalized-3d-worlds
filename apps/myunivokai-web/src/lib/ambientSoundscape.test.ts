@@ -474,6 +474,58 @@ describe("the ocean family", () => {
     expect(ambientSoundscapeSignature(oceanScene({ current: { kind: "surge", intensity: 0.5 } }))).not.toBe(base);
   });
 
+  // Depth reads as one physical axis across sight and sound: the same
+  // depthAt().brightness that dims color, fog and god-rays also muffles the
+  // tone filter and quiets the environmental bed. Metres taken from the ocean
+  // family's own golden fixtures (e2e/fixtures/ocean-*-world.json), not
+  // invented, so this is the actual shallow/twilight/abyss spread a visitor
+  // hears.
+  describe("depth drives the mix continuously, not just the transpose", () => {
+    const current = { kind: "drift", intensity: 0.5 };
+    const shallowMetres = 18.66; // ocean-shallow-world.json
+    const twilightMetres = 62.71; // ocean-twilight-world.json
+    const abyssMetres = 2208.58; // ocean-abyss-world.json
+
+    it("mutes the tone filter and the bed gain further with depth", () => {
+      const shallow = buildAmbientSoundscapeRecipe(
+        oceanScene({ depth: { metres: shallowMetres, zone: "sunlitShallows" }, current })
+      );
+      const twilight = buildAmbientSoundscapeRecipe(
+        oceanScene({ depth: { metres: twilightMetres, zone: "twilightReach" }, current })
+      );
+      const abyss = buildAmbientSoundscapeRecipe(
+        oceanScene({ depth: { metres: abyssMetres, zone: "abyss" }, current })
+      );
+      expect(shallow.toneCutoffHertz).toBeGreaterThan(twilight.toneCutoffHertz);
+      expect(twilight.toneCutoffHertz).toBeGreaterThan(abyss.toneCutoffHertz);
+      expect(shallow.bedGain).toBeGreaterThan(twilight.bedGain);
+      expect(twilight.bedGain).toBeGreaterThan(abyss.bedGain);
+    });
+
+    it("matches a depthless scene at the surface, where brightness is 1", () => {
+      const atSurface = buildAmbientSoundscapeRecipe(oceanScene({ depth: { metres: 0, zone: "sunlitShallows" }, current }));
+      const noDepthField = buildAmbientSoundscapeRecipe(oceanScene({ depth: undefined, current }));
+      expect(atSurface.toneCutoffHertz).toBeCloseTo(noDepthField.toneCutoffHertz, 5);
+      expect(atSurface.bedGain).toBeCloseTo(noDepthField.bedGain, 5);
+    });
+
+    it("changes the signature on depth alone, even inside the same zone", () => {
+      const near = ambientSoundscapeSignature(oceanScene({ depth: { metres: 5, zone: "sunlitShallows" } }));
+      const far = ambientSoundscapeSignature(oceanScene({ depth: { metres: 19, zone: "sunlitShallows" } }));
+      expect(near).not.toBe(far);
+    });
+
+    it("leaves every other family's mix untouched", () => {
+      const withoutDepthField = buildAmbientSoundscapeRecipe(UNIVERSE_SCENE);
+      const withStrayDepthField = buildAmbientSoundscapeRecipe({
+        ...UNIVERSE_SCENE,
+        depth: { metres: abyssMetres, zone: "abyss" }
+      } as SceneConfig);
+      expect(withStrayDepthField.toneCutoffHertz).toBe(withoutDepthField.toneCutoffHertz);
+      expect(withStrayDepthField.bedGain).toBe(withoutDepthField.bedGain);
+    });
+  });
+
   it("survives a config with no depth and no current instead of throwing", () => {
     const recipe = buildAmbientSoundscapeRecipe({ seed: "seed-ocean-bare", sceneType: "ocean" });
     expect(ARRANGEMENT_PIECE_IDS).toContain(recipe.performance.pieceId);

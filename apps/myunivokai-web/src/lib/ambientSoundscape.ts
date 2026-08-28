@@ -1,6 +1,7 @@
 import type { ArrangementPieceId } from "@/features/audio/arrangements";
 import type { SampledInstrumentKey } from "@/features/audio/instrumentSamples";
 import { isForestScene, isOceanScene, pointsOfInterestFromScene, randomFromSeed } from "./scene";
+import { depthAt } from "./oceanDepthCurve";
 import type { SceneConfig } from "./types";
 
 // --- Ambient soundscape recipe -----------------------------------------------
@@ -23,6 +24,8 @@ import type { SceneConfig } from "./types";
 //      average point energy          ->  the tempo
 //      how many planets / landmarks  ->  how full the chords are
 //      postFX bloom                  ->  how open the tone filter sits
+//      ocean depth                   ->  how open the tone filter sits, and
+//                                         how loud the environmental bed is
 //
 // FOUR ATTEMPTS, because the reasoning is worth not repeating:
 //
@@ -353,6 +356,15 @@ const BLOOM_TONE_INFLUENCE = 0.3;
 const MINIMUM_BLOOM_INTENSITY = 0.2;
 const MAXIMUM_BLOOM_INTENSITY = 2;
 
+// Depth reads as one physical axis across sight and sound: the same
+// `depthAt().brightness` that dims color, fog and god-rays also muffles and
+// quiets the mix. Both multipliers are 1 at the surface (brightness 1) —
+// unchanged from a depthless scene — and fall toward their floor in the
+// abyss (brightness 0). No independent depth-to-audio table: `depthAt` is
+// the only source of truth for what a given depth sounds/looks like.
+const OCEAN_DEPTH_TONE_MULTIPLIER_FLOOR = 0.35;
+const OCEAN_DEPTH_BED_GAIN_MULTIPLIER_FLOOR = 0.5;
+
 const MINIMUM_REVERB_DECAY_SECONDS = 3;
 const REVERB_DECAY_SPREAD_SECONDS = 3;
 const MINIMUM_REVERB_WET_MIX = 0.3;
@@ -594,6 +606,26 @@ function bloomToneMultiplier(scene: SceneConfig): number {
   return 1 + (bloomIntensity - NEUTRAL_BLOOM_INTENSITY) * BLOOM_TONE_INFLUENCE;
 }
 
+/** 1 (surface) for every non-ocean scene, so both multipliers below are a
+ * silent no-op anywhere but an ocean world. */
+function oceanDepthBrightness(scene: SceneConfig, family: AmbientFamily): number {
+  if (family !== OCEAN_FAMILY_KEY) {
+    return 1;
+  }
+  const metres = typeof scene.depth?.metres === "number" ? scene.depth.metres : 0;
+  return depthAt(metres).brightness;
+}
+
+function oceanDepthToneMultiplier(scene: SceneConfig, family: AmbientFamily): number {
+  const brightness = oceanDepthBrightness(scene, family);
+  return OCEAN_DEPTH_TONE_MULTIPLIER_FLOOR + brightness * (1 - OCEAN_DEPTH_TONE_MULTIPLIER_FLOOR);
+}
+
+function oceanDepthBedGainMultiplier(scene: SceneConfig, family: AmbientFamily): number {
+  const brightness = oceanDepthBrightness(scene, family);
+  return OCEAN_DEPTH_BED_GAIN_MULTIPLIER_FLOOR + brightness * (1 - OCEAN_DEPTH_BED_GAIN_MULTIPLIER_FLOOR);
+}
+
 /**
  * Short stable string identifying the soundscape a config asks for. Used as the
  * effect dependency that rebuilds the audio graph: the recipe object is rebuilt
@@ -625,6 +657,10 @@ export function ambientSoundscapeSignature(scene?: SceneConfig): string {
       OCEAN_FAMILY_KEY,
       dnaPart,
       String(scene.depth?.zone ?? ""),
+      // The zone alone is not enough once depth continuously drives the tone
+      // filter and the bed gain: two worlds sharing a zone but not a depth
+      // now sound different and must not share a signature.
+      typeof scene.depth?.metres === "number" ? scene.depth.metres.toFixed(1) : "",
       String(scene.current?.kind ?? ""),
       String(scene.current?.intensity ?? "")
     ].join("|");
@@ -706,11 +742,19 @@ export function buildAmbientSoundscapeRecipe(scene?: SceneConfig): AmbientSounds
       bass: { instrument: BASS_INSTRUMENT, gain: bassGain, noteKeepRatio: 1 }
     },
     toneCutoffHertz: clampToRange(
-      BASE_TONE_CUTOFF_HERTZ * toneJitter * energyToneMultiplier * bloomToneMultiplier(resolvedScene),
+      BASE_TONE_CUTOFF_HERTZ *
+        toneJitter *
+        energyToneMultiplier *
+        bloomToneMultiplier(resolvedScene) *
+        oceanDepthToneMultiplier(resolvedScene, family),
       MINIMUM_TONE_CUTOFF_HERTZ,
       MAXIMUM_TONE_CUTOFF_HERTZ
     ),
-    bedGain: clampToRange(bedCharacter.gain, MINIMUM_BED_GAIN, MAXIMUM_BED_GAIN),
+    bedGain: clampToRange(
+      bedCharacter.gain * oceanDepthBedGainMultiplier(resolvedScene, family),
+      MINIMUM_BED_GAIN,
+      MAXIMUM_BED_GAIN
+    ),
     bedFilterType: bedCharacter.filterType,
     bedFilterFrequencyHertz: clampToRange(
       bedCharacter.filterFrequencyHertz,

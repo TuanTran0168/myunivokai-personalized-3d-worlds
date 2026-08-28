@@ -1,6 +1,12 @@
 import type { WorldFamily } from "./types";
 
 const SAVED_WORLD_IDENTIFIERS_STORAGE_KEY = "myunivokai.savedWorldIds";
+// Deliberately a separate key from the gallery list above, and never
+// reordered into it: the gallery grid's own newest-first order is a
+// creation-time fact visitors rely on to find things, and must not shuffle
+// every time a card is merely opened. This key exists only to answer "which
+// world did the visitor last have open", for the gallery's ambient backdrop.
+const LAST_VIEWED_WORLD_STORAGE_KEY = "myunivokai.lastViewedWorldId";
 
 const DEFAULT_SAVED_WORLD_FAMILY: WorldFamily = "universe";
 
@@ -101,4 +107,45 @@ export function addWorldIdentifierToGallery(
 export function removeWorldIdentifierFromGallery(worldIdentifier: string): void {
   const savedReferences = readSavedWorldReferences();
   writeSavedWorldReferences(savedReferences.filter((reference) => reference.worldIdentifier !== worldIdentifier));
+  // Otherwise a removed-then-re-added-elsewhere world could keep pointing the
+  // ambient backdrop at an id the gallery no longer has data for.
+  if (isBrowserEnvironment() && readLastViewedWorld()?.worldIdentifier === worldIdentifier) {
+    window.localStorage.removeItem(LAST_VIEWED_WORLD_STORAGE_KEY);
+  }
+}
+
+/**
+ * Records the world the visitor just opened on its own detail page. Called
+ * unconditionally on every load there (unlike `addWorldIdentifierToGallery`,
+ * which is a no-op once a world is already saved) — this is the one place
+ * that is allowed to change on a re-view, precisely because nothing reads it
+ * for the gallery grid's own ordering.
+ */
+export function recordLastViewedWorld(worldIdentifier: string, family: WorldFamily): void {
+  if (!worldIdentifier) {
+    return;
+  }
+  if (!isBrowserEnvironment()) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(LAST_VIEWED_WORLD_STORAGE_KEY, JSON.stringify({ worldIdentifier, family }));
+  } catch {
+    // Storage may be unavailable (private mode, quota). Best-effort, same as the rest of this module.
+  }
+}
+
+export function readLastViewedWorld(): SavedWorldReference | null {
+  if (!isBrowserEnvironment()) {
+    return null;
+  }
+  try {
+    const storedValue = window.localStorage.getItem(LAST_VIEWED_WORLD_STORAGE_KEY);
+    if (!storedValue) {
+      return null;
+    }
+    return parseSavedWorldReference(JSON.parse(storedValue));
+  } catch {
+    return null;
+  }
 }

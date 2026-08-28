@@ -7,7 +7,7 @@ import { Copy, Download, ExternalLink, Loader2, RefreshCw, Rocket } from "lucide
 import { toast } from "sonner";
 import { api, apiErrorMessage } from "@/lib/api";
 import { exportSceneCanvasAsPng } from "@/lib/exportImage";
-import { addWorldIdentifierToGallery } from "@/lib/savedWorlds";
+import { addWorldIdentifierToGallery, recordLastViewedWorld } from "@/lib/savedWorlds";
 import { isForestScene, pointsOfInterestFromScene, sceneFromVariant, selectedVariant } from "@/lib/scene";
 import { sharePagePath, worldFamilyFromQueryValue, WORLD_FAMILY_QUERY_PARAMETER } from "@/lib/worldRoutes";
 import type { PlanetSceneConfig, World, WorldFamily, WorldVariant } from "@/lib/types";
@@ -90,6 +90,10 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
         setWorld(nextWorld);
         setActiveVariantId(selectedVariant(nextWorld)?.id);
         addWorldIdentifierToGallery(nextWorld.id, family);
+        // Unconditional, unlike the add above: this is the one signal the
+        // gallery's ambient backdrop uses to know which world the visitor
+        // last had open, and a re-view has to update it every time.
+        recordLastViewedWorld(nextWorld.id, family);
       })
       .catch((err) => mounted && setError(apiErrorMessage(err)))
       .finally(() => mounted && setLoading(false));
