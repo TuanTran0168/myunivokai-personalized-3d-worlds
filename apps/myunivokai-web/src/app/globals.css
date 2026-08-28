@@ -58,7 +58,8 @@
   --glass-easing: cubic-bezier(0.22, 0.61, 0.36, 1);
   --form-rail-collapse-easing-out: cubic-bezier(0.4, 0, 1, 1);
   --form-rail-collapse-duration: 320ms;
-  /* Tailwind lg:left-6 = 1.5rem, i.e. theme spacing.gutter. */
+  /* Tailwind md:left-6 = 1.5rem, i.e. theme spacing.gutter: the rail starts
+     floating at the tablet tier now, not only at lg. */
   --form-rail-left-gutter: 24px;
   /* Blur radius of .glass-panel-glow's outer shadow: the rail has to travel far
      enough that its shadow spill leaves the viewport too, or a dark smear stays

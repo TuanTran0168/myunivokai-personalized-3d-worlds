@@ -19,7 +19,7 @@ stopped changing what the canvas renders.
 
 ### S7-FE-RESPONSIVE-001 — Close the tablet breakpoint gap and fix the create-form layout
 
-Status: Planned
+Status: Implemented (branch `fix/fe/sprint-07-experience-batch`; Verified needs real-device/browser evidence beyond this session's own Playwright checks)
 Priority: P1
 
 As a visitor on a tablet or a phone,
@@ -76,18 +76,38 @@ Source evidence:
   state to reuse for the mobile placard, rather than adding a second one
 
 Tasks:
-- [ ] Add an `md:` layout tier for the create page's hero/rail split.
-- [ ] Fix the World Family grid so a 3rd option never sits alone (`grid-cols-3`,
+- [x] Add an `md:` layout tier for the create page's hero/rail split.
+- [x] Fix the World Family grid so a 3rd option never sits alone (`grid-cols-3`,
       or center the trailing item on `grid-cols-2`).
-- [ ] Render the identity placard on collapse below `lg` too, driven by
+- [x] Render the identity placard on collapse below `lg` too, driven by
       `formRailCollapseState`, not only inside the existing `lg:block` branch.
-- [ ] Add an IntersectionObserver-driven section indicator inside
+- [x] Add an IntersectionObserver-driven section indicator inside
       `.rail-scroll`.
-- [ ] Bump Palette swatch touch targets to at least 44px on narrow viewports.
+- [x] Bump Palette swatch touch targets to at least 44px on narrow viewports.
+
+Implementation note: manual Playwright screenshot verification (not a
+committed test) caught two real bugs the task list above did not anticipate,
+both fixed before this story was marked Implemented:
+
+- The progress indicator's `IntersectionObserver` was rooted on `.rail-scroll`
+  itself. Below `lg` that element has no scrollport of its own (the page
+  scrolls, not the rail), so a non-clipping element root never moves relative
+  to its own children as the page scrolls — the indicator froze at whatever
+  its first layout produced. Fixed by rooting on the viewport (`root`
+  omitted) and relying on the browser's native ancestor clip-chain, which
+  still restricts intersection to the rail's own scrollport once
+  `md:overflow-y-auto` applies.
+- The new `md:absolute` rail wrapper computes a definite height from
+  `md:top-16`/`md:bottom-16`, but the `<section>` inside it only had
+  `lg:h-full` and `.rail-scroll` only had `lg:overflow-y-auto` — both still
+  gated one tier later than the wrapper's own new breakpoint. Below `lg` (at
+  the new `md` tier specifically), the form's content overflowed straight
+  past the card's rounded border, uncontained, instead of scrolling inside
+  it. Fixed by moving both to `md:`.
 
 ### S7-FE-CUSTOMFORM-001 — One shared custom-value control for every chip group
 
-Status: Planned
+Status: Implemented (branch `fix/fe/sprint-07-experience-batch`; Verified needs real-device/browser evidence beyond this session's own Playwright checks)
 Priority: P2
 
 As a visitor completing the create form,
@@ -113,12 +133,26 @@ Source evidence:
   do not have one at all
 
 Tasks:
-- [ ] Audit `page.tsx` for which chip groups render their own custom-value
+- [x] Audit `page.tsx` for which chip groups render their own custom-value
       input today and which have none.
-- [ ] Extract one `<ChipGroupWithCustom>` component consuming
+- [x] Extract one `<ChipGroupWithCustom>` component consuming
       `toggleItem`/`ensureRange`, replacing every per-group duplicate.
-- [ ] Cover the shared component with the same rigor as
+- [x] Cover the shared component with the same rigor as
       `formSelection.test.ts`.
+
+Implementation note: the audit found three groups on the generic
+`toggleItem` path, not two — Core Interests, Traits, and Palette. Palette
+stayed out of scope: it renders fixed color squares (`rounded-xl`), not the
+`rounded-full` pill chips the rest of this story means by "chip group", and
+"a custom color" is a materially different control (a color picker) than a
+custom text value. World Family, Mood and World Style were never on this
+path at all — they are single-select enums backed by real per-value
+visual/audio profiles (see `FAMILY_COPY`/`oceanMoodOptions` etc.), so a
+free-text "custom" option there would not map to anything the renderer
+understands. Traits is the one group that gained the affordance for the
+first time; it keeps its own accent color (`secondary`, not Interests'
+`primary`) through a small `accent` prop on the shared component rather than
+losing that distinction to a hard-coded color.
 
 ### S7-FE-TRANSITION-001 — Shared-element and camera transitions between worlds
 
@@ -168,7 +202,7 @@ Tasks:
 
 ### S7-FE-GALLERY-001 — Gallery ambient backdrop reflects the visitor's own worlds
 
-Status: Planned
+Status: Implemented (branch `fix/fe/sprint-07-experience-batch`; Verified needs real-device/browser evidence beyond this session's own Playwright checks)
 Priority: P2
 
 As a returning visitor,
@@ -187,11 +221,12 @@ exists.
 
 Scenario: The single backdrop canvas may carry sound
 
-Given the gallery's card grid renders its own per-world canvases with sound
-intentionally off, to avoid several canvases playing over each other
-When only the one ambient backdrop canvas is active
-Then `enableAmbientSound` may be turned on for that backdrop alone, without
-reintroducing the conflict `UniverseCanvas.tsx` already documents.
+Given `SavedWorldCard` renders no canvas of its own (a static palette strip
+and text, not a live scene) and `AmbientWorld` is the gallery's only canvas
+When the gallery page mounts
+Then `enableAmbientSound` may be turned on for that one backdrop, without
+reintroducing the "several canvases at once" conflict `UniverseCanvas.tsx`
+already documents.
 
 Source evidence:
 - apps/myunivokai-web/src/features/gallery/AmbientWorld.tsx — the
@@ -200,17 +235,40 @@ Source evidence:
   saved-world read access to source the real scene from
 - apps/myunivokai-web/src/components/UniverseCanvas.tsx:85-87 — the
   multi-canvas comment this story must not violate
+- apps/myunivokai-web/src/features/gallery/SavedWorldCard.tsx — re-read
+  during implementation and found to render no canvas at all today (only a
+  palette strip and text), correcting this story's original premise that it
+  had per-world canvases with sound already off
 
 Tasks:
-- [ ] Read the most-recently-viewed saved world from `useSavedWorlds` and
+- [x] Read the most-recently-viewed saved world from `useSavedWorlds` and
       pass its real scene into `AmbientWorld`.
-- [ ] Keep the existing hard-coded input as the empty-gallery fallback.
-- [ ] Enable `enableAmbientSound` only on the backdrop canvas; confirm
+- [x] Keep the existing hard-coded input as the empty-gallery fallback.
+- [x] Enable `enableAmbientSound` only on the backdrop canvas; confirm
       `SavedWorldCard`'s own canvases remain silent.
+
+Implementation note: "most-recently-viewed" did not already exist anywhere
+in the codebase — `useSavedWorlds`'s own order is most-recently-*saved*
+(`addWorldIdentifierToGallery` prepends only on first save; re-viewing an
+already-saved world is a no-op there, by design, since that list also drives
+the gallery grid's own display order). A new, separate
+`recordLastViewedWorld`/`readLastViewedWorld` pair in `lib/savedWorlds.ts`
+tracks actual view recency without touching the grid's own order. Also
+found and corrected: the "single backdrop canvas may carry sound" scenario
+above originally assumed `SavedWorldCard` already had its own per-world
+canvases with sound off; re-reading that file during implementation found
+it renders no canvas at all, so the scenario's Given was rewritten to match.
+
+Known pre-existing issue found while verifying (out of scope for this
+story): Forest-family scenes never clear their "Rendering forest" loading
+veil in this dev/software-GL (swiftshader) Playwright environment,
+reproduced identically on the unmodified `/worlds/[worldId]` route with the
+same mocked fixture — confirmed unrelated to this change, not something
+this story's code touches.
 
 ### S7-FE-AUDIO-001 — Depth-driven ambient mix for Ocean worlds
 
-Status: Planned
+Status: Implemented (branch `fix/fe/sprint-07-experience-batch`; Verified needs real-device/browser evidence beyond this session's own Playwright checks)
 Priority: P2
 
 As a visitor in an Ocean world,
@@ -233,16 +291,28 @@ Source evidence:
   already pinned to the Go builder's goldens
 - services/ocean-service/internal/services/depth_curve.go — the canonical
   depth curve this story must not fork
-- apps/myunivokai-web/src/features/audio/ambientSoundscapeGraph.ts — the
-  existing DNA-driven mix to extend
+- apps/myunivokai-web/src/lib/ambientSoundscape.ts — the existing DNA-driven
+  recipe builder actually extended (see implementation note below)
 
 Tasks:
-- [ ] Identify which `ambientSoundscapeGraph.ts` parameters can take a
-      continuous depth input without breaking the seed-deterministic
-      contract Universe and Forest already rely on.
-- [ ] Wire Ocean's stored depth into the graph for those parameters only.
-- [ ] Add a test asserting the mix at the three depth zones Ocean's golden
+- [x] Identify which parameters can take a continuous depth input without
+      breaking the seed-deterministic contract Universe and Forest already
+      rely on.
+- [x] Wire Ocean's stored depth into the graph for those parameters only.
+- [x] Add a test asserting the mix at the three depth zones Ocean's golden
       fixtures already use.
+
+Implementation note: the parameters that changed (`toneCutoffHertz`,
+`bedGain`) are produced in `lib/ambientSoundscape.ts` (the pure recipe
+builder), not `features/audio/ambientSoundscapeGraph.ts` (the Web Audio
+graph, which already consumed both fields — it just never received a
+depth-varying value for them). This story's own Source evidence originally
+named the graph file; corrected once the actual edit site was clear. Also
+caught and fixed: `ambientSoundscapeSignature`'s ocean branch keyed only on
+`zone`, not `metres` — once metres continuously drives the mix, two worlds
+sharing a zone but not a depth would silently share a signature, and the
+React effect that rebuilds the audio graph would never fire for the
+difference.
 
 ### S7-FE-ADAPTIVE-001 — Adaptive quality tiers, pulled forward ahead of City
 

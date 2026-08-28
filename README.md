@@ -341,6 +341,18 @@ make local-up
 # or: docker compose --env-file .env.local -f docker-compose-local.yaml up --build
 ```
 
+Detached and rebuilt (matches `make local-up-detached`), for machines without
+`make` on PATH:
+
+```bash
+# Linux / macOS / WSL / Git Bash — run.sh is already tracked as executable
+./run.sh
+
+# Windows PowerShell or cmd.exe — these cannot execute a bash script directly
+# (no shebang support outside a POSIX shell), so go through Git Bash's bash.exe:
+bash run.sh
+```
+
 ### 2. Service Endpoints
 
 | Service | URL | Role |
@@ -392,6 +404,7 @@ make local-down
 | `AGENTS.md` | Core instructions, mission, and strict rules for AI assistants operating in this repository. |
 | `docker-compose-local.yaml` | Local development environment orchestrating all services, databases, and brokers. |
 | `Makefile` | CLI shortcuts for common development workflows (e.g., `make local-up`, `make local-down`). |
+| `run.sh` | Standalone `--build --detach` local stack start for machines without `make` on PATH; mirrors `make local-up-detached`. |
 | `render.yaml` | Infrastructure-as-Code (IaC) configuration for deploying services and databases to Render. |
 | `.env.example` | Template demonstrating all required environment variables for the system. |
 | `.gitignore` / `.gitattributes` | Source control definitions for ignored paths and git text handling. |
