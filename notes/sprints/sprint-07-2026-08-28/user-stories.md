@@ -156,7 +156,9 @@ losing that distinction to a hard-coded color.
 
 ### S7-FE-TRANSITION-001 — Shared-element and camera transitions between worlds
 
-Status: Planned
+Status: Implemented (branch `feat/fe/world-entry-cinematics`; Verified needs
+real-device/browser evidence beyond this session's own Playwright checks —
+see "What the software-GL harness could and could not show" below)
 Priority: P2
 
 As a visitor,
@@ -193,12 +195,135 @@ Source evidence:
   card this story animates from
 
 Tasks:
-- [ ] Add a shared-element transition (e.g. Framer Motion `layoutId`) from
-      `SavedWorldCard` into the world route's canvas frame.
-- [ ] Extend `CameraRig` with a short settle move triggered on family or
-      planet change, gated behind `prefers-reduced-motion`.
-- [ ] Add a check that reduced-motion disables both transitions without
+- [x] Add a shared-element transition from `SavedWorldCard` into the world
+      route's canvas frame. Built as a genie scanline warp, NOT Framer Motion
+      `layoutId` — see "Owner direction mid-sprint" below.
+- [x] Extend `CameraRig` with a short settle move triggered on family change,
+      gated behind `prefers-reduced-motion`.
+- [ ] Extend the same settle to a PLANET change. Not built: a selection change
+      does not remount the canvas, so it never reaches the entry the family
+      switch goes through, and the existing focus glide already animates it.
+      Left open rather than claimed.
+- [x] Add a check that reduced-motion disables both transitions without
       breaking navigation or the existing veil.
+
+Owner direction mid-sprint (2026-08-29):
+
+The owner asked for the loading spinner to go — "đừng làm cái spinner vô nghĩa
+nữa" — and for the world to arrive on a gentle, artistic camera move, and
+supplied https://www.ui-layouts.com/components/mac-genie as the bar for this
+and every other transition. That reference is not a layout morph: its source
+(`registry/components/mac/genie-effect.tsx`) rasterises the moving element and
+redraws it row by row on a 2D canvas, giving each row a delayed start. So the
+shared-element task was built that way instead of with `layoutId`, which also
+kept Framer Motion out of the dependency list.
+
+The one place this departs from the story as written: the story said the
+`isSceneReady` veil stays "unchanged". The veil MECHANISM is unchanged — same
+state, same crossfade — but its contents are not, because removing the spinner
+was the explicit instruction. It now holds the world's own background colour
+and, on the routes that exist to show one scene, that scene's archetype and
+name.
+
+What was built:
+
+- `lib/easing.ts` — the curves both motions share, extracted when the second
+  consumer appeared rather than duplicated.
+- `scene-renderers/shared/cameraIntro.ts` — the opening move as pure spherical
+  geometry, and three entry modes: `cinematic` (world, share), `settle` (the
+  create preview) and `none` (the gallery backdrop).
+- `features/transitions/genieWarp.ts` — the row geometry, expanded from the
+  reference's rectangle-to-POINT collapse to a rectangle-to-rectangle unfold.
+- `features/transitions/worldOpenOrigin.ts` — the card's rectangle, handed
+  across the navigation in sessionStorage and consumed on read.
+- `features/transitions/GenieReveal.tsx` — the overlay that snapshots the
+  scene's first frame and unfolds it, while `UniverseCanvas` holds both the
+  canvas and the camera move so the still it froze keeps matching the frame it
+  hands back to.
+
+Two defects found by measuring rather than by looking, both fixed:
+
+- Clamping the camera pose every frame buys a dead hold. A forest shot near the
+  70-unit ceiling asks for 73, gets 70 back, and sits still through the opening
+  stretch of its own entrance. The start offset is now resolved once, inside
+  the envelope, and the frames after it interpolate from there.
+- An unclamped frame delta skipped the move entirely on a first load. Measured
+  on the world route: the entry armed, ONE frame rendered at the pulled-back
+  start, the main thread blocked 4.2 s compiling shaders, and the next frame
+  arrived with a 4.2 s delta — progress went straight to 1 and the camera cut
+  back in a single 2.48-unit jump. A stall must pause the move, not
+  fast-forward it. Capped at 1/15 s.
+
+What the software-GL harness could and could not show:
+
+Reading `camera.position` out of `renderer.render` each frame (via three.js's
+`__THREE_DEVTOOLS__` hook) proved the entry reaches its clamped start exactly —
+9.697 to 11.830, a 1.22x pull-back — eases away from it with a visibly
+accelerating first stretch, and never leaves the resting framing under
+`reducedMotion: reduce`. The ocean's entry was checked separately, since that
+camera sits inside its medium: it lifts rather than dropping, so the seabed
+clamp is never engaged.
+
+What it could NOT show is either motion at speed. The suite's swiftshader
+renders these scenes at roughly 1.5 fps, so consecutive `requestAnimationFrame`
+timestamps are ~650 ms apart — longer than the genie's whole 620 ms run, which
+therefore collapses to two frames there. The warp's SHAPE was verified instead
+by driving the production `genieRowAt`/`genieRowHeight` over a synthetic banded
+image at fixed progress values and looking at the frames: the classic genie
+taper, no seams between rows, and a final frame landing pixel-exactly on the
+destination box. Smoothness on real hardware is still unwitnessed.
+
+Second owner pass (2026-08-29):
+
+The owner saw the above and asked for three things: push the transition further
+toward the mac-genie reference, vary the opening camera angle instead of using
+one, and either make the remaining spinner nicer or replace it with something
+like a phone's left-right swipe.
+
+1. The genie got the two terms a rectangle-to-rectangle unfold does not get for
+   free. Collapsing into a dock POINT gives the reference its funnel
+   automatically — both edges converge on one coordinate — while interpolating
+   between two rectangles only ever widens, which is a staggered zoom. So
+   `GENIE_NECK_PINCH` puts a waist back in (peaking at the midpoint of each
+   row's own travel, so the waist travels down the sheet) and
+   `GENIE_BOW_STRENGTH` holds the centreline back toward the card so it arrives
+   on a curve rather than a straight line. The reference's glow was added too,
+   riding the trailing edge — the edge still being drawn out, and so the one the
+   eye follows. Horizontal stagger went 0.55 to 0.65, the reference's own value.
+   All three are exactly zero at both ends of a row's travel: the reveal hands
+   over to the live canvas on the last frame, and any deformation still present
+   there is a visible jump.
+2. `CAMERA_INTRO_POSES` replaces the single start pose with six, picked by
+   `hashSeed(scene.seed)` so a world opens the same way every visit while
+   different worlds differ. Two invariants hold across the set, both
+   load-bearing and both tested: every pose has a non-zero azimuth offset,
+   because a bearing is the one axis no family envelope can clamp flat; and no
+   pose has a positive polar offset, because the ocean's camera sits at the
+   viewer's own depth plane and a start below the framing would trip the terrain
+   clamp, which lifts the orbit TARGET and would silently walk the resting shot
+   upward.
+3. `components/SweepRail.tsx` plus `.sweep-rail`. The loading tone of
+   `StatusMessage` no longer spins a `Loader2`; it sets the label in the same
+   mono caps the scene title cards use over a rail with a lit segment
+   travelling across it. `GeneratingOverlay` gained the same rail — it is the
+   longest wait in the product and its armillary rings say the app is alive
+   without saying anything is going anywhere. The small in-button spinners were
+   left alone: a 16-pixel icon inside a button is the right idiom and a rail
+   does not fit one.
+
+Measured, not assumed: the camera tap was re-run across four seeds landing on
+four different poses, against the same universe fixture whose resting framing is
+(0, 3.755, 8.940). The furthest opening offsets came out
+pull-back (+0.94, +1.74, +1.50), crane-down (+0.31, +2.36, +0.03), swing-right
+(+1.75, +0.82, +0.43) and long-approach (-1.24, +1.87, +2.27) — each dominated
+by the axis its name claims, so the variety is real and not a relabelling. The
+genie's new shape was checked the same way as before, by driving the production
+geometry over a banded image: the bow is plainly visible as a straight source
+stripe rendering as a curve, and progress 1.00 still lands flat, unbowed,
+unpinched and unlit on the destination box.
+
+Still unwitnessed on real hardware, same as the first pass: both motions at
+speed. The swiftshader harness cannot render them fast enough to judge.
 
 ### S7-FE-GALLERY-001 — Gallery ambient backdrop reflects the visitor's own worlds
 

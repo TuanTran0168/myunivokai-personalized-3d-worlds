@@ -493,6 +493,10 @@ export default function HomePage() {
           selectedPlanetKey={selectedPreviewPointKey}
           onSelectPlanet={handleSelectPreviewPoint}
           enableAmbientSound
+          // A settle, not a premiere: this preview re-solves its framing on
+          // every option toggle, and the full opening move would replay in
+          // full each time.
+          entryMotion="settle"
         />
 
         {/* Floating identity island (desktop): live state, the curatorial

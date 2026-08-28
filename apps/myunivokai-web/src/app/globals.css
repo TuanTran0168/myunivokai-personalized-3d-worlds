@@ -319,6 +319,42 @@ textarea {
   animation: page-enter 380ms ease both;
 }
 
+/* Indeterminate wait, as a swipe rather than a spin. See components/SweepRail.
+   One-directional and eased at both ends of each pass: a segment that bounces
+   between two walls reads as trapped, while one that leaves the far edge and
+   re-enters from the near one reads as things arriving. */
+.sweep-rail {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  height: 2px;
+  border-radius: 999px;
+  background: rgb(var(--brass-rgb) / 0.14);
+}
+
+.sweep-rail::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 38%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgb(var(--brass-rgb) / 0.95) 50%, transparent);
+  animation: sweep-rail 1450ms var(--glass-easing) infinite;
+}
+
+@keyframes sweep-rail {
+  from {
+    /* Fully clear of the near edge: the segment is 38% of the rail, so -105%
+       of its own width puts its trailing edge just outside. */
+    transform: translateX(-105%);
+  }
+  to {
+    transform: translateX(305%);
+  }
+}
+
 /* Interactive glass lifts toward the viewer on hover/focus. */
 .glass-lift:hover,
 .glass-lift:focus-visible {
@@ -642,6 +678,13 @@ body[data-world-immersive="true"] .immersive-exit-right {
   }
   .page-enter {
     animation: none;
+  }
+  /* The rail stays — it is the only thing on screen saying the wait is a wait —
+     but it stops travelling and simply lights up. */
+  .sweep-rail::after {
+    width: 100%;
+    animation: none;
+    opacity: 0.45;
   }
   /* The collapsed selector is repeated in full on purpose: a bare
      .form-rail-collapse would not outrank the attribute rule above, and the

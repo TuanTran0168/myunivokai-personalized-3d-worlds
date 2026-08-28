@@ -19,6 +19,10 @@ import {
 import { AmbientSoundToggle } from "@/components/AmbientSoundToggle";
 import { useAmbientSoundscape } from "@/features/audio/useAmbientSoundscape";
 import { CameraRig } from "@/features/scene-renderers/shared/CameraRig";
+import {
+  CAMERA_INTRO_DURATION_SECONDS,
+  CAMERA_SETTLE_DURATION_SECONDS
+} from "@/features/scene-renderers/shared/cameraIntro";
 import { CanvasLoader } from "@/features/scene-renderers/shared/CanvasLoader";
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
 import { PlanetPositionTrackerContext } from "@/features/scene-renderers/shared/PlanetPositionTracker";
@@ -86,6 +90,43 @@ type UniverseCanvasProps = {
    * all play over each other.
    */
   enableAmbientSound?: boolean;
+  /**
+   * How the scene arrives.
+   *
+   * `cinematic` — the full opening move plus a title card, for the one scene a
+   * route exists to show (world, share).
+   * `settle` — a short camera settle and a bare colour hold, for the create
+   * page's live preview, which re-solves its framing on every option toggle and
+   * would otherwise announce itself like a premiere each time.
+   * `none` — arrive parked, for decorative backdrops.
+   */
+  entryMotion?: "cinematic" | "settle" | "none";
+  /**
+   * Something else is presenting this frame right now — currently the genie
+   * reveal unfolding the scene out of the gallery card that opened it.
+   *
+   * While held, the canvas stays hidden and the opening camera move sits at its
+   * first pose instead of advancing, so the still the reveal snapshotted keeps
+   * matching the live frame it eventually hands back to.
+   */
+  revealHeld?: boolean;
+  /**
+   * Skip the reveal crossfade. For a route whose reveal is owned by something
+   * that has already drawn the frame: fading in underneath it would dissolve
+   * away the very thing that just arrived.
+   */
+  revealWithoutFade?: boolean;
+  /** Fired on the frame the scene first renders, every time the canvas remounts. */
+  onSceneReady?: () => void;
+};
+
+const CAMERA_INTRO_DURATION_SECONDS_BY_ENTRY_MOTION: Record<
+  NonNullable<UniverseCanvasProps["entryMotion"]>,
+  number
+> = {
+  cinematic: CAMERA_INTRO_DURATION_SECONDS,
+  settle: CAMERA_SETTLE_DURATION_SECONDS,
+  none: 0
 };
 
 /**
@@ -101,7 +142,11 @@ export function UniverseCanvas({
   preserveDrawingBuffer = false,
   devicePixelRatioRange = CANVAS_DEVICE_PIXEL_RATIO_RANGE,
   enableKeyboardMove = true,
-  enableAmbientSound = false
+  enableAmbientSound = false,
+  entryMotion = "cinematic",
+  revealHeld = false,
+  revealWithoutFade = false,
+  onSceneReady
 }: UniverseCanvasProps) {
   const ambientSoundscape = useAmbientSoundscape(scene, enableAmbientSound);
   const [hoveredPlanet, setHoveredPlanet] = useState<PlanetSceneConfig | null>(null);
@@ -170,15 +215,23 @@ export function UniverseCanvas({
   const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}`;
   const isSceneReady = lastReadyCanvasKey === canvasRemountKey;
 
+  const introDurationSeconds = CAMERA_INTRO_DURATION_SECONDS_BY_ENTRY_MOTION[entryMotion];
+  const titleCardName = entryMotion === "cinematic" ? scene?.sceneName?.trim() : undefined;
+  const isCanvasVisible = isSceneReady && !revealHeld;
+  // Armed by readiness, not by mount: the move has to be the first thing the
+  // visitor sees, and a scene that took two seconds to resolve would otherwise
+  // reveal a camera that had already finished arriving.
+  const introPhase = !isSceneReady ? "waiting" : revealHeld ? "held" : "running";
+
   return (
     <div
       className={`relative h-full min-h-[320px] overflow-hidden ${className ?? ""}`}
       style={{ backgroundColor, cursor: hoveredPlanet ? "pointer" : "grab" }}
     >
       <div
-        className={`h-full w-full transition-opacity duration-700 ease-out ${
-          isSceneReady ? "opacity-100" : "opacity-0"
-        }`}
+        className={`h-full w-full transition-opacity ease-out ${
+          revealWithoutFade ? "duration-0" : "duration-1000"
+        } ${isCanvasVisible ? "opacity-100" : "opacity-0"}`}
       >
         <Canvas
           key={canvasRemountKey}
@@ -238,7 +291,12 @@ export function UniverseCanvas({
                   ambientOcclusion={isForestFamilyScene}
                 />
               )}
-              <SceneReadySignal onSceneReady={() => setLastReadyCanvasKey(canvasRemountKey)} />
+              <SceneReadySignal
+                onSceneReady={() => {
+                  setLastReadyCanvasKey(canvasRemountKey);
+                  onSceneReady?.();
+                }}
+              />
             </Suspense>
             <CameraRig
               selectedPlanetKey={selectedPlanetKey ?? null}
@@ -247,30 +305,45 @@ export function UniverseCanvas({
               maximumPolarAngleRadians={isForestFamilyScene ? FOREST_MAXIMUM_POLAR_ANGLE_RADIANS : undefined}
               keyboardMoveEnabled={enableKeyboardMove}
               restingTarget={oceanCameraFraming?.target}
+              introDurationSeconds={introDurationSeconds}
+              introPhase={introPhase}
+              introPoseSeed={seed}
             />
           </TerrainHeightSamplerContext.Provider>
           </PlanetPositionTrackerContext.Provider>
         </Canvas>
       </div>
-      {/* Loading veil: option toggles change the preview seed, which remounts
-          the whole canvas — the veil turns that swap into an intentional
-          crossfade (armillary-style counter-spinning brass rings) instead of
-          a black flash. */}
+      {/* The hold before the scene arrives. Deliberately NOT a spinner: a pair
+          of counter-spinning rings used to sit here, and it said nothing about
+          the world being built behind it — a generic wait widget in front of a
+          product whose whole promise is that the world is yours. What replaces
+          it is the world's own background colour (already painted by the
+          wrapper, which is why this layer stays transparent) and, on the routes
+          that exist to show one scene, that scene's name. The reveal itself is
+          the event: the canvas dissolves up underneath while the card lifts
+          away, and CameraRig's opening move carries it from there.
+
+          Nothing animates during the wait on purpose. A wait that does not
+          fidget reads as composure; the motion is saved for the arrival. */}
       <div
         aria-hidden="true"
-        className={`pointer-events-none absolute inset-0 z-10 grid place-items-center transition-opacity duration-500 ${
-          isSceneReady ? "opacity-0" : "opacity-100"
+        className={`pointer-events-none absolute inset-0 z-10 grid place-items-center transition-opacity duration-700 ease-out ${
+          isSceneReady ? "opacity-0 delay-200" : "opacity-100"
         }`}
       >
-        <div className="flex flex-col items-center gap-3">
-          <span className="relative h-12 w-12">
-            <span className="absolute inset-0 animate-spin rounded-full border border-white/10 border-t-brass" />
-            <span className="absolute inset-2 animate-spin rounded-full border border-white/10 border-b-brass [animation-direction:reverse] [animation-duration:1.6s]" />
-          </span>
-          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-white/60">
-            {isForestFamilyScene ? "Rendering forest" : "Rendering universe"}
-          </p>
-        </div>
+        {titleCardName ? (
+          <div
+            className={`flex flex-col items-center gap-2.5 px-8 text-center transition-transform duration-1000 ease-out ${
+              isSceneReady ? "-translate-y-1.5" : "translate-y-0"
+            }`}
+          >
+            {scene?.archetype ? (
+              <p className="font-mono text-[10px] uppercase tracking-[0.32em] text-brass/85">{scene.archetype}</p>
+            ) : null}
+            <p className="font-display text-lg font-medium tracking-wide text-white/75">{titleCardName}</p>
+            <span className="mt-1 h-px w-14 bg-white/20" />
+          </div>
+        ) : null}
       </div>
       {hoveredPlanet ? (
         <div className="pointer-events-none absolute bottom-[68px] left-4 z-10 max-w-xs rounded-lg border border-white/15 bg-black/55 px-3 py-2 backdrop-blur">

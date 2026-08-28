@@ -53,6 +53,9 @@ export function AmbientWorld({ savedWorldEntries }: AmbientWorldProps) {
         // enableAmbientSound prop before enabling this anywhere else on the
         // page.
         enableAmbientSound
+        // A backdrop arrives parked. An opening move behind the gallery's cards
+        // would pull the eye off the cards, which are what the page is for.
+        entryMotion="none"
       />
       {/* Dim + vignette so foreground glass cards stay legible over the world. */}
       <div className="absolute inset-0 bg-void/55" />

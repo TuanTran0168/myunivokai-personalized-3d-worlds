@@ -15,6 +15,8 @@ import { StatusMessage } from "@/components/StatusMessage";
 import { PlanetDetailsPanel } from "@/components/PlanetDetailsPanel";
 import { RareFeatureBadge } from "@/components/RareFeatureBadge";
 import { UniverseCanvas } from "@/components/UniverseCanvas";
+import { GenieReveal } from "@/features/transitions/GenieReveal";
+import { takeWorldOpenOrigin, type WorldOpenOrigin } from "@/features/transitions/worldOpenOrigin";
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { prefetchSceneRendererForFamily } from "@/features/scene-renderers/registry";
 import { VariantList } from "@/components/VariantList";
@@ -66,6 +68,24 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   // collapsing region, so hiding the panels can never swallow one.
   const { collapseState, toggleCollapse, toggleButtonReference } = useWorldChromeCollapse({ worldFamily: family });
   const sceneContainerReference = useRef<HTMLDivElement>(null);
+
+  // The rectangle the gallery card occupied, if a card is what opened this
+  // world. Consumed on read, so a variant switch, a reload or a back-forward
+  // later in the same tab does not replay the reveal out of a rectangle
+  // nothing is standing in any more.
+  const [pendingOpenOrigin, setPendingOpenOrigin] = useState<WorldOpenOrigin | null>(null);
+  const [hasSceneRendered, setHasSceneRendered] = useState(false);
+  const [hasRevealFinished, setHasRevealFinished] = useState(false);
+
+  useEffect(() => {
+    setPendingOpenOrigin(takeWorldOpenOrigin(worldId));
+  }, [worldId]);
+
+  // Held from the first render rather than from the moment the reveal starts:
+  // releasing it for even one commit in between would flash the finished frame
+  // before the thing that is supposed to unfold into it has drawn anything.
+  const isRevealHeld = pendingOpenOrigin !== null && !hasRevealFinished;
+  const genieOrigin = isRevealHeld && hasSceneRendered ? pendingOpenOrigin : null;
 
   async function loadWorld() {
     setError("");
@@ -246,8 +266,19 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
           onSelectPlanet={handleSelectPlanet}
           preserveDrawingBuffer
           enableAmbientSound
+          revealHeld={isRevealHeld}
+          // The genie owns this route's reveal whenever a card opened it, and
+          // it has already drawn the frame by the time it hands over. Fading
+          // in underneath would dissolve away what just arrived.
+          revealWithoutFade={pendingOpenOrigin !== null}
+          onSceneReady={() => setHasSceneRendered(true)}
         />
       </div>
+      <GenieReveal
+        origin={genieOrigin}
+        sceneContainerReference={sceneContainerReference}
+        onFinished={() => setHasRevealFinished(true)}
+      />
 
       {/* HUD overlay — a normal scrolling column on mobile; on desktop it becomes
           a pointer-transparent layer so orbit-drag passes through the gaps, while
