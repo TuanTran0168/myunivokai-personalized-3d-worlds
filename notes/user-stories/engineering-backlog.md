@@ -551,6 +551,55 @@ Sprint stories: [S5-TELEMETRY-001 through S5-TELEMETRY-009](../sprints/sprint-05
 
 Source: [telemetry-service-plan.md](../vision/telemetry-service-plan.md)
 
+## EPIC-S7-FE-EXPERIENCE-001 — Transition, form and ambience polish for the create/gallery experience
+
+Status: Planned
+Priority: P1
+Sprint: [Sprint 7 — starts 2026-08-28](../sprints/sprint-07-2026-08-28/README.md)
+
+As a visitor curating and revisiting a personal world,
+I want the create form, the family/world transitions, the gallery backdrop and
+the ambient soundscape to feel like one coherent, responsive product,
+so that the surrounding experience matches the ambition already proven by the
+Universe/Forest/Ocean renderers themselves.
+
+Scenario: The create form holds up across the whole viewport range
+
+Given a viewport anywhere between 360px and 1440px wide
+When the create form renders
+Then no World Family card sits orphaned on a half-empty row
+And a tablet-width viewport gets its own layout tier rather than the
+sub-`lg` mobile treatment
+And the live-preview identity placard reaches a visitor below `lg`, not only
+above it.
+
+Scenario: Depth is heard as well as seen
+
+Given an Ocean world's stored depth value
+When its ambient soundscape mix is built
+Then the mix derives from the same `oceanDepthCurve.ts` output already
+driving color, fog and god-rays, not a second independent table.
+
+Epic exit:
+
+- [ ] Every Sprint 7 story below is Verified.
+- [ ] No viewport between 360px and 1440px shows a create-form layout break
+      named in S7-FE-RESPONSIVE-001.
+- [ ] `prefers-reduced-motion: reduce` disables every animation this epic adds
+      without breaking navigation.
+
+Sprint stories: [S7-FE-RESPONSIVE-001 through S7-FE-AUDIO-001](../sprints/sprint-07-2026-08-28/user-stories.md#epic-s7-fe-experience-001--transition-form-and-ambience-polish-for-the-creategallery-experience)
+
+Out of scope: adaptive GPU/mobile-weak-device quality tiers. That work stays
+gated behind City shipping by the owner's 2026-07-19 decision recorded in
+[frontend-plan.md](../vision/frontend-plan.md) gap #4 — nothing in this epic
+overrides that sequencing.
+
+Source: this epic has no predecessor vision document; scope and source
+citations live directly in [Sprint 7's user-stories.md](../sprints/sprint-07-2026-08-28/user-stories.md),
+on the same basis as [scene-fidelity.md](scene-fidelity.md) and
+[world-chrome.md](world-chrome.md).
+
 ## DEFERRED-AUTH-001 — Define identity before authentication
 
 Status: Deferred by owner decision on 2026-07-22. **Unaffected by Sprint 4** —
