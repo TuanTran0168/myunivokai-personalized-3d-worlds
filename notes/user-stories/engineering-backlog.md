@@ -580,6 +580,17 @@ When its ambient soundscape mix is built
 Then the mix derives from the same `oceanDepthCurve.ts` output already
 driving color, fog and god-rays, not a second independent table.
 
+Scenario: Weak devices get a real tier, not a deferral
+
+Given the owner's 2026-08-28 decision to pull adaptive quality tiers forward
+out of their post-City slot (recorded in
+[frontend-plan.md](../vision/frontend-plan.md) gap #4)
+When a visitor's device classifies below the top GPU tier
+Then DPR, shadow, postprocessing and LOD come from a matching profile instead
+of the single fixed high-tier profile
+And a visitor already at the top tier sees pixel-identical output to before
+this epic.
+
 Epic exit:
 
 - [ ] Every Sprint 7 story below is Verified.
@@ -587,18 +598,16 @@ Epic exit:
       named in S7-FE-RESPONSIVE-001.
 - [ ] `prefers-reduced-motion: reduce` disables every animation this epic adds
       without breaking navigation.
+- [ ] A visitor already at the tier-3/desktop GPU classification sees output
+      pixel-identical to the pre-Sprint-7 fixed profile.
 
-Sprint stories: [S7-FE-RESPONSIVE-001 through S7-FE-AUDIO-001](../sprints/sprint-07-2026-08-28/user-stories.md#epic-s7-fe-experience-001--transition-form-and-ambience-polish-for-the-creategallery-experience)
-
-Out of scope: adaptive GPU/mobile-weak-device quality tiers. That work stays
-gated behind City shipping by the owner's 2026-07-19 decision recorded in
-[frontend-plan.md](../vision/frontend-plan.md) gap #4 — nothing in this epic
-overrides that sequencing.
+Sprint stories: [S7-FE-RESPONSIVE-001 through S7-FE-ADAPTIVE-001](../sprints/sprint-07-2026-08-28/user-stories.md#epic-s7-fe-experience-001--transition-form-and-ambience-polish-for-the-creategallery-experience)
 
 Source: this epic has no predecessor vision document; scope and source
 citations live directly in [Sprint 7's user-stories.md](../sprints/sprint-07-2026-08-28/user-stories.md),
 on the same basis as [scene-fidelity.md](scene-fidelity.md) and
-[world-chrome.md](world-chrome.md).
+[world-chrome.md](world-chrome.md). The adaptive-tier story's own sequencing
+decision is recorded in [frontend-plan.md](../vision/frontend-plan.md) gap #4.
 
 ## DEFERRED-AUTH-001 — Define identity before authentication
 
@@ -622,10 +631,15 @@ And internal NATS credentials are not confused with user authentication.
 ## Deferred product work retained from the previous backlog
 
 The supported Next.js major upgrade, self-hosted Draco, asset/license budgets,
-adaptive weak-device quality and full City breadth remain valid
-product/engineering work. They must be re-estimated after Sprint 1 because the
-public API, runtime contracts and deployment topology change. Do not execute the
-old HTTP-peer City edge stories as written; the target uses NATS.
+and full City breadth remain valid product/engineering work. They must be
+re-estimated after Sprint 1 because the public API, runtime contracts and
+deployment topology change. Do not execute the old HTTP-peer City edge stories
+as written; the target uses NATS.
+
+Adaptive weak-device quality left this list on 2026-08-28: it is no longer
+merely "remains valid," it is scheduled as `S7-FE-ADAPTIVE-001` under
+[EPIC-S7-FE-EXPERIENCE-001](#epic-s7-fe-experience-001--transition-form-and-ambience-polish-for-the-creategallery-experience),
+pulled forward ahead of City by the owner.
 
 Lazy renderer chunks left this list: shipped on `feat/fe/lazy-renderer-chunks`,
 First Load JS 512-526 kB → 436-450 kB on the five 3D routes. Mechanism and

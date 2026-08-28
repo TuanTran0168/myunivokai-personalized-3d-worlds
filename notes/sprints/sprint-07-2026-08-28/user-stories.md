@@ -3,13 +3,17 @@
 > **Sprint starts:** 2026-08-28
 > **Last source review:** 2026-08-28
 
-One epic, five stories. S7-FE-RESPONSIVE-001 and S7-FE-CUSTOMFORM-001 touch
+One epic, six stories. S7-FE-RESPONSIVE-001 and S7-FE-CUSTOMFORM-001 touch
 only `apps/myunivokai-web/src/app/page.tsx` and `lib/formSelection.ts` and can
 run in any order relative to the others. S7-FE-GALLERY-001 and
 S7-FE-AUDIO-001 are independent of each other and of the form work.
 S7-FE-TRANSITION-001 is the only story that reaches into both the gallery and
 the create form, so it is easiest to land last, once the layout it animates
-around has stopped moving.
+around has stopped moving. S7-FE-ADAPTIVE-001 is independent of all five —
+it changes per-device render parameters inside each family renderer, not
+layout or audio — but its own verification (no visual regression at the
+existing high tier) is cheapest to run last, after the other stories have
+stopped changing what the canvas renders.
 
 ## EPIC-S7-FE-EXPERIENCE-001 — Transition, form and ambience polish for the create/gallery experience
 
@@ -239,3 +243,66 @@ Tasks:
 - [ ] Wire Ocean's stored depth into the graph for those parameters only.
 - [ ] Add a test asserting the mix at the three depth zones Ocean's golden
       fixtures already use.
+
+### S7-FE-ADAPTIVE-001 — Adaptive quality tiers, pulled forward ahead of City
+
+Status: Planned
+Priority: P1
+
+As a visitor on a mobile or weak device,
+I want the renderer to detect what my device can actually do and choose a
+matching quality tier,
+so that the experience is usable there without lowering what a desktop
+visitor already gets.
+
+Scenario: GPU tier gates render features, not the reverse
+
+Given a device is classified into GPU tier 1, 2 or 3 (mobile and desktop use
+distinct thresholds) at canvas mount
+When the canvas builds its render settings
+Then DPR range, shadow quality, the active postprocessing set and LOD
+distances come from that tier's profile
+And the tier-3/desktop profile is exactly today's fixed settings, unchanged.
+
+Scenario: A session degrades or recovers at runtime
+
+Given `<PerformanceMonitor>` observes fps staying below a sustained threshold
+When this happens mid-session on any device
+Then the canvas steps down one adaptive parameter (DPR first, then
+postprocessing) rather than staying pinned to its initial tier
+And steps back up if fps stays high for a sustained window afterward.
+
+Scenario: A WebGL failure is contained, not a blank canvas
+
+Given WebGL context creation or a shader compile fails on a low-tier device
+When the canvas would otherwise render nothing
+Then a WebGL failure boundary renders a stated fallback instead of a silent
+blank frame.
+
+Scenario: The approved high tier does not move
+
+Given a visitor whose device already classifies at tier 3/desktop
+When this story ships
+Then their rendered output is pixel-identical to the pre-Sprint-7 fixed
+profile, checked directly rather than assumed.
+
+Source evidence:
+- notes/vision/frontend-plan.md — gap #4 (updated 2026-08-28 to record the
+  owner pulling this step forward out of its post-City slot); §Next sequence
+  step 7
+- `@react-three/drei`'s `PerformanceMonitor` — already a project dependency,
+  currently unused anywhere in `apps/myunivokai-web`
+- `detect-gpu` (pmndrs) — not yet a dependency; the GPU-tier classification
+  library researched for this sprint
+
+Tasks:
+- [ ] Add `detect-gpu`; classify GPU tier once at canvas mount, with distinct
+      mobile/desktop thresholds.
+- [ ] Define per-tier render profiles (DPR range, shadow map size,
+      postprocessing set, LOD distances); promote today's fixed settings to
+      the tier-3/desktop profile unchanged.
+- [ ] Wire `<PerformanceMonitor>` for continuous runtime step-down/step-up.
+- [ ] Add the WebGL context-lost/compile-failure boundary named as missing in
+      `frontend-plan.md` gap #4.
+- [ ] Verify: capture tier-3/desktop output before and after; confirm no
+      visual regression on any of the three shipped families.

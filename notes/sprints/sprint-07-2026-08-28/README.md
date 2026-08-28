@@ -9,8 +9,10 @@
 Close the gap between how good the Universe/Forest/Ocean renderers already are
 and how the surrounding product experience carries a visitor between them: the
 create form's own layout, the cut between one world and the next, the
-gallery's backdrop, and the ambient soundscape. None of this changes a family
-renderer, a contract, or a backend service.
+gallery's backdrop, the ambient soundscape, and — pulled forward from its
+post-City slot by the owner — the device-quality tiers those renderers run at.
+None of this touches a contract or a backend service; the renderer changes are
+limited to per-device profile parameters, not new visuals.
 
 Backlog epic:
 [EPIC-S7-FE-EXPERIENCE-001](../../user-stories/engineering-backlog.md#epic-s7-fe-experience-001--transition-form-and-ambience-polish-for-the-creategallery-experience)
@@ -46,6 +48,11 @@ Every claim below cites the file and line audited, not a redesign mockup.
 - Ocean's ambient soundscape mix derives from the same stored depth curve
   already driving its color/fog/god-rays, instead of a second, independent
   depth-to-audio table.
+- Adaptive quality tiers for mobile and weak devices — GPU-tier classification
+  at mount, a per-tier profile (DPR/shadow/postprocessing/LOD), a runtime
+  `PerformanceMonitor` fallback, and a WebGL failure boundary — applied to the
+  three shipped families (Universe/Forest/Ocean), with the existing approved
+  high tier preserved pixel-identical.
 
 ## Decisions taken inside this sprint
 
@@ -58,6 +65,15 @@ Every claim below cites the file and line audited, not a redesign mockup.
    is disjoint from Sprint 3 (City) and Sprint 2 (resilience/scale) — neither
    touches `apps/myunivokai-web`'s create/gallery/audio surface — so it costs
    neither of them any time.
+3. **Adaptive GPU/mobile-weak-device quality tiers are pulled forward into
+   this sprint.** [frontend-plan.md](../../vision/frontend-plan.md) gap #4
+   recorded an owner decision on 2026-07-19 to sequence this work after City.
+   The owner reversed that sequencing on 2026-08-28: this sprint builds the
+   tier system against the three families that already exist
+   (Universe/Forest/Ocean) rather than waiting on City, which is unaffected
+   because it will adopt the same tier system once it ships. The one
+   constraint carried over unchanged: the current approved high tier must stay
+   pixel-identical once tiers exist.
 
 ## Definition of Done
 
@@ -69,14 +85,12 @@ Every claim below cites the file and line audited, not a redesign mockup.
       `oceanDepthCurve.ts` output; no second depth table exists.
 - [ ] `prefers-reduced-motion: reduce` disables every animation added by this
       sprint without breaking navigation.
+- [ ] A visitor already reaching the tier-3/desktop GPU classification sees
+      output pixel-identical to the pre-Sprint-7 fixed profile.
 
 ## Out of scope
 
-- **Adaptive GPU/mobile-weak-device quality tiers.** This stays gated behind
-  City shipping by the owner's 2026-07-19 decision recorded in
-  [frontend-plan.md](../../vision/frontend-plan.md) gap #4. Nothing in this
-  sprint overrides that sequencing; a visitor on a weak device gets the
-  responsive layout fixes in S7-FE-RESPONSIVE-001, not a lowered render tier.
 - Any City work (Sprint 3) or resilience/scale work (Sprint 2) — disjoint
-  services and surfaces.
+  services and surfaces. City will adopt this sprint's adaptive-tier system
+  once it ships rather than needing to precede it.
 - New family renderers, contracts, or backend services.
