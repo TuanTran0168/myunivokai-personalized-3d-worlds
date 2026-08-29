@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "typecheck:audition": "tsc --noEmit --project tsconfig.audition.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "shoot": "playwright test",

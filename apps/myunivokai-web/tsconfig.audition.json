@@ -1,0 +1,20 @@
+{
+  // Typechecks the audio audition harness, which the main tsconfig deliberately
+  // excludes.
+  //
+  // `src/**/*.audition.ts` imports `node-web-audio-api`, a development aid
+  // installed `--no-save` (see vitest.audition.config.ts). Under the main
+  // tsconfig's `"include": ["**/*.ts"]` that import is a hard TS2307 on any
+  // machine that has not installed it — including CI, which runs `npm ci` from
+  // package-lock.json and so by definition never has it. A harness whose whole
+  // purpose is to stay out of CI was failing CI.
+  //
+  // Excluding it there would leave it unchecked everywhere, so it is checked
+  // here instead, by the same opt-in as running it:
+  //
+  //   npm install --no-save node-web-audio-api
+  //   npm run typecheck:audition
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.audition.ts", "next-env.d.ts"],
+  "exclude": ["node_modules"]
+}

@@ -8,10 +8,14 @@
 //
 //   npm install --no-save node-web-audio-api
 //   npx vitest run --config vitest.audition.config.ts --disable-console-intercept
+//   npm run typecheck:audition
 //
-// Not part of `npm test`: it lives behind its own vitest config because
-// node-web-audio-api is a development aid installed `--no-save`, and a missing
-// optional dependency must never be able to fail CI. It is IN the repository,
+// Not part of `npm test` OR of `npm run typecheck`: it lives behind its own
+// vitest config and its own tsconfig because node-web-audio-api is a
+// development aid installed `--no-save`, and a missing optional dependency must
+// never be able to fail CI. It did once — the main tsconfig's `**/*.ts` swept
+// this file up and CI, which installs from package-lock.json and so can never
+// have the package, failed on TS2307. It is IN the repository,
 // though, unlike the previous copy — the numbers in PIECE_LEVEL_TRIM cannot be
 // re-derived without it, and adding a piece without running it is how an
 // accompaniment ends up louder than the tune.
@@ -176,7 +180,38 @@ const WORLDS: { label: string; scene: SceneConfig }[] = [
       current: { kind: current, intensity: 0.6 },
       depth: { metres: 40, zone: "sunlitShallows" }
     } as SceneConfig
-  }))
+  })),
+  // The abyss overrides the current, so it is one slot rather than three, and it
+  // is the only ocean row rendered at depth: the depth curve closes the tone
+  // filter and drops the bed as well as transposing, and a trim measured at 40 m
+  // does not describe what is heard at 900.
+  {
+    label: "ocean/abyss",
+    scene: {
+      seed: "trim-abyss",
+      sceneType: "ocean",
+      current: { kind: "still", intensity: 0.6 },
+      depth: { metres: 900, zone: "abyss" }
+    } as SceneConfig
+  },
+  // The two fallbacks. A weather or theme this arranger has not met is not a
+  // hypothetical — it is what a world stored before a table grew plays — and
+  // until these were listed here the only two pieces nobody had ever measured
+  // were the two that answer for an unknown world.
+  {
+    label: "universe/default",
+    scene: { seed: "trim-universe-default", theme: "not-a-theme", postFX: { bloomIntensity: 1 } } as SceneConfig
+  },
+  {
+    label: "forest/default",
+    scene: {
+      seed: "trim-forest-default",
+      sceneType: "forest",
+      season: { kind: "summer" },
+      lighting: { timeOfDay: "day" },
+      weather: { kind: "not-a-weather", intensity: 0.6 }
+    } as SceneConfig
+  }
 ];
 
 describe("offline trim measurement", () => {
