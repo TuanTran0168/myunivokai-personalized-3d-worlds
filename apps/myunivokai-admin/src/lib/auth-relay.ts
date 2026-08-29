@@ -13,7 +13,7 @@ import { ADMIN_ACCOUNT_COOKIE_NAME, encodeAccountCookieValue, type SessionRespon
 // instead of the gateway's — that relay is what makes the httpOnly session
 // cookies first-party to apps/myunivokai-admin, which is what lets this
 // app's own middleware read them without a network hop. See
-// notes/plans/services/auth-and-admin-plan.md#the-admin-app, "cookie-based auth wants
+// agent-system/plans/services/auth-and-admin-plan.md#the-admin-app, "cookie-based auth wants
 // a server".
 // Bounds how long a hung/unreachable gateway can hold this route handler
 // open. Without it, a stalled connection (gateway mid-restart, a dropped

@@ -366,7 +366,7 @@ type DNAFailedData struct {
 // that really is all zeroes. Adding it is backward compatible in both
 // directions — encoding/json ignores unknown fields, and dna-service compiles
 // against this same package and simply does not read it. See
-// notes/plans/services/analytics-service-plan.md#the-event-gap.
+// agent-system/plans/services/analytics-service-plan.md#the-event-gap.
 type FamilyCompletedData struct {
 	Family       WorldFamily    `json:"family"`
 	ProfileID    string         `json:"profileId"`

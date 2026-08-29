@@ -16,7 +16,7 @@
 --
 -- ADD COLUMN with a non-volatile DEFAULT is metadata-only on PostgreSQL 11+,
 -- so this does not rewrite the table on an already-deployed database.
--- See notes/plans/services/analytics-service-plan.md#design-decision-a-revision-column-on-worlds.
+-- See agent-system/plans/services/analytics-service-plan.md#design-decision-a-revision-column-on-worlds.
 ALTER TABLE worlds ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
 
 -- +goose Down

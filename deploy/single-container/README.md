@@ -9,7 +9,7 @@
 > smoke test is also what found and fixed the bug described below in
 > "Why `docker-entrypoint.sh` defaults every optional variable." **Not yet
 > deployed as a real Render service** — the deployment steps live in
-> `notes/skills/render-single-container-deployment-guide.md` and have not been
+> `agent-system/skills/render-single-container-deployment-guide.md` and have not been
 > run against real Neon/Upstash/Synadia credentials yet. Treat the
 > resource-fit section as the first thing to verify there.
 
@@ -61,14 +61,14 @@ separate ones, each built from its own `Dockerfile.prod`.
 Consolidating 8 Render web services into 1 keeps everything else identical
 — same account, same dashboard, same Neon/Upstash/Synadia credentials
 already sitting in each service's Environment tab — while fixing the actual
-problem `notes/skills/production-deployment-guide.md` §5.3 and `render.yaml`'s
+problem `agent-system/skills/production-deployment-guide.md` §5.3 and `render.yaml`'s
 own comments have been tracking: the shared 750-hour/month pool split
 across every free service in the account. Eight containers divide that
 budget eight ways; one container divides it by one. It also collapses
 "wake one sleeping sibling that might itself need to wake another" into a
 single wake, since every process is already running together the moment
 that one container is up. See
-`notes/skills/render-single-container-deployment-guide.md` for the concrete
+`agent-system/skills/render-single-container-deployment-guide.md` for the concrete
 steps: add the service, reuse the credentials already in the other eight
 services' Environment tabs, verify it, and only then decommission the
 eight originals.
@@ -192,7 +192,7 @@ other eight services' own Environment tabs — this is reuse, not new
 provisioning). First boot runs six Postgres migrations and eight NATS
 connections back-to-back on one shared instance — give the health check a
 generous grace period before assuming it's stuck. See
-`notes/skills/render-single-container-deployment-guide.md` for the full,
+`agent-system/skills/render-single-container-deployment-guide.md` for the full,
 step-by-step version of this.
 
 ## What's unverified and should be checked on a real account before relying on this

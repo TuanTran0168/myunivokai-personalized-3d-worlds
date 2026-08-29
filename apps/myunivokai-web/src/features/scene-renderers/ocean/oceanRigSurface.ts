@@ -24,7 +24,7 @@
  *   - It has no foam. Whitecaps are most of what makes a sea read as a sea, and
  *     here they come from the Gerstner Jacobian rather than from a paint layer.
  *
- * See notes/evolution/ocean-visual-direction-research.md §11d.
+ * See agent-system/evolution/ocean-visual-direction-research.md §11d.
  */
 import {
   BufferGeometry,

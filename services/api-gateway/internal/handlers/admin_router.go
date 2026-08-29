@@ -21,7 +21,7 @@ const adminCORSMaximumAgeSeconds = 300
 // construction: every route below requires either nothing (login, invite
 // accept), a presented refresh cookie (refresh, logout), or a verified
 // access token plus one specific permission (every record/management
-// route). See notes/plans/services/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
+// route). See agent-system/plans/services/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
 func newAdminRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStore EdgeStore, transport *RPCTransport, waker ServiceWaker) http.Handler {
 	adminRouter := chi.NewRouter()
 	adminRouter.Use(cors.Handler(cors.Options{

@@ -1,6 +1,6 @@
 /* =========================================================================
    Ocean style study, v2 — the art direction proposed in
-   notes/evolution/ocean-visual-direction-research.md, made visible.
+   agent-system/evolution/ocean-visual-direction-research.md, made visible.
 
    WHAT CHANGED FROM v1, AND WHY IT MATTERED
    v1 varied only the PALETTE with depth: the seabed sat at the same distance
@@ -46,7 +46,7 @@
      1. THE DEPTH CURVE + BATHYMETRY
      An approximation of the ocean service's depth_curve.go, good enough to
      drive art direction. The light-remaining table is the sourced one from
-     notes/evolution/ocean-family-research.md.
+     agent-system/evolution/ocean-family-research.md.
      ======================================================================= */
 
   /* ---- WATER, AS AN OPTICAL MEDIUM WITH A NAME --------------------------

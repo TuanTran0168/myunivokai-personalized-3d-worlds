@@ -5,7 +5,7 @@ that would otherwise be argued about in words.
 
 A demo here is **not** production code and is not imported by any app. It exists
 to answer one question with a picture before the answer costs a renderer
-refactor. If a demo proves something, the finding belongs in `notes/`; the code
+refactor. If a demo proves something, the finding belongs in `agent-system/`; the code
 stays here as the evidence.
 
 ## Rules
@@ -32,7 +32,7 @@ stays here as the evidence.
 ### `ocean-depth-rig/`
 
 An interactive style study for the ocean family: the art direction argued for in
-[notes/evolution/ocean-visual-direction-research.md](../notes/evolution/ocean-visual-direction-research.md),
+[agent-system/evolution/ocean-visual-direction-research.md](../agent-system/evolution/ocean-visual-direction-research.md),
 made visible so the direction can be accepted or rejected before
 `OceanRenderer.tsx` is touched.
 

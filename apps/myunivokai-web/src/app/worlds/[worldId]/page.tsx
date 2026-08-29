@@ -32,7 +32,7 @@ import { WORLD_PANELS_ELEMENT_ID } from "@/lib/formRailCollapse";
 // `params` is a Promise from Next 15 onward. This file is "use client", so it
 // cannot await — React's `use` is the documented equivalent, and it works on 14
 // as well, which is why this lands ahead of the version bump. See
-// notes/evolution/frontend-modernization-research.md#the-exact-code-change-all-three-files.
+// agent-system/evolution/frontend-modernization-research.md#the-exact-code-change-all-three-files.
 type PageProps = {
   params: Promise<{
     worldId: string;

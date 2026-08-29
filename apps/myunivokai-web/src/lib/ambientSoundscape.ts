@@ -43,7 +43,7 @@ import type { SceneConfig } from "./types";
 //    sampled instruments. The arranger decides which piece and how; the piece
 //    decides what the notes are.
 //
-// The lesson is the same one notes/knowledge/frontend/3d-development-limitations.md recorded for
+// The lesson is the same one agent-system/knowledge/frontend/3d-development-limitations.md recorded for
 // the visuals, applied twice over: the algorithm is the cheap part. First the
 // sound had to come from a recording instead of an oscillator, and then the
 // notes had to come from a composer instead of a random number generator.

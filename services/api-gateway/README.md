@@ -60,7 +60,7 @@ Everything lives under that one directory on purpose. This is a workaround for
 a hosting constraint, not a product feature, so it is built to be deleted:
 `internal/wake/` is the whole subsystem, and the package doc there lists every
 call site outside it. See §Removal in
-[service-wake-mechanism.md](../../notes/plans/architecture/service-wake-mechanism.md).
+[service-wake-mechanism.md](../../agent-system/plans/architecture/service-wake-mechanism.md).
 
 `SERVICE_WAKE_PLATFORM` selects the adapter. `none` is the default and the
 correct value on any always-on host, so leaving free tier is one line of
@@ -142,10 +142,10 @@ now. That is not a limitation of the implementation; the phenomenon itself
 stops existing. Durable service-lifecycle history — restarts, crashes,
 versions — is a different question that outlives this subsystem, and belongs
 in service startup events rather than here. See
-[platform-evolution-research.md](../../notes/evolution/platform-evolution-research.md)
+[platform-evolution-research.md](../../agent-system/evolution/platform-evolution-research.md)
 §Track B.
 
-Design and the exit plan: `notes/plans/architecture/service-wake-mechanism.md`.
+Design and the exit plan: `agent-system/plans/architecture/service-wake-mechanism.md`.
 
 ## Admin route group (`/api/admin`)
 
@@ -167,7 +167,7 @@ fails if a future one is added without any of the three.
 local Ed25519 access-token verification plus the Redis `tokenVersion`
 cache-miss fallback (`auth-service` is called at most once per miss, never
 per request) — see
-[notes/plans/services/auth-and-admin-plan.md#how-b-works](../../notes/plans/services/auth-and-admin-plan.md#how-b-works).
+[agent-system/plans/services/auth-and-admin-plan.md#how-b-works](../../agent-system/plans/services/auth-and-admin-plan.md#how-b-works).
 Session tokens travel only as `httpOnly`, `Secure` (in production),
 `SameSite=Lax` cookies, never in a JSON body — see
 `internal/handlers/admin_auth_handler.go`.

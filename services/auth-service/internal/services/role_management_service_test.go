@@ -201,7 +201,7 @@ func TestAuthService_UpdateRole_RefusesASystemRole(t *testing.T) {
 
 // RevokeRole must block an account from revoking a role FROM ITSELF when
 // that role is the account's only source of account:manage/role:manage -
-// see notes/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
+// see agent-system/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
 func TestAuthService_RevokeRole_BlocksRevokingItsOwnLastAccountManageRole(t *testing.T) {
 	authService, store, _ := newTestAuthService(t)
 	account := createTestAccount(t, authService, store, "staff@example.com", "a-strong-password-1")

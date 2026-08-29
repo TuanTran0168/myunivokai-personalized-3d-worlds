@@ -47,7 +47,7 @@ var (
 
 // RoleInUseError carries the count the vision doc requires a role-delete
 // rejection to report - see
-// notes/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
+// agent-system/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
 type RoleInUseError struct {
 	AccountCount int
 }
@@ -80,7 +80,7 @@ func (service *AuthService) InviteAccount(ctx context.Context, data contracts.In
 // right away, active from the moment it exists — the direct alternative to
 // InviteAccount's token dance, adopted because no email infrastructure
 // exists to relay an invite link; see
-// notes/plans/services/auth-and-admin-plan.md#account-creation-is-direct-not-invited.
+// agent-system/plans/services/auth-and-admin-plan.md#account-creation-is-direct-not-invited.
 func (service *AuthService) CreateAccount(ctx context.Context, data contracts.AccountCreateData) (contracts.AccountSummary, error) {
 	if len(data.Password) < minimumAccountPasswordLength {
 		return contracts.AccountSummary{}, ErrPasswordTooShort
@@ -237,7 +237,7 @@ func (service *AuthService) CreateRole(ctx context.Context, data contracts.RoleC
 // every other mutation in this file — a deliberate exception the vision doc
 // calls for specifically for role edits/deletes, not an inconsistency:
 // "Deleting/editing a role writes an audit row before it takes effect." See
-// notes/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
+// agent-system/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
 func (service *AuthService) UpdateRole(ctx context.Context, data contracts.RoleUpdateData) (contracts.RoleSummary, error) {
 	existing, err := service.store.GetRoleByID(ctx, data.RoleID)
 	if err != nil {

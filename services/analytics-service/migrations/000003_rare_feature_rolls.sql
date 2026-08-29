@@ -11,7 +11,7 @@
 -- The seed itself, added to the projection's allow list. It is a generated
 -- base32 identifier this platform minted, not anything a person typed, so it
 -- widens the data boundary by a machine value and no user content — see
--- notes/plans/services/analytics-service-plan.md#data-boundary.
+-- agent-system/plans/services/analytics-service-plan.md#data-boundary.
 --
 -- DEFAULT '' rather than NULL: a world projected before this shipped has no
 -- seed, and empty is the honest reading of "we cannot replay this one". The

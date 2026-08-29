@@ -6,7 +6,7 @@
 // as flags, or as AUTH_BOOTSTRAP_EMAIL/AUTH_BOOTSTRAP_PASSWORD if flags are
 // omitted - and never defaulted. There is no default password anywhere in
 // this repository, not even a local-only one; see
-// notes/plans/services/auth-and-admin-plan.md#passwords.
+// agent-system/plans/services/auth-and-admin-plan.md#passwords.
 package main
 
 import (

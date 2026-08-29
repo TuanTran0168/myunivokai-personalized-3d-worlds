@@ -28,7 +28,7 @@
 //                         caught two more when the catalogue went from six
 //                         pieces to twelve.
 //
-// See notes/knowledge/frontend/ambient-audio-mechanism.md, "Auditioning it".
+// See agent-system/knowledge/frontend/ambient-audio-mechanism.md, "Auditioning it".
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

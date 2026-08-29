@@ -37,7 +37,7 @@ export interface NavGroup {
 //   Administration who is allowed to look
 //
 // This is DEFERRED-S5-NAV-001 in
-// notes/plans/sprints/sprint-05-2026-08-13/user-stories.md, deferred until the
+// agent-system/plans/sprints/sprint-05-2026-08-13/user-stories.md, deferred until the
 // sidebar demonstrably felt crowded rather than on the day the eighth entry
 // landed. It does now, and the grouping that had been living in a comment here
 // is the one that shipped.

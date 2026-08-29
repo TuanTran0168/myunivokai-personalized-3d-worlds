@@ -12,7 +12,7 @@ import { defineConfig } from "vitest/config";
 //   npm install --no-save node-web-audio-api
 //   npx vitest run --config vitest.audition.config.ts --disable-console-intercept
 //
-// See notes/knowledge/frontend/ambient-audio-mechanism.md, "Auditioning it".
+// See agent-system/knowledge/frontend/ambient-audio-mechanism.md, "Auditioning it".
 export default defineConfig({
   test: {
     environment: "node",

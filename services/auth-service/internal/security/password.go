@@ -17,7 +17,7 @@ var ErrPasswordMismatch = errors.New("password does not match")
 
 // PasswordHasher wraps golang.org/x/crypto/argon2's IDKey with parameters
 // tuned for a 512 MB free-plan instance rather than the library defaults -
-// see notes/plans/services/auth-and-admin-plan.md#passwords.
+// see agent-system/plans/services/auth-and-admin-plan.md#passwords.
 type PasswordHasher struct {
 	memoryKiB   uint32
 	iterations  uint32

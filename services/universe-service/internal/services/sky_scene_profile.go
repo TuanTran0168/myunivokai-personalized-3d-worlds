@@ -48,7 +48,7 @@ const (
 )
 
 // Cloud layer opacities scale with the mood's bloom multiplier within clamped
-// photographic bounds (many sprites at low alpha; see notes/memory/archive/sky-db-and-realism-plan.md).
+// photographic bounds (many sprites at low alpha; see agent-system/memory/archive/sky-db-and-realism-plan.md).
 const (
 	baseNebulaCloudOpacity    = 0.10
 	minimumNebulaCloudOpacity = 0.05

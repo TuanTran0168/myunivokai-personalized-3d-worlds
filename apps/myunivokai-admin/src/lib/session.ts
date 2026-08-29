@@ -37,7 +37,7 @@ export interface SessionResponse {
 
 // PermissionCode values, ported from contracts/go/contracts_auth.go. Declared
 // in Go and synced to the database; this app only reads them, never invents
-// its own — see notes/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
+// its own — see agent-system/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
 export const PERMISSIONS = {
   worldRead: "world:read",
   worldUnpublish: "world:unpublish",
@@ -104,7 +104,7 @@ export function hasPermission(account: AccountSummary | null, code: PermissionCo
 // send the user to /login) — it is never a security boundary. The actual
 // boundary is the gateway's own signature + Redis tokenVersion check on
 // every request that matters (RequireAdminAccessToken), same as
-// notes/plans/services/auth-and-admin-plan.md#how-b-works describes for the
+// agent-system/plans/services/auth-and-admin-plan.md#how-b-works describes for the
 // gateway's own edge. Note this is distinct from contracts.AccessTokenClaims'
 // `expiresAt` field, which only exists on the Go-side struct auth-service
 // builds AFTER parsing the token — it is not a claim name on the wire.

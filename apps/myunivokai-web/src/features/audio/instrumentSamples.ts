@@ -5,7 +5,7 @@
 //
 // Why samples at all: the first two attempts synthesised everything from
 // oscillators and both were rejected as harsh and lifeless. That is the same
-// ceiling notes/knowledge/frontend/3d-development-limitations.md documents for the visuals —
+// ceiling agent-system/knowledge/frontend/3d-development-limitations.md documents for the visuals —
 // the algorithm is the cheap part, the asset is what decides whether the result
 // is beautiful. Oscillator synthesis is the audio equivalent of a chair built
 // out of boxes.

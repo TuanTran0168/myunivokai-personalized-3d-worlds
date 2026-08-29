@@ -52,7 +52,7 @@ var ServiceNames = []string{
 // directly - publishing to itself would buy nothing except an exception in
 // the one ACL entry permitted to publish no myunivokai subject at all, and
 // that absolute is worth more than the symmetry. See
-// infra/nats/nats-server.conf and notes/knowledge/backend/source-overview.md.
+// infra/nats/nats-server.conf and agent-system/knowledge/backend/source-overview.md.
 func ServiceStartedEventSubject(serviceName string) (string, error) {
 	for _, known := range ServiceNames {
 		if known == serviceName {

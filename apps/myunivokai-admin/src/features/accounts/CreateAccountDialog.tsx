@@ -41,7 +41,7 @@ async function copyToClipboard(value: string, label: string) {
 // Direct account creation — no email infrastructure exists to relay an
 // invite link, so the actor sets a password right now and the account is
 // active immediately. See auth-service's
-// notes/plans/services/auth-and-admin-plan.md#account-creation-is-direct-not-invited.
+// agent-system/plans/services/auth-and-admin-plan.md#account-creation-is-direct-not-invited.
 export function CreateAccountDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");

@@ -248,7 +248,7 @@ var nonHeroLandmarkKinds = []string{LandmarkSunkenRelic, LandmarkHydrothermalVen
 //
 // The ocean-1 catalogue resolves every key below to PROCEDURAL geometry built
 // in the browser, not to a downloaded GLB. That is the decision phase O4 of
-// notes/plans/services/ocean-service-plan.md left open, taken this way because no
+// agent-system/plans/services/ocean-service-plan.md left open, taken this way because no
 // agent-downloadable CC0 abyssal creature exists and a species list the
 // renderer cannot draw is the one mistake in this family that cannot be undone
 // cheaply — species are selected by floor(roll x len), so the order is frozen

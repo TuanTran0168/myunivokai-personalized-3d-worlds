@@ -15,7 +15,7 @@
  *   windSpeedMps                             the wave spectrum and the foam
  *   sunElevationDegrees                      the sky, and the refracted sun
  *
- * The reasoning behind each is in notes/evolution/ocean-visual-direction-research.md
+ * The reasoning behind each is in agent-system/evolution/ocean-visual-direction-research.md
  * (§11c the adaptation model, §11f the sky, §11i the sea state, §11j the water,
  * §11k why the service should carry exactly these fields).
  */

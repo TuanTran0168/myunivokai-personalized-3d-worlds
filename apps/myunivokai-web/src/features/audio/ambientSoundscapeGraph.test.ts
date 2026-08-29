@@ -33,7 +33,7 @@ import { noteNameToMidiNumber, SAMPLED_INSTRUMENT_NOTE_NAMES, type LoadedInstrum
 //
 // What it sounds like is a separate question these cannot answer. That one is
 // settled by rendering the real graph offline to WAV and measuring — see
-// notes/knowledge/frontend/ambient-audio-mechanism.md. Three versions shipped verified-and-wrong
+// agent-system/knowledge/frontend/ambient-audio-mechanism.md. Three versions shipped verified-and-wrong
 // before that habit existed.
 
 const FAKE_SAMPLE_RATE = 48000;

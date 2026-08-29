@@ -6,7 +6,7 @@
 // this gateway is a pure NATS consumer that receives none. A query against a
 // sleeping service therefore gets an immediate `no-responders` reply — not a
 // timeout — and nothing in normal operation ever wakes it back up. See
-// notes/plans/architecture/service-wake-mechanism.md.
+// agent-system/plans/architecture/service-wake-mechanism.md.
 //
 // The package is split the same way services/dna-service/internal/ai is:
 // Platform adapters are dumb and know only their vendor's mechanism, while
@@ -66,7 +66,7 @@
 // service-lifecycle history is a different question with a different answer —
 // startup events emitted by each service, which survive this directory
 // because restarts happen on every platform. See
-// notes/evolution/platform-evolution-research.md, Track B.
+// agent-system/evolution/platform-evolution-research.md, Track B.
 //
 // # A VPS is not that host
 //
@@ -79,7 +79,7 @@
 // wakeDetached, which PlatformNone short-circuits, so silencing the wake also
 // silences the detection. Keeping platform=http with internal targets
 // (http://dna-service:8080) keeps everything working with no code change.
-// See notes/plans/architecture/service-wake-mechanism.md#reuse-on-a-self-hosted-vps.
+// See agent-system/plans/architecture/service-wake-mechanism.md#reuse-on-a-self-hosted-vps.
 //
 // Two things are worth keeping even then, and neither depends on this package:
 // Retry-After in the admin router's exposed CORS headers, and *some*
@@ -157,7 +157,7 @@ type Platform interface {
 	// A nil error means the platform was told, NOT that the service can
 	// answer a query — cold start continues long after this returns. Callers
 	// must never treat nil as readiness; see
-	// notes/plans/architecture/service-wake-mechanism.md#healthz-is-a-start-signal-not-a-readiness-signal.
+	// agent-system/plans/architecture/service-wake-mechanism.md#healthz-is-a-start-signal-not-a-readiness-signal.
 	Wake(ctx context.Context, service string) error
 }
 

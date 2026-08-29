@@ -85,7 +85,7 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 	// not any consumer is alive, so a POST against a sleeping fleet returns
 	// 202, the job sits at `queued`, and every HTTP response in the trace is a
 	// success. There is no error for reactive waking to hang off - see
-	// notes/plans/architecture/service-wake-mechanism.md#design-proactive-wake-on-write-reactive-wake-on-read.
+	// agent-system/plans/architecture/service-wake-mechanism.md#design-proactive-wake-on-write-reactive-wake-on-read.
 	//
 	// Both services are woken because this one job needs both in sequence:
 	// dna-service to generate the profile, then the family service to compose
@@ -205,7 +205,7 @@ func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWrit
 // projection - so a week with no staff visit expires the oldest events
 // UNCONSUMED. The world and job counts are then wrong forever, with no error in
 // any log, because a message that aged out of a stream is not a failure anybody
-// observes. See notes/evolution/platform-evolution-research.md#the-retention-trap
+// observes. See agent-system/evolution/platform-evolution-research.md#the-retention-trap
 // --and-it-applies-to-library-service-too, which names this a defect in the
 // system as it runs today rather than a risk in a proposal.
 //

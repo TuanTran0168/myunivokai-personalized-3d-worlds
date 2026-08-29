@@ -11,7 +11,7 @@ import (
 )
 
 // HealthPath is the route each service binds purely so a scale-to-zero host
-// sees an open port (notes/skills/production-deployment-guide.md §5.6). It is
+// sees an open port (agent-system/skills/production-deployment-guide.md §5.6). It is
 // the cheapest thing to request and, being unauthenticated, the only route a
 // wake could use before a session exists.
 const HealthPath = "/healthz"

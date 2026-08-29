@@ -4,7 +4,7 @@
 #
 # 1. Materialize the one NATS credentials file every process below shares
 #    (production is one Synadia user with no per-service allow-list — see
-#    notes/skills/production-deployment-guide.md §1) from an environment
+#    agent-system/skills/production-deployment-guide.md §1) from an environment
 #    variable instead of assuming the platform has a "secret file" feature
 #    like Render's. Every platform lets you set an env var; not every
 #    free-tier platform has been verified here to support a mounted secret

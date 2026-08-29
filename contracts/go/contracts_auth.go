@@ -54,7 +54,7 @@ const (
 // AccountAudience matches the audience claim on an access token. A role or
 // permission scoped to one audience can never be granted on a token minted
 // for the other, enforced at the same place the token's signature is
-// verified — see notes/plans/services/auth-and-admin-plan.md#rbac.
+// verified — see agent-system/plans/services/auth-and-admin-plan.md#rbac.
 type AccountAudience string
 
 func (audience AccountAudience) Valid() bool {
@@ -63,19 +63,19 @@ func (audience AccountAudience) Valid() bool {
 
 // AccountKind is a column value, not an authorization decision. It exists so
 // the schema does not need to change when end-user accounts are approved —
-// see notes/plans/services/auth-and-admin-plan.md#why-this-does-not-violate-deferred-auth-001.
+// see agent-system/plans/services/auth-and-admin-plan.md#why-this-does-not-violate-deferred-auth-001.
 type AccountKind string
 
 // PermissionCode is declared in Go and synced into the permissions table at
 // migration/startup; staff read these, they never invent them. Roles are the
 // part staff compose freely — see
-// notes/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
+// agent-system/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
 type PermissionCode string
 
 // AccessTokenClaims is the decoded shape of the short-lived Ed25519 access
 // JWT. TokenVersion is compared against the Redis-cached value auth-service
 // writes on disable or password change; a claim below the stored value means
-// revoked — see notes/plans/services/auth-and-admin-plan.md#how-b-works.
+// revoked — see agent-system/plans/services/auth-and-admin-plan.md#how-b-works.
 type AccessTokenClaims struct {
 	Subject      string          `json:"subject"`
 	Roles        []string        `json:"roles"`
@@ -300,7 +300,7 @@ type InviteAcceptData struct {
 // AccountCreateData creates a staff account with a password the actor
 // chooses right away — no email infrastructure exists to relay a token (see
 // InviteCreateData), and building one is deliberately deferred; see
-// notes/plans/services/auth-and-admin-plan.md#account-creation-is-direct-not-invited.
+// agent-system/plans/services/auth-and-admin-plan.md#account-creation-is-direct-not-invited.
 // Unlike an invite, the account is active from the moment it is created.
 type AccountCreateData struct {
 	Email          string   `json:"email"`

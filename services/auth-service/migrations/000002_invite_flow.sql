@@ -2,7 +2,7 @@
 -- Invited accounts have no password until they accept: password_hash must
 -- become nullable, guarded by a constraint so a row can never end up with
 -- neither a password nor a live invite - see
--- notes/plans/sprints/sprint-04-2026-08-06/user-stories.md S4-AUTH-005.
+-- agent-system/plans/sprints/sprint-04-2026-08-06/user-stories.md S4-AUTH-005.
 ALTER TABLE accounts ALTER COLUMN password_hash DROP NOT NULL;
 ALTER TABLE accounts ADD COLUMN invited_at TIMESTAMPTZ;
 ALTER TABLE accounts ADD COLUMN invite_token_hash TEXT;

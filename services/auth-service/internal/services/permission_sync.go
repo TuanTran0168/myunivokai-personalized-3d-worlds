@@ -55,7 +55,7 @@ var reservedPermissions = []repositories.PermissionDefinition{
 
 // declaredPermissions is the single source of truth for every permission
 // codename that exists, and the only thing SyncPermissions is given — see
-// notes/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
+// agent-system/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
 // The split above is for readers and for the two tests; the database sees one
 // list, exactly as before.
 var declaredPermissions = append(append([]repositories.PermissionDefinition{}, enforcedPermissions...), reservedPermissions...)

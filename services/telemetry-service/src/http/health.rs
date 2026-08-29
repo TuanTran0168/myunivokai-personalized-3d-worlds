@@ -3,7 +3,7 @@
 //! The port is bound before the messaging runtime starts so a cold start has
 //! something to answer while the rest of the process is still connecting —
 //! `/healthz` is a START signal, not a readiness signal, exactly as
-//! notes/plans/architecture/service-wake-mechanism.md says. Reporting readiness here would
+//! agent-system/plans/architecture/service-wake-mechanism.md says. Reporting readiness here would
 //! make the gateway's wake wait for a database connection that has nothing to
 //! do with whether the instance is up.
 

@@ -6,7 +6,7 @@
  * the same lamp, and threading eight uniforms through eight components is how
  * they drift apart. One module owns the floor.
  *
- * The rules encoded here are argued in notes/evolution/ocean-visual-direction-research.md:
+ * The rules encoded here are argued in agent-system/evolution/ocean-visual-direction-research.md:
  *
  *   - the seabed is DARKER than the water above it (§3, the value ladder), and
  *     the frame flattens into poster paint the moment it is not;
