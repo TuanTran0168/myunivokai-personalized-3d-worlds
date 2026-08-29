@@ -76,6 +76,11 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   // reveal already works against.
   const [swipeRequest, setSwipeRequest] = useState<SceneSwipeRequest | null>(null);
   const swipeTokenReference = useRef(0);
+  // Separate from `hasSceneRendered` below: that one only ever goes false to
+  // true, once, for the genie's benefit. This has to go back to false on
+  // every swipe request, or the parked phase SceneSwipe relies on would never
+  // happen past the first variant this page ever showed.
+  const [isSwipeDestinationReady, setIsSwipeDestinationReady] = useState(false);
 
   // The rectangle the gallery card occupied, if a card is what opened this
   // world. Consumed on read, so a variant switch, a reload or a back-forward
@@ -192,6 +197,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
       return;
     }
     swipeTokenReference.current += 1;
+    setIsSwipeDestinationReady(false);
     setSwipeRequest({
       still,
       direction: swipeDirectionBetween(
@@ -312,7 +318,10 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
           // it has already drawn the frame by the time it hands over. Fading
           // in underneath would dissolve away what just arrived.
           revealWithoutFade={pendingOpenOrigin !== null}
-          onSceneReady={() => setHasSceneRendered(true)}
+          onSceneReady={() => {
+            setHasSceneRendered(true);
+            setIsSwipeDestinationReady(true);
+          }}
         />
       </div>
       <GenieReveal
@@ -323,6 +332,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
       <SceneSwipe
         request={swipeRequest}
         sceneContainerReference={sceneContainerReference}
+        isDestinationReady={isSwipeDestinationReady}
         onFinished={() => setSwipeRequest(null)}
       />
 

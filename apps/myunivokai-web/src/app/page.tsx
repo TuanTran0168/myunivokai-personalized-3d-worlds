@@ -249,6 +249,11 @@ export default function HomePage() {
   const sceneContainerReference = useRef<HTMLDivElement | null>(null);
   const [swipeRequest, setSwipeRequest] = useState<SceneSwipeRequest | null>(null);
   const swipeTokenReference = useRef(0);
+  // Whether the CURRENT preview scene has rendered a real frame — reset to
+  // false in the same update that starts a swipe, so SceneSwipe's parked
+  // phase always gets at least one tick. See SceneSwipe.tsx for why the swipe
+  // waits on this instead of moving the instant a family is picked.
+  const [isSceneReady, setIsSceneReady] = useState(false);
 
   /**
    * Change family, and swipe the old world off to do it.
@@ -266,6 +271,7 @@ export default function HomePage() {
     const still = captureSceneStill(sceneContainerReference.current);
     if (still) {
       swipeTokenReference.current += 1;
+      setIsSceneReady(false);
       setSwipeRequest({
         still,
         direction: swipeDirectionBetween(
@@ -542,6 +548,7 @@ export default function HomePage() {
           // every option toggle, and the full opening move would replay in
           // full each time.
           entryMotion="settle"
+          onSceneReady={() => setIsSceneReady(true)}
         />
 
         {/* Floating identity island (desktop): live state, the curatorial
@@ -590,6 +597,7 @@ export default function HomePage() {
       <SceneSwipe
         request={swipeRequest}
         sceneContainerReference={sceneContainerReference}
+        isDestinationReady={isSceneReady}
         onFinished={() => setSwipeRequest(null)}
       />
 

@@ -28,6 +28,22 @@ type SceneSwipeProps = {
   /** The element holding the live <canvas>. It is the panel that slides IN. */
   sceneContainerReference: RefObject<HTMLDivElement | null>;
   /**
+   * Whether the destination scene has rendered a real frame yet — the same
+   * signal `UniverseCanvas`'s `onSceneReady` already produces, threaded back
+   * down. The caller must reset this to `false` in the SAME state update that
+   * changes which scene is showing, before this component ever sees the new
+   * `request`; if it starts true the parked phase below never happens.
+   *
+   * This is the fix for the freeze a first-ever visit to a scene like the
+   * forest causes (documented at length in `UniverseCanvas.tsx`): compiling
+   * ~44 shader programs cold can block the main thread for seconds, and nothing
+   * in this codebase can make that faster (`compileAsync` was tried and
+   * measured to do nothing on this project's driver). What was never necessary
+   * was running the SWIPE through that freeze. See the parked-phase comment
+   * below.
+   */
+  isDestinationReady: boolean;
+  /**
    * Called exactly once per request, whether the swipe played or was declined.
    * The caller clears the request with it, so a path that never calls back is a
    * scene container left parked off screen.
@@ -83,15 +99,36 @@ export function captureSceneStill(sceneContainer: HTMLDivElement | null): HTMLCa
  * Carries the outgoing world off screen while the live scene container arrives
  * from the other side.
  *
- * Driven by CSS KEYFRAMES, not by a requestAnimationFrame loop, and that is the
- * one decision here that matters most. This gesture runs at exactly the moment
- * the main thread is at its busiest — the next world is mounting, compiling
- * shaders and uploading textures behind it — and a JS loop writing
- * `style.transform` every frame is a main-thread task that gets queued behind
- * all of it. Measured on the world route, a single shader compile blocks for
- * over four seconds; a rAF-driven swipe would sit frozen for the whole of it.
- * A compositor animation keeps running through a blocked main thread, which is
- * the difference between a 420 ms gesture and a 420 ms freeze.
+ * Driven by CSS KEYFRAMES, not by a requestAnimationFrame loop, and that is one
+ * of two decisions here that matter most. A JS loop writing `style.transform`
+ * every frame is a main-thread task; a compositor animation is not, which
+ * matters on a device with room to spare exactly as much as one without.
+ *
+ * The other is the PARKED PHASE below, and it exists because the first decision
+ * turned out not to be enough. This used to start both halves moving the
+ * instant a request arrived, on the theory that a compositor animation runs
+ * through a blocked main thread regardless. It does — but starting it doesn't
+ * un-block the thread that has to run the style recalculation that NOTICES the
+ * new animation classes and hands them to the compositor in the first place.
+ * Profiling a swipe into the forest showed why that matters: mounting the next
+ * scene can cost 2.5-3 SECONDS of blocked main thread compiling shaders cold
+ * (measured with the CPU sampler, not guessed — see `UniverseCanvas.tsx`), and
+ * that block sits between the classes being added and the browser's next
+ * chance to act on them. The result was not a smooth slide into a loading
+ * scene; it was however much of the 420 ms gesture the browser could still fit
+ * in once the block cleared, which could be all of it, none of it, or a
+ * mid-flight snap to the final position — indistinguishable, to the person who
+ * just clicked, from the app having glitched.
+ *
+ * So the two halves no longer move until `isDestinationReady` says the far
+ * side has actually rendered something. Until then, the captured still sits
+ * PARKED — drawn into place, animation classes withheld — which costs nothing
+ * to hold: a still frame doing nothing is indistinguishable from the world it
+ * is a picture of, sitting still. `UniverseCanvas`'s own loading veil already
+ * treats a wait this way on purpose ("nothing animates during the wait...
+ * reads as composure"); this just extends the same idea to the one thing on
+ * screen that used to move regardless of whether the far side was ready to be
+ * moved to.
  *
  * Both halves are driven from here rather than one of them being left to the
  * page: they are one gesture, and two owners animating against the same clock
@@ -103,7 +140,7 @@ export function captureSceneStill(sceneContainer: HTMLDivElement | null): HTMLCa
  * including on an interrupted swipe. A transform left behind is a scene parked
  * off screen with no way back, which is worse than any transition is good.
  */
-export function SceneSwipe({ request, sceneContainerReference, onFinished }: SceneSwipeProps) {
+export function SceneSwipe({ request, sceneContainerReference, isDestinationReady, onFinished }: SceneSwipeProps) {
   const overlayReference = useRef<HTMLDivElement>(null);
   const stillHostReference = useRef<HTMLDivElement>(null);
   const onFinishedReference = useRef(onFinished);
@@ -130,7 +167,10 @@ export function SceneSwipe({ request, sceneContainerReference, onFinished }: Sce
 
     // Pin the overlay to the container's box, read BEFORE the container is
     // animated: getBoundingClientRect reports the transformed box, so reading
-    // it later would chase the panel across the screen.
+    // it later would chase the panel across the screen. Re-read on every run
+    // of this effect (including the one that flips isDestinationReady), which
+    // is a deliberate no-op the common case and a correction the rare one
+    // where the viewport was resized during the wait.
     const containerBox = sceneContainer.getBoundingClientRect();
     overlay.style.left = `${containerBox.left}px`;
     overlay.style.top = `${containerBox.top}px`;
@@ -148,27 +188,55 @@ export function SceneSwipe({ request, sceneContainerReference, onFinished }: Sce
     // so the stylesheet holds the SHAPE of the gesture and nothing else. One
     // keyframe pair serves both directions: the sign rides in as a value the
     // keyframes multiply by, rather than as a second set to keep in step.
+    //
+    // Written unconditionally, even during the parked phase: they cost nothing
+    // to have sitting on the element before the classes that read them exist,
+    // and setting them here rather than inside startAnimating keeps this one
+    // block the only place either element's inline style is touched.
     const customProperties = sceneSwipeCustomProperties(request.direction);
     for (const [property, value] of Object.entries(customProperties)) {
       stillHost.style.setProperty(property, value);
       sceneContainer.style.setProperty(property, value);
     }
-    stillHost.classList.add("scene-swipe-out");
-    sceneContainer.classList.add("scene-swipe-in");
 
+    let hasStarted = false;
     let hasFinished = false;
-    function finishOnce() {
+    let timeoutId: number | null = null;
+
+    // Arrow functions, not declarations: TypeScript only carries the null
+    // checks above into a nested closure when the closure can't have been
+    // hoisted above them.
+    const finishOnce = () => {
       if (hasFinished) {
         return;
       }
       hasFinished = true;
       finish();
+    };
+
+    // The parked-to-moving handoff. Both classes go on together, same as
+    // before — only WHEN has changed.
+    const startAnimating = () => {
+      if (hasStarted) {
+        return;
+      }
+      hasStarted = true;
+      stillHost.classList.add("scene-swipe-out");
+      sceneContainer.classList.add("scene-swipe-in");
+      sceneContainer.addEventListener("animationend", finishOnce);
+      timeoutId = window.setTimeout(finishOnce, SCENE_SWIPE_TIMEOUT_MILLISECONDS);
+    };
+
+    if (isDestinationReady) {
+      startAnimating();
     }
-    sceneContainer.addEventListener("animationend", finishOnce);
-    const timeoutId = window.setTimeout(finishOnce, SCENE_SWIPE_TIMEOUT_MILLISECONDS);
+    // else: the still stays parked — drawn and positioned above, nothing more
+    // — until a later run of this effect sees isDestinationReady flip true.
 
     return () => {
-      window.clearTimeout(timeoutId);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
       sceneContainer.removeEventListener("animationend", finishOnce);
       sceneContainer.classList.remove("scene-swipe-in");
       stillHost.classList.remove("scene-swipe-out");
@@ -178,7 +246,7 @@ export function SceneSwipe({ request, sceneContainerReference, onFinished }: Sce
       }
       stillHost.replaceChildren();
     };
-  }, [request, sceneContainerReference]);
+  }, [request, isDestinationReady, sceneContainerReference]);
 
   if (!request) {
     return null;

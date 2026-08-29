@@ -18,8 +18,8 @@ type SwatchChipGroupProps = {
 };
 
 const SELECTED_CLASSNAME: Record<NonNullable<SwatchChipGroupProps["accent"]>, string> = {
-  primary: "border-primary bg-primary/25 font-semibold text-paper",
-  secondary: "border-secondary bg-secondary/25 font-semibold text-paper"
+  primary: "border-primary bg-primary/25 text-paper",
+  secondary: "border-secondary bg-secondary/25 text-paper"
 };
 
 /**
@@ -41,6 +41,17 @@ const SELECTED_CLASSNAME: Record<NonNullable<SwatchChipGroupProps["accent"]>, st
  * did not — nobody picks "Nebula" because of the purple — but it is what makes
  * the row scannable, and dropping it entirely made the group read as a second
  * Traits.
+ *
+ * The checkmark is always in the DOM, opacity-toggled rather than
+ * conditionally mounted, and the selected style drops the bold weight the
+ * other chip groups use. Both are the same fix for the same bug: this group
+ * is single-select, so picking a new option changes which TWO chips are
+ * "selected" in one update. A checkmark that only exists when selected — or
+ * text that only turns bold when selected — makes both of those chips change
+ * WIDTH at once, and a width change on a flex-wrap row can shift where every
+ * later chip wraps, jumping "Reef Crest" or "The Abyss" to a different line
+ * for a reason that has nothing to do with them. Nothing about a chip's own
+ * footprint may depend on whether it is the selected one.
  */
 export function SwatchChipGroup({
   fieldLabel,
@@ -73,7 +84,10 @@ export function SwatchChipGroup({
                 style={{ backgroundColor: option.swatch }}
               />
               {option.label}
-              {isSelected ? <Check className="h-3.5 w-3.5 shrink-0 text-brass" aria-hidden="true" /> : null}
+              <Check
+                aria-hidden="true"
+                className={`h-3.5 w-3.5 shrink-0 text-brass ${isSelected ? "opacity-100" : "opacity-0"}`}
+              />
             </button>
           );
         })}
