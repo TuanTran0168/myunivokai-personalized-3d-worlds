@@ -4,7 +4,9 @@ import {
   CAMERA_INTRO_MAXIMUM_FRAME_SECONDS,
   CAMERA_INTRO_POSES,
   CAMERA_INTRO_START_POSE,
+  CAMERA_SETTLE_DURATION_SECONDS,
   cameraIntroFrameSeconds,
+  cameraIntroPoseForDuration,
   cameraIntroOffsetAt,
   cameraIntroProgress,
   cameraIntroStartOffset,
@@ -57,11 +59,50 @@ describe("cameraIntroFrameSeconds", () => {
 });
 
 describe("CAMERA_INTRO_POSES", () => {
-  it("keeps every shot gentle — a step and a shoulder turn, not a fly-through", () => {
+  it("keeps every shot a move, not a fly-through", () => {
+    // These bounds were half this size, and the result read as "it zooms
+    // slightly": at those magnitudes the radius did nearly all the work, and
+    // the radius is the axis that reads LEAST as movement. The ceilings are now
+    // about a step and a half, a 25-degree descent and a 45-degree turn.
+    //
+    // Still bounded, and the bound is not decoration: an entry the visitor did
+    // not ask for has to be over before it becomes something they have to sit
+    // through, and 2.2 s is all there is.
     for (const pose of CAMERA_INTRO_POSES) {
-      expect(Math.abs(pose.radiusScale - 1)).toBeLessThanOrEqual(0.35);
-      expect(Math.abs(pose.polarOffsetRadians)).toBeLessThanOrEqual(0.25);
-      expect(Math.abs(pose.azimuthOffsetRadians)).toBeLessThanOrEqual(0.25);
+      expect(Math.abs(pose.radiusScale - 1)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(pose.polarOffsetRadians)).toBeLessThanOrEqual(0.45);
+      expect(Math.abs(pose.azimuthOffsetRadians)).toBeLessThanOrEqual(0.8);
+    }
+  });
+
+  it("makes the bearing the biggest axis, because it is the one that survives", () => {
+    // Radius and polar can each be clamped flat by a family's envelope. If the
+    // set grew mostly on those axes, the extra travel would be exactly the
+    // travel most likely to be thrown away — a bigger pull-back is a bigger
+    // request to be clamped back to the ceiling.
+    const widestTurn = Math.max(...CAMERA_INTRO_POSES.map((pose) => Math.abs(pose.azimuthOffsetRadians)));
+    const steepestDescent = Math.max(...CAMERA_INTRO_POSES.map((pose) => Math.abs(pose.polarOffsetRadians)));
+    expect(widestTurn).toBeGreaterThan(steepestDescent);
+  });
+
+  it("opens some worlds from inside their own framing", () => {
+    // A shot that only ever pulls back has one character however many entries
+    // are in the table. Starting closer and drawing out reads as emerging
+    // rather than arriving, and it is the only way to get that from a set of
+    // spherical offsets.
+    expect(CAMERA_INTRO_POSES.some((pose) => pose.radiusScale < 1)).toBe(true);
+    expect(CAMERA_INTRO_POSES.some((pose) => pose.radiusScale > 1)).toBe(true);
+  });
+
+  it("lifts every close start clear of the framing it opens inside", () => {
+    // A smaller radius at the same polar angle is a LOWER camera, so a close
+    // start on its own is a start underneath the shot — straight into the
+    // ocean's terrain clamp, which lifts the orbit target with the camera and
+    // hands back a resting framing the family never composed.
+    for (const pose of CAMERA_INTRO_POSES) {
+      if (pose.radiusScale < 1) {
+        expect(pose.polarOffsetRadians).toBeLessThan(-0.2);
+      }
     }
   });
 
@@ -237,5 +278,48 @@ describe("cameraIntroOffsetAt", () => {
     for (let step = 0; step <= 10; step++) {
       expect(cameraIntroOffsetAt(resting, resting, step / 10)).toEqual(resting);
     }
+  });
+});
+
+describe("cameraIntroPoseForDuration", () => {
+  const pose = CAMERA_INTRO_POSES[0];
+
+  it("hands the full cinematic entry the whole shot", () => {
+    expect(cameraIntroPoseForDuration(pose, CAMERA_INTRO_DURATION_SECONDS)).toEqual(pose);
+  });
+
+  it("gives a longer entry than the cinematic one the whole shot too", () => {
+    // Scaling UP has never been asked for and would take a pose past the bounds
+    // the set is checked against.
+    expect(cameraIntroPoseForDuration(pose, CAMERA_INTRO_DURATION_SECONDS * 3)).toEqual(pose);
+  });
+
+  it("shrinks the shot for the create page's settle instead of speeding it up", () => {
+    // The settle is not an arrival — it plays every time an option is toggled —
+    // so it takes a smaller version of the same move rather than the same
+    // travel at two and a half times the speed.
+    const settle = cameraIntroPoseForDuration(pose, CAMERA_SETTLE_DURATION_SECONDS);
+    expect(Math.abs(settle.azimuthOffsetRadians)).toBeLessThan(Math.abs(pose.azimuthOffsetRadians));
+    expect(Math.abs(settle.polarOffsetRadians)).toBeLessThan(Math.abs(pose.polarOffsetRadians));
+    expect(settle.radiusScale).toBeLessThan(pose.radiusScale);
+  });
+
+  it("scales the radius about 1, not about 0", () => {
+    // A radius scale of 1 means "no change", so half of a 1.32x pull-back is
+    // 1.16x. Scaling the number itself would give 0.66x — a shot that starts
+    // inside the world, which is a different move entirely.
+    const settle = cameraIntroPoseForDuration(pose, CAMERA_SETTLE_DURATION_SECONDS);
+    expect(settle.radiusScale).toBeGreaterThan(1);
+  });
+
+  it("never shrinks a shot away to nothing", () => {
+    const almostInstant = cameraIntroPoseForDuration(pose, 0.01);
+    expect(Math.abs(almostInstant.azimuthOffsetRadians)).toBeGreaterThan(0.03);
+  });
+
+  it("returns the pose untouched when there is no duration at all", () => {
+    // Reduced motion and the gallery backdrops both pass 0, and neither plays
+    // the move — so there is nothing to size.
+    expect(cameraIntroPoseForDuration(pose, 0)).toEqual(pose);
   });
 });

@@ -48,20 +48,27 @@ export type CameraIntroPose = {
  * The shots a world can open on.
  *
  * One fixed pose made every world arrive the same way, and a gallery of six
- * worlds opened six times in a row is exactly where that shows. These are all
- * still "nhẹ" — a gentle drift, not a fly-through: a 10-30% pull-back is about
- * one step backwards at conversational distance, and the largest arc here is
- * 11 degrees, a shoulder turn. What varies is the CHARACTER of the step, not
- * its size.
+ * worlds opened six times in a row is exactly where that shows.
  *
- * Two invariants hold across the whole set, and both are load-bearing.
+ * These used to be much smaller — a 10-30% pull-back and at most an 11-degree
+ * arc — and the owner's reading of the result was "it zooms slightly, doesn't
+ * it". That was accurate: at those magnitudes the radius does almost all of the
+ * work and the radius is the axis that reads LEAST as movement, because a
+ * pull-back changes what is in frame without changing where you are standing.
+ * The set is now roughly twice the size and the growth went mostly into the
+ * bearing, which is the axis that reads as travel.
+ *
+ * It is also the axis that always survives. Which is the first of two
+ * invariants, and both are load-bearing:
  *
  * Every pose carries a non-zero AZIMUTH offset. Radius and polar angle can both
  * be clamped flat by a family's envelope — a forest shot already near its
  * 70-unit ceiling or grazing its ground plane has nowhere to go on those axes —
  * but a bearing wraps rather than stopping, so the sideways component is the
  * one thing guaranteed to survive any envelope. It is what stops a clamped pose
- * degenerating into no move at all.
+ * degenerating into no move at all. Making the moves bigger made this MORE
+ * important, not less: a bigger radius request is a request more likely to be
+ * clamped away entirely.
  *
  * And no pose has a POSITIVE polar offset: every shot starts at or above the
  * resting elevation and descends onto it, never rises from below. Not a
@@ -71,25 +78,44 @@ export type CameraIntroPose = {
  * there would trip CameraRig's terrain clamp, which lifts the orbit TARGET
  * along with the camera — so the entrance would silently walk the framing
  * upward and hand back a resting shot the family never composed.
+ *
+ * That second invariant is why the two poses that start CLOSER than the resting
+ * framing also start well above it. A smaller radius at the same polar angle is
+ * a LOWER camera, so a close start on its own is a start underneath the shot;
+ * pairing it with a lift keeps it clear of the seabed while still opening from
+ * inside the world and drawing back out of it.
  */
 export const CAMERA_INTRO_POSES: readonly CameraIntroPose[] = [
-  // Pull back and settle. The original, and still the one that suits a solar
-  // system seen whole from outside.
-  { radiusScale: 1.22, polarOffsetRadians: -0.085, azimuthOffsetRadians: 0.09 },
+  // Pull back and settle. The original, widened, and still the one that suits a
+  // solar system seen whole from outside.
+  { radiusScale: 1.32, polarOffsetRadians: -0.12, azimuthOffsetRadians: 0.17 },
   // Crane down: starts well above the framing and descends onto it. The most
-  // overtly "establishing shot" of the set.
-  { radiusScale: 1.12, polarOffsetRadians: -0.2, azimuthOffsetRadians: 0.035 },
+  // overtly "establishing shot" of the set, and the steepest descent.
+  { radiusScale: 1.16, polarOffsetRadians: -0.4, azimuthOffsetRadians: 0.09 },
   // High arc: lifted and swung the other way, so the descent and the turn are
   // both doing work. Between the crane and the swings in character.
-  { radiusScale: 1.18, polarOffsetRadians: -0.15, azimuthOffsetRadians: -0.12 },
-  // Swing left — almost pure lateral arc, barely any distance change.
-  { radiusScale: 1.1, polarOffsetRadians: -0.03, azimuthOffsetRadians: -0.19 },
+  { radiusScale: 1.26, polarOffsetRadians: -0.26, azimuthOffsetRadians: -0.34 },
+  // Swing left — almost pure lateral arc, barely any distance change. The
+  // widest turn in the set: 36 degrees, most of a quarter-turn of the head.
+  { radiusScale: 1.12, polarOffsetRadians: -0.05, azimuthOffsetRadians: -0.63 },
   // Swing right, and not a mirror of the left: an identical pair reads as one
   // shot flipped, which is worse than two that merely rhyme.
-  { radiusScale: 1.09, polarOffsetRadians: -0.05, azimuthOffsetRadians: 0.185 },
+  { radiusScale: 1.07, polarOffsetRadians: -0.11, azimuthOffsetRadians: 0.56 },
   // The long approach. The biggest pull-back in the set, so it spends most of
   // the move covering distance rather than turning.
-  { radiusScale: 1.3, polarOffsetRadians: -0.065, azimuthOffsetRadians: -0.11 }
+  { radiusScale: 1.48, polarOffsetRadians: -0.1, azimuthOffsetRadians: -0.21 },
+  // Rise and turn: the only shot that gives lift and bearing equal weight, so
+  // it arcs down and around at once.
+  { radiusScale: 1.21, polarOffsetRadians: -0.42, azimuthOffsetRadians: 0.44 },
+  // Out of the world. Opens INSIDE the resting framing and draws back out of
+  // it, which reads as emerging rather than as arriving — lifted hard, because
+  // a close start at the resting elevation is a start below the shot.
+  { radiusScale: 0.78, polarOffsetRadians: -0.36, azimuthOffsetRadians: -0.27 },
+  // The low glide: barely any lift, barely any distance, and the longest
+  // sideways travel of all. The shot for a world whose interest is at eye level.
+  { radiusScale: 1.04, polarOffsetRadians: -0.03, azimuthOffsetRadians: 0.72 },
+  // Close and turning. The second inside start, swinging the other way.
+  { radiusScale: 0.84, polarOffsetRadians: -0.3, azimuthOffsetRadians: 0.38 }
 ];
 
 /**
@@ -97,6 +123,40 @@ export const CAMERA_INTRO_POSES: readonly CameraIntroPose[] = [
  * every test measures the envelope clamps against.
  */
 export const CAMERA_INTRO_START_POSE: CameraIntroPose = CAMERA_INTRO_POSES[0];
+
+/**
+ * The smallest fraction of a shot a short entry may play.
+ *
+ * Without a floor, the create page's 0.85 s settle would take 39% of a move
+ * that is now twice the size it was — and the settle is not an arrival, it is
+ * what the live preview does every time an option is toggled. Something that
+ * plays on every click has to stay small however large the full entry gets.
+ */
+const MINIMUM_INTRO_POSE_SCALE = 0.45;
+
+/**
+ * The same shot, sized for how long there is to play it.
+ *
+ * A shot is a distance covered over a duration, so the two cannot be set
+ * independently: the full 2.2 s cinematic entry gets the whole pose, and the
+ * 0.85 s preview settle gets a fraction of it rather than the same travel at
+ * two and a half times the speed. Scaling the POSE rather than the curve keeps
+ * one set of shots for the whole app — a settle is a smaller version of the
+ * world's own opening move, not a different move.
+ */
+export function cameraIntroPoseForDuration(pose: CameraIntroPose, durationSeconds: number): CameraIntroPose {
+  if (!(durationSeconds > 0) || durationSeconds >= CAMERA_INTRO_DURATION_SECONDS) {
+    return pose;
+  }
+  const scale = Math.max(MINIMUM_INTRO_POSE_SCALE, durationSeconds / CAMERA_INTRO_DURATION_SECONDS);
+  return {
+    // Scaled about 1, not about 0: a radius scale of 1 is "no change", so half
+    // of a 1.32x pull-back is 1.16x, not 0.66x.
+    radiusScale: 1 + (pose.radiusScale - 1) * scale,
+    polarOffsetRadians: pose.polarOffsetRadians * scale,
+    azimuthOffsetRadians: pose.azimuthOffsetRadians * scale
+  };
+}
 
 /**
  * Which shot this world opens on.

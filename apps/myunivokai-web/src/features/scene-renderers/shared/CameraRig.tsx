@@ -14,6 +14,7 @@ import {
   cameraIntroOffsetAt,
   cameraIntroProgress,
   cameraIntroStartOffset,
+  cameraIntroPoseForDuration,
   pickCameraIntroPose,
   type SphericalOffset
 } from "./cameraIntro";
@@ -134,9 +135,16 @@ export function CameraRig({
   const prefersReducedMotionReference = useRef(false);
   const introSpherical = useMemo(() => new Spherical(), []);
   const scratchIntroOffset = useMemo(() => new Vector3(), []);
+  // Sized for the duration it has to play in: the full cinematic entry gets the
+  // whole shot, the create page's short settle gets a fraction of it rather
+  // than the same travel at two and a half times the speed.
   const introPose = useMemo(
-    () => (introPoseSeed ? pickCameraIntroPose(introPoseSeed) : CAMERA_INTRO_START_POSE),
-    [introPoseSeed]
+    () =>
+      cameraIntroPoseForDuration(
+        introPoseSeed ? pickCameraIntroPose(introPoseSeed) : CAMERA_INTRO_START_POSE,
+        introDurationSeconds
+      ),
+    [introPoseSeed, introDurationSeconds]
   );
 
   useEffect(() => {
