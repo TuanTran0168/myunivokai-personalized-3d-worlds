@@ -617,3 +617,54 @@ is 4.1 million triangles and 59 shader programs, and closing that gap means
 reducing what is IN the scene rather than how many pixels it is drawn into.
 The `detect-gpu` classification, the per-tier profiles and the WebGL failure
 boundary in the tasks above are all still unstarted.
+
+Follow-up (2026-08-29): a report that swiping worlds felt "extremely laggy"
+turned out to be this same shader-compile freeze, not a bug in the swipe
+itself. Profiled with the CPU sampler (`Profiler.start`/`stop` over CDP, not
+just wall-clock timing): swiping into the forest for the first time in a
+browser session spends 2.5-3 of it inside `getProgramInfoLog` /
+`getProgramParameter`, three.js's own diagnostic and uniform/attribute readback
+on each of ~44 shader programs' first bind. The swipe's CSS keyframes keep
+running through this (compositor, not main-thread), but everything ELSE on the
+page — clicks, typing, the veil's own fade-in — is genuinely frozen for that
+stretch, which is what read as lag rather than a slow transition.
+
+`WebGLRenderer.compileAsync`, the standard fix for this exact class of freeze,
+was implemented, then measured and REMOVED. `KHR_parallel_shader_compile` is
+present on this project's ANGLE/D3D11 target (confirmed via
+`getSupportedExtensions()`), but its completion-status query blocked for the
+same 2.5-3s the plain path did — verified in both headless AND headed real
+Chrome, so it is not a headless-testing artifact. This driver does not honour
+the extension's non-blocking contract, and shipping the mechanism anyway would
+have been dead weight: profiling also showed it was compiling roughly DOUBLE
+the needed program count, because `compile()` warms against the canvas's own
+output color space while `PostEffects`' composer actually renders the scene
+into a separate linear intermediate target — two color-space variants of
+nearly every material, only one of which the composer ever uses.
+
+What DID turn out to matter, found by testing with a PERSISTENT Chrome profile
+instead of a fresh one per run (`launchPersistentContext`, not
+`launch`/`newContext`): Chrome caches compiled shader BINARIES on disk, keyed
+by source, independent of any page's WebGLRenderer. A brand new tab, brand new
+WebGL context, brand new renderer, same machine's Chrome profile — the SECOND
+time the forest's shaders are ever compiled, the same ~44-program readback
+dropped from 2633 ms to 350 ms in the final measurement (matches the earlier
+CPU-profile figures: 2547 ms cold vs 231-350 ms warm across three separate
+runs). The expensive case is "the first time this visitor's browser has ever
+compiled a forest", not "every swipe" — every fresh-profile/headless/CI
+measurement in this sprint's other notes is, unavoidably, the cold-cache
+number, since none of them persist a Chrome profile between runs.
+
+The only real, safe fix landed: `WebGLRenderer.debug.checkShaderErrors = false`
+in production (kept on in dev, so a genuine shader error still prints). A real
+three.js-documented saving, but small next to the readback that remains
+mandatory. The complete fix — reusing one `<Canvas>`/WebGLRenderer across a
+world swap instead of remounting it on every seed change — is blocked on r3f
+unconditionally calling `forceContextLoss()` on unmount regardless of whether
+the renderer was r3f's own or supplied via the `gl` prop, so a "persistent
+renderer" reference does not survive the swap either. Doing this properly means
+no longer keying the Canvas remount on `seed` at all, moving the camera-pose
+reset, the per-family tone-mapping/shadow config, and the genie reveal's
+still-matches-live-frame guarantee onto imperative effects instead — a real
+piece of work, not attempted here, and not something to start unreviewed under
+a "the swipe feels laggy" report.

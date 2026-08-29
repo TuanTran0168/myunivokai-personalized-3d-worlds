@@ -1,6 +1,6 @@
 "use client";
 
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useThree, type RootState } from "@react-three/fiber";
 import { Suspense, useMemo, useRef, useState } from "react";
 import { ACESFilmicToneMapping, AgXToneMapping } from "three";
 import type { Vector3 } from "three";
@@ -62,6 +62,39 @@ const FOREST_MAXIMUM_POLAR_ANGLE_RADIANS = Math.PI * 0.492;
 // so a strong machine renders every pixel its display has and a 4K panel gets
 // whatever the GPU can hold sixty frames at.
 const CANVAS_DEVICE_PIXEL_RATIO_RANGE: [number, number] = [1, 3];
+
+/**
+ * Skips a synchronous diagnostic readback on every shader program's first use.
+ *
+ * `WebGLRenderer.debug.checkShaderErrors` (on by default) has three.js read
+ * `getProgramInfoLog` back from the driver the first time each program is
+ * bound, purely to print a message if the link failed. `gl.linkProgram` above
+ * it already queued that work without blocking; the log READ is what forces
+ * the driver to stop and wait for a link it would otherwise finish on its own
+ * schedule. Kept on in development so a real shader error still prints
+ * instead of the scene silently rendering nothing.
+ *
+ * On its own this is a small, real saving, not a fix for the freeze a first
+ * scene mount causes (see the note on `canvasRemountKey` for what that freeze
+ * actually is and why it was left alone). Profiling with this off showed the
+ * same multi-second stall move into `getProgramParameter`, three.js's other
+ * call in the same first-use path, reading back active uniform/attribute
+ * locations — not optional the way the error log is, since three.js cannot
+ * build its uniform-setter map without it.
+ *
+ * `WebGLRenderer.compileAsync`, the standard fix for exactly this class of
+ * freeze, was tried and measured to do nothing on this project's ANGLE/D3D11
+ * target: `KHR_parallel_shader_compile` is present (confirmed by reading
+ * `getSupportedExtensions()` off a throwaway context), but its completion
+ * query blocked for the SAME ~2.5-3s the plain path did, in both headless and
+ * headed real Chrome — this driver does not honour the extension's
+ * non-blocking contract. Left out rather than shipped as dead weight.
+ */
+function disableShaderErrorCheckingInProduction(state: RootState) {
+  if (process.env.NODE_ENV === "production") {
+    state.gl.debug.checkShaderErrors = false;
+  }
+}
 
 /**
  * Holds the frame rate at or above sixty by giving back resolution, and only
@@ -303,6 +336,29 @@ export function UniverseCanvas({
   // The key has to carry the position actually used, not the config's distance:
   // a forest's framing comes from its lake, so the same rolled distance can want
   // two different camera positions.
+  //
+  // This key changing is also what makes a world swap cost a full COLD shader
+  // compile every time: React unmounting the old <Canvas> makes r3f tear down
+  // its WebGLRenderer (`forceContextLoss`, unconditional, whether the renderer
+  // was r3f's own or supplied), so the in-memory program cache that would have
+  // made a second visit to the same family instant is gone with it. Measured
+  // on the forest, the heaviest family: a first-ever visit blocks the main
+  // thread for ~2.5-3s reading back link/uniform status for its ~44 shader
+  // programs. Reusing one <Canvas> across a world swap instead of remounting
+  // it would fix this properly, but the camera position above, the per-family
+  // tone mapping and shadow config a few props down, and the genie reveal's
+  // still-matches-live-frame guarantee are all built on "a new world gets a
+  // new Canvas" — changing that is a real, separate piece of work, not a line
+  // fix, and is not what shipped here.
+  //
+  // What DOES already help, for anyone using their normal Chrome rather than a
+  // fresh profile: Chrome keeps compiled shader BINARIES in an on-disk cache
+  // keyed by source, independent of any one page's WebGLRenderer. Measured
+  // with a persistent browser profile: the second time the forest's shaders
+  // are ever compiled on a machine — even in a brand new tab, brand new
+  // context, brand new renderer — the same ~44-program readback drops from
+  // ~2.5s to ~230ms. The expensive case is closer to "the first time this
+  // visitor ever opens a forest" than "every single swipe".
   const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}`;
   const isSceneReady = lastReadyCanvasKey === canvasRemountKey;
 
@@ -350,6 +406,7 @@ export function UniverseCanvas({
             powerPreference: "high-performance",
             toneMapping: isOceanFamilyScene ? ACESFilmicToneMapping : AgXToneMapping,
           }}
+          onCreated={disableShaderErrorCheckingInProduction}
           onPointerMissed={() => onSelectPlanet?.(null)}
         >
           <color attach="background" args={[backgroundColor]} />
