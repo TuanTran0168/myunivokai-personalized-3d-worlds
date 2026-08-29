@@ -2,7 +2,7 @@
 //!
 //! Every type here mirrors one in `contracts/go`, which remains the source of
 //! truth for the Go services. This crate is a hand-maintained parallel copy —
-//! the cost `notes/vision/rust-adoption-research.md` named plainly before any
+//! the cost `notes/evolution/rust-adoption-research.md` named plainly before any
 //! Rust was written — and the mitigation is not documentation but a test:
 //! `tests/telemetry_fixture.rs` decodes the exact same
 //! `contracts/fixtures/*.json` file the Go suite validates in CI. If a fixture

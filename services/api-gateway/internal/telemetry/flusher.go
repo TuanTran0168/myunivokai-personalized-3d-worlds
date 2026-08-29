@@ -28,7 +28,7 @@ type RollupPublisher interface {
 // subscribed at that instant or not at all — a fire-and-forget publish while
 // the consumer sleeps would lose every interval for as long as it slept, not
 // merely one interval on an unclean shutdown. See
-// notes/vision/telemetry-service-plan.md#durability-and-wake.
+// notes/plans/services/telemetry-service-plan.md#durability-and-wake.
 type Flusher struct {
 	collector      *Collector
 	publisher      RollupPublisher

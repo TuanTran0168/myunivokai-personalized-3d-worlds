@@ -74,7 +74,7 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 
 	// The product CORS handler is scoped to this group, not global - it must
 	// never reach /api/admin, which mounts its own further down. See
-	// notes/vision/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
+	// notes/plans/services/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
 	router.Group(func(businessRouter chi.Router) {
 		businessRouter.Use(cors.Handler(cors.Options{
 			AllowedOrigins: serviceConfig.AllowedOrigins,

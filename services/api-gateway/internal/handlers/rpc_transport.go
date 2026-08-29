@@ -167,7 +167,7 @@ func (transport *RPCTransport) Wake(service string) {
 // scale-to-zero hosting - it also occurs during a rolling deploy, a
 // crash-restart, an OOM-kill and a scale-down - so this split stays correct
 // after the ping is removed on a paid plan. See
-// notes/vision/service-wake-mechanism.md#removal-when-leaving-free-tier.
+// notes/plans/architecture/service-wake-mechanism.md#removal-when-leaving-free-tier.
 func (transport *RPCTransport) classifyTransportError(ctx context.Context, responseWriter http.ResponseWriter, subject string, err error) (int, string, string) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):

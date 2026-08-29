@@ -15,7 +15,7 @@
 //! hatch for every statement below, leaving the entity layer as decoration
 //! that still has to be kept in step with the schema. `sqlx` is the
 //! ecosystem's answer for exactly this case: a driver and a type-safe binder,
-//! with the SQL left as SQL. See notes/be/rust-service-architecture.md.
+//! with the SQL left as SQL. See notes/knowledge/backend/rust-service-architecture.md.
 
 /// Expands to a string literal, which is what lets `concat!` fold it into the
 /// constants below at compile time.

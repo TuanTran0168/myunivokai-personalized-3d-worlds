@@ -1,5 +1,5 @@
 // Retrying SERVICE_WAKING is the client half of the gateway's wake mechanism
-// (notes/vision/service-wake-mechanism.md). The gateway answers a request for
+// (notes/plans/architecture/service-wake-mechanism.md). The gateway answers a request for
 // a sleeping service immediately, starts it in the background, and tells the
 // caller when to come back — it deliberately does not hold the connection
 // open for a cold start.

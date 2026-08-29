@@ -2,7 +2,7 @@
 // contract: local Ed25519 signature verification plus the Redis tokenVersion
 // revocation check, so an admin request never pays a network hop to
 // auth-service on the common path — see
-// notes/vision/auth-and-admin-plan.md#how-b-works.
+// notes/plans/services/auth-and-admin-plan.md#how-b-works.
 package auth
 
 import (
@@ -29,7 +29,7 @@ type accessTokenClaims struct {
 // TokenVerifier checks the Ed25519 signature and expiry of an admin access
 // token locally. It holds every currently-accepted public key so a key
 // rotation can add the new one before the old is removed and no session is
-// force-logged-out — see notes/vision/auth-and-admin-plan.md#tokens.
+// force-logged-out — see notes/plans/services/auth-and-admin-plan.md#tokens.
 type TokenVerifier struct {
 	publicKeys []ed25519.PublicKey
 }

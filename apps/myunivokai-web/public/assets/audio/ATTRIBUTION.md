@@ -49,5 +49,5 @@ Result: **39 files, 1.27 MB.** For comparison the solar-system textures alone ar
 
 The conversion script is not kept in the repository — it runs once per asset and
 needs two dev-only packages. Its steps are recorded above and in
-[notes/fe/ambient-audio-mechanism.md](../../../../../notes/fe/ambient-audio-mechanism.md)
+[notes/knowledge/frontend/ambient-audio-mechanism.md](../../../../../notes/knowledge/frontend/ambient-audio-mechanism.md)
 so it can be reproduced.

@@ -36,7 +36,7 @@ type worldSnapshotQuerier interface {
 // service's database for the analytics read model. It is an allow list, not
 // a projection of the row: quote, dna_snapshot, visual variant config and
 // share slugs are absent on purpose and must stay absent — see
-// notes/vision/analytics-service-plan.md#data-boundary.
+// notes/plans/services/analytics-service-plan.md#data-boundary.
 func newWorldSnapshot(world models.World, variantCount, selectedVariantNo int, selectedVariantSeed string, publishedAt *time.Time) contracts.WorldSnapshot {
 	favoriteColors := world.VisualIntent.FavoriteColors
 	if favoriteColors == nil {

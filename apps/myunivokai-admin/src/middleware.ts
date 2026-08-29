@@ -3,7 +3,7 @@ import { serializeCookie } from "@/lib/cookie-serialize";
 import { ADMIN_ACCESS_COOKIE_NAME, ADMIN_ACCOUNT_COOKIE_NAME, readAccessTokenExpiry } from "@/lib/session";
 
 // Every route other than /login is denied without a valid session
-// (notes/vision/auth-and-admin-plan.md#the-admin-app, S4-AUTH-004's
+// (notes/plans/services/auth-and-admin-plan.md#the-admin-app, S4-AUTH-004's
 // scenario). "Valid" here only means the access token has not obviously
 // expired — the real authorization boundary (signature + Redis tokenVersion)
 // is the gateway's RequireAdminAccessToken, run on every request that

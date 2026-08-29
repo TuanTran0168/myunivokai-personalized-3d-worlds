@@ -32,7 +32,7 @@ stays here as the evidence.
 ### `ocean-depth-rig/`
 
 An interactive style study for the ocean family: the art direction argued for in
-[notes/fe/ocean-visual-direction-research.md](../notes/fe/ocean-visual-direction-research.md),
+[notes/evolution/ocean-visual-direction-research.md](../notes/evolution/ocean-visual-direction-research.md),
 made visible so the direction can be accepted or rejected before
 `OceanRenderer.tsx` is touched.
 

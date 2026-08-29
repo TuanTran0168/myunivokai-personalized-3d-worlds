@@ -57,7 +57,7 @@ Three consequences are worth knowing before changing any of it:
   sunlight floor (1000 m). An earlier draft used the textbook 200 m boundary and
   produced a 750 m "twilight" world byte-identical in water and lighting to a
   2430 m abyssal one — see §16.4 of
-  [notes/vision/ocean-service-plan.md](../../notes/vision/ocean-service-plan.md).
+  [notes/plans/services/ocean-service-plan.md](../../notes/plans/services/ocean-service-plan.md).
 
 The curve is implemented **twice**: here, and in
 `apps/myunivokai-web/src/lib/oceanDepthCurve.ts`, which the create form's live

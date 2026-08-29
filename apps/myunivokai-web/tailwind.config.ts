@@ -1,6 +1,6 @@
 import type { Config } from "tailwindcss";
 
-// House design system — "The Vitrine + Liquid Glass" (notes/fe/refactor-plan.md §V).
+// House design system — "The Vitrine + Liquid Glass" (notes/memory/execution-records/frontend-refactor-plan.md §V).
 //
 // V1 (feat/fe/v-foundation-tokens) is a SHIM migration: the legacy Material-Design-3
 // token NAMES (surface / on-surface / primary-container / *-fixed / secondary ...)

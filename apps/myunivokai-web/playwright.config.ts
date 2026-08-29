@@ -5,7 +5,7 @@ import { defineConfig, devices } from "@playwright/test";
  * canvas. `npm test` runs pure functions, `tsc` checks types and `next build`
  * checks that the app compiles — and a scene that renders the wrong colour, the
  * wrong geometry or nothing at all passes every one of them. See
- * notes/vision/frontend-modernization-research.md#the-blind-spot-nothing-in-ci-can-see-the-scene.
+ * notes/evolution/frontend-modernization-research.md#the-blind-spot-nothing-in-ci-can-see-the-scene.
  *
  * These are NOT run by `npm test` and NOT run in CI. They are a before/after
  * instrument for a human, taken deliberately on either side of a dependency

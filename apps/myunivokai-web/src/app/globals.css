@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* House design system — "The Vitrine + Liquid Glass" (notes/fe/refactor-plan.md §V).
+/* House design system — "The Vitrine + Liquid Glass" (notes/memory/execution-records/frontend-refactor-plan.md §V).
    V1 SHIM: legacy utility classes (.glass-panel / .btn-gradient / .input-dark /
    .pulse-bg / .chip-shimmer) are redefined in place so every page adopts the new
    look without touching component markup. New canonical utilities (.liquid-glass,

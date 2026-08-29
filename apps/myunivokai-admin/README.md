@@ -3,8 +3,8 @@
 The internal staff console for Myunivokai — a separate Next.js app with its
 own domain, sharing no code with `apps/myunivokai-web` (enforced by
 `npm run check:boundary`) and no three.js. See
-`notes/vision/auth-and-admin-plan.md#the-admin-app` and
-`notes/sprints/sprint-04-2026-08-06/user-stories.md` (S4-AUTH-004).
+`notes/plans/services/auth-and-admin-plan.md#the-admin-app` and
+`notes/plans/sprints/sprint-04-2026-08-06/user-stories.md` (S4-AUTH-004).
 
 ## Session model
 
@@ -114,7 +114,7 @@ row: `basic_user` is the real seeded system role (`permission_sync.go`
 reseeds it at every auth-service startup). "Super Admin" is a pinned,
 read-only card (`src/features/roles/SuperAdminCard.tsx`) built from
 `accounts.is_super_admin` — deliberately NOT a second role row. See
-`notes/vision/auth-and-admin-plan.md#rbac`: a real role row can be edited or
+`notes/plans/services/auth-and-admin-plan.md#rbac`: a real role row can be edited or
 deleted like any other, which is exactly the "system becomes
 unadministerable" risk the bypass flag exists to prevent, so the UI
 represents it without reversing that design.

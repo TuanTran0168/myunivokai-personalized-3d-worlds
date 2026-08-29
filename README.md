@@ -394,7 +394,15 @@ make local-down
 │   └── telemetry-service/            # Platform metrics read model (Rust)
 ├── contracts/                        # Cross-service schemas, Go contracts & OpenAPI specifications
 ├── infra/                            # Local development Docker Compose, NATS & PostgreSQL configs
-└── notes/                            # Comprehensive engineering and architecture documentation
+└── notes/                            # The agent knowledge system (see notes/README.md)
+    ├── rules/                        # Gates: git convention, coding style, CI
+    ├── knowledge/                    # How the system IS — frontend, backend, product, references
+    ├── plans/                        # What to build — architecture, services, backlog, sprints
+    ├── memory/                       # What happened, and where a plan turned out wrong
+    ├── evolution/                    # Research that moved the target; nothing here is approved
+    ├── skills/                       # Runbooks with a verification per step
+    ├── agents/                       # One reading list per kind of task
+    └── project-context.json          # The same map, machine-readable
 ```
 
 ### Root Configs & Files
@@ -413,14 +421,26 @@ make local-down
 
 ## Documentation
 
-Comprehensive internal engineering documents are maintained in the [`notes/`](notes/README.md) folder.
+`notes/` is organised by what you are asking rather than by who wrote it:
+[`rules/`](notes/rules/README.md) (what you may not get wrong),
+[`knowledge/`](notes/knowledge/README.md) (how the system is),
+[`plans/`](notes/plans/README.md) (what to build),
+[`memory/`](notes/memory/README.md) (what happened, and where a plan was wrong),
+[`evolution/`](notes/evolution/README.md) (research that moved the target),
+[`skills/`](notes/skills/README.md) (runbooks), and
+[`agents/`](notes/agents/README.md) (one reading list per kind of task).
 
-Key references:
-- [`notes/coding/git-convention.md`](notes/coding/git-convention.md) — Mandatory branch naming and commit conventions
-- [`notes/coding/coding-style.md`](notes/coding/coding-style.md) — Code style rules (no hardcoded values, clean names)
-- [`notes/be/source-overview.md`](notes/be/source-overview.md) — Backend architecture & microservice patterns
-- [`notes/be/request-lifecycle.md`](notes/be/request-lifecycle.md) — Detailed request paths & cache invalidation
-- [`notes/be/design-decisions.md`](notes/be/design-decisions.md) — Design rationales (AI boundaries, deterministic math, public domain music)
-- [`notes/fe/source-overview.md`](notes/fe/source-overview.md) — Frontend architecture & 3D scene registry
-- [`notes/fe/threejs-scene-architecture.md`](notes/fe/threejs-scene-architecture.md) — 3D scene rendering principles
-- [`notes/ops/production-deployment-guide.md`](notes/ops/production-deployment-guide.md) — Full production deployment runbook
+The split has one rule: **knowledge describes, plans prescribe, memory records.**
+Which folder a document is in decides who is wrong when it disagrees with the
+code. [`notes/README.md`](notes/README.md) has the full explanation;
+[`notes/project-context.json`](notes/project-context.json) is the same map for a
+program to read.
+
+Start here:
+- [`notes/agents/`](notes/agents/README.md) — pick the definition matching your task; it names what to read and what to skip
+- [`notes/rules/git-convention.md`](notes/rules/git-convention.md) — mandatory branch naming and commit conventions
+- [`notes/rules/coding-style.md`](notes/rules/coding-style.md) — no hardcoded values, no abbreviated names
+- [`notes/knowledge/backend/source-overview.md`](notes/knowledge/backend/source-overview.md) — backend architecture and microservice patterns
+- [`notes/knowledge/backend/request-lifecycle.md`](notes/knowledge/backend/request-lifecycle.md) — request paths and cache invalidation
+- [`notes/knowledge/frontend/source-overview.md`](notes/knowledge/frontend/source-overview.md) — frontend architecture and the 3D scene registry
+- [`notes/skills/production-deployment-guide.md`](notes/skills/production-deployment-guide.md) — the full production deployment runbook

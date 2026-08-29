@@ -18,7 +18,7 @@
 #    x86_64-unknown-linux-musl target and a musl toolchain for every transitive
 #    C dependency to match that. The ~25 MB of extra image is irrelevant on
 #    this hosting tier; a build that only fails in CI is not. See
-#    notes/sprints/sprint-05-2026-08-13/README.md.
+#    notes/plans/sprints/sprint-05-2026-08-13/README.md.
 
 FROM rust:1-slim-bookworm AS builder
 WORKDIR /workspace/services/telemetry-service

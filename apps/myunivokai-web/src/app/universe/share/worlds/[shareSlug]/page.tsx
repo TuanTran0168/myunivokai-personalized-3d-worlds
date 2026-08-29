@@ -9,7 +9,7 @@ import { buildShareWorldMetadata } from "@/features/share/shareWorldMetadata";
 
 // `params` is a Promise from Next 15 onward, and awaiting one is legal on 14
 // too — which is why this change lands ahead of the version bump rather than
-// inside it. See notes/vision/frontend-modernization-research.md#the-15--16-hop.
+// inside it. See notes/evolution/frontend-modernization-research.md#the-15--16-hop.
 type PageProps = {
   params: Promise<{
     shareSlug: string;

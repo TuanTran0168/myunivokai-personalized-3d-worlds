@@ -98,7 +98,7 @@ services:
       # safety check on writing key-shaped secrets) — confirm both are set
       # on the dashboard before this file is merged/deployed to main, or
       # the gateway will crash-loop on boot. See
-      # notes/vision/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
+      # notes/plans/services/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
       - key: ADMIN_ROUTES_ENABLED
         value: "true"
       - key: ADMIN_ALLOWED_ORIGIN
@@ -119,7 +119,7 @@ services:
       # a free instance wakes only on inbound HTTP — so nothing in normal
       # operation ever wakes one, and a query against a sleeping service gets
       # an instant no-responders reply. "http" makes the gateway start them
-      # on demand; see notes/vision/service-wake-mechanism.md.
+      # on demand; see notes/plans/architecture/service-wake-mechanism.md.
       #
       # This is a hosting workaround with an explicit exit: on a paid plan or
       # a real background worker, set this to "none" and nothing else changes.
@@ -173,7 +173,7 @@ services:
       # MYUNIVOKAI_EVENTS with one rollup envelope per minute whether or not
       # a consumer exists yet, which is deliberate: envelopes accumulate on
       # the stream the same way analytics' events did before that service was
-      # built. See notes/vision/telemetry-service-plan.md.
+      # built. See notes/plans/services/telemetry-service-plan.md.
       - key: TELEMETRY_ENABLED
         value: "false"
       - key: TELEMETRY_FLUSH_INTERVAL
@@ -320,7 +320,7 @@ services:
       # put a real value in this file. Rotation: add a second key to the
       # gateway's accepted-public-keys list before removing the old one, so
       # no session is force-logged-out — see
-      # notes/vision/auth-and-admin-plan.md#tokens.
+      # notes/plans/services/auth-and-admin-plan.md#tokens.
       - key: AUTH_ACCESS_PRIVATE_KEY
         sync: false
       - key: AUTH_ACCESS_TOKEN_TTL
@@ -349,7 +349,7 @@ services:
   # The admin read model. Consumes myunivokai.events.>, writes its own Neon
   # database, answers myunivokai.queries.analytics.>. It publishes no domain
   # subject and calls no other service, so it has no outbox settings and no
-  # provider keys — see notes/vision/analytics-service-plan.md.
+  # provider keys — see notes/plans/services/analytics-service-plan.md.
   #
   # Service created on Render 2026-08-22 and already linked to the
   # myunivokai-env-prod group (verified live via the Render API the same day
@@ -362,7 +362,7 @@ services:
   # top comment) — production is one shared Synadia user with no per-service
   # allow-list; infra/nats/nats-server.conf's per-user ACL blocks are LOCAL
   # ONLY (see that file's own top comment and
-  # notes/ops/production-deployment-guide.md §1). This is also the sixth free
+  # notes/skills/production-deployment-guide.md §1). This is also the sixth free
   # web service on the account — verify the instance-hour budget. The runbook
   # is services/analytics-service/README.md.
   - type: web
@@ -411,7 +411,7 @@ services:
   # Rust. Consumes myunivokai.events.telemetry.http.v1, writes its own Neon
   # database, answers myunivokai.queries.telemetry.>. It publishes no domain
   # subject and calls no other service — see
-  # notes/vision/telemetry-service-plan.md and
+  # notes/plans/services/telemetry-service-plan.md and
   # services/telemetry-service/README.md.
   #
   # Service created on Render 2026-08-22 (the SEVENTH free web service on the

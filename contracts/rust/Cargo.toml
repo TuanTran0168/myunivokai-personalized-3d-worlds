@@ -10,7 +10,7 @@ description = "Hand-maintained Rust mirror of contracts/go, for services written
 # wire shape is then a conscious edit in two places rather than a generated
 # file nobody reads — and tests/telemetry_fixture.rs decodes the same
 # contracts/fixtures/*.json file the Go suite validates, so the two cannot
-# disagree without CI failing. See notes/vision/telemetry-service-plan.md.
+# disagree without CI failing. See notes/plans/services/telemetry-service-plan.md.
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -25,7 +25,7 @@ services:
       # /api/admin is off by default in production until apps/myunivokai-admin
       # exists (S4-AUTH-004); local dev turns it on so the route group and its
       # tests actually run against a live stack. See
-      # notes/vision/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
+      # notes/plans/services/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
       ADMIN_ROUTES_ENABLED: ${ADMIN_ROUTES_ENABLED:-true}
       ADMIN_ALLOWED_ORIGIN: http://localhost:${ADMIN_PORT:-41900}
       ADMIN_RATE_LIMIT_REQUESTS_PER_SECOND: ${ADMIN_RATE_LIMIT_REQUESTS_PER_SECOND:-10}
@@ -50,7 +50,7 @@ services:
       # locally, not like a cold start: `docker compose stop dna-service`
       # must still produce SERVICE_UNAVAILABLE so an integration test can tell
       # a broken service from a slow one. See
-      # notes/vision/service-wake-mechanism.md.
+      # notes/plans/architecture/service-wake-mechanism.md.
       SERVICE_WAKE_PLATFORM: ${SERVICE_WAKE_PLATFORM:-none}
       # Off by default here too, so the local stack behaves like the shipped
       # configuration. Set TELEMETRY_ENABLED=true in .env.local to watch

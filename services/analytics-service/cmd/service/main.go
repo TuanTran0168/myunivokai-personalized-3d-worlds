@@ -27,7 +27,7 @@ const (
 
 // startHealthServer binds a port immediately so Render's free-tier cold start
 // has an inbound HTTP target - see
-// notes/vision/service-wake-mechanism.md#healthz-is-a-start-signal-not-a-readiness-signal.
+// notes/plans/architecture/service-wake-mechanism.md#healthz-is-a-start-signal-not-a-readiness-signal.
 // It answers 200 before the messaging runtime has finished Run().
 func startHealthServer() *http.Server {
 	port := strings.TrimSpace(os.Getenv("PORT"))

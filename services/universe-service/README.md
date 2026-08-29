@@ -21,7 +21,7 @@ one projection function rather than two.
 what leaves this database. It is an **allow list**, not a projection of the
 row: the world quote, the DNA snapshot, variant scene configs and share slugs
 are absent on purpose and must stay absent — see
-[notes/vision/analytics-service-plan.md](../../notes/vision/analytics-service-plan.md)'s
+[notes/plans/services/analytics-service-plan.md](../../notes/plans/services/analytics-service-plan.md)'s
 data boundary.
 
 Two behaviours worth knowing before changing this code:

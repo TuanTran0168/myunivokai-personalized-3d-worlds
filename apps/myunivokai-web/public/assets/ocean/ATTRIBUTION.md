@@ -14,7 +14,7 @@ list must not name a species the renderer cannot draw.
 The reasoning was sound and the conclusion was wrong, for a reason the search
 missed: **Quaternius publishes CC0 marine models with real skeletal swim
 animations, and Poly Pizza hosts them already converted to GLB.** That is the
-same route the nature-1 catalogue took. `notes/fe/3d-development-limitations.md`
+same route the nature-1 catalogue took. `notes/knowledge/frontend/3d-development-limitations.md`
 §3 rates primitive assembly "Thấp–TB — không đủ đẹp" and rates a CC0 GLB kit
 "TB–Cao"; the ocean shipped the first and looked it.
 
@@ -248,7 +248,7 @@ models as much as for any other, and `isDownloadable` on a public model page
 does not change that on its own. It is owner-manual by default; a
 user-supplied personal API token (see above) lifts the block for that
 person's own automation, but the token itself must never be committed. See
-`notes/references/threejs-assets.md`.
+`notes/knowledge/references/threejs-assets.md`.
 
 ## Superseded: "still procedural"
 

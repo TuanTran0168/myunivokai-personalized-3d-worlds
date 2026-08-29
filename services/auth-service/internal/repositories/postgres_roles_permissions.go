@@ -10,7 +10,7 @@ import (
 // as Django's Permission rows are generated from migrations. Unknown rows
 // (declared in a past version, removed since) are pruned so the table never
 // grants something no route checks - see
-// notes/vision/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
+// notes/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
 func (store *PostgresStore) SyncPermissions(ctx context.Context, definitions []PermissionDefinition) error {
 	transaction, err := store.pool.Begin(ctx)
 	if err != nil {
@@ -110,7 +110,7 @@ func (store *PostgresStore) GetRoleByID(ctx context.Context, roleID string) (Rol
 
 // CreateRole never creates a system role (is_system is always FALSE here) —
 // system roles exist only via EnsureSystemRole at startup, code-owned, not
-// staff-composed. See notes/vision/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
+// staff-composed. See notes/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
 func (store *PostgresStore) CreateRole(ctx context.Context, name, description string, audience contracts.AccountAudience, permissionCodenames []string) (Role, error) {
 	transaction, err := store.pool.Begin(ctx)
 	if err != nil {

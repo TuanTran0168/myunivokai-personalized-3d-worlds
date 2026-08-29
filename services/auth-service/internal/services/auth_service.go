@@ -68,7 +68,7 @@ func NewAuthService(store repositories.Store, passwordHasher security.PasswordHa
 // Login verifies credentials with a constant-time response whether or not
 // the account exists: an unknown email still pays the full Argon2id cost
 // against a fixed decoy hash before returning the same error - see
-// notes/vision/auth-and-admin-plan.md#passwords.
+// notes/plans/services/auth-and-admin-plan.md#passwords.
 func (service *AuthService) Login(ctx context.Context, data contracts.LoginData, sourceAddress string) (contracts.LoginResponseData, error) {
 	email := normalizeEmail(data.Email)
 	account, err := service.store.GetAccountByEmail(ctx, email)
@@ -109,7 +109,7 @@ func (service *AuthService) Login(ctx context.Context, data contracts.LoginData,
 // Refresh rotates the presented token and detects reuse: a token whose
 // used_at is already set means the previous response was intercepted, so the
 // whole family is revoked rather than only the reused row - see
-// notes/vision/auth-and-admin-plan.md#tokens.
+// notes/plans/services/auth-and-admin-plan.md#tokens.
 func (service *AuthService) Refresh(ctx context.Context, rawRefreshToken, sourceAddress string) (contracts.LoginResponseData, error) {
 	tokenHash := security.HashRefreshToken(rawRefreshToken)
 	existingToken, err := service.store.GetRefreshTokenByHash(ctx, tokenHash)
@@ -168,7 +168,7 @@ func (service *AuthService) Logout(ctx context.Context, rawRefreshToken, sourceA
 
 // TokenVersion answers the gateway's cache-miss fallback query. A cache miss
 // must never be read as "not revoked" by the caller; this method only
-// reports the current value - see notes/vision/auth-and-admin-plan.md#how-b-works.
+// reports the current value - see notes/plans/services/auth-and-admin-plan.md#how-b-works.
 func (service *AuthService) TokenVersion(ctx context.Context, accountID string) (int, error) {
 	account, err := service.store.GetAccountByID(ctx, accountID)
 	if err != nil {
@@ -180,13 +180,13 @@ func (service *AuthService) TokenVersion(ctx context.Context, accountID string) 
 // DisableAccount bumps tokenVersion, caches it in Redis and revokes every
 // refresh token family the account holds, so the disable takes effect within
 // the Redis-cached revocation window rather than only at the account's next
-// full token expiry - see notes/vision/auth-and-admin-plan.md#revocation.
+// full token expiry - see notes/plans/services/auth-and-admin-plan.md#revocation.
 //
 // The last account with is_super_admin cannot be disabled: that flag is the
 // one bypass path back into an otherwise-unadministerable system, and
 // disabling its last holder is the same bricking failure the plan's lockout
 // guards exist to prevent even though this account's roles are untouched -
-// see notes/vision/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
+// see notes/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
 func (service *AuthService) DisableAccount(ctx context.Context, accountID, actorAccountID, sourceAddress string) error {
 	target, err := service.store.GetAccountByID(ctx, accountID)
 	if err != nil {

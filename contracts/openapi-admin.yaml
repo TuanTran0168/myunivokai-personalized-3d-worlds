@@ -147,7 +147,7 @@ paths:
 
 
         This whole route is scoped to scale-to-zero hosting and disappears with
-        it — see notes/vision/service-wake-mechanism.md §Removal.
+        it — see notes/plans/architecture/service-wake-mechanism.md §Removal.
       operationId: adminWakeStats
       security:
         - accessTokenCookie: []

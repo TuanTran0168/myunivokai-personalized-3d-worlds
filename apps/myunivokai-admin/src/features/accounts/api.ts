@@ -28,7 +28,7 @@ export const accountsApi = {
   get: (accountId: string) => adminRequest<AccountSummary>(`/accounts/${accountId}`),
   // Creates an account with a password set right now — active immediately,
   // with no invite token to relay. See auth-service's
-  // notes/vision/auth-and-admin-plan.md#account-creation-is-direct-not-invited.
+  // notes/plans/services/auth-and-admin-plan.md#account-creation-is-direct-not-invited.
   create: (email: string, name: string, password: string, roleIds: string[]) =>
     adminRequest<AccountSummary>("/accounts", {
       method: "POST",

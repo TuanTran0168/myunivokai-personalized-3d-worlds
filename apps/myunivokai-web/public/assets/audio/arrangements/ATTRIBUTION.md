@@ -124,4 +124,4 @@ converter reproduces **all six note arrays byte for byte**. That is the check to
 repeat if it is ever changed.
 
 The steps are also recorded in
-[notes/fe/ambient-audio-mechanism.md](../../../../../../notes/fe/ambient-audio-mechanism.md).
+[notes/knowledge/frontend/ambient-audio-mechanism.md](../../../../../../notes/knowledge/frontend/ambient-audio-mechanism.md).

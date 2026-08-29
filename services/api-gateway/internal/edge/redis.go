@@ -129,7 +129,7 @@ func (store *RedisStore) Delete(ctx context.Context, namespace, identifier strin
 // or password change — a plain key, not under the "cache:" namespace the
 // rest of this store uses, so both processes agree on it without either
 // hardcoding the other's prefix. See
-// notes/vision/auth-and-admin-plan.md#how-b-works and
+// notes/plans/services/auth-and-admin-plan.md#how-b-works and
 // services/auth-service/internal/redis/client.go.
 func (store *RedisStore) GetTokenVersion(ctx context.Context, accountID string) (int, error) {
 	raw, err := store.client.Get(ctx, store.key(authTokenVersionSegment, accountID)).Result()

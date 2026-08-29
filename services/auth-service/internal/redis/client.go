@@ -17,7 +17,7 @@ const tokenVersionKeySegment = "auth:tokenversion"
 // Client is the write side of the revocation cache: auth-service is the only
 // writer, on every tokenVersion bump. The gateway is a reader with a
 // cache-miss fallback that calls auth-service directly — see
-// notes/vision/auth-and-admin-plan.md#how-b-works.
+// notes/plans/services/auth-and-admin-plan.md#how-b-works.
 type Client struct {
 	client    *redis.Client
 	keyPrefix string
