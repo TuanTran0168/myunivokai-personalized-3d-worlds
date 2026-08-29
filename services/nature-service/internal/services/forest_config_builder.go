@@ -71,6 +71,10 @@ type BuildForestConfigInput struct {
 
 func (b *ForestConfigBuilder) Build(input BuildForestConfigInput) models.ForestSceneConfig {
 	moodProfile := forestProfileForMood(input.Input.Mood)
+	// An unknown or absent style resolves to the neutral profile, which is a
+	// no-op in every one of its fields — so a forest stored before this family
+	// had styles builds exactly as it always did. See forest_style_profile.go.
+	styleProfile := forestProfileForStyle(input.Input.PreferredWorldStyle)
 	primary := defaultPrimaryColor
 	secondary := defaultSecondaryColor
 	if len(input.Input.FavoriteColors) > 0 {
@@ -81,9 +85,9 @@ func (b *ForestConfigBuilder) Build(input BuildForestConfigInput) models.ForestS
 	}
 
 	season := buildSeasonConfig(input, moodProfile)
-	lighting, bloomIntensity := buildLightingConfig(input, season, moodProfile)
+	lighting, bloomIntensity := buildLightingConfig(input, season, moodProfile, styleProfile)
 	terrain, cameraDistance := buildTerrainConfig(input)
-	trees := buildTreesConfig(input, season, moodProfile)
+	trees := buildTreesConfig(input, season, moodProfile, styleProfile)
 	weather := buildWeatherConfig(input, season)
 	wildlife := buildWildlifeConfig(input, season, moodProfile)
 	ambientParticles := buildAmbientParticlesConfig(input, season, lighting)
@@ -114,9 +118,10 @@ func (b *ForestConfigBuilder) Build(input BuildForestConfigInput) models.ForestS
 		Camera:           models.CameraConfig{Distance: cameraDistance, FOV: forestCameraFOV},
 		PostFX: models.PostFXConfig{
 			BloomIntensity: bloomIntensity,
-			// The grade is a per-season table lookup (no PRNG draw), so two
-			// forests in the same season always grade identically.
-			Grade: forestGradesBySeason[season.Kind],
+			// The grade is a per-season table lookup plus the style's offset
+			// (no PRNG draw), so two forests in the same season and style
+			// always grade identically.
+			Grade: addGrade(forestGradesBySeason[season.Kind], styleProfile.Grade),
 		},
 		HUD:    models.HUDConfig{ShowTraitBars: true, ShowLabels: true},
 		Assets: buildAssetsConfig(lighting, trees, wildlife, landmarks),
@@ -153,7 +158,7 @@ func buildSeasonConfig(input BuildForestConfigInput, moodProfile forestMoodProfi
 // roll, fog density, bloom. Fog density is drawn even when the fog gate
 // misses. Returns the lighting section plus the bloom intensity (which lives
 // under postFX in the envelope).
-func buildLightingConfig(input BuildForestConfigInput, season models.SeasonConfig, moodProfile forestMoodProfile) (models.LightingConfig, float64) {
+func buildLightingConfig(input BuildForestConfigInput, season models.SeasonConfig, moodProfile forestMoodProfile, styleProfile forestStyleProfile) (models.LightingConfig, float64) {
 	rng := seed.NewPRNG(input.Seed + lightingSeedSuffix)
 	timeOfDayRoll := rng.Float64()
 	sunElevationRoll := rng.Float64()
@@ -163,13 +168,17 @@ func buildLightingConfig(input BuildForestConfigInput, season models.SeasonConfi
 	fogDensityRoll := rng.Float64()
 	bloomRoll := rng.Float64()
 
-	timeOfDay := timeOfDayForRoll(timeOfDayRoll)
+	timeOfDay := timeOfDayForRoll(timeOfDayRoll, styleProfile.TimeOfDayWeights)
 	elevationBounds := sunElevationBoundsByTimeOfDay[timeOfDay]
 	fogDensity := 0.0
-	if fogRoll < fogProbabilityBySeason[season.Kind] {
+	// The style biases the season's own probability rather than replacing it,
+	// so autumn stays foggier than summer under Mistwood as well as under
+	// Wildwood.
+	fogProbability := clampFloat(fogProbabilityBySeason[season.Kind]+styleProfile.FogProbabilityBias, minimumFogProbability, maximumFogProbability)
+	if fogRoll < fogProbability {
 		fogDensity = roundToThousandths(minimumFogDensity + fogDensityRoll*fogDensityRange)
 	}
-	bloomIntensity := round(clampFloat((baseBloomIntensity+bloomRoll*bloomIntensityRange)*moodProfile.BloomMultiplier, minimumBloomIntensity, maximumBloomIntensity))
+	bloomIntensity := round(clampFloat((baseBloomIntensity+bloomRoll*bloomIntensityRange)*moodProfile.BloomMultiplier*styleProfile.BloomMultiplier, minimumBloomIntensity, maximumBloomIntensity))
 
 	return models.LightingConfig{
 		TimeOfDay:           timeOfDay,
@@ -215,7 +224,7 @@ func buildTerrainConfig(input BuildForestConfigInput) (models.TerrainConfig, flo
 
 // Draw order: tree count, species-mix pick, scale minimum, scale maximum,
 // tint strength, wind strength, wind direction, gust frequency.
-func buildTreesConfig(input BuildForestConfigInput, season models.SeasonConfig, moodProfile forestMoodProfile) models.TreesConfig {
+func buildTreesConfig(input BuildForestConfigInput, season models.SeasonConfig, moodProfile forestMoodProfile, styleProfile forestStyleProfile) models.TreesConfig {
 	rng := seed.NewPRNG(input.Seed + treesSeedSuffix)
 	treeCountDraw := baseTreeCount + rng.Intn(treeCountSpread)
 	speciesMixRoll := rng.Float64()
@@ -226,17 +235,20 @@ func buildTreesConfig(input BuildForestConfigInput, season models.SeasonConfig, 
 	windDirectionRoll := rng.Float64()
 	gustFrequencyRoll := rng.Float64()
 
-	countDesktop := clampInt(int(float64(treeCountDraw)*treeCountMultipliersBySeason[season.Kind]), minimumTreeCount, maximumTreeCount)
+	countDesktop := clampInt(int(float64(treeCountDraw)*treeCountMultipliersBySeason[season.Kind]*styleProfile.TreeCountMultiplier), minimumTreeCount, maximumTreeCount)
 	mixes := treeSpeciesMixesBySeason[season.Kind]
 	mixIndex := int(speciesMixRoll * float64(len(mixes)))
 
 	return models.TreesConfig{
-		PlacementSeed:        input.Seed + treePlacementSeedSuffix,
-		CountDesktop:         countDesktop,
-		CountMobile:          int(float64(countDesktop) * mobileTreeFraction),
-		SpeciesMix:           append([]models.TreeSpeciesMixEntry(nil), mixes[mixIndex]...),
-		ScaleMin:             round(treeScaleMinimumBase + scaleMinimumRoll*treeScaleMinimumRange),
-		ScaleMax:             round(treeScaleMaximumBase + scaleMaximumRoll*treeScaleMaximumRange),
+		PlacementSeed: input.Seed + treePlacementSeedSuffix,
+		CountDesktop:  countDesktop,
+		CountMobile:   int(float64(countDesktop) * mobileTreeFraction),
+		SpeciesMix:    append([]models.TreeSpeciesMixEntry(nil), mixes[mixIndex]...),
+		// Both ends scale together, so a style changes how big the trees are
+		// without changing how VARIED they are — an ancient grove is uniformly
+		// enormous, not enormous-to-tiny.
+		ScaleMin:             round((treeScaleMinimumBase + scaleMinimumRoll*treeScaleMinimumRange) * styleProfile.TreeScaleMultiplier),
+		ScaleMax:             round((treeScaleMaximumBase + scaleMaximumRoll*treeScaleMaximumRange) * styleProfile.TreeScaleMultiplier),
 		FoliageTintStrength:  round(foliageTintStrengthBase + tintStrengthRoll*foliageTintStrengthRange),
 		WindStrength:         round(clampFloat((windStrengthBase+windStrengthRoll*windStrengthRange)*moodProfile.WindMultiplier, minimumWindStrength, maximumWindStrength)),
 		WindDirectionRadians: round(windDirectionRoll * 2 * math.Pi),

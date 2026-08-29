@@ -180,6 +180,7 @@ var depthBandByZone = map[string]floatRange{
 //   - A reef IS shallow water over a floor. You are on the continental shelf,
 //     the bottom is right there, and kelp confirms it: kelp forests are rarely
 //     deeper than 15-40 m because they need light. Floor visible.
+//
 //   - The twilight zone is OPEN WATER. Against a mean ocean depth of 3682 m,
 //     a world at 143 m has kilometres of nothing beneath it, so no floor.
 //
@@ -192,6 +193,7 @@ var depthBandByZone = map[string]floatRange{
 //     with some fish in it, which is the single ugliest thing this family can
 //     produce, and it produced it for a third of all worlds. See
 //     surfacedByBoundaryRule below.
+//
 //   - The abyssal worlds are placed ON the bottom, because everything that
 //     makes the abyss worth drawing lives there: hydrothermal vents (mean
 //     ~2100 m along the mid-ocean ridges), whale falls, tubeworm fields. An
@@ -674,11 +676,11 @@ const (
 	// band.
 	minimumBreachedSurfaceElevation = 0.06
 	breachedSurfaceElevationRange   = 0.64
-	exposureJitterRange     = 0.10
-	baseBloomIntensity      = 0.30
-	bloomIntensityRange     = 0.55
-	minimumBloomIntensity   = 0.25
-	maximumBloomIntensity   = 1.40
+	exposureJitterRange             = 0.10
+	baseBloomIntensity              = 0.30
+	bloomIntensityRange             = 0.55
+	minimumBloomIntensity           = 0.25
+	maximumBloomIntensity           = 1.40
 
 	// Grade jitter, applied on top of oceanGradesByZone. Small relative to the
 	// gap BETWEEN zones on every channel (saturation alone spans 0.24 across
@@ -706,14 +708,20 @@ const (
 	oceanCameraFOV             = 55.0
 
 	// current
-	currentIntensityBase     = 0.30
-	currentIntensityRange    = 0.55
-	minimumCurrentIntensity  = 0.05
-	maximumCurrentIntensity  = 1.00
-	gustFrequencyBase        = 0.18
-	gustFrequencyRange       = 0.34
-	baseMarineSnowCount      = 900
-	marineSnowCountSpread    = 901 // 900..1800
+	currentIntensityBase    = 0.30
+	currentIntensityRange   = 0.55
+	minimumCurrentIntensity = 0.05
+	maximumCurrentIntensity = 1.00
+	gustFrequencyBase       = 0.18
+	gustFrequencyRange      = 0.34
+	baseMarineSnowCount     = 900
+	marineSnowCountSpread   = 901 // 900..1800
+	// Bounds for the style multiplier, which is the only thing that moves this
+	// off the draw above. The ceiling is a performance bound as much as a
+	// visual one: marine snow is one instanced points system, but it is drawn
+	// through the whole water column in front of the camera.
+	minimumMarineSnowCount   = 400
+	maximumMarineSnowCount   = 3200
 	mobileMarineSnowFraction = 0.30
 
 	// flora
@@ -768,7 +776,7 @@ const (
 	bioluminescenceBloomRange = 0.55
 
 	// landmarks
-	landmarkAngleJitterRadians  = 0.25
+	landmarkAngleJitterRadians = 0.25
 	// LANDMARKS ARE PLACED RELATIVE TO THE CAMERA, NOT TO THE BASIN.
 	//
 	// They used to be a fraction of the basin radius, 0.50 to 0.88. The basin is
@@ -788,8 +796,8 @@ const (
 	// landscape rather than out past its edge.
 	landmarkCameraStandoffMetres = 8.0
 	landmarkRingDepthMetres      = 26.0
-	landmarkHeightBase          = 0.0
-	landmarkHeightRange         = 6.0
+	landmarkHeightBase           = 0.0
+	landmarkHeightRange          = 6.0
 )
 
 // adjacentZone picks the zone above or below. Unlike the forest's seasons this

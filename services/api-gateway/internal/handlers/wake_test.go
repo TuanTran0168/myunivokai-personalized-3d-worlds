@@ -299,11 +299,12 @@ func TestEveryServiceSubjectWakesItsOwnResponder(t *testing.T) {
 func TestCreateWorldWakesTheWholeGenerationPathBeforePublishing(t *testing.T) {
 	testCases := map[string]struct {
 		path             string
+		style            string
 		expectedServices []string
 	}{
-		"universe": {"/api/universe/worlds", []string{wake.ServiceDNA, wake.ServiceUniverse, wake.ServiceAnalytics}},
-		"nature":   {"/api/nature/worlds", []string{wake.ServiceDNA, wake.ServiceNature, wake.ServiceAnalytics}},
-		"ocean":    {"/api/ocean/worlds", []string{wake.ServiceDNA, wake.ServiceOcean, wake.ServiceAnalytics}},
+		"universe": {"/api/universe/worlds", "nebula", []string{wake.ServiceDNA, wake.ServiceUniverse, wake.ServiceAnalytics}},
+		"nature":   {"/api/nature/worlds", "mistwood", []string{wake.ServiceDNA, wake.ServiceNature, wake.ServiceAnalytics}},
+		"ocean":    {"/api/ocean/worlds", "coral-garden", []string{wake.ServiceDNA, wake.ServiceOcean, wake.ServiceAnalytics}},
 	}
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -311,7 +312,7 @@ func TestCreateWorldWakesTheWholeGenerationPathBeforePublishing(t *testing.T) {
 			brokerClient := &fakeBroker{}
 			router := NewRouter(testGatewayConfig(), brokerClient, newFakeEdgeStore(), waker, nil)
 			response := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodPost, testCase.path, strings.NewReader(validWorldInputJSON()))
+			request := httptest.NewRequest(http.MethodPost, testCase.path, strings.NewReader(worldInputJSONWithStyle(testCase.style)))
 			request.Header.Set("Content-Type", "application/json")
 			router.ServeHTTP(response, request)
 
@@ -537,5 +538,27 @@ func TestAFailingWakeDoesNotChangeATimeout(t *testing.T) {
 	}
 	if woken := waker.wokenServices(); len(woken) != 0 {
 		t.Fatalf("a slow service was woken: %v", woken)
+	}
+}
+
+// A universe style posted to the forest is a 400, not a forest quietly built
+// with a stored value nothing reads. That silent-store behaviour is exactly why
+// the create form hid the style picker for two of three families.
+func TestCreateWorldRejectsAStyleFromAnotherFamily(t *testing.T) {
+	for _, testCase := range []struct{ name, path, style string }{
+		{"universe style posted to the forest", "/api/nature/worlds", "nebula"},
+		{"forest style posted to the ocean", "/api/ocean/worlds", "mistwood"},
+		{"ocean style posted to the universe", "/api/universe/worlds", "coral-garden"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			router := NewRouter(testGatewayConfig(), &fakeBroker{}, newFakeEdgeStore(), newFakeWaker(wake.Services...), nil)
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, testCase.path, strings.NewReader(worldInputJSONWithStyle(testCase.style)))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 for style %q on %s", response.Code, testCase.style, testCase.path)
+			}
+		})
 	}
 }

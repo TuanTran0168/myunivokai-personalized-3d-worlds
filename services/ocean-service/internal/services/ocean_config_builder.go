@@ -79,6 +79,10 @@ type BuildOceanConfigInput struct {
 
 func (b *OceanConfigBuilder) Build(input BuildOceanConfigInput) models.OceanSceneConfig {
 	moodProfile := oceanProfileForMood(input.Input.Mood)
+	// An unknown or absent style resolves to the neutral profile, which is a
+	// no-op in every one of its fields — so an ocean stored before this family
+	// had styles builds exactly as it always did. See ocean_style_profile.go.
+	styleProfile := oceanProfileForStyle(input.Input.PreferredWorldStyle)
 	primary := defaultPrimaryColor
 	secondary := defaultSecondaryColor
 	if len(input.Input.FavoriteColors) > 0 {
@@ -93,13 +97,13 @@ func (b *OceanConfigBuilder) Build(input BuildOceanConfigInput) models.OceanScen
 	// results are STORED below; nothing recomputes this at render time.
 	depthResponse := DepthAt(depth.Metres)
 
-	water := buildWaterConfig(input, depth, depthResponse, moodProfile)
-	lighting, bloomIntensity, grade := buildLightingConfig(input, depth, depthResponse, moodProfile)
+	water := buildWaterConfig(input, depth, depthResponse, moodProfile, styleProfile)
+	lighting, bloomIntensity, grade := buildLightingConfig(input, depth, depthResponse, moodProfile, styleProfile)
 	seafloor, cameraDistance := buildSeafloorConfig(input)
-	current := buildCurrentConfig(input, depth, moodProfile)
-	flora := buildFloraConfig(input, depth, moodProfile)
-	fauna := buildFaunaConfig(input, depth, water, moodProfile)
-	bioluminescence := buildBioluminescenceConfig(input, depth, moodProfile)
+	current := buildCurrentConfig(input, depth, moodProfile, styleProfile)
+	flora := buildFloraConfig(input, depth, moodProfile, styleProfile)
+	fauna := buildFaunaConfig(input, depth, water, moodProfile, styleProfile)
+	bioluminescence := buildBioluminescenceConfig(input, depth, moodProfile, styleProfile)
 	landmarks := buildLandmarkConfigs(input, cameraDistance, primary, secondary)
 
 	return models.OceanSceneConfig{
@@ -241,7 +245,7 @@ func buildDepthConfig(input BuildOceanConfigInput, moodProfile oceanMoodProfile)
 // this the renderer manufactured one by hashing the seed, which put a physical
 // property of the world outside the world's record. It draws from its OWN
 // stream so that adding it moved nothing that already existed.
-func buildWaterConfig(input BuildOceanConfigInput, depth models.DepthConfig, depthResponse DepthResponse, moodProfile oceanMoodProfile) models.WaterConfig {
+func buildWaterConfig(input BuildOceanConfigInput, depth models.DepthConfig, depthResponse DepthResponse, moodProfile oceanMoodProfile, styleProfile oceanStyleProfile) models.WaterConfig {
 	rng := seed.NewPRNG(input.Seed + seaStateSeedSuffix)
 	windRoll := rng.Float64()
 	waterTypeRoll := rng.Float64()
@@ -251,7 +255,11 @@ func buildWaterConfig(input BuildOceanConfigInput, depth models.DepthConfig, dep
 	// A trench is gin-clear and unlit; a harbour is brilliantly lit and opaque.
 	// Storing only the light-limited one is what made the first version of this
 	// call an abyssal world "coastal, turbid".
-	waterType := WaterTypeForZone(depth.Zone, waterTypeRoll)
+	// The style shifts WHERE IN THE ZONE'S OWN LIST the draw lands, never what
+	// is on the list: the abyss offers no coastal water however silty the style
+	// is, because the turbidity that makes water coastal is river outflow and
+	// resuspended sediment and neither reaches two kilometres down.
+	waterType := WaterTypeForZone(depth.Zone, clampFloat(waterTypeRoll+styleProfile.WaterClarityBias, 0, 1))
 	visibility := math.Min(depthResponse.VisibilityMetres, SightingRangeForWaterType(waterType))
 
 	return models.WaterConfig{
@@ -271,7 +279,7 @@ func buildWaterConfig(input BuildOceanConfigInput, depth models.DepthConfig, dep
 // caustics come from the depth curve and are drawn from no stream at all.
 // Returns the lighting section, the bloom intensity and the grade (both live
 // under postFX in the envelope).
-func buildLightingConfig(input BuildOceanConfigInput, depth models.DepthConfig, depthResponse DepthResponse, moodProfile oceanMoodProfile) (models.OceanLightingConfig, float64, models.PostFXGradeConfig) {
+func buildLightingConfig(input BuildOceanConfigInput, depth models.DepthConfig, depthResponse DepthResponse, moodProfile oceanMoodProfile, styleProfile oceanStyleProfile) (models.OceanLightingConfig, float64, models.PostFXGradeConfig) {
 	rng := seed.NewPRNG(input.Seed + lightingSeedSuffix)
 	surfaceElevationRoll := rng.Float64()
 	exposureRoll := rng.Float64()
@@ -290,9 +298,12 @@ func buildLightingConfig(input BuildOceanConfigInput, depth models.DepthConfig, 
 	brightnessJitterRoll := rng.Float64()
 	contrastJitterRoll := rng.Float64()
 
-	bloomIntensity := round(clampFloat((baseBloomIntensity+bloomRoll*bloomIntensityRange)*moodProfile.BloomMultiplier, minimumBloomIntensity, maximumBloomIntensity))
+	bloomIntensity := round(clampFloat((baseBloomIntensity+bloomRoll*bloomIntensityRange)*moodProfile.BloomMultiplier*styleProfile.BloomMultiplier, minimumBloomIntensity, maximumBloomIntensity))
 
-	baseGrade := oceanGradesByZone[depth.Zone]
+	// The style's grade is layered on the zone's before the per-world jitter,
+	// so two oceans in the same zone and style still differ by the jitter and
+	// never by more than it.
+	baseGrade := addGrade(oceanGradesByZone[depth.Zone], styleProfile.Grade)
 	grade := models.PostFXGradeConfig{
 		HueRadians: round(baseGrade.HueRadians + (hueJitterRoll-0.5)*2*gradeHueJitterRange),
 		Saturation: round(clampFloat(baseGrade.Saturation+(saturationJitterRoll-0.5)*2*gradeSaturationJitterRange, -1, 1)),
@@ -349,7 +360,7 @@ func buildSeafloorConfig(input BuildOceanConfigInput) (models.SeafloorConfig, fl
 // count. Marine snow is drawn at every depth — unlike the forest's four
 // mutually exclusive seasonal particle systems, there is always something
 // falling through seawater.
-func buildCurrentConfig(input BuildOceanConfigInput, depth models.DepthConfig, moodProfile oceanMoodProfile) models.CurrentConfig {
+func buildCurrentConfig(input BuildOceanConfigInput, depth models.DepthConfig, moodProfile oceanMoodProfile, styleProfile oceanStyleProfile) models.CurrentConfig {
 	rng := seed.NewPRNG(input.Seed + currentSeedSuffix)
 	kindRoll := rng.Float64()
 	intensityRoll := rng.Float64()
@@ -357,6 +368,9 @@ func buildCurrentConfig(input BuildOceanConfigInput, depth models.DepthConfig, m
 	gustFrequencyRoll := rng.Float64()
 	marineSnowDraw := baseMarineSnowCount + rng.Intn(marineSnowCountSpread)
 
+	// Sediment IS marine snow, from the viewer's side of the water: the silt
+	// style is mostly this number.
+	marineSnowCount := clampInt(int(float64(marineSnowDraw)*styleProfile.MarineSnowMultiplier), minimumMarineSnowCount, maximumMarineSnowCount)
 	kind := currentKindForRoll(kindRoll, currentWeightsByZone[depth.Zone])
 	intensity := round(clampFloat((currentIntensityBase+intensityRoll*currentIntensityRange)*moodProfile.CurrentMultiplier, minimumCurrentIntensity, maximumCurrentIntensity))
 	return models.CurrentConfig{
@@ -364,14 +378,14 @@ func buildCurrentConfig(input BuildOceanConfigInput, depth models.DepthConfig, m
 		Intensity:              intensity,
 		DirectionRadians:       round(directionRoll * 2 * math.Pi),
 		GustFrequency:          round(gustFrequencyBase + gustFrequencyRoll*gustFrequencyRange),
-		MarineSnowCountDesktop: marineSnowDraw,
-		MarineSnowCountMobile:  int(float64(marineSnowDraw) * mobileMarineSnowFraction),
+		MarineSnowCountDesktop: marineSnowCount,
+		MarineSnowCountMobile:  int(float64(marineSnowCount) * mobileMarineSnowFraction),
 	}
 }
 
 // Draw order: flora count, species-mix pick, scale minimum, scale maximum,
 // sway strength, depth tint.
-func buildFloraConfig(input BuildOceanConfigInput, depth models.DepthConfig, moodProfile oceanMoodProfile) models.FloraConfig {
+func buildFloraConfig(input BuildOceanConfigInput, depth models.DepthConfig, moodProfile oceanMoodProfile, styleProfile oceanStyleProfile) models.FloraConfig {
 	rng := seed.NewPRNG(input.Seed + floraSeedSuffix)
 	floraCountDraw := baseFloraCount + rng.Intn(floraCountSpread)
 	speciesMixRoll := rng.Float64()
@@ -380,7 +394,7 @@ func buildFloraConfig(input BuildOceanConfigInput, depth models.DepthConfig, moo
 	swayStrengthRoll := rng.Float64()
 	depthTintRoll := rng.Float64()
 
-	countDesktop := clampInt(floraCountDraw, minimumFloraCount, maximumFloraCount)
+	countDesktop := clampInt(int(float64(floraCountDraw)*styleProfile.FloraMultiplier), minimumFloraCount, maximumFloraCount)
 	mixes := floraSpeciesMixesByZone[depth.Zone]
 	mixIndex := int(speciesMixRoll * float64(len(mixes)))
 
@@ -422,7 +436,7 @@ type drifterSlotDraw struct {
 // cohesion, separation), then 2 drifter slots x (species, count, pulse,
 // colour), then the giant's 4 draws — presence, species, approach, duration —
 // which happen whether or not a giant appears.
-func buildFaunaConfig(input BuildOceanConfigInput, depth models.DepthConfig, water models.WaterConfig, moodProfile oceanMoodProfile) models.FaunaConfig {
+func buildFaunaConfig(input BuildOceanConfigInput, depth models.DepthConfig, water models.WaterConfig, moodProfile oceanMoodProfile, styleProfile oceanStyleProfile) models.FaunaConfig {
 	rng := seed.NewPRNG(input.Seed + faunaSeedSuffix)
 	schoolDraws := [maximumSchoolSlots]schoolSlotDraw{}
 	for slot := range schoolDraws {
@@ -450,8 +464,9 @@ func buildFaunaConfig(input BuildOceanConfigInput, depth models.DepthConfig, wat
 	giantApproachRoll := rng.Float64()
 	giantDurationRoll := rng.Float64()
 
-	activeSchoolSlots := clampInt(int(math.Round(baseSchoolSlotsByZone[depth.Zone]*moodProfile.FaunaMultiplier)), 0, maximumSchoolSlots)
-	activeDrifterSlots := clampInt(int(math.Round(baseDrifterSlotsByZone[depth.Zone]*moodProfile.FaunaMultiplier)), 0, maximumDrifterSlots)
+	faunaMultiplier := moodProfile.FaunaMultiplier * styleProfile.FaunaMultiplier
+	activeSchoolSlots := clampInt(int(math.Round(baseSchoolSlotsByZone[depth.Zone]*faunaMultiplier)), 0, maximumSchoolSlots)
+	activeDrifterSlots := clampInt(int(math.Round(baseDrifterSlotsByZone[depth.Zone]*faunaMultiplier)), 0, maximumDrifterSlots)
 
 	fishSpecies := fishSpeciesByZone[depth.Zone]
 	usedFishSpecies := map[string]bool{}
@@ -517,7 +532,7 @@ func buildFaunaConfig(input BuildOceanConfigInput, depth models.DepthConfig, wat
 
 // Draw order: plankton count, bloom intensity. Both are always drawn; the zone
 // tables decide how much of it there is.
-func buildBioluminescenceConfig(input BuildOceanConfigInput, depth models.DepthConfig, moodProfile oceanMoodProfile) models.BioluminescenceConfig {
+func buildBioluminescenceConfig(input BuildOceanConfigInput, depth models.DepthConfig, moodProfile oceanMoodProfile, styleProfile oceanStyleProfile) models.BioluminescenceConfig {
 	rng := seed.NewPRNG(input.Seed + bioluminescenceSeedSuffix)
 	planktonDraw := basePlanktonCountByZone[depth.Zone] + rng.Intn(planktonCountSpreadByZone[depth.Zone])
 	bloomRoll := rng.Float64()
@@ -527,7 +542,7 @@ func buildBioluminescenceConfig(input BuildOceanConfigInput, depth models.DepthC
 		// This brightens light that is already in the scene; it is never what
 		// makes it visible. An abyssal world has to read with post-processing
 		// switched off.
-		BloomIntensity: round(clampFloat((bioluminescenceBloomBase+bloomRoll*bioluminescenceBloomRange)*moodProfile.BloomMultiplier, 0, 1)),
+		BloomIntensity: round(clampFloat((bioluminescenceBloomBase+bloomRoll*bioluminescenceBloomRange)*moodProfile.BloomMultiplier*styleProfile.BloomMultiplier, 0, 1)),
 		EmissiveColors: append([]string(nil), bioluminescenceColorsByZone[depth.Zone]...),
 		FlickerSeed:    input.Seed + bioluminescenceFlickerSuffix,
 	}

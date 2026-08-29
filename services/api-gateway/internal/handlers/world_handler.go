@@ -76,7 +76,7 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 		return
 	}
 	input = input.Normalize()
-	if details := input.Validate(); len(details) > 0 {
+	if details := input.Validate(handler.family); len(details) > 0 {
 		httpx.WriteErrorWithDetails(responseWriter, request, http.StatusBadRequest, "VALIDATION_ERROR", "Please check the highlighted fields.", details)
 		return
 	}

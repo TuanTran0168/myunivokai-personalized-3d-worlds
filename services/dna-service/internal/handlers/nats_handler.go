@@ -64,7 +64,7 @@ func (handler *NATSHandler) HandleGenerationFailure(ctx context.Context, message
 		return fmt.Errorf("%w: unsupported family %q", ErrInvalidGenerateCommand, envelope.Data.Family)
 	}
 	normalizedInput := envelope.Data.Input.Normalize()
-	if validationDetails := normalizedInput.Validate(); len(validationDetails) > 0 {
+	if validationDetails := normalizedInput.Validate(envelope.Data.Family); len(validationDetails) > 0 {
 		return fmt.Errorf("%w: %s", ErrInvalidGenerateCommand, validationDetails[0].Message)
 	}
 	envelope.Data.Input = normalizedInput

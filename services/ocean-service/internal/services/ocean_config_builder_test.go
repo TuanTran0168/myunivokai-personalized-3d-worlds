@@ -40,9 +40,13 @@ func buildTestInput(seedValue, mood string, landmarkCount int) BuildOceanConfigI
 		Seed:      seedValue,
 		VariantNo: 1,
 		Input: models.VisualIntent{
-			Mood:                mood,
-			FavoriteColors:      []string{"#8B5CF6", "#06B6D4"},
-			PreferredWorldStyle: "aurora",
+			Mood:           mood,
+			FavoriteColors: []string{"#8B5CF6", "#06B6D4"},
+			// The neutral ocean style. It was "aurora" — a UNIVERSE style,
+			// accepted here because nothing read the field. It resolves to the
+			// same neutral profile either way, so the golden fixtures are
+			// untouched by the correction.
+			PreferredWorldStyle: StyleOpenWater,
 		},
 	}
 }
