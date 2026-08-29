@@ -337,28 +337,62 @@ export function UniverseCanvas({
   // a forest's framing comes from its lake, so the same rolled distance can want
   // two different camera positions.
   //
-  // This key changing is also what makes a world swap cost a full COLD shader
-  // compile every time: React unmounting the old <Canvas> makes r3f tear down
-  // its WebGLRenderer (`forceContextLoss`, unconditional, whether the renderer
-  // was r3f's own or supplied), so the in-memory program cache that would have
-  // made a second visit to the same family instant is gone with it. Measured
-  // on the forest, the heaviest family: a first-ever visit blocks the main
-  // thread for ~2.5-3s reading back link/uniform status for its ~44 shader
-  // programs. Reusing one <Canvas> across a world swap instead of remounting
-  // it would fix this properly, but the camera position above, the per-family
-  // tone mapping and shadow config a few props down, and the genie reveal's
-  // still-matches-live-frame guarantee are all built on "a new world gets a
-  // new Canvas" — changing that is a real, separate piece of work, not a line
-  // fix, and is not what shipped here.
+  // This key changing tears down the whole WebGL context, and that is
+  // EXPENSIVE — but as of the investigation below it is also load-bearing, so
+  // read this before trying to make it cheaper.
+  //
+  // React unmounting the old <Canvas> makes r3f call `forceContextLoss()` and
+  // then `dispose(scene)`, and that dispose walks every object AND ITS PROPS,
+  // so it frees the geometries, the materials, the compiled programs and the
+  // uploaded textures in one synchronous sweep. Measured on this page with a
+  // long-task observer, that sweep-and-rebuild costs:
+  //
+  //   toggle one interest chip     1108 ms blocked
+  //   fill in the nickname field   1575 ms blocked
+  //   switch family to forest      2108 ms blocked
+  //
+  // A CPU profile put 1121 ms of the family switch inside `texSubImage2D`,
+  // re-uploading the universe family's 8K textures (8192x4096 is 134 MB of
+  // RGBA once decoded, before mipmaps), and most of the rest in
+  // `getProgramParameter`, re-linking its shader programs.
+  //
+  // The obvious fix — keep ONE <Canvas> for the page's whole life, move the
+  // key down onto the scene contents, and apply the camera pose and tone curve
+  // imperatively (r3f creates the camera once and passes `gl` straight to the
+  // WebGLRenderer constructor, so neither is re-read from props) — was built
+  // and measured. Its first switch is a big win: 2108 ms -> 401 ms, and
+  // `texSubImage2D` disappears from the profile entirely.
+  //
+  // It was REVERTED because it leaks, unboundedly, and the leak is worse than
+  // the stall. Reading `renderer.info` after each change, with the context
+  // kept alive:
+  //
+  //   six family switches   geometries  58 -> 323, textures 37 -> 214, programs  26 -> 361
+  //   ten form edits        geometries  58 -> 518, textures 37 -> 105, programs  26 -> 215
+  //
+  // Nothing is ever released, and the block time climbs with it — the tenth
+  // form edit cost 2185 ms, worse than the remount it replaced. The cause is
+  // that r3f only frees a removed object via `disposeOnIdle`, which schedules
+  // the work at React's *IdlePriority*; a scene rendering continuously never
+  // yields an idle slot, so the queue is never drained. The synchronous
+  // `dispose(scene)` on full unmount is the only thing that actually collects
+  // this scene graph today.
+  //
+  // Making the persistent canvas correct therefore means giving each renderer
+  // family explicit ownership of its own GPU resources, which cannot be done
+  // by a blanket traverse-and-dispose from here: the forest's meshes share
+  // geometry with the `useLoader` GLTF cache (three's `clone()` shares
+  // geometry and material references), so disposing what a scene traverse
+  // finds would break the cache for every later mount. That is a real,
+  // separate piece of work per family, and is not what shipped here.
   //
   // What DOES already help, for anyone using their normal Chrome rather than a
   // fresh profile: Chrome keeps compiled shader BINARIES in an on-disk cache
   // keyed by source, independent of any one page's WebGLRenderer. Measured
   // with a persistent browser profile: the second time the forest's shaders
   // are ever compiled on a machine — even in a brand new tab, brand new
-  // context, brand new renderer — the same ~44-program readback drops from
-  // ~2.5s to ~230ms. The expensive case is closer to "the first time this
-  // visitor ever opens a forest" than "every single swipe".
+  // context, brand new renderer — the same program readback drops from ~2.5s
+  // to ~230ms.
   const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}`;
   const isSceneReady = lastReadyCanvasKey === canvasRemountKey;
 
