@@ -2,7 +2,35 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Check, Loader2, Orbit, Trees, Waves } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  CircleDashed,
+  CircuitBoard,
+  Cloud,
+  CloudFog,
+  Eclipse,
+  Fish,
+  Flame,
+  Flower2,
+  Gem,
+  Lamp,
+  Leaf,
+  Loader2,
+  Moon,
+  Orbit,
+  Rainbow,
+  Satellite,
+  Shell,
+  Snowflake,
+  Sparkles,
+  Sprout,
+  Sun,
+  TreePine,
+  Trees,
+  Waves,
+  Wheat
+} from "lucide-react";
 import { api, apiErrorMessage } from "@/lib/api";
 import { addWorldIdentifierToGallery } from "@/lib/savedWorlds";
 import { UniverseCanvas } from "@/components/UniverseCanvas";
@@ -45,16 +73,16 @@ const traitOptions = ["curious", "builder", "focused", "creative", "calm", "expl
 // language — universe moods are cosmic, forest moods are seasonal (each label
 // names the season that mood leans toward in the forest builder).
 const moodOptions: readonly SwatchOption[] = [
-  { label: "Cybernetic", value: "focused", swatch: "#3b82f6" },
-  { label: "Nebula", value: "dreamy", swatch: "#a855f7" },
-  { label: "Solar", value: "energetic", swatch: "#eab308" },
-  { label: "Void", value: "reflective", swatch: "#ef4444" }
+  { label: "Cybernetic", value: "focused", swatch: "#3b82f6", Icon: CircuitBoard },
+  { label: "Nebula", value: "dreamy", swatch: "#a855f7", Icon: Sparkles },
+  { label: "Solar", value: "energetic", swatch: "#eab308", Icon: Sun },
+  { label: "Void", value: "reflective", swatch: "#ef4444", Icon: CircleDashed }
 ];
 const natureMoodOptions: readonly SwatchOption[] = [
-  { label: "Frostwood", value: "focused", swatch: "#93C5FD" },
-  { label: "Blossom", value: "dreamy", swatch: "#F9A8D4" },
-  { label: "Summer Meadow", value: "energetic", swatch: "#4ADE80" },
-  { label: "Amber Autumn", value: "reflective", swatch: "#F59E0B" }
+  { label: "Frostwood", value: "focused", swatch: "#93C5FD", Icon: Snowflake },
+  { label: "Blossom", value: "dreamy", swatch: "#F9A8D4", Icon: Flower2 },
+  { label: "Summer Meadow", value: "energetic", swatch: "#4ADE80", Icon: Wheat },
+  { label: "Amber Autumn", value: "reflective", swatch: "#F59E0B", Icon: Leaf }
 ];
 // Each ocean label names the depth that mood IS — a coordinate on the
 // family's one axis, not a character bias the way the forest's seasons are.
@@ -69,12 +97,56 @@ const natureMoodOptions: readonly SwatchOption[] = [
 // See OCEAN_MOOD_PROFILES in lib/oceanScene.ts and oceanMoodProfiles in
 // ocean_scene_profile.go.
 const oceanMoodOptions: readonly SwatchOption[] = [
-  { label: "Glass Shallows", value: "focused", swatch: "#5EEAD4" },
-  { label: "Mesophotic Current", value: "dreamy", swatch: "#A78BFA" },
-  { label: "Reef Crest", value: "energetic", swatch: "#F2B24C" },
-  { label: "The Abyss", value: "reflective", swatch: "#1E3A5F" }
+  // The icons here name the DEPTH, because that is what these four options
+  // actually are: sun at the surface, the twilight edge of the light, the reef
+  // where the fauna is, and the moon for the midnight zone.
+  { label: "Glass Shallows", value: "focused", swatch: "#5EEAD4", Icon: Sun },
+  { label: "Mesophotic Current", value: "dreamy", swatch: "#A78BFA", Icon: Eclipse },
+  { label: "Reef Crest", value: "energetic", swatch: "#F2B24C", Icon: Fish },
+  { label: "The Abyss", value: "reflective", swatch: "#1E3A5F", Icon: Moon }
 ];
 
+// World Style, one vocabulary per family, mirroring allowedWorldStylesByFamily
+// in contracts/go/contracts.go. Posting one family's style to another is a 400.
+//
+// It used to be these five for everyone, and nature-service and ocean-service
+// stored whichever arrived and never read it — so the picker was hidden for
+// both rather than left offering a control that changed nothing. Each family
+// now has its own axis and its own service reads it.
+//
+// THE FIRST ENTRY OF EVERY FAMILY IS ITS NEUTRAL STYLE: the world as the
+// builder already made it. That is what lets the picker come back without
+// changing a single stored world.
+const universeStyleOptions: readonly SwatchOption[] = [
+  { label: "Cosmic", value: "cosmic-galaxy", swatch: "#8B5CF6", Icon: Orbit },
+  // A cloud, not the sparkles the Nebula MOOD carries. The two have shared a
+  // name in this form since it was written, and until now they also looked
+  // identical in a list of coloured dots.
+  { label: "Nebula", value: "nebula", swatch: "#a855f7", Icon: Cloud },
+  { label: "Crystal", value: "crystal", swatch: "#22d3ee", Icon: Gem },
+  { label: "Aurora", value: "aurora", swatch: "#34d399", Icon: Rainbow },
+  { label: "Cyber Orbit", value: "cyber-orbit", swatch: "#38bdf8", Icon: Satellite }
+];
+
+// Mood decides the forest's season; style decides how it is grown and lit.
+// See forest_style_profile.go and the mirror in lib/forestScene.ts.
+const natureStyleOptions: readonly SwatchOption[] = [
+  { label: "Wildwood", value: "wildwood", swatch: "#7CB463", Icon: Trees },
+  { label: "Ancient Grove", value: "ancient-grove", swatch: "#4E7A54", Icon: TreePine },
+  { label: "Mistwood", value: "mistwood", swatch: "#B8C7CE", Icon: CloudFog },
+  { label: "Emberfall", value: "emberfall", swatch: "#E07A3C", Icon: Flame },
+  { label: "Lanternwood", value: "lanternwood", swatch: "#F2C464", Icon: Lamp }
+];
+
+// Mood decides the ocean's depth; style decides the water and what lives in it.
+// See ocean_style_profile.go and the mirror in lib/oceanScene.ts.
+const oceanStyleOptions: readonly SwatchOption[] = [
+  { label: "Open Water", value: "open-water", swatch: "#38A7C7", Icon: Waves },
+  { label: "Coral Garden", value: "coral-garden", swatch: "#F2775A", Icon: Shell },
+  { label: "Kelp Cathedral", value: "kelp-cathedral", swatch: "#5A9E6F", Icon: Sprout },
+  { label: "Crystal Shoal", value: "crystal-shoal", swatch: "#7DD3FC", Icon: Gem },
+  { label: "Silt Drift", value: "silt-drift", swatch: "#9CA3AF", Icon: CloudFog }
+];
 // Everything the create page says differently per family, in one record typed
 // by WorldFamily. It replaced a run of `worldFamily === "nature" ? ... : ...`
 // ternaries, each of which quietly treated a third family as "universe" — the
@@ -85,43 +157,51 @@ const FAMILY_COPY: Record<
     noun: string;
     moodLabel: string;
     moodOptions: readonly SwatchOption[];
+    /** The field label for World Style — each family styles a different thing. */
+    styleLabel: string;
+    styleOptions: readonly SwatchOption[];
     chromeClassName: string;
     submitLabel: string;
-    showsWorldStylePicker: boolean;
   }
 > = {
   universe: {
     noun: "Universe",
     moodLabel: "Atmospheric Mood",
     moodOptions,
+    styleLabel: "World Style",
+    styleOptions: universeStyleOptions,
     chromeClassName: "",
-    submitLabel: "Curate this universe",
-    showsWorldStylePicker: true
+    submitLabel: "Curate this universe"
   },
   nature: {
     noun: "Forest",
     moodLabel: "Forest Mood",
     moodOptions: natureMoodOptions,
+    styleLabel: "Forest Style",
+    styleOptions: natureStyleOptions,
     chromeClassName: "forest-chrome",
-    submitLabel: "Curate this forest",
-    showsWorldStylePicker: false
+    submitLabel: "Curate this forest"
   },
   ocean: {
     noun: "Ocean",
     moodLabel: "Depth & Mood",
     moodOptions: oceanMoodOptions,
+    styleLabel: "Water & Life",
+    styleOptions: oceanStyleOptions,
     chromeClassName: "forest-chrome",
-    submitLabel: "Curate this ocean",
-    showsWorldStylePicker: false
+    submitLabel: "Curate this ocean"
   }
 };
-const styleOptions: readonly SwatchOption[] = [
-  { label: "Cosmic", value: "cosmic-galaxy", swatch: "#8B5CF6" },
-  { label: "Nebula", value: "nebula", swatch: "#a855f7" },
-  { label: "Crystal", value: "crystal", swatch: "#22d3ee" },
-  { label: "Aurora", value: "aurora", swatch: "#34d399" },
-  { label: "Cyber Orbit", value: "cyber-orbit", swatch: "#38bdf8" }
-];
+
+/**
+ * The neutral style of a family — its first option, which every family's
+ * service treats as a no-op. Switching family has to swap the stored style with
+ * it, because a style belongs to exactly one family now and posting the wrong
+ * one is a 400 from the gateway.
+ */
+function defaultStyleForFamily(family: WorldFamily): string {
+  return FAMILY_COPY[family].styleOptions[0].value;
+}
 const colorOptions = ["#8B5CF6", "#06B6D4", "#F97316", "#22C55E", "#F43F5E", "#EAB308"];
 
 // One entry per scrollable field group in the rail, in DOM order — the single
@@ -307,6 +387,12 @@ export default function HomePage() {
       setRenderedWorldFamily(nextFamily);
     }
     setWorldFamily(nextFamily);
+    // A style belongs to exactly one family now, and the gateway returns 400
+    // for one family's style posted to another. Reset to the family's own
+    // neutral style rather than carrying the old value across — the neutral is
+    // a no-op in its builder, so this is the least surprising landing point as
+    // well as the only valid one.
+    setPreferredWorldStyle(defaultStyleForFamily(nextFamily));
   }
 
   // Drives the rail's section-progress indicator. Kept as a running map of
@@ -539,11 +625,10 @@ export default function HomePage() {
     setFavoriteColors((current) => toggleItem(current, color, 1, 4));
   }
 
-  // World Style only renders for the universe family (see FAMILY_COPY above),
-  // so its segment is dropped for the other two rather than sitting dead in
-  // the indicator every time.
-  const visibleFormSectionIds =
-    worldFamily === "universe" ? PROGRESS_SECTION_IDS : PROGRESS_SECTION_IDS.filter((id) => id !== "world-style");
+  // Every section renders for every family now that World Style does, so the
+  // indicator has one fixed set of segments again. It used to drop the
+  // world-style segment for the two families whose picker was hidden.
+  const visibleFormSectionIds = PROGRESS_SECTION_IDS;
   const activeFormSectionPosition = activeSectionIndex(visibleFormSectionIds, activeFormSectionId);
 
   function handleFormRailToggle() {
@@ -619,9 +704,9 @@ export default function HomePage() {
             Always mounted from `lg` up (regardless of collapse state); it
             clears with the rest of the interface via .immersive-exit the
             moment the rail collapses, same as the header and footer. Below
-            `lg` the compact placard just below takes over instead, since
-            there is no room to float this one beside a rail that already
-            spans the width. */}
+            `lg` it never renders at all — there is no room to float it beside a
+            rail that already spans the width, and nothing stands in for it once
+            the rail is hidden, on purpose. */}
         <div className="immersive-exit immersive-exit-right pointer-events-none absolute right-5 top-[72px] hidden w-[290px] lg:block">
           <div className="glass-panel glass-panel-glow glass-rise flex w-full flex-col gap-3 rounded-2xl px-4 py-3.5">
             <IdentityPlacardBody
@@ -633,25 +718,13 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Compact identity placard (phone/tablet): the same live-preview
-            summary, reachable only once the rail is collapsed below `lg` —
-            an expanded rail already shows this information field-by-field, so
-            showing it twice would be redundant. Deliberately NOT an
-            .immersive-exit: that class hides a surface when immersive mode
-            begins, and this one's whole job is to appear at exactly that
-            moment. */}
-        {!formRailCollapseState.isExpanded ? (
-          <div className="pointer-events-none absolute left-3 right-3 top-32 sm:left-auto sm:right-5 sm:w-[290px] lg:hidden">
-            <div className="glass-panel glass-panel-glow glass-rise flex w-full flex-col gap-3 rounded-2xl px-4 py-3.5">
-              <IdentityPlacardBody
-                nickname={payload.nickname}
-                familyNoun={FAMILY_COPY[worldFamily].noun}
-                interests={payload.interests}
-                favoriteColors={payload.favoriteColors}
-              />
-            </div>
-          </div>
-        ) : null}
+        {/* There is deliberately no compact placard below `lg` any more.
+            A phone used to get one the moment the rail collapsed — the same
+            live-preview summary, standing in for the desktop island there is no
+            room to float. It was the wrong reading of the control: hiding the
+            form is a request to see the WORLD, and answering it by swapping one
+            panel for another gives back a third of a small screen and none of
+            the point. Hide now means hide, at every width. */}
       </div>
       <WorldTransition
         request={transitionRequest}
@@ -883,17 +956,18 @@ export default function HomePage() {
                 />
               </div>
 
-              {/* World Style only shapes universe visuals (sky/orbit themes);
-                  the forest's look comes from mood/season and the ocean's from
-                  mood/depth, so the section hides for both (their stored theme
-                  keeps its default). */}
-              <div
-                className={FAMILY_COPY[worldFamily].showsWorldStylePicker ? "" : "hidden"}
-                data-form-section={PROGRESS_SECTION_IDS[8]}
-              >
+              {/* Every family, each with its own vocabulary and its own label,
+                  because each one styles a different thing: the universe its
+                  sky and orbits, the forest how it is grown and lit, the ocean
+                  its water and what lives in it.
+
+                  This was hidden for the forest and the ocean, and correctly
+                  so at the time — both services stored the field and never read
+                  it, so the control changed nothing. Both read it now. */}
+              <div data-form-section={PROGRESS_SECTION_IDS[8]}>
                 <SwatchChipGroup
-                  fieldLabel="World Style"
-                  options={styleOptions}
+                  fieldLabel={FAMILY_COPY[worldFamily].styleLabel}
+                  options={FAMILY_COPY[worldFamily].styleOptions}
                   selected={preferredWorldStyle}
                   onSelect={setPreferredWorldStyle}
                   accent="primary"

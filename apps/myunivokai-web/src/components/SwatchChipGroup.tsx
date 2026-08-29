@@ -1,11 +1,17 @@
 "use client";
 
-import { Check } from "lucide-react";
+import { Check, type LucideIcon } from "lucide-react";
 
 export type SwatchOption = {
   label: string;
   value: string;
   swatch: string;
+  /**
+   * What the option IS, drawn rather than named. Required, not optional: an
+   * icon that some options in a group have and others do not is worse than a
+   * group with none, because the ones without read as unfinished.
+   */
+  Icon: LucideIcon;
 };
 
 type SwatchChipGroupProps = {
@@ -22,8 +28,12 @@ const SELECTED_CLASSNAME: Record<NonNullable<SwatchChipGroupProps["accent"]>, st
   secondary: "border-secondary bg-secondary/25 text-paper"
 };
 
+/** How much of the option's own colour tints the disc behind its icon. */
+const ICON_DISC_TINT_PERCENTAGE = 24;
+
 /**
- * A single-select group of coloured chips: Atmospheric Mood and World Style.
+ * A single-select group of chips: Atmospheric Mood and World Style, for every
+ * family.
  *
  * Both were grids of cards — an h-8 colour bar with a label under it, in a
  * two- or three-column grid — and between them they were 464px of a form whose
@@ -37,10 +47,13 @@ const SELECTED_CLASSNAME: Record<NonNullable<SwatchChipGroupProps["accent"]>, st
  * ocean's "Mesophotic Current" needs more width than "Void" does. A cloud has
  * no orphans and gives each label the width its own text asks for.
  *
- * The swatch survives as a dot. It was never carrying information the label
- * did not — nobody picks "Nebula" because of the purple — but it is what makes
- * the row scannable, and dropping it entirely made the group read as a second
- * Traits.
+ * THE SWATCH IS NOW AN ICON on a disc of its own colour. It was a plain filled
+ * dot, and the dot was honest about carrying no information — nobody picks
+ * "Nebula" because of the purple — but a row of coloured dots asks the visitor
+ * to know what "Mesophotic Current" or "Lanternwood" means from the label
+ * alone. The icon is the only part of a chip that can answer that before it is
+ * clicked. The colour stays, as the disc and the glyph, because it is what
+ * makes the row scannable; dropping it made the group read as a second Traits.
  *
  * The checkmark is always in the DOM, opacity-toggled rather than
  * conditionally mounted, and the selected style drops the bold weight the
@@ -51,7 +64,8 @@ const SELECTED_CLASSNAME: Record<NonNullable<SwatchChipGroupProps["accent"]>, st
  * WIDTH at once, and a width change on a flex-wrap row can shift where every
  * later chip wraps, jumping "Reef Crest" or "The Abyss" to a different line
  * for a reason that has nothing to do with them. Nothing about a chip's own
- * footprint may depend on whether it is the selected one.
+ * footprint may depend on whether it is the selected one, and that now
+ * includes the icon: it is the same box in both states.
  */
 export function SwatchChipGroup({
   fieldLabel,
@@ -72,7 +86,7 @@ export function SwatchChipGroup({
               type="button"
               onClick={() => onSelect(option.value)}
               aria-pressed={isSelected}
-              className={`focus-ring tappable inline-flex items-center gap-2 rounded-full border py-1.5 pl-2 pr-3.5 text-[13px] ${
+              className={`focus-ring tappable inline-flex items-center gap-2 rounded-full border py-1.5 pl-1.5 pr-3.5 text-[13px] ${
                 isSelected
                   ? SELECTED_CLASSNAME[accent]
                   : "border-white/15 bg-white/5 text-on-surface-variant hover:border-white/35 hover:text-on-surface"
@@ -80,9 +94,14 @@ export function SwatchChipGroup({
             >
               <span
                 aria-hidden="true"
-                className="h-4 w-4 shrink-0 rounded-full ring-1 ring-inset ring-white/25"
-                style={{ backgroundColor: option.swatch }}
-              />
+                className="grid h-5 w-5 shrink-0 place-items-center rounded-full ring-1 ring-inset ring-white/20"
+                style={{
+                  backgroundColor: `color-mix(in srgb, ${option.swatch} ${ICON_DISC_TINT_PERCENTAGE}%, transparent)`,
+                  color: option.swatch
+                }}
+              >
+                <option.Icon className="h-3 w-3" strokeWidth={2.25} />
+              </span>
               {option.label}
               <Check
                 aria-hidden="true"
