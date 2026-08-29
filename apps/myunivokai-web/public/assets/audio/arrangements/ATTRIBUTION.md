@@ -1,11 +1,18 @@
 # Arrangement attribution
 
-The notes every world plays are real compositions. Twelve of them, as note data.
+The notes every world plays are real compositions. Sixteen of them, as note data.
 
-It was six, and six could not cover thirteen slots. Bach's C major prelude was
-answering for four of them — the crystal universe, a clear forest, snow, AND an
-ocean surge — so worlds that share nothing else shared a tune. The six added
-here were each chosen against the slot they fill rather than for variety's sake.
+It was six, then twelve, and twelve still had three pieces answering for two
+slots each. Two of those doubles crossed a family: Clair de Lune played both a
+sunlit forest and a drifting ocean, and BWV 846 played both a crystal universe
+and a clear forest. Drift is the most common current in all three ocean zones,
+so the single likeliest ocean and a very likely forest were the same tune — in
+two families a visitor switches between with one tap. That is what "forest and
+ocean sound the same" means, and it was reported before it was noticed here.
+
+Sixteen is the number at which every slot in every family has a piece nobody
+else uses. A test asserts it now, because it is a property that decays in
+silence every time a slot is added.
 
 ## Why not a famous song
 
@@ -42,6 +49,10 @@ CC BY-SA, so they were dropped rather than complied with.
 | Kinderszenen No. 7: Träumerei | Robert Schumann (d. 1856) | 1838 | [id 504](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=504) | Public Domain |
 | Prelude Op. 11 No. 1 | Alexander Scriabin (d. 1915) | 1895 | [id 1779](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1779) | Public Domain |
 | The Seasons Op. 37a: January | Pyotr Ilyich Tchaikovsky (d. 1893) | 1876 | [id 1171](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1171) | Public Domain |
+| Étude Op. 10 No. 1 in C major | Frédéric Chopin | 1830 | [id 914](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=914) | Public Domain |
+| Romanze Op. 28 No. 2 | Robert Schumann | 1839 | [id 314](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=314) | Public Domain |
+| Album for the Young Op. 39 No. 16: Old French Song | Pyotr Ilyich Tchaikovsky | 1878 | [id 2080](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=2080) | Public Domain |
+| Après un rêve, Op. 7 No. 1 | Gabriel Fauré (d. 1924) | 1877 | [id 368](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=368) | Public Domain |
 
 A test asserts the `licence` field of every shipped file, so a piece that cannot
 be shipped cannot be added quietly.
@@ -51,7 +62,26 @@ generated, not inferred from the composer's death date. Mutopia's catalogue was
 crawled for this: of 788 piano pieces, **517** are Public Domain and the rest are
 CC BY or CC BY-SA and unusable here.
 
-## Why these six
+That check earned its keep again on this round. Grieg's *Albumblatt*, Op. 12
+No. 7 was picked for the clear forest and is by a composer who died in 1907 —
+and its Mutopia engraving is **CC BY-SA 4.0**, because the licence attaches to
+the typesetting, not to the music. It was dropped rather than complied with, the
+same way the *Gnossiennes* were. A composer's dates tell you nothing about the
+file you are about to download.
+
+## Why these four
+
+Each one exists to break a piece out of two slots at once, so all four are named
+by what they FREED as much as by what they fill.
+
+| Slot | Piece | Why, and what it freed |
+| --- | --- | --- |
+| universe / crystal | Chopin Op. 10 No. 1 | One C major arpeggio opening and closing across the keyboard for 79 bars: 1195 of its 1337 notes on a single line, which on a glockenspiel is a lattice rather than a tune. The universe moved rather than the forest because the forest's pairing is measured — a kalimba survives BWV 846 only because 846 is almost bare, and no other piece has that shape. Freed **BWV 846** to the clear forest alone. |
+| ocean / drift | Schumann Romanze Op. 28 No. 2 | Its melody sits in the middle voice with a hand either side, so the texture rocks around a line instead of sitting under one; 233 bass / 306 harmony / 216 melody is the most even split in the catalogue. Freed **Clair de Lune** to the sunlit forest alone. |
+| forest / (unknown weather) | Old French Song | 188 notes in 32 bars, the sparsest piece here, a plain modal melody over held chords. A default is reachable in every family at once, so it is the worst possible place for a shared tune. Freed **Gymnopédie No. 1** to the universe default alone. |
+| ocean / abyss | Fauré, *Après un rêve* | Not a fourth current — a fourth ZONE. Depth used to only transpose, so with the abyss running 0.62 still / 0.36 drift / 0.02 surge the deep sea was one piece almost every time. A single sustained voice line over 950 unbroken triplet notes is what being far under water sounds like. |
+
+## Why the six before them
 
 Chosen against the slot, not for variety. The point of adding pieces was that a
 snowy forest and a crystal universe should not sound the same, so a piece that
@@ -98,7 +128,7 @@ than by reading the code:
   melody notes against 1024 harmony ones — a chattering accompaniment with barely
   a tune over it. At three the melody recovers to 264.
 
-**Size.** 163 kB for all twelve, 3.7–24.2 kB each, and a world fetches exactly
+**Size.** 205 kB for all sixteen, 3.1–23.6 kB each, and a world fetches exactly
 one. For comparison the instrument samples are 1.1 MB and the solar-system
 textures alone are 30 MB.
 

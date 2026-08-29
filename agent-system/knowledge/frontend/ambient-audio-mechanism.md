@@ -59,15 +59,29 @@ the notes had to come from a composer instead of a random number generator.
 5. **Space** — convolution reverb from a generated impulse response, plus a
    feedback delay. Without these, any synthesis reads as clinical.
 
-Twelve public-domain pieces (Satie ×3, Bach ×2, Debussy ×2, Chopin ×2, Schumann,
-Scriabin, Tchaikovsky) and eight instruments. See
+Sixteen public-domain pieces (Satie ×3, Bach ×2, Debussy ×2, Chopin ×3,
+Schumann ×2, Scriabin, Tchaikovsky ×2, Fauré) and eight instruments. See
 [arrangements/ATTRIBUTION.md](../../../apps/myunivokai-web/public/assets/audio/arrangements/ATTRIBUTION.md)
 and [audio/ATTRIBUTION.md](../../../apps/myunivokai-web/public/assets/audio/ATTRIBUTION.md).
 
-It was six, and six could not cover thirteen slots — Bach's C major prelude was
-answering for four of them, so worlds that share nothing else shared a tune. The
-six added are each matched to the slot they fill: the Raindrop prelude for rain,
-"By the Hearth" for snow, Träumerei for the dreamy nebula.
+It was six, then twelve, and now sixteen. Six could not cover thirteen slots —
+Bach's C major prelude was answering for four of them. Twelve covered them, but
+three pieces still answered twice and two of those doubles **crossed a family**:
+Clair de Lune played a sunlit forest and a drifting ocean, BWV 846 played a
+crystal universe and a clear forest. Drift is the most common current in all
+three ocean zones, so the likeliest ocean and a likely forest were the same
+tune — in the two families a visitor switches between with one tap.
+
+That is the reported complaint, arriving as "forest and ocean sound the same",
+and it is the reason **the invariant is now a test rather than a habit**: no
+piece may appear in two families, and every shipped piece must be reachable.
+A catalogue loses this property silently, one added slot at a time.
+
+The abyss also stopped being a shading. Depth used to transpose the key and
+close the tone filter and nothing else, so with the abyss running 0.62 still /
+0.36 drift / 0.02 surge the deep sea was one piece almost every time; it now
+overrides the current with Fauré's *Après un rêve*. Depth is the ocean's one
+axis no other family has, and it was the only one not choosing music.
 
 **The MIDI converter is now in the repository** at
 [tools/midi-to-arrangement.mjs](../../../apps/myunivokai-web/tools/midi-to-arrangement.mjs),
@@ -236,16 +250,32 @@ than by any gain: Bach is 549 notes in 35 bars where Gymnopédie No. 3 is 326 in
 
 ### Where it currently measures
 
-Thirteen worlds, 60 s each, master 0.6 × piece trim, after the catalogue went
-from six pieces to twelve:
+Sixteen worlds, 60 s each, master 0.6 × piece trim, after the catalogue went
+from twelve pieces to sixteen:
 
-| | Range |
-| --- | --- |
-| Onsets | 0.75–2.98 per second |
-| Peak | 0.25–0.57 — no clipping |
-| RMS | 0.0495–0.0895 — 1.81x spread |
-| Melody lead over accompaniment | 1.13x–2.63x — melody leads in all thirteen |
-| Bed | the quietest layer in every world |
+| | Range | Was, at twelve |
+| --- | --- | --- |
+| Onsets | 0.75–2.98 per second | unchanged |
+| Peak | 0.24–0.51 — no clipping | 0.25–0.57 |
+| RMS | 0.0529–0.0601 — **1.13x spread** | 0.0416–0.1108 — 2.66x |
+| Melody lead over accompaniment | 1.13x–2.78x — melody leads in all sixteen | 1.13x–2.63x |
+| Bed | the quietest layer in every world | unchanged |
+
+**Sixteen worlds, not thirteen.** Three slots had never been rendered: the two
+fallbacks — the piece a world plays when its stored weather or theme is one this
+arranger has not met — and the abyss. That is where the 2.66x came from. The
+universe fallback was the quietest thing shipping at 0.0416 and the forest
+fallback the loudest at 0.1108, and neither could be heard by anyone testing,
+because reaching a fallback means storing a world the tables predate. A slot
+absent from the harness is a slot with an unverified trim, and the two least
+visible slots were the two furthest out.
+
+**Splitting the families is what made the trims fixable.** A trim is one number
+per piece, but the same piece renders at a different level under a forest's bed
+than under a solar system's — BWV 846 measured 0.0502 as a crystal universe and
+0.0699 as a clear forest, and 0.87 was the compromise between them. With nothing
+shared, four trims could finally be set against the one place their piece is
+heard. Four of the six that moved were moved by that, not by the new pieces.
 
 **Layer isolation earned its keep again on this pass.** Two of the six added
 pieces measured the accompaniment LOUDER than the tune on the first render —
@@ -256,7 +286,16 @@ E minor prelude was given a blown instrument. Then ocean/surge came back at
 1.03x, a tune technically ahead and not audibly so, and needed a third pass.
 
 **Do not add a piece without running this.** Three renders per world at roughly
-2.5 s each is about 100 seconds for the whole catalogue.
+2 s each is about 100 seconds for the whole catalogue. **Add the slot to
+`WORLDS` in the harness in the same change** — a piece reachable only through a
+slot the harness does not render is a piece with a guessed trim, which is what
+the two fallbacks were for two rounds.
+
+The harness has its own tsconfig as well as its own vitest config
+(`npm run typecheck:audition`). `node-web-audio-api` is installed `--no-save`, so
+it is absent on any machine that has not asked for it — CI included, which
+installs from the lock file — and the main `tsc --noEmit` sweeping the file up
+was a red CI job on a harness whose whole point is to stay out of CI.
 
 ### Tempo is not a rate
 

@@ -2,6 +2,7 @@ import type { ArrangementPieceId } from "@/features/audio/arrangements";
 import type { SampledInstrumentKey } from "@/features/audio/instrumentSamples";
 import { isForestScene, isOceanScene, pointsOfInterestFromScene, randomFromSeed } from "./scene";
 import { depthAt } from "./oceanDepthCurve";
+import { OCEAN_ZONE_ABYSS, OCEAN_ZONE_SUNLIT_SHALLOWS, OCEAN_ZONE_TWILIGHT_REACH } from "./oceanScene";
 import type { SceneConfig } from "./types";
 
 // --- Ambient soundscape recipe -----------------------------------------------
@@ -143,30 +144,53 @@ const MASTER_GAIN = 0.6;
 
 // Per-piece level trim, measured by rendering every world offline and comparing
 // RMS. Nothing else settles this: loudness here is driven by how many notes a
-// piece has per bar far more than by any gain, and the twelve span 4x — Bach's
+// piece has per bar far more than by any gain, and the sixteen span 4x — Bach's
 // BWV 870 is 833 notes in 34 bars where Gymnopédie No. 3 is 326 in 60. Without
 // these, moving between worlds on the create page steps in volume.
 //
+// Measured across all sixteen slots the spread is now 1.13x (0.0529-0.0601 RMS)
+// and the loudest peak 0.51. It was 2.66x and 0.57.
+//
 // Not guessable from note density either, which is why every one of these is a
-// measurement: Bach's BWV 846 is 15.7 notes a bar and trims to 0.87, Clair de
-// Lune is 20.5 and trims UP to 1.09.
+// measurement: Bach's BWV 846 is 15.7 notes a bar and trims to 0.67, Clair de
+// Lune is 20.5 and trims UP to 1.19.
+//
+// Four of these moved when no piece was left playing in two families at once. A
+// trim is one number for a piece, but the same piece renders at a different
+// level under a forest's bed than under a solar system's — BWV 846 measured
+// 0.0502 as a crystal universe and 0.0699 as a clear forest, and 0.87 was the
+// compromise between them. Nothing is shared now, so every trim can be set
+// against the one place its piece is actually heard.
+//
+// The other two moved because they had never been measured at all: the harness
+// rendered thirteen named slots and neither fallback was one of them. The
+// universe default was the quietest thing shipping (0.0416) and the forest
+// default the loudest (0.1108), a 2.7x step nobody could hear because you have
+// to store a world with an unrecognised weather to reach one.
 const PIECE_LEVEL_TRIM: Record<ArrangementPieceId, number> = {
-  "satie-gymnopedie-1": 0.89,
+  "satie-gymnopedie-1": 1.16,
   "satie-gymnopedie-2": 1.28,
-  "satie-gymnopedie-3": 1.19,
-  "bach-prelude-c-major": 0.87,
+  "satie-gymnopedie-3": 0.72,
+  "bach-prelude-c-major": 0.67,
   // 0.8 rather than the 0.87 that would match its RMS: BWV 870 renders the
   // highest peak in the catalogue at 0.73, and headroom is worth the 1 dB.
   "bach-wtc2-prelude-c-major": 0.8,
   "chopin-prelude-e-minor": 0.99,
   "chopin-prelude-raindrop": 0.97,
   "debussy-arabesque-1": 0.73,
-  "debussy-clair-de-lune": 1.09,
-  // Träumerei is the loudest of the twelve untrimmed — a thick four-voice
+  "debussy-clair-de-lune": 1.19,
+  // Träumerei is the loudest of the sixteen untrimmed — a thick four-voice
   // texture in the middle of the register, where nothing masks anything.
   "schumann-traumerei": 0.66,
   "scriabin-prelude-op11-1": 0.92,
-  "tchaikovsky-seasons-january": 0.86
+  "tchaikovsky-seasons-january": 0.86,
+  "chopin-etude-op10-1": 1.07,
+  "schumann-romanze-op28-2": 0.68,
+  // The sparsest piece in the catalogue and the loudest: 188 notes, but a plain
+  // melody over held chords in the middle of the register with nothing masking
+  // anything, played at the fastest tempo band here.
+  "tchaikovsky-old-french-song": 0.49,
+  "faure-apres-un-reve": 0.95
 };
 
 // REGISTER. Laptop and phone speakers roll off steeply below ~150 Hz. The first
@@ -192,8 +216,18 @@ export const SMALL_SPEAKER_BASS_FLOOR_MIDI = 43; // G2, about 98 Hz
 type MusicalIdentity = { pieceId: ArrangementPieceId; instrument: MelodyInstrumentKey };
 
 const UNIVERSE_IDENTITY_BY_THEME: Record<string, MusicalIdentity> = {
-  // Bach's arpeggios are pure geometry, which is what a crystal world is.
-  crystal: { pieceId: "bach-prelude-c-major", instrument: "glockenspiel" },
+  // Chopin's Op. 10 No. 1, not the Bach prelude that used to sit here. Both are
+  // pure geometry — the reason a crystal world got 846 in the first place — but
+  // 846 was ALSO the clear forest's piece, and the pairing there is measured:
+  // the kalimba survives it only because 846 is almost bare (67 bass and 70
+  // harmony notes against 412 melody), and no other piece in the catalogue has
+  // that shape. So the universe moved instead.
+  //
+  // Op. 10 No. 1 is the more crystalline of the two anyway: one C major arpeggio
+  // opening and closing across the whole keyboard for 79 bars, 1195 of its 1337
+  // notes on a single line. On a glockenspiel that is a lattice rather than a
+  // tune, which is what the theme is called after.
+  crystal: { pieceId: "chopin-etude-op10-1", instrument: "glockenspiel" },
   // Debussy's Arabesque is a curtain of light moving in one direction.
   aurora: { pieceId: "debussy-arabesque-1", instrument: "piano" },
   "cosmic-galaxy": { pieceId: "satie-gymnopedie-2", instrument: "harp" },
@@ -240,9 +274,18 @@ const FOREST_IDENTITY_BY_WEATHER: Record<string, MusicalIdentity> = {
   snow: { pieceId: "tchaikovsky-seasons-january", instrument: "glockenspiel" }
 };
 
+// Tchaikovsky's "Old French Song", not the Gymnopédie the universe default
+// already holds. A default is the piece a world plays when its weather is
+// something this table has not met, so it is the one slot guaranteed to be
+// reachable in every family at once — exactly the wrong place for a shared tune.
+//
+// 188 notes in 32 bars, the sparsest piece in the catalogue and a plain modal
+// melody over held chords. Vibraphone rather than the kalimba the other forest
+// slots lean on: 95 melody notes over 32 bars is roughly one every two beats,
+// and a kalimba's ping has died long before the next one.
 const DEFAULT_FOREST_IDENTITY: MusicalIdentity = {
-  pieceId: "satie-gymnopedie-1",
-  instrument: "kalimba"
+  pieceId: "tchaikovsky-old-french-song",
+  instrument: "vibraphone"
 };
 
 // Keyed by the current, which is the ocean's counterpart of the forest's
@@ -251,7 +294,17 @@ const DEFAULT_FOREST_IDENTITY: MusicalIdentity = {
 // like; surge gets the running sixteenths.
 const OCEAN_IDENTITY_BY_CURRENT: Record<string, MusicalIdentity> = {
   still: { pieceId: "satie-gymnopedie-3", instrument: "vibraphone" },
-  drift: { pieceId: "debussy-clair-de-lune", instrument: "harp" },
+  // Schumann's Romanze, not the Clair de Lune that used to sit here. Drift is
+  // the most common current in all three zones (0.45 / 0.55 / 0.36), and Clair
+  // de Lune is also the sunlit forest's piece — so the single most likely ocean
+  // and a very likely forest were the same tune, in two families a visitor
+  // switches between with one tap.
+  //
+  // The Romanze is the better fit besides: its melody sits in the MIDDLE voice
+  // with a hand either side of it, so the whole texture rocks around a line
+  // rather than sitting under one. 233 bass, 306 harmony and 216 melody notes
+  // is the most even three-way split in the catalogue.
+  drift: { pieceId: "schumann-romanze-op28-2", instrument: "harp" },
   // BWV 870 rather than 846: the same running motion, half again as many notes
   // under each attack, and it leaves 846 to the crystal universe alone.
   //
@@ -263,8 +316,28 @@ const OCEAN_IDENTITY_BY_CURRENT: Record<string, MusicalIdentity> = {
   surge: { pieceId: "bach-wtc2-prelude-c-major", instrument: "piano" }
 };
 const DEFAULT_OCEAN_IDENTITY: MusicalIdentity = {
-  pieceId: "debussy-clair-de-lune",
-  instrument: "harp"
+  pieceId: "satie-gymnopedie-3",
+  instrument: "vibraphone"
+};
+
+// The abyss overrides the current entirely.
+//
+// Depth was the ocean's one axis that no other family has, and until now it
+// only moved the KEY down and closed the tone filter. That is a shading of the
+// same music, and an abyss is not a shaded reef — it is a different place. It
+// is also the zone where the current stops meaning much: 0.62 still, 0.36
+// drift, 0.02 surge, so without this the deep sea was Gymnopédie No. 3 almost
+// every time.
+//
+// Fauré's "Après un rêve" — a voice line over an unbroken triplet
+// accompaniment, 950 accompaniment notes under 161 melody ones. That ratio is
+// why the saxello: it is the same shape as Chopin's E minor prelude, where a
+// decaying melody instrument was measured losing the tune outright and a blown
+// one held it. A single sustained line over a rolling dark mass is what being
+// far under water sounds like.
+const ABYSS_OCEAN_IDENTITY: MusicalIdentity = {
+  pieceId: "faure-apres-un-reve",
+  instrument: "saxello"
 };
 
 // The harmony instrument is always softer and longer-ringing than the melody it
@@ -321,7 +394,17 @@ const PERFORMANCE_TEMPO_BY_PIECE: Record<ArrangementPieceId, TempoRange> = {
   // notes against three, and slow is the only speed at which that reads as two
   // rates drifting rather than as a scramble.
   "scriabin-prelude-op11-1": { minimumBeatsPerMinute: 26, maximumBeatsPerMinute: 36 },
-  "tchaikovsky-seasons-january": { minimumBeatsPerMinute: 26, maximumBeatsPerMinute: 36 }
+  "tchaikovsky-seasons-january": { minimumBeatsPerMinute: 26, maximumBeatsPerMinute: 36 },
+  // Written Allegro at 176 and played at a seventh of it. Op. 10 No. 1 is 4.2
+  // notes a beat, all of them onsets — the widest arpeggios in the catalogue,
+  // and the only tempo band at which they read as a shape rather than a run.
+  "chopin-etude-op10-1": { minimumBeatsPerMinute: 22, maximumBeatsPerMinute: 30 },
+  "schumann-romanze-op28-2": { minimumBeatsPerMinute: 34, maximumBeatsPerMinute: 46 },
+  // The sparsest piece here, so the fastest band: 1.8 notes a beat needs the
+  // tempo the others are slowed away from or it stops being music and becomes
+  // separate notes.
+  "tchaikovsky-old-french-song": { minimumBeatsPerMinute: 54, maximumBeatsPerMinute: 70 },
+  "faure-apres-un-reve": { minimumBeatsPerMinute: 30, maximumBeatsPerMinute: 40 }
 };
 
 // --- Key ---------------------------------------------------------------------
@@ -345,9 +428,9 @@ const TIME_OF_DAY_TRANSPOSE_SEMITONES: Record<string, number> = {
 // free: going deeper and going lower are the same gesture, and a listener hears
 // it without being told what it means.
 const DEPTH_ZONE_TRANSPOSE_SEMITONES: Record<string, number> = {
-  sunlitShallows: 0,
-  twilightReach: -4,
-  abyss: -9
+  [OCEAN_ZONE_SUNLIT_SHALLOWS]: 0,
+  [OCEAN_ZONE_TWILIGHT_REACH]: -4,
+  [OCEAN_ZONE_ABYSS]: -9
 };
 
 const SEED_TRANSPOSE_CHOICES = [-2, 0, 0, 2, 3];
@@ -594,6 +677,10 @@ function resolveMusicalIdentity(scene: SceneConfig, family: AmbientFamily): Musi
     return FOREST_IDENTITY_BY_WEATHER[weatherKind] ?? DEFAULT_FOREST_IDENTITY;
   }
   if (family === OCEAN_FAMILY_KEY) {
+    const zone = typeof scene.depth?.zone === "string" ? scene.depth.zone : "";
+    if (zone === OCEAN_ZONE_ABYSS) {
+      return ABYSS_OCEAN_IDENTITY;
+    }
     const currentKind = typeof scene.current?.kind === "string" ? scene.current.kind : "";
     return OCEAN_IDENTITY_BY_CURRENT[currentKind] ?? DEFAULT_OCEAN_IDENTITY;
   }

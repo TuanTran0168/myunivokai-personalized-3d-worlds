@@ -206,6 +206,89 @@ describe("which piece plays", () => {
   });
 });
 
+describe("no piece crosses a family", () => {
+  // The property the catalogue exists to have, and the one that decays in
+  // silence. Twelve pieces covered sixteen slots by letting three of them
+  // answer twice, and two of those doubles were across families: Clair de Lune
+  // played both a sunlit forest and a drifting ocean, and drift is the most
+  // common current in every zone. Two families a visitor switches between with
+  // one tap played the same tune, which is exactly what "they all sound the
+  // same" means.
+  //
+  // Nothing here checks that a piece SUITS its slot — that is a judgement, and
+  // it is written down next to each entry. This checks the thing a judgement
+  // cannot: that adding a thirteenth forest slot did not quietly hand it a
+  // piece the ocean was already using.
+  function piecesByFamily(): Map<string, Set<ArrangementPieceId>> {
+    const byFamily = new Map<string, Set<ArrangementPieceId>>();
+    const scenesWithFallbacks: { family: string; scene: SceneConfig }[] = [
+      ...everySupportedScene().map((scene) => ({ family: familyOfScene(scene), scene })),
+      { family: "universe", scene: { seed: "fallback-universe", theme: "not-a-theme" } },
+      {
+        family: "forest",
+        scene: forestScene({ seed: "fallback-forest", weather: { kind: "not-a-weather", intensity: 0.5 } })
+      },
+      {
+        family: "ocean",
+        scene: oceanScene({ seed: "fallback-ocean", current: { kind: "not-a-current", intensity: 0.5 } })
+      }
+    ];
+    for (const { family, scene } of scenesWithFallbacks) {
+      const pieces = byFamily.get(family) ?? new Set<ArrangementPieceId>();
+      pieces.add(buildAmbientSoundscapeRecipe(scene).performance.pieceId);
+      byFamily.set(family, pieces);
+    }
+    return byFamily;
+  }
+
+  function familyOfScene(scene: SceneConfig): string {
+    if (scene.sceneType === "forest") {
+      return "forest";
+    }
+    if (scene.sceneType === "ocean") {
+      return "ocean";
+    }
+    return "universe";
+  }
+
+  it("never plays one family's piece in another", () => {
+    const byFamily = piecesByFamily();
+    const seenIn = new Map<ArrangementPieceId, string>();
+    for (const [family, pieces] of byFamily) {
+      for (const pieceId of pieces) {
+        const alreadySeenIn = seenIn.get(pieceId);
+        expect(alreadySeenIn ?? family, `${pieceId} is played by both ${alreadySeenIn} and ${family}`).toBe(family);
+        seenIn.set(pieceId, family);
+      }
+    }
+  });
+
+  it("gives the abyss its own piece, not the current's", () => {
+    // Depth used to only transpose. In the abyss the current is 0.62 still /
+    // 0.36 drift / 0.02 surge, so without an override the deep sea was one
+    // piece almost every time.
+    const shallowStill = buildAmbientSoundscapeRecipe(
+      oceanScene({ seed: "zone-test", current: { kind: "still", intensity: 0.6 }, depth: { metres: 20, zone: "sunlitShallows" } })
+    );
+    const abyssStill = buildAmbientSoundscapeRecipe(
+      oceanScene({ seed: "zone-test", current: { kind: "still", intensity: 0.6 }, depth: { metres: 900, zone: "abyss" } })
+    );
+    expect(abyssStill.performance.pieceId).not.toBe(shallowStill.performance.pieceId);
+  });
+
+  it("uses every piece it ships", () => {
+    // A piece in the catalogue that no scene reaches is 20 kB of transfer for
+    // silence, and the only way to find one is to ask.
+    const played = new Set<ArrangementPieceId>();
+    for (const pieces of piecesByFamily().values()) {
+      for (const pieceId of pieces) {
+        played.add(pieceId);
+      }
+    }
+    expect([...played].sort()).toEqual([...ARRANGEMENT_PIECE_IDS].sort());
+  });
+});
+
 describe("who plays it", () => {
   it("always uses a sampled instrument we actually ship", () => {
     for (const scene of everySupportedScene()) {
