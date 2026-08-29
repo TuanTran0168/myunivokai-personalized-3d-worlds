@@ -2,71 +2,9 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 import { REDUCED_MOTION_MEDIA_QUERY } from "@/lib/formRailCollapse";
-import {
-  GENIE_DURATION_MILLISECONDS,
-  GENIE_MINIMUM_ROW_WIDTH,
-  genieGlowAlpha,
-  genieRowAt,
-  genieRowHeight,
-  isGenieWorthPlaying,
-  type GenieRectangle,
-  type GenieRow
-} from "./genieWarp";
-
-/**
- * More rows than this and the per-frame `drawImage` count costs more than the
- * effect is worth. Against a 700-pixel-tall canvas this draws every other row,
- * which is invisible across 620 ms and halves the work.
- */
-const GENIE_MAXIMUM_ROWS = 420;
-
-/**
- * Half-thickness of the light on the trailing edge, as a fraction of that
- * edge's own width, and the range it is held inside.
- *
- * Tied to the edge's width rather than fixed so it stays in proportion as the
- * sheet opens: a constant band that reads as a rim on a 300-pixel card reads as
- * a stripe across a 1280-pixel frame.
- */
-const GENIE_GLOW_HALF_HEIGHT_RATIO = 0.045;
-const GENIE_GLOW_MINIMUM_HALF_HEIGHT = 2;
-const GENIE_GLOW_MAXIMUM_HALF_HEIGHT = 18;
-
-/** Brass, the accent this product's chrome already lights things with. */
-const GENIE_GLOW_CORE_COLOR = "255, 240, 206";
-const GENIE_GLOW_EDGE_COLOR = "201, 163, 91";
-
-/**
- * Lays a soft band of light along the sheet's trailing edge — the one still
- * being drawn out of the card, and so the one the eye is following.
- *
- * Composited with `lighter` rather than painted over: the band is light falling
- * on the frame, and an opaque fill there would punch a hole in the very rows it
- * is supposed to be lighting.
- */
-function drawTrailingEdgeGlow(
-  context: CanvasRenderingContext2D,
-  edge: GenieRow,
-  alpha: number
-): void {
-  if (alpha <= 0 || edge.width < GENIE_MINIMUM_ROW_WIDTH) {
-    return;
-  }
-  const halfHeight = Math.min(
-    GENIE_GLOW_MAXIMUM_HALF_HEIGHT,
-    Math.max(GENIE_GLOW_MINIMUM_HALF_HEIGHT, edge.width * GENIE_GLOW_HALF_HEIGHT_RATIO)
-  );
-  const gradient = context.createLinearGradient(0, edge.top - halfHeight, 0, edge.top + halfHeight);
-  gradient.addColorStop(0, `rgba(${GENIE_GLOW_EDGE_COLOR}, 0)`);
-  gradient.addColorStop(0.5, `rgba(${GENIE_GLOW_CORE_COLOR}, ${alpha})`);
-  gradient.addColorStop(1, `rgba(${GENIE_GLOW_EDGE_COLOR}, 0)`);
-
-  const previousComposite = context.globalCompositeOperation;
-  context.globalCompositeOperation = "lighter";
-  context.fillStyle = gradient;
-  context.fillRect(edge.left, edge.top - halfHeight, edge.width, halfHeight * 2);
-  context.globalCompositeOperation = previousComposite;
-}
+import { drawGenieSheet, genieRowCount } from "./genieSheet";
+import { GENIE_DURATION_MILLISECONDS, isGenieWorthPlaying, type GenieRectangle } from "./genieWarp";
+import { captureSceneStill } from "./sceneStill";
 
 type GenieRevealProps = {
   /** The rectangle to unfold from, or null for no reveal at all. */
@@ -95,6 +33,11 @@ type GenieRevealProps = {
  * and the live canvas it hands to is showing the same camera — the opening move
  * is held at its first pose for as long as this runs. Two identical images do
  * not need dissolving between; crossfading them would only add a dip.
+ *
+ * The warp itself lives in `genieSheet.ts`, shared with the world change that
+ * collapses one world into a slot and unfolds the next one back out of it. A
+ * card opening into a world and a world arriving from off screen are the same
+ * gesture seen twice, and they should never be able to drift apart.
  */
 export function GenieReveal({ origin, sceneContainerReference, onFinished }: GenieRevealProps) {
   const overlayCanvasReference = useRef<HTMLCanvasElement>(null);
@@ -113,8 +56,7 @@ export function GenieReveal({ origin, sceneContainerReference, onFinished }: Gen
     }
     const overlayCanvas = overlayCanvasReference.current;
     const sceneContainer = sceneContainerReference.current;
-    const sceneCanvas = sceneContainer?.querySelector("canvas") ?? null;
-    if (!overlayCanvas || !sceneContainer || !sceneCanvas) {
+    if (!overlayCanvas || !sceneContainer) {
       finish();
       return;
     }
@@ -135,46 +77,30 @@ export function GenieReveal({ origin, sceneContainerReference, onFinished }: Gen
       return;
     }
 
-    // Capped at 2: past that the snapshot costs memory and fill rate for
-    // detail nobody resolves inside a 620 ms warp.
-    const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
-    const snapshot = document.createElement("canvas");
-    snapshot.width = Math.max(1, Math.round(destination.width * pixelRatio));
-    snapshot.height = Math.max(1, Math.round(destination.height * pixelRatio));
-    const snapshotContext = snapshot.getContext("2d");
+    // Null when the canvas handed back a blank buffer — a route that forgot
+    // `preserveDrawingBuffer`. Unfolding a transparent rectangle over the scene
+    // would read as a flash of nothing rather than as a missing effect.
+    const snapshot = captureSceneStill(sceneContainer);
     const overlayContext = overlayCanvas.getContext("2d");
-    if (!snapshotContext || !overlayContext) {
-      finish();
-      return;
-    }
-    snapshotContext.drawImage(sceneCanvas, 0, 0, snapshot.width, snapshot.height);
-
-    // A WebGL canvas hands back a blank buffer unless it was created with
-    // preserveDrawingBuffer. Every route that opens a genie sets it, but a
-    // future one might not, and unfolding a transparent rectangle over the
-    // scene would read as a flash of nothing rather than as a missing effect.
-    const centreSample = snapshotContext.getImageData(
-      Math.floor(snapshot.width / 2),
-      Math.floor(snapshot.height / 2),
-      1,
-      1
-    ).data;
-    if (centreSample[3] === 0) {
+    if (!snapshot || !overlayContext) {
       finish();
       return;
     }
 
+    const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     overlayCanvas.width = Math.max(1, Math.round(viewportWidth * pixelRatio));
     overlayCanvas.height = Math.max(1, Math.round(viewportHeight * pixelRatio));
 
-    const rowCount = Math.max(1, Math.min(GENIE_MAXIMUM_ROWS, Math.round(destination.height)));
-    const sourceRowHeight = snapshot.height / rowCount;
+    const rowCount = genieRowCount(destination.height);
     // Bound before the frame callback closes over them: TypeScript loses the
-    // narrowing on `origin` and on the context across a nested function.
+    // narrowing on `origin`, on the snapshot and on the context across a nested
+    // function declaration, which it has to assume could be called before the
+    // checks above ran.
     const from = origin;
     const context = overlayContext;
+    const sheetSource = snapshot;
     let animationFrame = 0;
     let startTimestamp = 0;
 
@@ -186,30 +112,15 @@ export function GenieReveal({ origin, sceneContainerReference, onFinished }: Gen
 
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       context.clearRect(0, 0, viewportWidth, viewportHeight);
-
-      let nextRow = genieRowAt(0, progress, from, destination);
-      for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
-        const row = nextRow;
-        nextRow = genieRowAt((rowIndex + 1) / rowCount, progress, from, destination);
-        if (row.width < GENIE_MINIMUM_ROW_WIDTH) {
-          continue;
-        }
-        context.drawImage(
-          snapshot,
-          0,
-          rowIndex * sourceRowHeight,
-          snapshot.width,
-          sourceRowHeight,
-          row.left,
-          row.top,
-          row.width,
-          genieRowHeight(row.top, nextRow.top)
-        );
-      }
-
-      // `nextRow` has walked past the last row and now holds rowRatio 1 — the
-      // bottom edge of the sheet, which is exactly where the light goes.
-      drawTrailingEdgeGlow(context, nextRow, genieGlowAlpha(progress));
+      drawGenieSheet(context, {
+        source: sheetSource,
+        sourceWidth: sheetSource.width,
+        sourceHeight: sheetSource.height,
+        from,
+        to: destination,
+        progress,
+        rowCount
+      });
 
       if (progress >= 1) {
         finish();

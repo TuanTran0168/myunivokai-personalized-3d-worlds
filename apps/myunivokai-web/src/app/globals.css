@@ -344,47 +344,362 @@ textarea {
   animation: sweep-rail 1450ms var(--glass-easing) infinite;
 }
 
-/* --- Whole-screen world swipe ------------------------------------------------
+/* --- World loaders -----------------------------------------------------------
 
-   The gesture that carries one world off and brings the next one on. Both
-   halves are keyframes rather than a requestAnimationFrame loop on purpose:
-   this runs at the exact moment the next scene is mounting, compiling shaders
-   and uploading textures, and a main-thread animation would be queued behind
-   all of it. A compositor animation keeps its frame rate through a blocked main
-   thread — the difference between a 420 ms gesture and a 420 ms freeze.
+   What a world family shows while it is being built, and the single hardest
+   constraint in this stylesheet: EVERY ANIMATION BELOW MOVES `transform` AND
+   `opacity` AND NOTHING ELSE.
 
-   Only `transform` and `opacity` are touched, so neither half ever asks for
-   layout or paint. Every number arrives as a custom property written on by
-   SceneSwipe from features/transitions/sceneSwipe.ts, which is what keeps the
-   gesture's timing in one place instead of two. */
-.scene-swipe-out {
-  animation: scene-swipe-out var(--scene-swipe-duration) var(--scene-swipe-easing) both;
-  will-change: transform, opacity;
+   This is not tidiness. These marks are on screen for exactly the window in
+   which the destination scene is mounting, and mounting a cold scene blocks the
+   main thread for up to ~2.5 seconds compiling shaders (measured; the numbers
+   are in components/UniverseCanvas.tsx). Transform and opacity are the two
+   properties the browser hands to the compositor, so a mark built out of them
+   keeps 60 fps straight through that block. Anything that touched width, top,
+   colour or a filter would need the main thread for every frame and would
+   simply stop — and a frozen loader reads as a crashed app, which is a worse
+   thing to show than no loader at all.
+
+   The same reasoning used to be written above a pair of swipe keyframes here.
+   The swipe is gone (see features/transitions/worldChangeStages.ts); the reason
+   it had to be CSS outlived it. */
+
+.world-loader-ground {
+  position: absolute;
+  inset: 0;
 }
 
-.scene-swipe-in {
-  animation: scene-swipe-in var(--scene-swipe-duration) var(--scene-swipe-easing) both;
+/* The ground's own slow breath. Opacity only, on a layer of its own, so it
+   costs nothing and cannot drag the marks down with it. */
+.world-loader-ground::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(58% 58% at 50% 50%, var(--world-loader-glow) 0%, transparent 72%);
+  animation: world-loader-breathe 4800ms ease-in-out infinite;
+  will-change: opacity;
+}
+
+@keyframes world-loader-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Each pair brackets the real backgrounds that family's scenes use, so the wait
+   is already the colour of the place the visitor is going. See the comment on
+   WORLD_LOADERS in features/transitions/world-loaders/registry.ts. */
+.world-loader-ground-universe {
+  --world-loader-glow: rgb(245 179 36 / 0.1);
+  background: linear-gradient(180deg, #0b0720 0%, #04070c 100%);
+}
+
+.world-loader-ground-nature {
+  --world-loader-glow: rgb(124 180 99 / 0.11);
+  background: linear-gradient(180deg, #0d1510 0%, #080f0a 100%);
+}
+
+.world-loader-ground-ocean {
+  --world-loader-glow: rgb(56 167 199 / 0.12);
+  background: linear-gradient(180deg, #06283a 0%, #01070f 100%);
+}
+
+/* The mark's own layer. Fades in once the outgoing world has cleared the frame
+   and out again as the arriving one unfolds over it; both durations arrive as
+   custom properties from worldChangeStages.ts, which keeps the pacing in the
+   module that owns the rest of it. */
+.world-loader-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity var(--world-loader-fade-out) ease-in;
+  will-change: opacity;
+}
+
+.world-loader-stage[data-mark-visible="true"] {
+  opacity: 1;
+  transition: opacity var(--world-loader-fade-in) ease-out;
+}
+
+/* Sized off the SMALLER viewport axis, so the mark is the same fraction of the
+   frame on a phone held upright and on a 4K panel — the ground it sits on is
+   the whole scene, and a fixed pixel size would be a landmark on one and a
+   speck on the other. Clamped at both ends: below ~90px the forest's leaves and
+   the ocean's highlights stop resolving, and past ~200px the mark stops being a
+   quiet thing in the middle of a world and starts being the world. */
+.world-loader-mark {
+  --world-loader-size: clamp(90px, 15vmin, 200px);
+  position: relative;
+  width: var(--world-loader-size);
+  height: var(--world-loader-size);
+}
+
+/* Universe: a body completing an orbit every two seconds, with a trail made of
+   the same body started a few hundredths of a second earlier. */
+.universe-loader {
+  --universe-accent: 245 179 36;
+}
+
+.universe-loader-core {
+  position: absolute;
+  inset: 26%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(var(--universe-accent) / 0.45) 0%, rgb(var(--universe-accent) / 0) 70%);
+}
+
+.universe-loader-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgb(var(--universe-accent) / 0.22);
+}
+
+.universe-loader-arm {
+  position: absolute;
+  inset: 0;
+  animation: universe-loader-orbit 2000ms linear infinite;
   will-change: transform;
 }
 
-@keyframes scene-swipe-out {
-  from {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
+.universe-loader-arm::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--world-loader-size) * -0.05);
+  left: 50%;
+  width: calc(var(--world-loader-size) * 0.1);
+  height: calc(var(--world-loader-size) * 0.1);
+  margin-left: calc(var(--world-loader-size) * -0.05);
+  border-radius: 50%;
+  background: #fff3d2;
+  transform: scale(var(--universe-body-scale, 1));
+}
+
+/* Only the leading body carries a halo — it is the one the eye follows, and a
+   halo on all nine would be a bright smear rather than a trail. */
+.universe-loader-arm-lead::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--world-loader-size) * -0.17);
+  left: 50%;
+  width: calc(var(--world-loader-size) * 0.34);
+  height: calc(var(--world-loader-size) * 0.34);
+  margin-left: calc(var(--world-loader-size) * -0.17);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(var(--universe-accent) / 0.5) 0%, rgb(var(--universe-accent) / 0) 70%);
+}
+
+@keyframes universe-loader-orbit {
   to {
-    transform: translateX(calc(var(--scene-swipe-direction) * var(--scene-swipe-travel)))
-      scale(var(--scene-swipe-scale));
-    opacity: var(--scene-swipe-opacity);
+    transform: rotate(360deg);
   }
 }
 
-@keyframes scene-swipe-in {
+/* Forest: a sapling swaying inside growth rings that keep opening outward. */
+.forest-loader {
+  --forest-accent: 124 180 99;
+}
+
+.forest-loader-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgb(var(--forest-accent) / 0.55);
+  animation: forest-loader-ring 2400ms linear infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes forest-loader-ring {
   from {
-    transform: translateX(calc(var(--scene-swipe-direction) * -100%));
+    transform: scale(0.26);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.5;
   }
   to {
-    transform: translateX(0);
+    transform: scale(1.12);
+    opacity: 0;
+  }
+}
+
+.forest-loader-stem {
+  position: absolute;
+  left: 50%;
+  bottom: 20%;
+  width: calc(var(--world-loader-size) * 0.045);
+  height: calc(var(--world-loader-size) * 0.5);
+  margin-left: calc(var(--world-loader-size) * -0.0225);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgb(var(--forest-accent) / 0.95), rgb(var(--forest-accent) / 0.4));
+  transform-origin: 50% 100%;
+  animation: forest-loader-sway 3200ms ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes forest-loader-sway {
+  from {
+    transform: rotate(-6deg);
+  }
+  to {
+    transform: rotate(6deg);
+  }
+}
+
+/* Children of the stem, not siblings: they inherit its sway instead of running
+   a second animation that would drift out of step within a few seconds. */
+.forest-loader-leaf {
+  position: absolute;
+  width: calc(var(--world-loader-size) * 0.16);
+  height: calc(var(--world-loader-size) * 0.07);
+  border-radius: 999px;
+  background: rgb(var(--forest-accent) / 0.8);
+}
+
+.forest-loader-leaf-left {
+  top: calc(var(--world-loader-size) * 0.22);
+  right: 50%;
+  transform-origin: 100% 50%;
+  transform: rotate(-20deg);
+}
+
+.forest-loader-leaf-right {
+  top: calc(var(--world-loader-size) * 0.08);
+  left: 50%;
+  transform-origin: 0 50%;
+  transform: rotate(20deg);
+}
+
+.forest-loader-leaf-tip {
+  top: calc(var(--world-loader-size) * -0.04);
+  left: 50%;
+  width: calc(var(--world-loader-size) * 0.09);
+  height: calc(var(--world-loader-size) * 0.09);
+  margin-left: calc(var(--world-loader-size) * -0.045);
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(45deg);
+}
+
+.forest-loader-mote {
+  position: absolute;
+  left: var(--forest-mote-offset, 50%);
+  bottom: 0;
+  width: calc(var(--world-loader-size) * 0.035);
+  height: calc(var(--world-loader-size) * 0.035);
+  border-radius: 50%;
+  background: rgb(226 240 205 / 0.75);
+  animation: forest-loader-mote 4500ms linear infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes forest-loader-mote {
+  from {
+    transform: translate3d(0, calc(var(--world-loader-size) * 0.15), 0);
+    opacity: 0;
+  }
+  22% {
+    opacity: 0.55;
+  }
+  72% {
+    opacity: 0.38;
+  }
+  to {
+    transform: translate3d(calc(var(--world-loader-size) * 0.08), calc(var(--world-loader-size) * -1.15), 0);
+    opacity: 0;
+  }
+}
+
+/* Ocean: bubbles wobbling up toward a surface that is breathing. Two elements
+   per bubble because one element can only run one transform animation — the
+   outer rises, the inner wobbles. */
+.ocean-loader {
+  --ocean-accent: 56 167 199;
+}
+
+.ocean-loader-surface {
+  position: absolute;
+  left: -8%;
+  right: -8%;
+  top: 4%;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgb(var(--ocean-accent) / 0.55), transparent);
+  animation: ocean-loader-surface 3600ms ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes ocean-loader-surface {
+  from {
+    transform: scaleX(0.86) translateY(0);
+  }
+  to {
+    transform: scaleX(1) translateY(3px);
+  }
+}
+
+.ocean-loader-bubble {
+  position: absolute;
+  bottom: 0;
+  width: var(--ocean-bubble-size);
+  height: var(--ocean-bubble-size);
+  margin-left: calc(var(--ocean-bubble-size) / -2);
+  animation-name: ocean-loader-rise;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes ocean-loader-rise {
+  from {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  84% {
+    opacity: 0.7;
+  }
+  to {
+    transform: translate3d(0, calc(var(--world-loader-size) * -0.98), 0);
+    opacity: 0;
+  }
+}
+
+.ocean-loader-bubble-drift {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgb(214 244 255 / 0.6);
+  animation-name: ocean-loader-drift;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+  will-change: transform;
+}
+
+.ocean-loader-bubble-drift::before {
+  content: "";
+  position: absolute;
+  top: 16%;
+  left: 16%;
+  width: 32%;
+  height: 32%;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.35);
+}
+
+@keyframes ocean-loader-drift {
+  from {
+    transform: translate3d(calc(var(--ocean-bubble-size) * -0.5), 0, 0);
+  }
+  to {
+    transform: translate3d(calc(var(--ocean-bubble-size) * 0.5), 0, 0);
   }
 }
 
@@ -431,6 +746,24 @@ textarea {
 
 .rail-scroll::-webkit-scrollbar-thumb:hover {
   background: rgb(var(--brass-rgb) / 0.5);
+}
+
+/* Below `md` the create form is a SHEET across the full width of the world, not
+   an island down one side of it, and that changes what the material has to do.
+   A desktop rail floats over the quiet left edge of a scene; a sheet sits over
+   whatever happens to be in the middle of it, which on the universe family is a
+   sun at full brightness. At the house tint of 8% the form was genuinely
+   unreadable over it — the heavy text shadow every glass panel carries is built
+   for a busy background, not for a white-hot one.
+
+   Raised tint, and deliberately NOT blur: "trong suốt" (see-through) is the
+   owner's word for this material and the reason there is no backdrop-filter
+   anywhere in this file. A darker clear pane still shows the world moving
+   behind it; a frosted one would not. */
+@media (max-width: 767px) {
+  .form-rail-sheet {
+    --glass-tint: rgba(8, 8, 10, 0.72);
+  }
 }
 
 /* ---------- The create form's collapsing rail ---------- */
@@ -730,12 +1063,20 @@ body[data-world-immersive="true"] .immersive-exit-right {
     animation: none;
     opacity: 0.45;
   }
-  /* Belt and braces. SceneSwipe already declines to run at all under reduced
-     motion, so these classes should never be applied — but a swipe that DID
-     slip through would move a full-screen panel across the viewport, which is
-     the single most nauseating thing this interface can do. */
-  .scene-swipe-in,
-  .scene-swipe-out {
+  /* Belt and braces. WorldTransition declines to run at all under reduced
+     motion, so no loader should ever mount here — but a hold that DID slip
+     through would leave a dozen elements orbiting, swaying and rising on a
+     surface that covers the whole scene, which is the single most nauseating
+     thing this interface can do. The ground and the mark stay visible and
+     simply stop moving. */
+  .world-loader-ground::after,
+  .universe-loader-arm,
+  .forest-loader-ring,
+  .forest-loader-stem,
+  .forest-loader-mote,
+  .ocean-loader-surface,
+  .ocean-loader-bubble,
+  .ocean-loader-bubble-drift {
     animation: none;
   }
   /* The collapsed selector is repeated in full on purpose: a bare

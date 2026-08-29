@@ -10,8 +10,12 @@ import { GeneratingOverlay } from "@/components/GeneratingOverlay";
 import { StatusMessage } from "@/components/StatusMessage";
 import { ChipGroupWithCustom, type ChipGroupWithCustomHandle } from "@/components/ChipGroupWithCustom";
 import { SwatchChipGroup, type SwatchOption } from "@/components/SwatchChipGroup";
-import { SceneSwipe, captureSceneStill, type SceneSwipeRequest } from "@/features/transitions/SceneSwipe";
-import { isSceneSwipeWorthPlaying, swipeDirectionBetween } from "@/features/transitions/swipeGesture";
+import { WorldTransition, type WorldTransitionRequest } from "@/features/transitions/WorldTransition";
+import { captureSceneStill } from "@/features/transitions/sceneStill";
+import {
+  isWorldChangeWorthPlaying,
+  worldChangeDirectionBetween
+} from "@/features/transitions/worldChangeDirection";
 import { ensureRange, toggleItem } from "@/lib/formSelection";
 import { activeSectionIndex, pickActiveSectionId } from "@/lib/formSectionProgress";
 import { FORM_RAIL_ELEMENT_ID } from "@/lib/formRailCollapse";
@@ -242,44 +246,65 @@ export default function HomePage() {
   const railScrollReference = useRef<HTMLDivElement | null>(null);
   const [activeFormSectionId, setActiveFormSectionId] = useState<string | null>(null);
 
-  // The live world, and the swipe that carries one family off when another is
-  // picked. The container ref is what both the still capture and the incoming
-  // half of the gesture work against — the same shape the world route's genie
-  // reveal already uses.
+  // The live world, and the transition that carries one family off when another
+  // is picked. The container ref is what the still captures work against — the
+  // same shape the world route's genie reveal already uses.
   const sceneContainerReference = useRef<HTMLDivElement | null>(null);
-  const [swipeRequest, setSwipeRequest] = useState<SceneSwipeRequest | null>(null);
-  const swipeTokenReference = useRef(0);
+  const [transitionRequest, setTransitionRequest] = useState<WorldTransitionRequest | null>(null);
+  const transitionTokenReference = useRef(0);
   // Whether the CURRENT preview scene has rendered a real frame — reset to
-  // false in the same update that starts a swipe, so SceneSwipe's parked
-  // phase always gets at least one tick. See SceneSwipe.tsx for why the swipe
-  // waits on this instead of moving the instant a family is picked.
+  // false in the same update that starts a transition, so the hold always gets
+  // at least one tick to wait on. See worldChangeStages.ts for why the arrival
+  // waits on this instead of playing the instant a family is picked.
   const [isSceneReady, setIsSceneReady] = useState(false);
+  /**
+   * Which family the CANVAS is showing, as opposed to which one the form says.
+   *
+   * The two are the same except during a transition, when this one lags by
+   * exactly the length of the departure. That lag is not cosmetic — it is what
+   * keeps the whole thing at 60 fps. Mounting a family for the first time
+   * blocks the main thread for up to ~2.5 seconds compiling shaders, and the
+   * departure is a canvas animation that would be queued behind every
+   * millisecond of it. Holding the mount back until the outgoing world has
+   * finished leaving puts that block inside the one phase whose animation runs
+   * on the compositor and does not care. `worldChangeStages.ts` has the full
+   * account; `WorldTransition`'s `onDeparted` is what releases it.
+   *
+   * Everything else about the form — the mood swatches, the submit label, the
+   * chrome tint — still follows `worldFamily` immediately, so the picker itself
+   * never feels like it lagged.
+   */
+  const [renderedWorldFamily, setRenderedWorldFamily] = useState<WorldFamily>("universe");
 
   /**
-   * Change family, and swipe the old world off to do it.
+   * Change family, and carry the old world off to do it.
    *
    * The still is captured HERE, before the state update, and that ordering is
-   * the whole trick: one `setWorldFamily` later React has swapped the canvas
-   * for the next family's and the frame worth keeping no longer exists. A
-   * capture that comes back null (no canvas yet, a cleared GL buffer, a
-   * zero-size box) simply means no swipe — the family still changes.
+   * the whole trick: one render later React may have swapped the canvas for the
+   * next family's and the frame worth keeping no longer exists. A capture that
+   * comes back null (no canvas yet, a cleared GL buffer, a zero-size box)
+   * simply means no transition — the family still changes, immediately.
    */
   function handleSelectWorldFamily(nextFamily: WorldFamily) {
-    if (!isSceneSwipeWorthPlaying(worldFamily, nextFamily)) {
+    if (!isWorldChangeWorthPlaying(worldFamily, nextFamily)) {
       return;
     }
     const still = captureSceneStill(sceneContainerReference.current);
     if (still) {
-      swipeTokenReference.current += 1;
+      transitionTokenReference.current += 1;
       setIsSceneReady(false);
-      setSwipeRequest({
+      setTransitionRequest({
         still,
-        direction: swipeDirectionBetween(
+        direction: worldChangeDirectionBetween(
           familyOptions.findIndex((option) => option.value === worldFamily),
           familyOptions.findIndex((option) => option.value === nextFamily)
         ),
-        token: swipeTokenReference.current
+        family: nextFamily,
+        token: transitionTokenReference.current
       });
+    } else {
+      // No picture to carry off, so nothing to wait for: the canvas swaps now.
+      setRenderedWorldFamily(nextFamily);
     }
     setWorldFamily(nextFamily);
   }
@@ -415,14 +440,20 @@ export default function HomePage() {
     };
     // Same inputs, family-specific mirror: the preview always renders with the
     // exact renderer the generated world will use.
-    if (worldFamily === "nature") {
+    //
+    // Keyed on renderedWorldFamily, NOT worldFamily. During a transition the
+    // two differ, and this is the seam where that matters: recomputing the
+    // scene the moment the picker is clicked would mount the destination
+    // straight into the departure animation, which is precisely what the
+    // deferred commit exists to prevent.
+    if (renderedWorldFamily === "nature") {
       return buildPreviewForestSceneConfig(previewInput);
     }
-    if (worldFamily === "ocean") {
+    if (renderedWorldFamily === "ocean") {
       return buildPreviewOceanSceneConfig(previewInput, { showCalmSurfaceDefault: isPreviewUncustomized });
     }
     return buildPreviewSceneConfig(previewInput);
-  }, [debouncedPayload, isPreviewUncustomized, worldFamily]);
+  }, [debouncedPayload, isPreviewUncustomized, renderedWorldFamily]);
 
   // The preview mounts the selected family immediately, so that chunk is already
   // in flight. Warm the others as well: this is the one page whose whole job is
@@ -499,12 +530,18 @@ export default function HomePage() {
     toggleCollapse();
   }
 
+  // One viewport, never a scrolling document, at EVERY tier.
+  //
+  // Below `md` this page used to be a flex column: a tall hero with the rail in
+  // flow underneath it, so reaching the palette meant scrolling the world off
+  // the top of the screen. On the one page whose whole subject is a live
+  // portrait of you, scrolling away from the portrait in order to fill in the
+  // form that makes it is the wrong trade. Now the world is pinned behind
+  // everything and the rail is a sheet over the lower part of it with its own
+  // scrollport — which is the shape the tablet and desktop tiers already had,
+  // taken all the way down.
   return (
-    <main
-      className={`relative flex min-h-screen flex-col lg:block lg:h-screen lg:overflow-hidden ${
-        FAMILY_COPY[worldFamily].chromeClassName
-      }`}
-    >
+    <main className={`relative h-svh overflow-hidden ${FAMILY_COPY[worldFamily].chromeClassName}`}>
       <GeneratingOverlay
         isVisible={loading}
         status={generationStatus === "queued" || generationStatus === "processing" ? generationStatus : undefined}
@@ -524,15 +561,10 @@ export default function HomePage() {
         disabled={loading}
       />
 
-      {/* Full-bleed live world: a tall hero on phones, the immersive background from
-          the tablet tier up so the preview owns the screen and the rail floats over
-          it. */}
-      <div
-        ref={sceneContainerReference}
-        className={`relative min-h-[320px] w-full md:absolute md:inset-0 md:h-full ${
-          formRailCollapseState.reservesLayoutSpace ? "h-[46vh]" : "h-svh"
-        }`}
-      >
+      {/* Full-bleed live world, behind everything, at every tier. It no longer
+          changes height when the rail collapses: the rail floats over it now
+          rather than sitting under it, so there is no box to give back. */}
+      <div ref={sceneContainerReference} className="absolute inset-0 h-full w-full">
         <UniverseCanvas
           scene={previewScene}
           className="h-full"
@@ -594,17 +626,27 @@ export default function HomePage() {
           </div>
         ) : null}
       </div>
-      <SceneSwipe
-        request={swipeRequest}
+      <WorldTransition
+        request={transitionRequest}
         sceneContainerReference={sceneContainerReference}
         isDestinationReady={isSceneReady}
-        onFinished={() => setSwipeRequest(null)}
+        // Reads the family the form already moved to rather than closing over
+        // the one the request was made with: if a second pick landed while the
+        // first was still leaving, the canvas has to end up on the LAST one.
+        onDeparted={() => setRenderedWorldFamily(worldFamily)}
+        onFinished={() => setTransitionRequest(null)}
       />
 
-      {/* Floating Liquid-Glass form rail: an in-flow card on phones (pulled up
-          over the hero), a floating glass island from the tablet tier up,
-          narrower at `md` and at its full width from `lg`, where only the
-          field column scrolls.
+      {/* Floating Liquid-Glass form rail: a bottom sheet over the world on
+          phones, a floating glass island from the tablet tier up, narrower at
+          `md` and at its full width from `lg`. Only the field column ever
+          scrolls, at every tier.
+
+          `top-[46svh]` on phones is the one number that decides the split: the
+          world keeps the upper 46% of the screen and never leaves it, and the
+          sheet gets the rest. Measured in `svh` rather than `vh` so a phone
+          browser retracting its URL bar cannot push the submit button under the
+          footer.
 
           The positioning lives on this WRAPPER rather than on the panel, and the
           wrapper deliberately carries neither .glass-panel nor .glass-rise: the
@@ -612,23 +654,16 @@ export default function HomePage() {
           `transform: none` on .glass-panel would each silently defeat a collapse
           applied to the panel itself. See .form-rail-collapse in globals.css.
 
-          `h-0` only ever applies once the slide has finished, so the mobile page
-          closes up under an already-invisible card instead of jumping while it
-          is still on screen. */}
+          It no longer has a "reserves layout space" branch either. That existed
+          because the rail was in the mobile document flow and a transform does
+          not affect layout, so the box had to be released a beat after the slide
+          — an absolutely positioned rail has no box to release. */}
       <div
         id={FORM_RAIL_ELEMENT_ID}
         data-form-rail-collapsed={!formRailCollapseState.isExpanded}
-        className={`form-rail-collapse relative z-10 sm:mx-4 md:absolute md:bottom-16 md:left-6 md:top-16 md:mx-0 md:mb-0 md:mt-0 md:w-[340px] lg:bottom-[68px] lg:top-[72px] lg:w-[384px] ${
-          formRailCollapseState.reservesLayoutSpace
-            ? // The rail is in flow below md while the footer is fixed over it, so
-              // a plain gap left the submit button under the footer bar. The
-              // floating branch from md up already reserves that height with
-              // md:bottom/lg:bottom.
-              "mx-3 mb-[calc(var(--footer-height)+1rem)] mt-4"
-            : "mx-3 mb-0 mt-0 h-0 overflow-hidden"
-        }`}
+        className="form-rail-collapse form-rail-sheet absolute inset-x-3 bottom-[calc(var(--footer-height)+0.5rem)] top-[46svh] z-10 sm:inset-x-4 md:inset-x-auto md:bottom-16 md:left-6 md:top-16 md:w-[340px] lg:bottom-[68px] lg:top-[72px] lg:w-[384px]"
       >
-      <section className="glass-panel glass-panel-glow glass-rise flex w-full flex-col overflow-hidden rounded-3xl md:h-full">
+      <section className="glass-panel glass-panel-glow glass-rise flex h-full w-full flex-col overflow-hidden rounded-3xl">
           {/* The rail's own masthead. It used to stack an eyebrow, a text-3xl
               title, a two-line subtitle and the progress bar, which came to
               169px — a third of the rail's 760px on a 900px-tall laptop went to
@@ -636,7 +671,7 @@ export default function HomePage() {
               the eyebrow, and the subtitle is dropped from `lg` up, where the
               identity island opposite already says whose world this is and what
               it was curated from. Below `lg` there is no island, so it stays. */}
-          <div className="border-b border-white/5 px-5 pb-3 pt-4 sm:px-7">
+          <div className="border-b border-white/5 px-5 pb-2.5 pt-3 sm:px-7">
             <div className="flex items-baseline gap-3">
               <span className="font-mono text-xs uppercase tracking-[0.2em] text-brass">Curate</span>
               <h1 className="font-display text-xl font-semibold leading-tight text-paper">A portrait of you.</h1>
@@ -668,8 +703,13 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div ref={railScrollReference} className="rail-scroll min-h-0 flex-1 overflow-x-hidden md:overflow-y-auto">
-            <form id={CREATE_FORM_ELEMENT_ID} className="grid gap-4 px-5 py-5 sm:px-7" onSubmit={onSubmit}>
+          <div ref={railScrollReference} className="rail-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+            {/* gap-3.5 / py-4, tightened from gap-4 / py-5. The rail is a column
+                of ten short groups, and at 16px between them plus 20px of top
+                and bottom padding the gaps alone came to 164px — a fifth of the
+                scrollport spent on nothing. 14px still separates the groups
+                clearly and gives back about a field and a half. */}
+            <form id={CREATE_FORM_ELEMENT_ID} className="grid gap-3.5 px-5 py-4 sm:px-7" onSubmit={onSubmit}>
               <div className="grid gap-2.5" data-form-section={PROGRESS_SECTION_IDS[0]}>
                 <span className="font-mono text-xs uppercase tracking-widest text-brass">World Family</span>
                 {/* grid-cols-3, not -2: with exactly 3 options a 2-column grid always
@@ -713,24 +753,36 @@ export default function HomePage() {
               {/* Nickname and Primary Role side by side. Two single-line inputs
                   stacked cost 148px of a 508px scrollport to hold about twenty
                   characters between them. They stay stacked below `sm`, where
-                  half a phone's width is not enough for either placeholder. */}
+                  half a phone's width is not enough for either placeholder.
+
+                  `min-w-0` on both columns is not defensive — without it these
+                  two overlapped, measurably: 98px of overlap in a 340px rail and
+                  76px in a 384px one. A grid item's `min-width` defaults to
+                  `auto`, which means "never shrink below the content's own
+                  intrinsic width", and an <input>'s intrinsic width is its
+                  `size` attribute — about 245px whatever the placeholder says.
+                  Two 245px columns cannot fit in a 300px track, so they ran over
+                  each other instead of sharing it. This is also why the form
+                  looked correct at 75% browser zoom and broken at 100%: at 75%
+                  the track was finally wide enough to hold both intrinsic
+                  widths, so the bug simply stopped being reachable. */}
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1.5" data-form-section={PROGRESS_SECTION_IDS[1]}>
+                <label className="grid min-w-0 gap-1.5" data-form-section={PROGRESS_SECTION_IDS[1]}>
                   <span className="font-mono text-xs uppercase tracking-widest text-brass">Nickname</span>
                   <input
                     value={nickname}
                     onChange={(event) => setNickname(event.target.value)}
-                    className="focus-ring input-dark rounded-xl px-3.5 py-2.5 text-on-surface placeholder:text-outline"
+                    className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                     placeholder="e.g. Neo"
                     maxLength={32}
                   />
                 </label>
-                <label className="grid gap-1.5" data-form-section={PROGRESS_SECTION_IDS[2]}>
+                <label className="grid min-w-0 gap-1.5" data-form-section={PROGRESS_SECTION_IDS[2]}>
                   <span className="font-mono text-xs uppercase tracking-widest text-brass">Primary Role</span>
                   <input
                     value={role}
                     onChange={(event) => setRole(event.target.value)}
-                    className="focus-ring input-dark rounded-xl px-3.5 py-2.5 text-on-surface placeholder:text-outline"
+                    className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                     placeholder="e.g. Explorer"
                     maxLength={80}
                   />
@@ -777,7 +829,7 @@ export default function HomePage() {
                 <textarea
                   value={goal}
                   onChange={(event) => setGoal(event.target.value)}
-                  className="focus-ring input-dark min-h-[68px] resize-y rounded-xl px-3.5 py-2.5 text-on-surface placeholder:text-outline"
+                  className="focus-ring input-dark min-h-[60px] resize-y rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                   placeholder="Build a beautiful AI product that feels personal and useful."
                   maxLength={220}
                 />
@@ -788,7 +840,7 @@ export default function HomePage() {
                 <input
                   value={challenge}
                   onChange={(event) => setChallenge(event.target.value)}
-                  className="focus-ring input-dark rounded-xl px-3.5 py-2.5 text-on-surface placeholder:text-outline"
+                  className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                   placeholder="e.g. I overthink product direction"
                   maxLength={220}
                 />
@@ -844,7 +896,7 @@ export default function HomePage() {
             </form>
           </div>
 
-          <div className="grid gap-3 border-t border-white/10 px-5 py-4 sm:px-7">
+          <div className="grid gap-3 border-t border-white/10 px-5 py-3 sm:px-7">
             {error ? <StatusMessage tone="error">{error}</StatusMessage> : null}
             <button
               type="submit"
