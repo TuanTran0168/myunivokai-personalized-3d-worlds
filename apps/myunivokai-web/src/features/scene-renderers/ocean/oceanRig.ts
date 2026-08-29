@@ -96,6 +96,13 @@ import {
 const WAVE_MAX = 12;
 /** A boundary is drawn only when it lies within about 1.5 sighting ranges. */
 const BOUNDARY_SIGHT_MULTIPLIER = 1.5;
+/**
+ * The backdrop shell, in metres. Underwater it sits past anything the water
+ * lets you see, which is exactly why the water has to be allowed to swallow it;
+ * above water it is scaled up, because the same shell would be a wall halfway
+ * to the horizon.
+ */
+const BACKDROP_RADIUS_METRES = 420;
 
 export type OceanRigOptions = {
   renderer: WebGLRenderer;
@@ -372,6 +379,12 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     uHorizon: { value: above ? new Color(SKY_HAZE) : fogColor.clone() },
     uUp: { value: keyColor.clone().multiplyScalar(0.85).lerp(fogColor, 0.3) },
     uDown: { value: fogColor.clone().multiplyScalar(0.3) },
+    // How much water is between the viewer and the dome, and how fast that
+    // water swallows a background. Both zero above the surface, where the
+    // "backdrop" is the sky and there is nothing in the way.
+    uWaterColor: { value: fogColor.clone() },
+    uFogDensity: { value: above ? 0 : palette.fogDensity },
+    uBackdropRadius: { value: BACKDROP_RADIUS_METRES },
     // Underwater there is no sun in the backdrop — the surface layer owns it.
     // Above water the backdrop IS the sky, so the same dome grows a disc, a Mie
     // forward-scatter lobe and a reddened horizon, and all three fall out of
@@ -379,7 +392,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     uSunGlow: { value: above ? 1 : 0 },
     ...skyShared,
   };
-  const backdropGeometry = new SphereGeometry(420, 32, 24);
+  const backdropGeometry = new SphereGeometry(BACKDROP_RADIUS_METRES, 32, 24);
   const backdropMaterial = new ShaderMaterial({
     uniforms: backdropUniforms,
     side: BackSide,
@@ -390,6 +403,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     fragmentShader: `
       uniform vec3 uHorizon; uniform vec3 uUp; uniform vec3 uDown;
       uniform float uSunGlow;
+      uniform vec3 uWaterColor; uniform float uFogDensity; uniform float uBackdropRadius;
       ${SKY_UNIFORMS_GLSL}
       varying vec3 vW;
       ${PREETHAM_SKY_GLSL}
@@ -402,6 +416,23 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
           c = uHorizon;
           c = mix(c, uUp,   pow(clamp( dir.y, 0.0, 1.0), 1.5));
           c = mix(c, uDown, pow(clamp(-dir.y, 0.0, 1.0), 1.4));
+          // The same law every other underwater layer is subject to: a
+          // background falls toward the water colour by 1 - exp(-(d*k)^2).
+          //
+          // The dome did not have it, and it was the only thing in the scene
+          // that did not. So a viewer at 24 m — where the sighting range is a
+          // few metres and the far field is by definition uniform water — got
+          // uUp painted straight on: a pale grey-olive dome filling half the
+          // frame the moment the camera pitched toward the surface, measured at
+          // 0.55 mean luma and 0.07 saturation where the same frame without the
+          // dome measures 0.16 and 0.84. It reads as staring into the sun,
+          // because a large pale shape overhead is what that looks like.
+          //
+          // This is the fault demos/ocean-depth-rig already recorded once, in
+          // the other direction: the from-below SURFACE painting a dark ceiling
+          // until it was fogged by the medium. Same rule, other layer.
+          float swallow = 1.0 - exp(-pow(uBackdropRadius * uFogDensity, 2.0));
+          c = mix(c, uWaterColor, clamp(swallow, 0.0, 1.0));
         }
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
