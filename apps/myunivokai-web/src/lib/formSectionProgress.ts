@@ -49,3 +49,46 @@ export function activeSectionIndex(sectionIds: readonly string[], activeId: stri
   const index = sectionIds.indexOf(activeId);
   return index === -1 ? 0 : index;
 }
+
+/**
+ * How close to the bottom of the field column still counts as "at the bottom".
+ * A scrollport's own `scrollTop` is fractional on a zoomed or high-DPI display,
+ * so an exact equality never fires there.
+ */
+export const SCROLL_END_TOLERANCE_PIXELS = 2;
+
+export type ScrollPosition = {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+};
+
+/** True once the field column cannot scroll any further down. */
+export function isScrolledToEnd(position: ScrollPosition): boolean {
+  return position.scrollTop + position.clientHeight >= position.scrollHeight - SCROLL_END_TOLERANCE_PIXELS;
+}
+
+/**
+ * The active section as the indicator should show it, which is not quite the
+ * most-visible one.
+ *
+ * The observer's band sits a fifth of the way down the field column, so the
+ * LAST section can never enter it: at maximum scroll it is pinned to the bottom
+ * of the scrollport, below the band, and something above it wins forever. The
+ * indicator would stop one segment short of full no matter how far the visitor
+ * scrolled — which reads as a broken bar rather than as a finished form.
+ *
+ * Reaching the bottom of the scroll is therefore its own signal, and it
+ * outranks the band.
+ */
+export function resolveActiveSectionId(
+  sectionIds: readonly string[],
+  visibilities: SectionVisibility[],
+  currentActiveId: string | null,
+  hasReachedEnd: boolean
+): string | null {
+  if (hasReachedEnd && sectionIds.length > 0) {
+    return sectionIds[sectionIds.length - 1];
+  }
+  return pickActiveSectionId(visibilities, currentActiveId);
+}

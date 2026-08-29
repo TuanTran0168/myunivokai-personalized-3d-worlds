@@ -17,7 +17,7 @@ import {
   worldChangeDirectionBetween
 } from "@/features/transitions/worldChangeDirection";
 import { ensureRange, toggleItem } from "@/lib/formSelection";
-import { activeSectionIndex, pickActiveSectionId } from "@/lib/formSectionProgress";
+import { activeSectionIndex, isScrolledToEnd, resolveActiveSectionId } from "@/lib/formSectionProgress";
 import { FORM_RAIL_ELEMENT_ID } from "@/lib/formRailCollapse";
 import { useWorldChromeCollapse, WorldChromeToggle } from "@/components/WorldChromeToggle";
 import { buildPreviewSceneConfig, pointsOfInterestFromScene } from "@/lib/scene";
@@ -316,25 +316,48 @@ export default function HomePage() {
   // a section that just barely entered view outrank one still mostly visible
   // but simply absent from that particular batch.
   //
-  // `root` is deliberately left as the default viewport, NOT railScrollReference:
-  // `.rail-scroll` only becomes its own clipped scrollport at `lg:overflow-y-auto`
-  // (see the className below). Below `lg` the page itself scrolls and the rail
-  // has no clip of its own, so its unclipped bounding box does not move
-  // relative to its own children as the page scrolls — an element root there
-  // would freeze the indicator at whatever its first layout produced. The
-  // browser's native ancestor-clip-chain still restricts intersection to the
-  // rail's own scrollport once `lg:overflow-y-auto` applies, so one viewport
-  // root is correct at every tier.
+  // `root` is the rail's own scrollport, and the margins are read against IT.
+  //
+  // This used to be the default viewport root, correct back when `.rail-scroll`
+  // only clipped from `lg:overflow-y-auto` up and the page itself scrolled below
+  // that. It stopped being correct the moment the rail became an absolutely
+  // positioned sheet that scrolls internally at every tier, and it failed in
+  // exactly one place: on phones the sheet starts at `top-[46svh]`, while a
+  // viewport root with these margins puts the active band between 20% and 40%
+  // of the viewport — entirely in the world above the sheet. No section could
+  // ever land in it, every ratio stayed 0, `pickActiveSectionId` kept returning
+  // the null it started with, and the indicator sat frozen on its first segment
+  // no matter how far the visitor scrolled. Desktop hid it: from `md` the rail
+  // spans `top-16` to `bottom-16`, so the viewport band happened to fall inside
+  // the field column anyway.
+  //
+  // Against the scrollport the same two margins mean what they were written to
+  // mean at every width — a band a fifth of the way down the visible fields —
+  // and there is no tier where the root and the thing being scrolled are
+  // different elements.
   useEffect(() => {
-    const scrollContainer = railScrollReference.current;
-    if (!scrollContainer) {
+    const railScrollElement = railScrollReference.current;
+    if (!railScrollElement) {
       return;
     }
+    // Rebound after the guard: TypeScript drops the narrowing on the ref read
+    // inside the function DECLARATION below, which hoists.
+    const scrollContainer = railScrollElement;
     const sectionElements = Array.from(scrollContainer.querySelectorAll<HTMLElement>("[data-form-section]"));
     if (sectionElements.length === 0) {
       return;
     }
     const latestRatioBySectionId = new Map<string, number>();
+    function publishActiveSection() {
+      const visibilities = Array.from(latestRatioBySectionId, ([id, intersectionRatio]) => ({
+        id,
+        intersectionRatio
+      }));
+      const hasReachedEnd = isScrolledToEnd(scrollContainer);
+      setActiveFormSectionId((current) =>
+        resolveActiveSectionId(PROGRESS_SECTION_IDS, visibilities, current, hasReachedEnd)
+      );
+    }
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -343,18 +366,22 @@ export default function HomePage() {
             latestRatioBySectionId.set(sectionId, entry.intersectionRatio);
           }
         }
-        const visibilities = Array.from(latestRatioBySectionId, ([id, intersectionRatio]) => ({
-          id,
-          intersectionRatio
-        }));
-        setActiveFormSectionId((current) => pickActiveSectionId(visibilities, current));
+        publishActiveSection();
       },
-      { rootMargin: "-20% 0px -60% 0px", threshold: [0, 0.25, 0.5, 0.75, 1] }
+      { root: scrollContainer, rootMargin: "-20% 0px -60% 0px", threshold: [0, 0.25, 0.5, 0.75, 1] }
     );
     for (const element of sectionElements) {
       observer.observe(element);
     }
-    return () => observer.disconnect();
+    // The observer alone cannot see the bottom of the scroll: the last section
+    // is already past the band by the time the column stops moving, so no
+    // threshold is crossed and no callback fires. The scroll event is what
+    // reports that final state.
+    scrollContainer.addEventListener("scroll", publishActiveSection, { passive: true });
+    return () => {
+      observer.disconnect();
+      scrollContainer.removeEventListener("scroll", publishActiveSection);
+    };
   }, []);
 
   useEffect(() => {
