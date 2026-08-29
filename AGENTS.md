@@ -39,6 +39,11 @@ same map for a program to read.
 - [`agent-system/rules/coding-style.md`](agent-system/rules/coding-style.md) — no hardcoded values, no abbreviated names
 - [`agent-system/rules/ci-quality-gates.md`](agent-system/rules/ci-quality-gates.md) — the jobs every PR must pass
 
+**And when the owner asks for an artifact** — a bench, a style study, any page
+built to be looked at rather than shipped:
+
+- [`agent-system/rules/demos-and-artifacts.md`](agent-system/rules/demos-and-artifacts.md) — it is committed to [`demos/`](demos/README.md) in the same change, not left as a URL
+
 **Then take the one definition that matches the task**, which names the handful
 of documents that matter and the ones to skip:
 

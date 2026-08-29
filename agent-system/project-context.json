@@ -122,7 +122,8 @@
       "frontend": "agent-system/agents/frontend-agent.md",
       "backend": "agent-system/agents/backend-agent.md",
       "operations": "agent-system/agents/operations-agent.md",
-      "research": "agent-system/agents/research-agent.md"
+      "research": "agent-system/agents/research-agent.md",
+      "artifactOrDemo": "agent-system/rules/demos-and-artifacts.md"
     }
   },
   "repository": {
@@ -200,7 +201,14 @@
       "path": "contracts/",
       "$comment": "The only surface the client shares with the backend. If a frontend document would change a backend decision, this is underspecified."
     },
-    "localStack": "infra/docker-compose-local.yaml"
+    "localStack": "infra/docker-compose-local.yaml",
+    "demos": {
+      "path": "demos",
+      "what": "prototypes and every artifact built for the owner, committed rather than left as a claude.ai artifact URL",
+      "rule": "agent-system/rules/demos-and-artifacts.md",
+      "readme": "demos/README.md",
+      "notProductionCode": true
+    }
   },
   "worldFamilies": {
     "$comment": "The `family` key every backend service stamps into its configs. Adding one is NOT only a code change — see the two manual steps below.",

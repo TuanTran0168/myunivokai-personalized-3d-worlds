@@ -8,6 +8,14 @@ to answer one question with a picture before the answer costs a renderer
 refactor. If a demo proves something, the finding belongs in `agent-system/`; the code
 stays here as the evidence.
 
+**Every artifact built for the owner lands here**, in the change that creates
+it. A page that exists only as a `claude.ai/code/artifact/...` URL is not in the
+repository: it cannot be diffed, cannot be found by anyone without the link, and
+goes with the conversation that made it. Two of this project's settled arguments
+were settled by a page like that. The committed file is the original; the URL is
+a copy of it. See
+[agent-system/rules/demos-and-artifacts.md](../agent-system/rules/demos-and-artifacts.md).
+
 ## Rules
 
 - **Two source files, one build step.** A demo should be a shell (`shell.html`)
@@ -26,8 +34,48 @@ stays here as the evidence.
   looks the same every time it is opened and a screenshot means something.
 - **Say what it does not prove.** Every demo's header comment records its own
   limits.
+- **Correct it when its subject ships.** A bench that still reads as a proposal
+  after its proposal was built is worse than no bench — the next person takes
+  its recommendation as the current design, one revision late.
 
 ## Contents
+
+### `world-change-transition/`
+
+The bench that chose how changing world should look. Four ways to cross, played
+against the same floating form rail, with the 2.5 s cold load simulated — plus a
+loader per world family. `Genie out · hold · in` was approved from it and is what
+ships in `apps/myunivokai-web/src/features/transitions/`.
+
+```
+# no build step; open it directly
+demos/world-change-transition/between-worlds.html
+node demos/world-change-transition/measure.mjs   # checks its three claims
+```
+
+No build step because there is nothing to splice in: the worlds are hand-painted
+on a 2D canvas, and the whole point is to judge motion and layering rather than
+to render a scene.
+
+Three claims, all checked numerically by `measure.mjs`:
+
+| Claim | How it is checked |
+| --- | --- |
+| the timeline is 620 ms out, hold, 620 ms in | each stage timed from the click to its Play button coming back |
+| the hold is painted in the **arriving** world's ground | canvas sampled mid-hold, clear of the loader, against both candidate colours |
+| the rail never moves | its bounding box read before, mid-gesture and after |
+
+The corrections written into the page after it shipped are the part worth
+reading. The bench cannot show the one thing that decided the implementation:
+both genie halves are canvas `requestAnimationFrame` loops, so they freeze
+during the real compile block exactly as the old swipe did. The destination is
+therefore not mounted until the departure has finished, and only the hold — DOM
+and CSS, `transform` and `opacity` only, so it runs on the compositor — overlaps
+the blocked main thread.
+
+**What it does not prove:** its stall is a `setTimeout`, not a blocked main
+thread, so every stage here keeps animating through it and in the app only the
+hold would. Nothing measured here says anything about the real 2.7 s.
 
 ### `ocean-depth-rig/`
 
