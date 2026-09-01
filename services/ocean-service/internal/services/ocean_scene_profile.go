@@ -154,7 +154,7 @@ func ZoneForDepth(metres float64) string {
 // rather than as one world under three colour grades, which is the acceptance
 // criterion this family was signed off against:
 //
-//   - 3-28 m is where reef-building coral actually lives, and where caustics
+//   - 12-32 m is where reef-building coral actually lives, and where caustics
 //     are still legible. A "reef in sunlit water" placed at 50 m is a dark
 //     green room.
 //   - 45-170 m is the deep blue with faint rays and silhouettes. Placed any
@@ -163,8 +163,20 @@ func ZoneForDepth(metres float64) string {
 //     water and lighting to a 2400 m abyssal one.
 //   - 1050-3800 m is below the sunlight floor, so every abyssal world is lit
 //     by bioluminescence alone as a matter of arithmetic.
+//
+// The shallows' own minimum moved once, from 3 m: at 3 m the camera is close
+// enough to the surface that the underwater-surface shader (Snell's window,
+// seen from below) has almost no water column left to be swallowed by fog
+// through, so a turbid style (Kelp Cathedral's clarity bias) painted a wall of
+// light overhead with the reef fogged out below it — reported against a real
+// frame, not a comment. The fix is not a shader clamp, it is this number: the
+// swallow the shader already does is `1 - exp(-(distance * fogDensity)^2)`, a
+// function of the REAL distance to the surface, and at 3 m no fog density this
+// family draws makes that distance mean anything. 12 m is not arbitrary either:
+// see TestOnBottomZonesCanActuallySeeTheirFloor below, which is what keeps this
+// number and the floor clearance one honest against each other.
 var depthBandByZone = map[string]floatRange{
-	ZoneSunlitShallows: {Minimum: 3, Maximum: 28},
+	ZoneSunlitShallows: {Minimum: 12, Maximum: 32},
 	ZoneTwilightReach:  {Minimum: 45, Maximum: 170},
 	ZoneAbyss:          {Minimum: 1050, Maximum: 3800},
 }
@@ -207,8 +219,32 @@ var depthBandByZone = map[string]floatRange{
 // visibility down there is about 12 m, so a 3-26 m band left more than a third
 // of abyssal worlds staring into nothing. TestOnBottomZonesCanActuallySeeTheir
 // Floor pins this against the depth curve rather than against a comment.
+//
+// THE SHALLOWS BAND CAME DOWN FROM 6-18 m, and "in sight" was the wrong bar to
+// have set it against. Two separate numbers decide whether a floor is visible
+// and only one of them was being checked:
+//
+//   - the DEPTH CURVE's VisibilityMetres, which is how much light is left. That
+//     is what TestOnBottomZonesCanActuallySeeTheirFloor tests, and 18 m passed
+//     it comfortably at every depth in the band.
+//   - the WATER TYPE's own clarity, sightingRangeMetres, which is what the
+//     renderer actually divides by. It is not a function of depth at all.
+//
+// The shallows can roll 3C (kd475 0.420), whose sighting range is 11.85 m and
+// whose 1.5x boundary reach is 17.77 m. An 18 m clearance is therefore OUTSIDE
+// the reach outright — and even at 17.77 m the fog term the renderer applies,
+// 1 - exp(-(distance/range)^2), has already swallowed 89% of the seabed. A
+// floor that is technically in sight and 89% gone is not a floor.
+//
+// 10 m is where the worst water this zone can draw still leaves the seabed
+// legible: 1 - exp(-(10/11.85)^2) = 51% swallowed, a floor seen THROUGH water
+// rather than a rumour of one. In the clearest water the zone can roll (IB,
+// range 49.89 m) the same 10 m is 4% swallowed and crisp. The minimum came down
+// with it, to 5 m, so the band keeps its spread; below that the ambient kelp
+// (1.9-5.1 m tall, oceanRigFlora.ts) would close over the viewer's head.
+// TestOnBottomZonesSeeTheirFloorThroughTheirOwnWater pins the new bar.
 var floorClearanceBandByZone = map[string]floatRange{
-	ZoneSunlitShallows: {Minimum: 2, Maximum: 14},
+	ZoneSunlitShallows: {Minimum: 5, Maximum: 10},
 	ZoneTwilightReach:  {Minimum: 1900, Maximum: 3900},
 	ZoneAbyss:          {Minimum: 2, Maximum: 9},
 }

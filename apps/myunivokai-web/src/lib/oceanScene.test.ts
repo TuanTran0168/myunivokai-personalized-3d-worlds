@@ -97,7 +97,7 @@ describe("the ocean preview builder", () => {
   it("stamps the contract keys the renderer registry resolves on", () => {
     const scene = buildPreviewOceanSceneConfig(previewInput());
     expect(scene.sceneType).toBe("ocean");
-    expect(scene.schemaVersion).toBe("1.4");
+    expect(scene.schemaVersion).toBe("1.5");
     expect(scene.assets?.catalogVersion).toBe("ocean-1");
     // This family has no sky, so it must never claim an environment map.
     expect(scene.assets?.hdriKey).toBeUndefined();
@@ -124,6 +124,38 @@ describe("the ocean preview builder", () => {
         expect(-metres).toBeLessThanOrEqual(24);
         expect(scene.depth?.seafloorMetres ?? 0).toBeGreaterThan(0);
       }
+    }
+  });
+
+  // Mirrors TestOnBottomZonesSeeTheirFloorThroughTheirOwnWater in
+  // depth_curve_test.go, and exists because nothing on this side used to pin
+  // the floor-clearance band at all — the FE/BE mirror was a comment.
+  //
+  // "In sight" was the wrong bar. A world can place its seabed inside the
+  // boundary reach and still have the renderer's own fog term,
+  // 1 - exp(-(distance/range)^2), swallow nearly all of it. The old shallows
+  // band reached 18 m against 3C water whose sighting range is 11.85 m, which
+  // is 90% swallowed: a floor that is technically drawn and effectively absent.
+  //
+  // Measured against the STORED visibility, which is min(remaining light,
+  // water clarity) — so this is stricter than the renderer, which divides by
+  // clarity alone. Stricter in the safe direction: it cannot pass something the
+  // renderer would then lose.
+  it("keeps the seabed legible in every world that is placed on one", () => {
+    // Where a floor stops reading as a floor rather than as a suggestion.
+    const MAXIMUM_FLOOR_FOG_SWALLOW = 0.6;
+    const ON_BOTTOM_ZONES = new Set([OCEAN_ZONE_SUNLIT_SHALLOWS, OCEAN_ZONE_ABYSS]);
+    for (const scene of previewsAcrossMoodsAndNicknames(30)) {
+      const metres = scene.depth?.metres ?? 0;
+      // Above the waterline there is no seabed drawn, so there is nothing to
+      // keep legible — see the isAboveWater gate in oceanRig.ts.
+      if (metres < 0) continue;
+      if (!ON_BOTTOM_ZONES.has(scene.depth?.zone ?? "")) continue;
+      const clearanceMetres = (scene.depth?.seafloorMetres ?? 0) - metres;
+      const visibilityMetres = scene.water?.visibilityMetres ?? 0;
+      expect(visibilityMetres).toBeGreaterThan(0);
+      const swallowed = 1 - Math.exp(-Math.pow(clearanceMetres / visibilityMetres, 2));
+      expect(swallowed).toBeLessThanOrEqual(MAXIMUM_FLOOR_FOG_SWALLOW);
     }
   });
 

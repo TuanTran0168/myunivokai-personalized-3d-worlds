@@ -18,12 +18,19 @@ import (
 // generation of one mood the same photograph. The other three moods'
 // probability is a flat 0 and is unaffected in outcome, but the new
 // aboveWaterRoll draw still shifts the depth stream's later rolls for every
-// mood, so every existing seed's depth moves regardless. No reader is kept
-// for 1.1, 1.2 or 1.3 because this family has not shipped and nothing has
-// ever been stored at any of them — a compatibility shim for zero rows is a
-// liability, not caution. The version still moves so the renderer key does.
+// mood, so every existing seed's depth moves regardless.
+//
+// 1.5 widens the sunlit shallows' own depthBandByZone and
+// floorClearanceBandByZone (see ocean_scene_profile.go): the shallowest reef
+// worlds sat the camera as little as 3 m from the surface, which is not
+// enough real distance for the underwater-surface shader's own fog-based
+// swallow to do anything, so a turbid style could paint a wall of light
+// straight overhead. No reader is kept for 1.1 through 1.4 because this
+// family has not shipped and nothing has ever been stored at any of them — a
+// compatibility shim for zero rows is a liability, not caution. The version
+// still moves so the renderer key does.
 const (
-	oceanSchemaVersion = "1.4"
+	oceanSchemaVersion = "1.5"
 	oceanSceneType     = "ocean"
 )
 

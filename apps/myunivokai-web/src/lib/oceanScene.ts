@@ -37,7 +37,7 @@ import { clampNumber, depthAt, roundToHundredths, roundToThousandths } from "./o
 // logic rather than a duplicated table.
 
 // Mirrors oceanSchemaVersion in ocean_config_builder.go.
-export const OCEAN_PREVIEW_SCHEMA_VERSION = "1.4";
+export const OCEAN_PREVIEW_SCHEMA_VERSION = "1.5";
 
 // Depth zones, in canonical order from the surface down. Both boundaries are
 // physical constants of the depth curve rather than round numbers: the sunlit
@@ -61,8 +61,17 @@ export function oceanZoneForDepth(metres: number): string {
   return OCEAN_ZONE_ABYSS;
 }
 
+// The shallows' own minimum moved once, from 3 m: at 3 m the camera is close
+// enough to the surface that the underwater-surface shader (Snell's window,
+// seen from below) has almost no water column left to be swallowed by fog
+// through, so a turbid style (Kelp Cathedral's clarity bias) painted a wall
+// of light overhead with the reef fogged out below it. The fix is not a
+// shader clamp, it is this number: the swallow the shader already does is
+// `1 - exp(-(distance * fogDensity)^2)`, a function of the REAL distance to
+// the surface, and at 3 m no fog density this family draws makes that
+// distance mean anything. Mirrors depthBandByZone in ocean_scene_profile.go.
 const DEPTH_BAND_BY_ZONE: Record<string, { minimum: number; maximum: number }> = {
-  [OCEAN_ZONE_SUNLIT_SHALLOWS]: { minimum: 3, maximum: 28 },
+  [OCEAN_ZONE_SUNLIT_SHALLOWS]: { minimum: 12, maximum: 32 },
   [OCEAN_ZONE_TWILIGHT_REACH]: { minimum: 45, maximum: 170 },
   [OCEAN_ZONE_ABYSS]: { minimum: 1050, maximum: 3800 }
 };
@@ -73,7 +82,14 @@ const DEPTH_BAND_BY_ZONE: Record<string, { minimum: number; maximum: number }> =
 // shows no floor; abyssal worlds sit ON the bottom, because the vents, whale
 // falls and tubeworm fields that make the abyss worth drawing are all there.
 const FLOOR_CLEARANCE_BAND_BY_ZONE: Record<string, { minimum: number; maximum: number }> = {
-  [OCEAN_ZONE_SUNLIT_SHALLOWS]: { minimum: 2, maximum: 14 },
+  // Set against the WATER TYPE's clarity, not the depth curve's remaining
+  // light. The shallows can roll 3C, whose sighting range is 11.85 m: an 18 m
+  // clearance fell outside the 1.5x boundary reach entirely, and even at the
+  // reach the renderer's own fog term had swallowed 89% of the seabed. At 10 m
+  // the worst water this zone draws leaves it 51% swallowed — a floor seen
+  // through water rather than a rumour of one. Mirrors floorClearanceBandByZone
+  // in ocean_scene_profile.go.
+  [OCEAN_ZONE_SUNLIT_SHALLOWS]: { minimum: 5, maximum: 10 },
   [OCEAN_ZONE_TWILIGHT_REACH]: { minimum: 1900, maximum: 3900 },
   // Kept inside the ~12 m visibility of the abyss. A wider band silently turns
   // "this world sits on the seabed" into "this world sits just too far above
