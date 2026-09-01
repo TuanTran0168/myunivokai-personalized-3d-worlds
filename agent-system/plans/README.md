@@ -51,6 +51,12 @@ Universe diversity rounds and the Forest renderer landed.
 [forest-realism-roadmap.md](frontend/forest-realism-roadmap.md) — the current
 realism level and what to improve next; read it before any "make the forest look
 better" task, and note that its perf budget is **unmeasured**.
+[ocean-realism-roadmap.md](frontend/ocean-realism-roadmap.md) — the same for the
+ocean, and the root cause of the "wall of light" bug: the orbit camera could
+rise above the water plane while the rig still believed it was submerged. The
+camera half is fixed and the plan records what shipped and why it differs from
+what the plan first asked for. Read it before touching the ocean camera, the
+depth bands, or the fauna.
 
 ## backlog/
 

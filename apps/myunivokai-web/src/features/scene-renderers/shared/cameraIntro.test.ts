@@ -10,6 +10,8 @@ import {
   cameraIntroOffsetAt,
   cameraIntroProgress,
   cameraIntroStartOffset,
+  minimumPolarAngleUnderCeiling,
+  NO_POLAR_FLOOR,
   pickCameraIntroPose,
   type SphericalOffset,
   type SphericalOffsetLimits
@@ -18,7 +20,8 @@ import {
 const FOREST_LIKE_LIMITS: SphericalOffsetLimits = {
   minimumRadius: 3,
   maximumRadius: 70,
-  maximumPolarRadians: Math.PI * 0.492
+  maximumPolarRadians: Math.PI * 0.492,
+  minimumPolarRadiansAtRadius: NO_POLAR_FLOOR
 };
 
 describe("cameraIntroProgress", () => {
@@ -321,5 +324,113 @@ describe("cameraIntroPoseForDuration", () => {
     // Reduced motion and the gallery backdrops both pass 0, and neither plays
     // the move — so there is nothing to size.
     expect(cameraIntroPoseForDuration(pose, 0)).toEqual(pose);
+  });
+});
+
+describe("minimumPolarAngleUnderCeiling", () => {
+  // The ocean's numbers: a shallows world 12 m down, its resting aim 4.36 m
+  // above the lens, and the widest the shared envelope opens to.
+  const CEILING_HEIGHT = 8.5;
+  const TARGET_HEIGHT = 4.364;
+
+  it("does not restrict a camera that cannot reach the ceiling anyway", () => {
+    // Zoomed right in, the whole orbit is shorter than the gap overhead.
+    expect(minimumPolarAngleUnderCeiling(CEILING_HEIGHT, TARGET_HEIGHT, 2.5)).toBe(0);
+  });
+
+  it("tightens as the camera zooms out", () => {
+    const closeIn = minimumPolarAngleUnderCeiling(CEILING_HEIGHT, TARGET_HEIGHT, 6);
+    const restingRadius = minimumPolarAngleUnderCeiling(CEILING_HEIGHT, TARGET_HEIGHT, 20);
+    const pulledBack = minimumPolarAngleUnderCeiling(CEILING_HEIGHT, TARGET_HEIGHT, 26);
+    // The owner's own report, as an inequality: the same drag is safe zoomed in
+    // and breaches the surface zoomed out.
+    expect(closeIn).toBeLessThan(restingRadius);
+    expect(restingRadius).toBeLessThan(pulledBack);
+  });
+
+  it("holds the camera under the ceiling at every radius the envelope allows", () => {
+    for (let radius = 2.5; radius <= 26; radius += 0.5) {
+      const polar = minimumPolarAngleUnderCeiling(CEILING_HEIGHT, TARGET_HEIGHT, radius);
+      const highestCamera = TARGET_HEIGHT + radius * Math.cos(polar);
+      expect(highestCamera).toBeLessThanOrEqual(CEILING_HEIGHT + 1e-9);
+    }
+  });
+
+  it("pins the camera below its target when the ceiling is under the aim point", () => {
+    // Looking steeply up from just under the surface. There is no orbit
+    // position at or above the target's own height that is still in the water.
+    const polar = minimumPolarAngleUnderCeiling(3, TARGET_HEIGHT, 20);
+    expect(polar).toBeGreaterThan(Math.PI / 2);
+  });
+
+  it("returns no restriction for a degenerate radius", () => {
+    expect(minimumPolarAngleUnderCeiling(CEILING_HEIGHT, TARGET_HEIGHT, 0)).toBe(0);
+  });
+});
+
+describe("cameraIntroStartOffset under a ceiling", () => {
+  const CEILING_HEIGHT = 8.5;
+  const TARGET_HEIGHT = 4.364;
+  // The ocean's resting pose: the lens sits at the viewer's own depth plane and
+  // looks UP at a target 4.36 m above it, so the offset points downward and the
+  // polar angle is past 90 degrees.
+  const OCEAN_LIKE_RESTING: SphericalOffset = {
+    radius: 20,
+    polarRadians: Math.acos(-TARGET_HEIGHT / 20),
+    azimuthRadians: 0.4
+  };
+  const OCEAN_LIKE_LIMITS: SphericalOffsetLimits = {
+    minimumRadius: 2.5,
+    maximumRadius: 26,
+    maximumPolarRadians: Math.PI,
+    minimumPolarRadiansAtRadius: (radius: number) =>
+      minimumPolarAngleUnderCeiling(CEILING_HEIGHT, TARGET_HEIGHT, radius)
+  };
+
+  it("keeps every opening shot in the water", () => {
+    // Every pose in the set both lifts the camera and pulls it back, and the
+    // two compound: the lift is the radius times the cosine. Before the floor
+    // existed, the crane-down pose opened a 12 m world with the lens above its
+    // own surface, which is a white frame with the entire scene behind it.
+    for (const pose of CAMERA_INTRO_POSES) {
+      const started = cameraIntroStartOffset(OCEAN_LIKE_RESTING, OCEAN_LIKE_LIMITS, pose);
+      const cameraHeight = TARGET_HEIGHT + started.radius * Math.cos(started.polarRadians);
+      expect(cameraHeight).toBeLessThanOrEqual(CEILING_HEIGHT + 1e-9);
+    }
+  });
+
+  it("is doing work — without the floor those same shots leave the water", () => {
+    // The bug this closed, kept as an assertion so the floor cannot be quietly
+    // removed and the suite stay green. Three of the ten poses put the lens
+    // above a 12 m world's own surface before the visitor has touched anything.
+    const breaching = CAMERA_INTRO_POSES.filter((pose) => {
+      const started = cameraIntroStartOffset(
+        OCEAN_LIKE_RESTING,
+        { ...OCEAN_LIKE_LIMITS, minimumPolarRadiansAtRadius: NO_POLAR_FLOOR },
+        pose
+      );
+      return TARGET_HEIGHT + started.radius * Math.cos(started.polarRadians) > CEILING_HEIGHT;
+    });
+    expect(breaching.length).toBeGreaterThan(0);
+  });
+
+  it("still turns when the lift is clamped away", () => {
+    // The azimuth invariant, which is what stops a fully clamped pose from
+    // degenerating into no move at all.
+    for (const pose of CAMERA_INTRO_POSES) {
+      const started = cameraIntroStartOffset(OCEAN_LIKE_RESTING, OCEAN_LIKE_LIMITS, pose);
+      expect(started.azimuthRadians).not.toBe(OCEAN_LIKE_RESTING.azimuthRadians);
+    }
+  });
+
+  it("leaves a family with no ceiling exactly as it was", () => {
+    const withoutCeiling = cameraIntroStartOffset(OCEAN_LIKE_RESTING, {
+      ...OCEAN_LIKE_LIMITS,
+      minimumPolarRadiansAtRadius: NO_POLAR_FLOOR
+    });
+    expect(withoutCeiling.polarRadians).toBeCloseTo(
+      OCEAN_LIKE_RESTING.polarRadians + CAMERA_INTRO_START_POSE.polarOffsetRadians,
+      10
+    );
   });
 });

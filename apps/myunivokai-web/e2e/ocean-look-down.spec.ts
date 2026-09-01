@@ -18,10 +18,44 @@ import { mkdirSync } from "node:fs";
  * against 0.55 and 0.07 with it.
  */
 
+/**
+ * MEASURED 2026-09-01, AND IT CHANGES WHAT THIS FILE IS WORTH: the gesture below
+ * does not appear to move the camera at all.
+ *
+ * The camera-breach fix was disabled and this spec re-run as a control. It
+ * passed, with numbers within noise of the fixed build (reef: 0.285 luma /
+ * 0.632 saturation unfixed, 0.299 / 0.621 fixed). The committed screenshot from
+ * the unfixed run settles why: it is the untouched RESTING framing — level, in
+ * open water, at the resting distance — after a 900 px drag and twelve wheel
+ * notches. In that world (`energetic`, 18.65 m deep, surface drawn) an
+ * unclamped drag to the pole puts the lens at 24.4 m, six metres into the air.
+ * The frame shows nothing of the sort, so the input never reached OrbitControls.
+ *
+ * So this file has never exercised the camera, which is why it stayed green
+ * through the whole life of the bug it is named after. Until the input path is
+ * fixed, treat a pass here as "the scene still renders", not as "the camera is
+ * safe". The camera invariant is pinned in `oceanMath.test.ts` instead, where it
+ * is checked across every world the generator can make, at every radius in the
+ * envelope, without a GPU.
+ *
+ * The likely causes, in the order worth checking: `page.locator("canvas")
+ * .first()` may not be the scene's canvas (and `measureFrame`'s own
+ * `document.querySelector("canvas")` would then be reading the same wrong one),
+ * or an overlay is taking the pointer at the drag point. Instrumenting the
+ * camera height and asserting it directly is the fix — a threshold on frame
+ * statistics cannot tell "the camera did not breach" from "the camera did not
+ * move".
+ */
+
 const SHOT_DIRECTORY = "e2e/shots/ocean-look-down";
 // Far enough to reach the polar limit in either direction. The first attempt at
 // this used 260 and never left the band where the fault does not show.
 const ORBIT_DRAG_PIXELS = 900;
+// Enough wheel to be sitting on the distance limit rather than near it. The
+// orbit starts at 20 m and tops out at 26, and OrbitControls dollies by a
+// factor per notch, so a handful of generous notches is comfortably past it.
+const ZOOM_OUT_WHEEL_STEPS = 12;
+const ZOOM_OUT_WHEEL_PIXELS = 240;
 // A frame the tone map has pushed to the top of its range with nothing left in
 // it. Seawater is never this pale and never this grey.
 //
@@ -98,9 +132,15 @@ async function openOceanPreview(page: Page, moodLabel: RegExp): Promise<void> {
 /**
  * Drags on the canvas until the orbit hits its polar limit.
  *
- * `directionSign` is the MOUSE direction, not the view direction: OrbitControls
- * moves the camera around its target, so dragging down lowers the camera and
- * the view ends up pointing at the surface.
+ * `directionSign` is the MOUSE direction, not the view direction, and the
+ * mapping is the opposite of the one written here for two rounds: OrbitControls
+ * moves the camera AROUND its target, and its `rotateUp` SUBTRACTS from the
+ * polar angle, which is measured down from +Y. So dragging the mouse DOWN
+ * RAISES the camera and swings the view down onto the target from above.
+ *
+ * That inversion is not a pedantic correction. It is the whole mechanism of the
+ * fault this file is named after: "turning the camera down" is the gesture that
+ * walks the lens UP, and in a shallow world it walked it out of the sea.
  */
 async function orbitToPolarLimit(page: Page, directionSign: 1 | -1): Promise<void> {
   const canvas = page.locator("canvas").first();
@@ -121,10 +161,32 @@ async function orbitToPolarLimit(page: Page, directionSign: 1 | -1): Promise<voi
   await page.waitForTimeout(1200);
 }
 
+/** Wheels the orbit out until it is against its distance limit. */
+async function zoomToWidest(page: Page): Promise<void> {
+  const canvas = page.locator("canvas").first();
+  const box = await canvas.boundingBox();
+  if (!box) {
+    throw new Error("the canvas has no box to scroll on");
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let step = 0; step < ZOOM_OUT_WHEEL_STEPS; step++) {
+    await page.mouse.wheel(0, ZOOM_OUT_WHEEL_PIXELS);
+  }
+  await page.waitForTimeout(600);
+}
+
 test.describe("turning the camera in an ocean world", () => {
-  // Both ends of the family's one axis, and both ends of the orbit. The fault
-  // was reported on a reef and reproduced in the abyss too, which is what ruled
-  // out the camera crossing the waterline: at 900 m it cannot reach it.
+  // Both ends of the family's one axis, and both ends of the orbit.
+  //
+  // The fault was reported on a reef and reproduced in the abyss too, and that
+  // was read here as RULING OUT the camera crossing the waterline, on the
+  // grounds that at 900 m it cannot reach it. The inference was wrong and it
+  // cost two rounds of shader work: the same pale frame had two causes, and
+  // fixing the abyss one (the backdrop dome, unfogged) left the reef one
+  // standing. The reef's cause is geometric — the orbit lifts the lens out of
+  // the water while the rig still believes it is submerged — and it is pinned
+  // in oceanMath.test.ts, where it can be checked without a GPU. This file
+  // keeps the abyss honest and confirms the reef on real pixels.
   for (const world of [
     { name: "Reef Crest", moodLabel: /reef crest/i },
     { name: "The Abyss", moodLabel: /the abyss/i }
@@ -136,6 +198,13 @@ test.describe("turning the camera in an ocean world", () => {
       test(`${world.name}, orbiting ${orbit.name}: shows seawater, not a wall of light`, async ({ page }) => {
         test.skip(test.info().project.name !== "desktop", "one viewport is enough for a render fault");
         await openOceanPreview(page, world.moodLabel);
+        // Zoomed OUT first, which is the condition the owner reported and the
+        // one this file was missing: the lift a tilt buys is the orbit radius
+        // times the cosine of the polar angle, so the same drag that is
+        // harmless at the resting distance puts the lens through the surface at
+        // the wide end. Dragging at the resting radius alone measured clean
+        // frames while the bug was live.
+        await zoomToWidest(page);
         await orbitToPolarLimit(page, orbit.sign);
 
         const frame = await measureFrame(page);

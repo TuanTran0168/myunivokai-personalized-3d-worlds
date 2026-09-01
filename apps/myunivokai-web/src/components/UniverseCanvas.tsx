@@ -9,7 +9,10 @@ import { backgroundColorFromScene, isForestScene, isOceanScene, pointsOfInterest
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { resolveSceneRenderer, resolveSceneTypeRenderer } from "@/features/scene-renderers/registry";
 import { FallbackUniverseRenderer } from "@/features/scene-renderers/fallback/FallbackUniverseRenderer";
-import { oceanCameraFraming as oceanCameraFramingFor } from "@/features/scene-renderers/ocean/oceanMath";
+import {
+  oceanCameraFraming as oceanCameraFramingFor,
+  oceanCameraCeilingMetres
+} from "@/features/scene-renderers/ocean/oceanMath";
 import { forestShoreCameraFraming } from "@/features/scene-renderers/forest/forestMath";
 import {
   cameraDistanceFromConfig,
@@ -53,6 +56,13 @@ const FOREST_MAXIMUM_CAMERA_DISTANCE = 70;
 // clamp (84.6) sat just inside that, so OrbitControls' first update would have
 // silently tilted the shallowest seeds back up.
 const FOREST_MAXIMUM_POLAR_ANGLE_RADIANS = Math.PI * 0.492;
+// Only worlds stored before the service began carrying a wind speed reach this,
+// and for those OceanRenderer derives one from the seed anywhere in 5-13 m/s.
+// The ceiling has to hold for whichever it lands on, so it is solved for the
+// windiest — the sea with the deepest troughs — at the cost of a couple of
+// metres of headroom in a handful of legacy worlds. Matches the top of
+// windSpeedFromSeed's own band in OceanRenderer.tsx.
+const OCEAN_FALLBACK_WIND_SPEED_METRES_PER_SECOND = 13;
 // Render at native device resolution (the old 1.8 cap under-sampled every
 // HiDPI display — a uniform blur). Quality-first scope: weak devices are
 // explicitly out of scope for now.
@@ -320,6 +330,17 @@ export function UniverseCanvas({
         scene?.depth?.seafloorMetres,
       )
     : null;
+  // How high the ocean's lens may go before it is out of its own sea. The
+  // renderer decides above-or-below ONCE, when it builds the rig, so a camera
+  // that leaves the water leaves a rig that still believes it is submerged —
+  // see oceanCameraCeilingMetres for what that looks like on screen and why the
+  // bug only ever showed at the wide end of the zoom.
+  const oceanCameraCeiling = isOceanFamilyScene
+    ? oceanCameraCeilingMetres(
+        scene?.depth?.metres ?? 20,
+        scene?.water?.windSpeedMetresPerSecond ?? OCEAN_FALLBACK_WIND_SPEED_METRES_PER_SECOND,
+      )
+    : null;
   const cameraPosition: [number, number, number] = forestCameraFraming
     ? [0, forestCameraFraming.height, forestCameraFraming.distance]
     : oceanCameraFraming
@@ -486,6 +507,7 @@ export function UniverseCanvas({
               minimumDistance={isForestFamilyScene ? FOREST_MINIMUM_CAMERA_DISTANCE : undefined}
               maximumDistance={isForestFamilyScene ? FOREST_MAXIMUM_CAMERA_DISTANCE : undefined}
               maximumPolarAngleRadians={isForestFamilyScene ? FOREST_MAXIMUM_POLAR_ANGLE_RADIANS : undefined}
+              maximumCameraHeightMetres={oceanCameraCeiling ?? undefined}
               keyboardMoveEnabled={enableKeyboardMove}
               restingTarget={oceanCameraFraming?.target}
               introDurationSeconds={introDurationSeconds}

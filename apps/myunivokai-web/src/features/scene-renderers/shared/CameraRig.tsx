@@ -15,6 +15,8 @@ import {
   cameraIntroProgress,
   cameraIntroStartOffset,
   cameraIntroPoseForDuration,
+  minimumPolarAngleUnderCeiling,
+  NO_POLAR_FLOOR,
   pickCameraIntroPose,
   type SphericalOffset
 } from "./cameraIntro";
@@ -57,6 +59,25 @@ type CameraRigProps = {
   minimumDistance?: number;
   maximumDistance?: number;
   maximumPolarAngleRadians?: number;
+  /**
+   * The height the lens may not rise above, for a family whose camera is INSIDE
+   * something it must not come out of.
+   *
+   * Only the ocean sets it, and only underwater: a scene with a sheet of water
+   * over the camera has a ceiling in the same way the forest has a floor. Left
+   * undefined, nothing here restricts the lift at all — every other family's
+   * camera is outside its subject looking in, and has nothing overhead to
+   * breach.
+   *
+   * The clamp derived from it is REAPPLIED EVERY FRAME AGAINST THE LIVE ORBIT
+   * RADIUS, not solved once, because the lift a tilt buys is the radius times
+   * the cosine of the polar angle. A single fixed angle would have to be the one
+   * that survives the widest zoom-out, and would then forbid at 3 m a look that
+   * is perfectly safe at 3 m — which is the same asymmetry the owner reported
+   * from the other side: zoomed in the frame is fine, zoomed out the same drag
+   * puts the lens through the surface.
+   */
+  maximumCameraHeightMetres?: number;
   /** Decorative canvases (gallery backdrop) opt out of keyboard movement. */
   keyboardMoveEnabled?: boolean;
   /**
@@ -109,6 +130,7 @@ export function CameraRig({
   minimumDistance = ORBIT_CONTROLS_MINIMUM_DISTANCE,
   maximumDistance = ORBIT_CONTROLS_MAXIMUM_DISTANCE,
   maximumPolarAngleRadians = ORBIT_CONTROLS_MAXIMUM_POLAR_ANGLE,
+  maximumCameraHeightMetres,
   keyboardMoveEnabled = true,
   restingTarget,
   introDurationSeconds = 0,
@@ -230,13 +252,43 @@ export function CameraRig({
     if (!sampleTerrainHeight) {
       return;
     }
-    const minimumY = sampleTerrainHeight(camera.position.x, camera.position.z) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES;
+    let minimumY = sampleTerrainHeight(camera.position.x, camera.position.z) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES;
+    // A floor is never allowed to push the lens through the ceiling. Without
+    // this the terrain clamp is a way AROUND the polar clamp rather than a
+    // companion to it: it lifts the camera after the controls have already had
+    // their say, and it lifts the orbit TARGET with it, which raises the ceiling
+    // crossing for every subsequent frame too. Where the corridor is genuinely
+    // too thin to hold both, the ceiling wins — a lens in the sand is a dark
+    // frame, a lens through the surface is a white one with the whole world
+    // hidden behind it.
+    if (maximumCameraHeightMetres !== undefined) {
+      minimumY = Math.min(minimumY, maximumCameraHeightMetres);
+    }
     if (camera.position.y < minimumY) {
       const deltaY = minimumY - camera.position.y;
       camera.position.y += deltaY;
       orbitControls.target.y += deltaY;
       orbitControls.update();
     }
+  }
+
+  // The ceiling, expressed in the one language OrbitControls speaks. Written
+  // straight onto the controls instead of clamping the position afterwards,
+  // because the controls re-derive the camera from (target, radius, polar,
+  // azimuth) on every update: a position correction would be recomputed away on
+  // the next frame, while a polar bound is enforced by the same code that moves
+  // the camera. It also means the drag simply STOPS at the surface rather than
+  // reaching it and being shoved back, which is the difference between a limit
+  // and a glitch.
+  function applyCameraCeiling(orbitControls: OrbitControlsImplementation, orbitRadius?: number) {
+    if (maximumCameraHeightMetres === undefined) {
+      return;
+    }
+    orbitControls.minPolarAngle = minimumPolarAngleUnderCeiling(
+      maximumCameraHeightMetres,
+      orbitControls.target.y,
+      orbitRadius ?? camera.position.distanceTo(orbitControls.target)
+    );
   }
 
   useFrame((_, deltaTimeSeconds) => {
@@ -253,6 +305,13 @@ export function CameraRig({
         orbitControls.update();
       }
     }
+
+    // After the resting target is in place and before every update() below, so
+    // no branch of this frame can move the camera under a bound solved for a
+    // target it no longer has. The bound is a function of the target's height,
+    // and the first frame moves that height from the scene centre to wherever
+    // the family aimed it.
+    applyCameraCeiling(orbitControls);
 
     // Opening move, ahead of everything else and returning while it runs: a
     // focus glide or a WASD glide fighting the entrance for the same camera
@@ -277,7 +336,21 @@ export function CameraRig({
             {
               minimumRadius: minimumDistance,
               maximumRadius: maximumDistance,
-              maximumPolarRadians: maximumPolarAngleRadians
+              maximumPolarRadians: maximumPolarAngleRadians,
+              // Solved against the radius the start pose lands on, which is the
+              // pulled-back one: every pose in the set lifts AND pulls back, and
+              // the lift a pose buys is the radius times the cosine, so the two
+              // compound. Without this the entrance is the one camera move that
+              // can breach the surface before the visitor has touched anything.
+              minimumPolarRadiansAtRadius:
+                maximumCameraHeightMetres === undefined
+                  ? NO_POLAR_FLOOR
+                  : (startRadius: number) =>
+                      minimumPolarAngleUnderCeiling(
+                        maximumCameraHeightMetres,
+                        orbitControls.target.y,
+                        startRadius
+                      )
             },
             introPose
           );
@@ -290,6 +363,9 @@ export function CameraRig({
         const offset = cameraIntroOffsetAt(introStartOffsetReference.current, restingOffset, progress);
         introSpherical.set(offset.radius, offset.polarRadians, offset.azimuthRadians);
         camera.position.copy(orbitControls.target).add(scratchIntroOffset.setFromSpherical(introSpherical));
+        // Against the radius THIS frame of the move is posing at, not the one
+        // the frame began with: the move travels along the radius axis too.
+        applyCameraCeiling(orbitControls, offset.radius);
         orbitControls.update();
         if (progress >= 1) {
           isIntroSpentReference.current = true;
@@ -358,6 +434,14 @@ export function CameraRig({
         orbitControls.target.lerp(SCENE_CENTER, frameLerpFactor);
       }
     }
+    orbitControls.update();
+
+    // A second pass, because a scroll-zoom is applied INSIDE update(): the bound
+    // set at the top of the frame was solved for the radius the frame started
+    // at, and the wheel has since widened it. One frame of a stale bound is one
+    // frame of white water, so it is re-solved and re-enforced here rather than
+    // left to the next tick.
+    applyCameraCeiling(orbitControls);
     orbitControls.update();
 
     // Terrain clamp, last, so it corrects whatever this frame's zoom/orbit/pan

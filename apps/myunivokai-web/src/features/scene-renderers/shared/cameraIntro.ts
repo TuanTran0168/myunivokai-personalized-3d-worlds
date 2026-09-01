@@ -217,7 +217,59 @@ export type SphericalOffsetLimits = {
   minimumRadius: number;
   maximumRadius: number;
   maximumPolarRadians: number;
+  /**
+   * How far the camera may be lifted, as a polar angle floor.
+   *
+   * The mirror of `maximumPolarRadians`, and it exists for the family that has
+   * a ceiling rather than a floor: an ocean camera is INSIDE the medium, with a
+   * sheet of water over it that it must not come out of.
+   *
+   * A function of the radius rather than a number, because the lift a polar
+   * angle buys is the radius times its cosine — so the bound is only meaningful
+   * once the radius is known. See `minimumPolarAngleUnderCeiling`. Families with
+   * no ceiling return 0.
+   */
+  minimumPolarRadiansAtRadius: (radius: number) => number;
 };
+
+/** The envelope of a family with nothing over its camera. */
+export const NO_POLAR_FLOOR = () => 0;
+
+/**
+ * A polar angle of exactly 0 puts the camera on the +Y axis, where the azimuth
+ * becomes undefined and OrbitControls' own spherical round-trip loses the
+ * horizontal bearing entirely.
+ */
+const POLAR_AXIS_EPSILON_RADIANS = 0.000001;
+
+/**
+ * The steepest lift that still keeps the lens under a horizontal ceiling.
+ *
+ * OrbitControls derives the camera from (target, radius, polar, azimuth), so
+ * the camera's height is `targetHeight + radius * cos(polar)` — polar is
+ * measured down from +Y, and the camera rises as it shrinks. Inverting that for
+ * the height the lens may not pass gives the angle it may not go below.
+ *
+ * It is a function of the LIVE radius, not of a fixed one, and that is the
+ * whole point: the same tilt that is safe zoomed in breaches the surface zoomed
+ * out, because the lift is the radius times the cosine. A single constant angle
+ * would have to be the one that survives the widest zoom, and would then forbid
+ * at 3 m a look that is perfectly safe there.
+ *
+ * Returns 0 — no restriction — when the ceiling is further above the target
+ * than the radius can reach, which is every scene that has no ceiling at all.
+ */
+export function minimumPolarAngleUnderCeiling(
+  ceilingHeight: number,
+  targetHeight: number,
+  orbitRadius: number
+): number {
+  if (!(orbitRadius > 0)) {
+    return 0;
+  }
+  const highestSafeCosine = (ceilingHeight - targetHeight) / orbitRadius;
+  return Math.acos(Math.min(1, Math.max(-1, highestSafeCosine)));
+}
 
 /**
  * Where the move actually starts from, INSIDE the same envelope OrbitControls
@@ -234,6 +286,13 @@ export type SphericalOffsetLimits = {
  * The polar clamp is there for the same reason from the other side: the
  * forest's shallowest opening shot grazes the water at 85.7 degrees, and
  * lifting it further would jam it against that family's ground-plane clamp.
+ *
+ * The polar FLOOR is the ocean's, and it is the one limit that has to be
+ * applied against the radius the start pose actually lands on rather than
+ * against the resting one. Every pose in the set both lifts the camera and
+ * pulls it back, and those compound: a 1.32x pull-back at a 0.12 rad lift puts
+ * the lens higher than either would alone. Clamping the angle against the
+ * resting radius would wave through exactly the frames the pull-back breaks.
  */
 export function cameraIntroStartOffset(
   restingOffset: SphericalOffset,
@@ -242,12 +301,11 @@ export function cameraIntroStartOffset(
 ): SphericalOffset {
   const requestedRadius = restingOffset.radius * startPose.radiusScale;
   const requestedPolar = restingOffset.polarRadians + startPose.polarOffsetRadians;
+  const radius = Math.min(limits.maximumRadius, Math.max(limits.minimumRadius, requestedRadius));
+  const lowestPolar = Math.max(POLAR_AXIS_EPSILON_RADIANS, limits.minimumPolarRadiansAtRadius(radius));
   return {
-    radius: Math.min(limits.maximumRadius, Math.max(limits.minimumRadius, requestedRadius)),
-    // The lower bound is not 0: a polar angle of exactly 0 puts the camera on
-    // the +Y axis, where the azimuth becomes undefined and OrbitControls' own
-    // spherical round-trip loses the horizontal bearing entirely.
-    polarRadians: Math.min(limits.maximumPolarRadians, Math.max(0.000001, requestedPolar)),
+    radius,
+    polarRadians: Math.min(limits.maximumPolarRadians, Math.max(lowestPolar, requestedPolar)),
     azimuthRadians: restingOffset.azimuthRadians + startPose.azimuthOffsetRadians
   };
 }

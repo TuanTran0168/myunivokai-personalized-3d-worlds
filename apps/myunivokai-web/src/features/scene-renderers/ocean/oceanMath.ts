@@ -1,5 +1,6 @@
 import { randomFromSeed } from "@/lib/scene";
 import type { OceanSeafloorConfig } from "@/lib/types";
+import { significantWaveHeightMetres } from "./oceanSeaState";
 
 /**
  * Deterministic maths for the ocean renderer.
@@ -533,4 +534,84 @@ export function oceanCameraFraming(
       z: position.z + Math.sin(yaw) * horizontal,
     },
   };
+}
+
+/**
+ * The highest crest this sea actually reaches, as a multiple of its
+ * significant wave height.
+ *
+ * Rayleigh statistics on a narrow-banded sea: over N waves the largest HEIGHT
+ * tends to Hs * sqrt(ln(N) / 2), which over the thousand-odd waves a visitor
+ * sits through is about 1.86 Hs, and a crest is half of a height.
+ *
+ * 0.93 rather than the Gerstner sum's own bound. Summing the twelve component
+ * amplitudes gives 1.22 Hs, but that is every component cresting at the same
+ * point at the same instant — true once in the life of the sea, not once a
+ * minute, and buying a fifth of a shallow world's water column to insure
+ * against it is a worse trade than the occasional grazed crest.
+ */
+const EXTREME_CREST_OVER_SIGNIFICANT_HEIGHT = 0.93;
+
+/**
+ * Clear of the near plane as well as of the water.
+ *
+ * OceanRenderer pushes the near plane out to 0.5 m for the duration of the rig,
+ * so a lens exactly at the crest line would have the sheet INSIDE its near
+ * plane and clip a hole through the sea rather than swim under it.
+ */
+const SURFACE_NEAR_PLANE_MARGIN_METRES = 0.6;
+
+/**
+ * How far below the mean waterline the lens has to stay.
+ *
+ * The surface is drawn as a Gerstner sheet whose base plane sits at the
+ * viewer's own depth, so "the waterline" is a mean, not a lid: the sheet's
+ * troughs hang below it by as much as its crests stand above it. A camera level
+ * with the mean plane is already outside the water half the time.
+ */
+export function oceanSurfaceClearanceMetres(windSpeedMetresPerSecond: number): number {
+  return (
+    significantWaveHeightMetres(Math.max(0, windSpeedMetresPerSecond)) *
+      EXTREME_CREST_OVER_SIGNIFICANT_HEIGHT +
+    SURFACE_NEAR_PLANE_MARGIN_METRES
+  );
+}
+
+/**
+ * The height the lens may not pass, or null when nothing is over it.
+ *
+ * THIS IS THE FIX FOR THE WALL OF LIGHT, and the bug it closes was never a
+ * shader bug. `createOceanRig` decides ONCE, at build time, whether the viewer
+ * is above or below the water, and roughly fifteen decisions hang off that
+ * boolean — which of the two surface materials is drawn, whether a seabed
+ * exists at all, which species are in the roster. The orbit camera then moves
+ * freely and can walk straight out of the medium the rig was built for.
+ *
+ * When it does, three things happen at once and they compound:
+ *
+ *   - the from-below surface shader is `DoubleSide` and its Snell's-window term
+ *     is an ABSOLUTE dot product, so seen from above it reports a window
+ *     everywhere and paints raw zenith sky across the whole sheet;
+ *   - the only term that dims it is distance fog, and at one metre away that is
+ *     four hundredths of one percent;
+ *   - the sheet is 900 m across, opaque and depth-writing, and follows the
+ *     camera. Every animal in the world is behind it.
+ *
+ * Which is exactly what the owner reported, in that order: a white frame, and
+ * the fish gone with it. The camera height is `target.y + radius * cos(polar)`,
+ * so it is the ZOOM that decides whether a given tilt breaches — the reason the
+ * bug shows on zoom-out and not on zoom-in.
+ *
+ * Null above water: those worlds have no sheet over the lens to come out of.
+ * They have the mirror problem — a camera that can dive UNDER their sea — which
+ * is a different bound and is not what this returns.
+ */
+export function oceanCameraCeilingMetres(
+  viewerDepthMetres: number,
+  windSpeedMetresPerSecond: number,
+): number | null {
+  if (viewerDepthMetres < 0) {
+    return null;
+  }
+  return viewerDepthMetres - oceanSurfaceClearanceMetres(windSpeedMetresPerSecond);
 }
