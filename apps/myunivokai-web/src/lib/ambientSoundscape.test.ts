@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ambientSoundscapeSignature,
@@ -5,7 +7,12 @@ import {
   SMALL_SPEAKER_BASS_FLOOR_MIDI,
   SMALL_SPEAKER_MELODY_FLOOR_MIDI
 } from "./ambientSoundscape";
-import { ARRANGEMENT_PIECE_IDS } from "@/features/audio/arrangements";
+import {
+  ARRANGEMENT_NOTE_START_BEAT_INDEX,
+  ARRANGEMENT_PIECE_IDS,
+  parseArrangement,
+  type ArrangementPieceId
+} from "@/features/audio/arrangements";
 import { SAMPLED_INSTRUMENT_NOTE_NAMES } from "@/features/audio/instrumentSamples";
 import type { SceneConfig } from "./types";
 
@@ -14,6 +21,35 @@ import type { SceneConfig } from "./types";
 // is checkable here. What it SOUNDS like is not — that is settled by rendering
 // the real graph offline and measuring, which is how three earlier versions were
 // found to be wrong while their tests were green.
+
+// The band the offline renders report across every world, widened a little at
+// each end so a tempo tweak of a few bpm is not a failing build.
+const SLOWEST_AMBIENT_ONSETS_PER_SECOND = 0.5;
+const FASTEST_AMBIENT_ONSETS_PER_SECOND = 3.5;
+const SECONDS_PER_MINUTE = 60;
+
+const ARRANGEMENT_DIRECTORY = join(process.cwd(), "public", "assets", "audio", "arrangements");
+const onsetsPerBeatByPiece = new Map<ArrangementPieceId, number>();
+
+/**
+ * How many times a second a note is STRUCK in this piece, per beat of tempo.
+ * A chord counts once — three notes on one downbeat is one attack to the ear,
+ * which is why this counts distinct start beats rather than notes.
+ */
+function noteOnsetsPerBeat(pieceId: ArrangementPieceId): number {
+  const cached = onsetsPerBeatByPiece.get(pieceId);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const arrangement = parseArrangement(
+    pieceId,
+    JSON.parse(readFileSync(join(ARRANGEMENT_DIRECTORY, `${pieceId}.json`), "utf8"))
+  );
+  const distinctOnsets = new Set(arrangement.notes.map((note) => note[ARRANGEMENT_NOTE_START_BEAT_INDEX]));
+  const onsetsPerBeat = distinctOnsets.size / arrangement.totalBeats;
+  onsetsPerBeatByPiece.set(pieceId, onsetsPerBeat);
+  return onsetsPerBeat;
+}
 
 const UNIVERSE_THEMES = ["cosmic-galaxy", "nebula", "crystal", "aurora", "cyber-orbit"];
 const FOREST_WEATHERS = ["clear", "sunRays", "overcast", "rain", "snow"];
@@ -170,6 +206,89 @@ describe("which piece plays", () => {
   });
 });
 
+describe("no piece crosses a family", () => {
+  // The property the catalogue exists to have, and the one that decays in
+  // silence. Twelve pieces covered sixteen slots by letting three of them
+  // answer twice, and two of those doubles were across families: Clair de Lune
+  // played both a sunlit forest and a drifting ocean, and drift is the most
+  // common current in every zone. Two families a visitor switches between with
+  // one tap played the same tune, which is exactly what "they all sound the
+  // same" means.
+  //
+  // Nothing here checks that a piece SUITS its slot — that is a judgement, and
+  // it is written down next to each entry. This checks the thing a judgement
+  // cannot: that adding a thirteenth forest slot did not quietly hand it a
+  // piece the ocean was already using.
+  function piecesByFamily(): Map<string, Set<ArrangementPieceId>> {
+    const byFamily = new Map<string, Set<ArrangementPieceId>>();
+    const scenesWithFallbacks: { family: string; scene: SceneConfig }[] = [
+      ...everySupportedScene().map((scene) => ({ family: familyOfScene(scene), scene })),
+      { family: "universe", scene: { seed: "fallback-universe", theme: "not-a-theme" } },
+      {
+        family: "forest",
+        scene: forestScene({ seed: "fallback-forest", weather: { kind: "not-a-weather", intensity: 0.5 } })
+      },
+      {
+        family: "ocean",
+        scene: oceanScene({ seed: "fallback-ocean", current: { kind: "not-a-current", intensity: 0.5 } })
+      }
+    ];
+    for (const { family, scene } of scenesWithFallbacks) {
+      const pieces = byFamily.get(family) ?? new Set<ArrangementPieceId>();
+      pieces.add(buildAmbientSoundscapeRecipe(scene).performance.pieceId);
+      byFamily.set(family, pieces);
+    }
+    return byFamily;
+  }
+
+  function familyOfScene(scene: SceneConfig): string {
+    if (scene.sceneType === "forest") {
+      return "forest";
+    }
+    if (scene.sceneType === "ocean") {
+      return "ocean";
+    }
+    return "universe";
+  }
+
+  it("never plays one family's piece in another", () => {
+    const byFamily = piecesByFamily();
+    const seenIn = new Map<ArrangementPieceId, string>();
+    for (const [family, pieces] of byFamily) {
+      for (const pieceId of pieces) {
+        const alreadySeenIn = seenIn.get(pieceId);
+        expect(alreadySeenIn ?? family, `${pieceId} is played by both ${alreadySeenIn} and ${family}`).toBe(family);
+        seenIn.set(pieceId, family);
+      }
+    }
+  });
+
+  it("gives the abyss its own piece, not the current's", () => {
+    // Depth used to only transpose. In the abyss the current is 0.62 still /
+    // 0.36 drift / 0.02 surge, so without an override the deep sea was one
+    // piece almost every time.
+    const shallowStill = buildAmbientSoundscapeRecipe(
+      oceanScene({ seed: "zone-test", current: { kind: "still", intensity: 0.6 }, depth: { metres: 20, zone: "sunlitShallows" } })
+    );
+    const abyssStill = buildAmbientSoundscapeRecipe(
+      oceanScene({ seed: "zone-test", current: { kind: "still", intensity: 0.6 }, depth: { metres: 900, zone: "abyss" } })
+    );
+    expect(abyssStill.performance.pieceId).not.toBe(shallowStill.performance.pieceId);
+  });
+
+  it("uses every piece it ships", () => {
+    // A piece in the catalogue that no scene reaches is 20 kB of transfer for
+    // silence, and the only way to find one is to ask.
+    const played = new Set<ArrangementPieceId>();
+    for (const pieces of piecesByFamily().values()) {
+      for (const pieceId of pieces) {
+        played.add(pieceId);
+      }
+    }
+    expect([...played].sort()).toEqual([...ARRANGEMENT_PIECE_IDS].sort());
+  });
+});
+
 describe("who plays it", () => {
   it("always uses a sampled instrument we actually ship", () => {
     for (const scene of everySupportedScene()) {
@@ -229,10 +348,17 @@ describe("the balance", () => {
 
 describe("tempo", () => {
   it("stays slow enough to be ambience and fast enough to move", () => {
+    // Measured in NOTE ONSETS PER SECOND, not in beats per minute. A bare tempo
+    // bound was what this used to assert, and it does not mean anything across a
+    // catalogue this wide: Bach's BWV 870 puts 3.9 attacks on every beat where a
+    // Gymnopédie puts 0.79, so 30 bpm is busier in one piece than 58 is in the
+    // other. This is also the number the offline renders report, which is what
+    // makes a failure here checkable against a real listen.
     for (const scene of everySupportedScene()) {
-      const { beatsPerMinute } = buildAmbientSoundscapeRecipe(scene).performance;
-      expect(beatsPerMinute).toBeGreaterThanOrEqual(30);
-      expect(beatsPerMinute).toBeLessThanOrEqual(80);
+      const { pieceId, beatsPerMinute } = buildAmbientSoundscapeRecipe(scene).performance;
+      const onsetsPerSecond = (noteOnsetsPerBeat(pieceId) * beatsPerMinute) / SECONDS_PER_MINUTE;
+      expect(onsetsPerSecond).toBeGreaterThanOrEqual(SLOWEST_AMBIENT_ONSETS_PER_SECOND);
+      expect(onsetsPerSecond).toBeLessThanOrEqual(FASTEST_AMBIENT_ONSETS_PER_SECOND);
     }
   });
 
@@ -472,6 +598,58 @@ describe("the ocean family", () => {
     const base = ambientSoundscapeSignature(oceanScene());
     expect(ambientSoundscapeSignature(oceanScene({ depth: { metres: 2400, zone: "abyss" } }))).not.toBe(base);
     expect(ambientSoundscapeSignature(oceanScene({ current: { kind: "surge", intensity: 0.5 } }))).not.toBe(base);
+  });
+
+  // Depth reads as one physical axis across sight and sound: the same
+  // depthAt().brightness that dims color, fog and god-rays also muffles the
+  // tone filter and quiets the environmental bed. Metres taken from the ocean
+  // family's own golden fixtures (e2e/fixtures/ocean-*-world.json), not
+  // invented, so this is the actual shallow/twilight/abyss spread a visitor
+  // hears.
+  describe("depth drives the mix continuously, not just the transpose", () => {
+    const current = { kind: "drift", intensity: 0.5 };
+    const shallowMetres = 18.66; // ocean-shallow-world.json
+    const twilightMetres = 62.71; // ocean-twilight-world.json
+    const abyssMetres = 2208.58; // ocean-abyss-world.json
+
+    it("mutes the tone filter and the bed gain further with depth", () => {
+      const shallow = buildAmbientSoundscapeRecipe(
+        oceanScene({ depth: { metres: shallowMetres, zone: "sunlitShallows" }, current })
+      );
+      const twilight = buildAmbientSoundscapeRecipe(
+        oceanScene({ depth: { metres: twilightMetres, zone: "twilightReach" }, current })
+      );
+      const abyss = buildAmbientSoundscapeRecipe(
+        oceanScene({ depth: { metres: abyssMetres, zone: "abyss" }, current })
+      );
+      expect(shallow.toneCutoffHertz).toBeGreaterThan(twilight.toneCutoffHertz);
+      expect(twilight.toneCutoffHertz).toBeGreaterThan(abyss.toneCutoffHertz);
+      expect(shallow.bedGain).toBeGreaterThan(twilight.bedGain);
+      expect(twilight.bedGain).toBeGreaterThan(abyss.bedGain);
+    });
+
+    it("matches a depthless scene at the surface, where brightness is 1", () => {
+      const atSurface = buildAmbientSoundscapeRecipe(oceanScene({ depth: { metres: 0, zone: "sunlitShallows" }, current }));
+      const noDepthField = buildAmbientSoundscapeRecipe(oceanScene({ depth: undefined, current }));
+      expect(atSurface.toneCutoffHertz).toBeCloseTo(noDepthField.toneCutoffHertz, 5);
+      expect(atSurface.bedGain).toBeCloseTo(noDepthField.bedGain, 5);
+    });
+
+    it("changes the signature on depth alone, even inside the same zone", () => {
+      const near = ambientSoundscapeSignature(oceanScene({ depth: { metres: 5, zone: "sunlitShallows" } }));
+      const far = ambientSoundscapeSignature(oceanScene({ depth: { metres: 19, zone: "sunlitShallows" } }));
+      expect(near).not.toBe(far);
+    });
+
+    it("leaves every other family's mix untouched", () => {
+      const withoutDepthField = buildAmbientSoundscapeRecipe(UNIVERSE_SCENE);
+      const withStrayDepthField = buildAmbientSoundscapeRecipe({
+        ...UNIVERSE_SCENE,
+        depth: { metres: abyssMetres, zone: "abyss" }
+      } as SceneConfig);
+      expect(withStrayDepthField.toneCutoffHertz).toBe(withoutDepthField.toneCutoffHertz);
+      expect(withStrayDepthField.bedGain).toBe(withoutDepthField.bedGain);
+    });
   });
 
   it("survives a config with no depth and no current instead of throwing", () => {

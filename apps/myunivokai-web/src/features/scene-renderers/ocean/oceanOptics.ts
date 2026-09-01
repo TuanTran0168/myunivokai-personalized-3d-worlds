@@ -8,7 +8,7 @@
  * that scheme — I, IA, IB, II, III for open ocean and 1C–9C for coastal.
  *
  * This replaces a hand-authored palette with a derivation, and the reason to
- * care is in notes/fe/ocean-visual-direction-research.md §11j: a palette can
+ * care is in agent-system/evolution/ocean-visual-direction-research.md §11j: a palette can
  * pair fifty metres of visibility with estuary-green water, and Kd cannot.
  *
  * Two facts are load-bearing and worth stating before the code:

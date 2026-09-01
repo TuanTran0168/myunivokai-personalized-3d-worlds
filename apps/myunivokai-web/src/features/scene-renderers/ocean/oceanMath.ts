@@ -1,5 +1,6 @@
 import { randomFromSeed } from "@/lib/scene";
 import type { OceanSeafloorConfig } from "@/lib/types";
+import { significantWaveHeightMetres } from "./oceanSeaState";
 
 /**
  * Deterministic maths for the ocean renderer.
@@ -48,6 +49,96 @@ export function createSeafloorHeightSampler(seafloor?: OceanSeafloorConfig): Sea
     const radial = Math.min(1, Math.hypot(x, z) / Math.max(1, basinRadius));
     return (primary + secondary) * amplitude - radial * radial * BASIN_RIM_DROP;
   };
+}
+
+// How many points around the rim of a footprint are sampled when there is no
+// mesh to sample instead. Eight is where the gap this closes stops narrowing:
+// the seabed's shortest wavelength is the wind ripple at about 11 m and a
+// footprint is a few metres across, so the surface under one object is close to
+// a plane, and a ring of eight finds its low corner.
+const FOOTPRINT_RIM_SAMPLE_COUNT = 8;
+// The most mesh vertices this will look at along one axis, whatever the
+// footprint and cell size ask for. A guard against a pathological call, not a
+// quality setting: the real cases need three or four.
+const MAXIMUM_FOOTPRINT_SAMPLES_PER_AXIS = 12;
+
+/**
+ * The LOWEST the DRAWN seabed gets anywhere under a footprint of this radius.
+ *
+ * Two things put a landmark in the air, and this answers both.
+ *
+ * The foot is a footprint, not a point, and it used to be placed against a
+ * single sample taken at its centre. The seabed carries 1.2 m dunes over an
+ * 18 m wavelength, so a shape five metres across standing on a slope has its
+ * uphill edge buried and its downhill edge in open water however correct its
+ * centre is.
+ *
+ * And `heightSampler` is the height FUNCTION, while what the eye sees is that
+ * function sampled on a grid and joined with flat triangles. Those triangles
+ * cut every corner, so the drawn floor hangs BELOW the function — by about
+ * 0.2 m at desktop's 2.27 m vertex spacing and 0.6 m at mobile's 5.67 m. An
+ * object placed on the function is that far above the sand it appears to
+ * stand on, and it is worse on the weaker device, which is the opposite of
+ * how a quality setting should fail.
+ *
+ * So when the mesh spacing is known the samples are taken AT ITS VERTICES,
+ * across every cell the footprint touches. Their minimum is at or below the
+ * drawn surface everywhere inside the footprint, because a triangle never dips
+ * below its own corners — which makes this exact rather than an estimate. With
+ * no mesh (`meshCellSizeMetres` of 0, the first frames before the rig exists)
+ * it falls back to a ring on the function itself.
+ *
+ * The minimum is the right end of the range and not the mean: an object half a
+ * metre into the seabed reads as settled, and the same object half a metre
+ * above it reads as broken.
+ */
+export function lowestSeafloorUnderFootprint(
+  heightSampler: SeafloorHeightSampler,
+  centreX: number,
+  centreZ: number,
+  footprintRadiusMetres: number,
+  meshCellSizeMetres: number
+): number {
+  let lowest = heightSampler(centreX, centreZ);
+  if (!(footprintRadiusMetres > 0)) {
+    return lowest;
+  }
+
+  if (!(meshCellSizeMetres > 0)) {
+    for (let sampleIndex = 0; sampleIndex < FOOTPRINT_RIM_SAMPLE_COUNT; sampleIndex += 1) {
+      const angle = (sampleIndex / FOOTPRINT_RIM_SAMPLE_COUNT) * Math.PI * 2;
+      const sampled = heightSampler(
+        centreX + Math.cos(angle) * footprintRadiusMetres,
+        centreZ + Math.sin(angle) * footprintRadiusMetres
+      );
+      if (sampled < lowest) {
+        lowest = sampled;
+      }
+    }
+    return lowest;
+  }
+
+  // Every vertex of every cell the footprint overlaps, so the whole triangle
+  // fan under the shape is accounted for and not just the part inside the
+  // circle.
+  const firstColumn = Math.floor((centreX - footprintRadiusMetres) / meshCellSizeMetres);
+  const lastColumn = Math.ceil((centreX + footprintRadiusMetres) / meshCellSizeMetres);
+  const firstRow = Math.floor((centreZ - footprintRadiusMetres) / meshCellSizeMetres);
+  const lastRow = Math.ceil((centreZ + footprintRadiusMetres) / meshCellSizeMetres);
+  const columnCount = Math.min(MAXIMUM_FOOTPRINT_SAMPLES_PER_AXIS, lastColumn - firstColumn + 1);
+  const rowCount = Math.min(MAXIMUM_FOOTPRINT_SAMPLES_PER_AXIS, lastRow - firstRow + 1);
+  for (let column = 0; column < columnCount; column += 1) {
+    for (let row = 0; row < rowCount; row += 1) {
+      const sampled = heightSampler(
+        (firstColumn + column) * meshCellSizeMetres,
+        (firstRow + row) * meshCellSizeMetres
+      );
+      if (sampled < lowest) {
+        lowest = sampled;
+      }
+    }
+  }
+  return lowest;
 }
 
 /**
@@ -533,4 +624,84 @@ export function oceanCameraFraming(
       z: position.z + Math.sin(yaw) * horizontal,
     },
   };
+}
+
+/**
+ * The highest crest this sea actually reaches, as a multiple of its
+ * significant wave height.
+ *
+ * Rayleigh statistics on a narrow-banded sea: over N waves the largest HEIGHT
+ * tends to Hs * sqrt(ln(N) / 2), which over the thousand-odd waves a visitor
+ * sits through is about 1.86 Hs, and a crest is half of a height.
+ *
+ * 0.93 rather than the Gerstner sum's own bound. Summing the twelve component
+ * amplitudes gives 1.22 Hs, but that is every component cresting at the same
+ * point at the same instant — true once in the life of the sea, not once a
+ * minute, and buying a fifth of a shallow world's water column to insure
+ * against it is a worse trade than the occasional grazed crest.
+ */
+const EXTREME_CREST_OVER_SIGNIFICANT_HEIGHT = 0.93;
+
+/**
+ * Clear of the near plane as well as of the water.
+ *
+ * OceanRenderer pushes the near plane out to 0.5 m for the duration of the rig,
+ * so a lens exactly at the crest line would have the sheet INSIDE its near
+ * plane and clip a hole through the sea rather than swim under it.
+ */
+const SURFACE_NEAR_PLANE_MARGIN_METRES = 0.6;
+
+/**
+ * How far below the mean waterline the lens has to stay.
+ *
+ * The surface is drawn as a Gerstner sheet whose base plane sits at the
+ * viewer's own depth, so "the waterline" is a mean, not a lid: the sheet's
+ * troughs hang below it by as much as its crests stand above it. A camera level
+ * with the mean plane is already outside the water half the time.
+ */
+export function oceanSurfaceClearanceMetres(windSpeedMetresPerSecond: number): number {
+  return (
+    significantWaveHeightMetres(Math.max(0, windSpeedMetresPerSecond)) *
+      EXTREME_CREST_OVER_SIGNIFICANT_HEIGHT +
+    SURFACE_NEAR_PLANE_MARGIN_METRES
+  );
+}
+
+/**
+ * The height the lens may not pass, or null when nothing is over it.
+ *
+ * THIS IS THE FIX FOR THE WALL OF LIGHT, and the bug it closes was never a
+ * shader bug. `createOceanRig` decides ONCE, at build time, whether the viewer
+ * is above or below the water, and roughly fifteen decisions hang off that
+ * boolean — which of the two surface materials is drawn, whether a seabed
+ * exists at all, which species are in the roster. The orbit camera then moves
+ * freely and can walk straight out of the medium the rig was built for.
+ *
+ * When it does, three things happen at once and they compound:
+ *
+ *   - the from-below surface shader is `DoubleSide` and its Snell's-window term
+ *     is an ABSOLUTE dot product, so seen from above it reports a window
+ *     everywhere and paints raw zenith sky across the whole sheet;
+ *   - the only term that dims it is distance fog, and at one metre away that is
+ *     four hundredths of one percent;
+ *   - the sheet is 900 m across, opaque and depth-writing, and follows the
+ *     camera. Every animal in the world is behind it.
+ *
+ * Which is exactly what the owner reported, in that order: a white frame, and
+ * the fish gone with it. The camera height is `target.y + radius * cos(polar)`,
+ * so it is the ZOOM that decides whether a given tilt breaches — the reason the
+ * bug shows on zoom-out and not on zoom-in.
+ *
+ * Null above water: those worlds have no sheet over the lens to come out of.
+ * They have the mirror problem — a camera that can dive UNDER their sea — which
+ * is a different bound and is not what this returns.
+ */
+export function oceanCameraCeilingMetres(
+  viewerDepthMetres: number,
+  windSpeedMetresPerSecond: number,
+): number | null {
+  if (viewerDepthMetres < 0) {
+    return null;
+  }
+  return viewerDepthMetres - oceanSurfaceClearanceMetres(windSpeedMetresPerSecond);
 }

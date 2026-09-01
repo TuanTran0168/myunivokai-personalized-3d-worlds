@@ -97,12 +97,90 @@ var allowedMoods = map[string]struct{}{
 	"curious":         {},
 }
 
-var allowedWorldStyles = map[string]struct{}{
+// World styles, PER FAMILY.
+//
+// It used to be one set shared by all three, which was only ever true of the
+// universe: the five names below under WorldFamilyUniverse are sky and orbit
+// themes, and nature-service and ocean-service stored whichever of them arrived
+// and then never read it again. The create form eventually hid the picker for
+// those two families rather than keep offering a control that changed nothing,
+// which is the right call for a control that changes nothing and the wrong one
+// for a family that has two families' worth of unexposed variation in it.
+//
+// So each family names its own, and each one's service reads it. The FIRST
+// entry of every family is its neutral style — the world as the builder already
+// made it — which is what lets this be added without invalidating a single
+// stored world.
+// The vocabulary the AI is asked to answer with in visualHints.theme, which is
+// NOT the same field as the visitor's PreferredWorldStyle and is not per-family.
+// It happens to be the universe's five style names because that is what the DNA
+// prompt asks for; every family stores the answer and only universe-service
+// reads it (sky_scene_profile.go, and the post-FX grade).
+var allowedDNAVisualThemes = map[string]struct{}{
 	"cosmic-galaxy": {},
 	"nebula":        {},
 	"crystal":       {},
 	"aurora":        {},
 	"cyber-orbit":   {},
+}
+
+var allowedWorldStylesByFamily = map[WorldFamily]map[string]struct{}{
+	WorldFamilyUniverse: {
+		"cosmic-galaxy": {},
+		"nebula":        {},
+		"crystal":       {},
+		"aurora":        {},
+		"cyber-orbit":   {},
+	},
+	WorldFamilyNature: {
+		"wildwood":      {},
+		"ancient-grove": {},
+		"mistwood":      {},
+		"emberfall":     {},
+		"lanternwood":   {},
+	},
+	WorldFamilyOcean: {
+		"open-water":     {},
+		"coral-garden":   {},
+		"kelp-cathedral": {},
+		"crystal-shoal":  {},
+		"silt-drift":     {},
+	},
+}
+
+// DefaultWorldStyleForFamily is the neutral style, and the answer for a stored
+// world that predates its family having styles at all.
+//
+// Every family's neutral profile is a no-op — all multipliers 1, all biases 0 —
+// so a world created before this existed renders byte-for-byte as it did. That
+// is not a nicety: the golden fixtures in each family service ARE the
+// compatibility contract, and a style axis whose default moved would have
+// forced a schema bump on all three families at once.
+func DefaultWorldStyleForFamily(family WorldFamily) string {
+	switch family {
+	case WorldFamilyNature:
+		return "wildwood"
+	case WorldFamilyOcean:
+		return "open-water"
+	default:
+		return "cosmic-galaxy"
+	}
+}
+
+// WorldStyleAllowedForFamily reports whether this family offers this style.
+// An empty style is allowed and means the family's default — a world stored
+// before its family had styles has no style, and rejecting it would make old
+// records unreadable.
+func WorldStyleAllowedForFamily(family WorldFamily, style string) bool {
+	if style == "" {
+		return true
+	}
+	styles, found := allowedWorldStylesByFamily[family]
+	if !found {
+		return false
+	}
+	_, allowed := styles[style]
+	return allowed
 }
 
 type WorldFamily string
@@ -200,7 +278,11 @@ type ValidationDetail struct {
 	Message string `json:"message"`
 }
 
-func (input WorldInput) Validate() []ValidationDetail {
+// Validate takes the family because the world style is the one field whose
+// vocabulary differs by family — "nebula" is a real universe and a nonsense
+// forest. Every call site already had the family in hand one line above, next
+// to its own family.Valid() check.
+func (input WorldInput) Validate(family WorldFamily) []ValidationDetail {
 	normalizedInput := input.Normalize()
 	var details []ValidationDetail
 	if runeLength(normalizedInput.Nickname) < minimumNicknameCharacters || runeLength(normalizedInput.Nickname) > maximumNicknameCharacters {
@@ -228,8 +310,8 @@ func (input WorldInput) Validate() []ValidationDetail {
 			details = append(details, ValidationDetail{Field: fmt.Sprintf("favoriteColors.%d", colorIndex), Message: "Color must be a hex value like #8B5CF6."})
 		}
 	}
-	if _, found := allowedWorldStyles[normalizedInput.PreferredWorldStyle]; !found {
-		details = append(details, ValidationDetail{Field: "preferredWorldStyle", Message: "World style is not supported."})
+	if !WorldStyleAllowedForFamily(family, normalizedInput.PreferredWorldStyle) {
+		details = append(details, ValidationDetail{Field: "preferredWorldStyle", Message: "World style is not supported for this world family."})
 	}
 	return details
 }
@@ -317,7 +399,7 @@ func (profileDNA ProfileDNA) Validate() error {
 			return fmt.Errorf("facets.%d.energy must be 0-100", facetIndex)
 		}
 	}
-	if _, found := allowedWorldStyles[strings.ToLower(strings.TrimSpace(profileDNA.VisualHints.Theme))]; !found {
+	if _, found := allowedDNAVisualThemes[strings.ToLower(strings.TrimSpace(profileDNA.VisualHints.Theme))]; !found {
 		return errors.New("visualHints.theme is not supported")
 	}
 	return nil
@@ -366,7 +448,7 @@ type DNAFailedData struct {
 // that really is all zeroes. Adding it is backward compatible in both
 // directions — encoding/json ignores unknown fields, and dna-service compiles
 // against this same package and simply does not read it. See
-// notes/vision/analytics-service-plan.md#the-event-gap.
+// agent-system/plans/services/analytics-service-plan.md#the-event-gap.
 type FamilyCompletedData struct {
 	Family       WorldFamily    `json:"family"`
 	ProfileID    string         `json:"profileId"`

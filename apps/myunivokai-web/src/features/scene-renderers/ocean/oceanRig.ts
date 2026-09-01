@@ -15,7 +15,7 @@
  *   windSpeedMps                             the wave spectrum and the foam
  *   sunElevationDegrees                      the sky, and the refracted sun
  *
- * The reasoning behind each is in notes/fe/ocean-visual-direction-research.md
+ * The reasoning behind each is in agent-system/evolution/ocean-visual-direction-research.md
  * (§11c the adaptation model, §11f the sky, §11i the sea state, §11j the water,
  * §11k why the service should carry exactly these fields).
  */
@@ -96,6 +96,23 @@ import {
 const WAVE_MAX = 12;
 /** A boundary is drawn only when it lies within about 1.5 sighting ranges. */
 const BOUNDARY_SIGHT_MULTIPLIER = 1.5;
+/**
+ * The backdrop shell, in metres. Underwater it sits past anything the water
+ * lets you see, which is exactly why the water has to be allowed to swallow it;
+ * above water it is scaled up, because the same shell would be a wall halfway
+ * to the horizon.
+ */
+const BACKDROP_RADIUS_METRES = 420;
+/**
+ * The seabed mesh: how far it reaches, and how finely it is sampled at each
+ * quality level. The vertex spacing that falls out of these two — 2.27 m and
+ * 5.67 m — is what anything standing on the floor has to know about, because
+ * between vertices the drawn triangles hang below the height function. Exposed
+ * as `floorCellSizeMetres` for that reason.
+ */
+const SEABED_EXTENT_METRES = 680;
+const SEABED_SEGMENTS_HIGH = 300;
+const SEABED_SEGMENTS_LOW = 120;
 
 export type OceanRigOptions = {
   renderer: WebGLRenderer;
@@ -158,6 +175,12 @@ export type OceanRig = {
    * exactly as far above the sand as the two disagree.
    */
   heightAt: (x: number, z: number) => number;
+  /**
+   * The floor mesh's vertex spacing, in metres, or 0 when no floor is drawn.
+   * What separates the height FUNCTION from the surface actually rasterised —
+   * see Seabed.cellSizeMetres.
+   */
+  floorCellSizeMetres: number;
   update: (elapsed: number, camera: Camera) => void;
   dispose: () => void;
 };
@@ -372,6 +395,12 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     uHorizon: { value: above ? new Color(SKY_HAZE) : fogColor.clone() },
     uUp: { value: keyColor.clone().multiplyScalar(0.85).lerp(fogColor, 0.3) },
     uDown: { value: fogColor.clone().multiplyScalar(0.3) },
+    // How much water is between the viewer and the dome, and how fast that
+    // water swallows a background. Both zero above the surface, where the
+    // "backdrop" is the sky and there is nothing in the way.
+    uWaterColor: { value: fogColor.clone() },
+    uFogDensity: { value: above ? 0 : palette.fogDensity },
+    uBackdropRadius: { value: BACKDROP_RADIUS_METRES },
     // Underwater there is no sun in the backdrop — the surface layer owns it.
     // Above water the backdrop IS the sky, so the same dome grows a disc, a Mie
     // forward-scatter lobe and a reddened horizon, and all three fall out of
@@ -379,7 +408,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     uSunGlow: { value: above ? 1 : 0 },
     ...skyShared,
   };
-  const backdropGeometry = new SphereGeometry(420, 32, 24);
+  const backdropGeometry = new SphereGeometry(BACKDROP_RADIUS_METRES, 32, 24);
   const backdropMaterial = new ShaderMaterial({
     uniforms: backdropUniforms,
     side: BackSide,
@@ -390,6 +419,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     fragmentShader: `
       uniform vec3 uHorizon; uniform vec3 uUp; uniform vec3 uDown;
       uniform float uSunGlow;
+      uniform vec3 uWaterColor; uniform float uFogDensity; uniform float uBackdropRadius;
       ${SKY_UNIFORMS_GLSL}
       varying vec3 vW;
       ${PREETHAM_SKY_GLSL}
@@ -402,6 +432,23 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
           c = uHorizon;
           c = mix(c, uUp,   pow(clamp( dir.y, 0.0, 1.0), 1.5));
           c = mix(c, uDown, pow(clamp(-dir.y, 0.0, 1.0), 1.4));
+          // The same law every other underwater layer is subject to: a
+          // background falls toward the water colour by 1 - exp(-(d*k)^2).
+          //
+          // The dome did not have it, and it was the only thing in the scene
+          // that did not. So a viewer at 24 m — where the sighting range is a
+          // few metres and the far field is by definition uniform water — got
+          // uUp painted straight on: a pale grey-olive dome filling half the
+          // frame the moment the camera pitched toward the surface, measured at
+          // 0.55 mean luma and 0.07 saturation where the same frame without the
+          // dome measures 0.16 and 0.84. It reads as staring into the sun,
+          // because a large pale shape overhead is what that looks like.
+          //
+          // This is the fault demos/ocean-depth-rig already recorded once, in
+          // the other direction: the from-below SURFACE painting a dark ceiling
+          // until it was fogged by the medium. Same rule, other layer.
+          float swallow = 1.0 - exp(-pow(uBackdropRadius * uFogDensity, 2.0));
+          c = mix(c, uWaterColor, clamp(swallow, 0.0, 1.0));
         }
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
@@ -654,8 +701,8 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
   let seabed: Seabed | null = null;
   if (seafloorInSight) {
     seabed = createSeabed({
-      extent: 680,
-      segments: high ? 300 : 120,
+      extent: SEABED_EXTENT_METRES,
+      segments: high ? SEABED_SEGMENTS_HIGH : SEABED_SEGMENTS_LOW,
       windDirectionRadians,
       seed,
       renderer,
@@ -837,6 +884,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
   return {
     group,
     heightAt: (x, z) => (seabed ? seabed.heightAt(x, z) : 0),
+    floorCellSizeMetres: seabed ? seabed.cellSizeMetres : 0,
     state: {
       seaState,
       sightingRangeMetres: range,

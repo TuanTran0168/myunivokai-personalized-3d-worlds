@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   title: "Myunivokai Admin",
   description: "Internal staff console",
   // Staff-only surface: never indexed, never listed, never statically
-  // generated with record data (notes/vision/auth-and-admin-plan.md#the-admin-app).
+  // generated with record data (agent-system/plans/services/auth-and-admin-plan.md#the-admin-app).
   robots: { index: false, follow: false }
 };
 

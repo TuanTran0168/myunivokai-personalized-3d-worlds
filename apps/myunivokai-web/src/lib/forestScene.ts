@@ -132,6 +132,106 @@ function forestProfileForMood(mood: string): ForestMoodProfile {
   return FOREST_MOOD_PROFILES[mood.trim().toLowerCase()] ?? NEUTRAL_FOREST_PROFILE;
 }
 
+// --- World style -------------------------------------------------------------
+//
+// Mirrors forest_style_profile.go one-for-one. The visitor's second axis, and
+// deliberately the one the MOOD does not touch: mood decides which season and
+// how much wind/wildlife/bloom, style decides how the forest is GROWN and LIT.
+//
+// timeOfDayWeights index TIME_OF_DAY_KINDS_IN_ORDER. fogProbabilityBias is
+// ADDED to the season's own probability and then clamped, so autumn stays
+// foggier than summer under every style.
+export const FOREST_STYLE_WILDWOOD = "wildwood";
+export const FOREST_STYLE_ANCIENT_GROVE = "ancient-grove";
+export const FOREST_STYLE_MISTWOOD = "mistwood";
+export const FOREST_STYLE_EMBERFALL = "emberfall";
+export const FOREST_STYLE_LANTERNWOOD = "lanternwood";
+
+type ForestStyleProfile = {
+  timeOfDayWeights: [number, number, number];
+  fogProbabilityBias: number;
+  treeCountMultiplier: number;
+  treeScaleMultiplier: number;
+  bloomMultiplier: number;
+  grade: ScenePostFXGradeConfig;
+};
+
+const NEUTRAL_FOREST_GRADE: ScenePostFXGradeConfig = { hueRadians: 0, saturation: 0, brightness: 0, contrast: 0 };
+
+// Exactly neutral, and it has to stay that way: these are the numbers a forest
+// with no style gets, and they are what keeps the backend's golden fixtures
+// valid for every world stored before styles existed.
+const NEUTRAL_FOREST_STYLE_PROFILE: ForestStyleProfile = {
+  timeOfDayWeights: [0.35, 0.45, 0.2],
+  fogProbabilityBias: 0,
+  treeCountMultiplier: 1.0,
+  treeScaleMultiplier: 1.0,
+  bloomMultiplier: 1.0,
+  grade: NEUTRAL_FOREST_GRADE
+};
+
+const FOREST_STYLE_PROFILES: Record<string, ForestStyleProfile> = {
+  [FOREST_STYLE_WILDWOOD]: NEUTRAL_FOREST_STYLE_PROFILE,
+  [FOREST_STYLE_ANCIENT_GROVE]: {
+    timeOfDayWeights: [0.55, 0.35, 0.1],
+    fogProbabilityBias: 0.1,
+    treeCountMultiplier: 0.62,
+    treeScaleMultiplier: 1.45,
+    bloomMultiplier: 0.9,
+    grade: { hueRadians: 0, saturation: -0.04, brightness: -0.02, contrast: 0.05 }
+  },
+  [FOREST_STYLE_MISTWOOD]: {
+    timeOfDayWeights: [0.3, 0.3, 0.4],
+    fogProbabilityBias: 0.55,
+    treeCountMultiplier: 1.1,
+    treeScaleMultiplier: 1.0,
+    bloomMultiplier: 1.25,
+    grade: { hueRadians: 0.02, saturation: -0.18, brightness: 0.04, contrast: -0.05 }
+  },
+  [FOREST_STYLE_EMBERFALL]: {
+    timeOfDayWeights: [0.1, 0.8, 0.1],
+    fogProbabilityBias: -0.05,
+    treeCountMultiplier: 1.0,
+    treeScaleMultiplier: 1.05,
+    bloomMultiplier: 1.2,
+    grade: { hueRadians: -0.04, saturation: 0.16, brightness: 0.01, contrast: 0.06 }
+  },
+  [FOREST_STYLE_LANTERNWOOD]: {
+    timeOfDayWeights: [0.05, 0.2, 0.75],
+    fogProbabilityBias: 0.25,
+    treeCountMultiplier: 1.15,
+    treeScaleMultiplier: 0.95,
+    bloomMultiplier: 1.55,
+    grade: { hueRadians: -0.03, saturation: 0.1, brightness: -0.03, contrast: 0.09 }
+  }
+};
+
+function forestProfileForStyle(style: string): ForestStyleProfile {
+  return FOREST_STYLE_PROFILES[style.trim().toLowerCase()] ?? NEUTRAL_FOREST_STYLE_PROFILE;
+}
+
+// Fog may not be certain and may not be impossible: a style that pinned either
+// end would stop the weather being a property of the world.
+const MINIMUM_FOG_PROBABILITY = 0.05;
+const MAXIMUM_FOG_PROBABILITY = 0.95;
+
+/**
+ * Layers a style's grade offset on the season's. Both are offsets from neutral,
+ * so adding is the operation that means "and also".
+ *
+ * Every field is optional in the type because the FE mirrors the BE JSON
+ * contract, where an older stored world may simply not carry one — an absent
+ * offset is no offset.
+ */
+function addGrade(base: ScenePostFXGradeConfig, overlay: ScenePostFXGradeConfig): ScenePostFXGradeConfig {
+  return {
+    hueRadians: (base.hueRadians ?? 0) + (overlay.hueRadians ?? 0),
+    saturation: (base.saturation ?? 0) + (overlay.saturation ?? 0),
+    brightness: (base.brightness ?? 0) + (overlay.brightness ?? 0),
+    contrast: (base.contrast ?? 0) + (overlay.contrast ?? 0)
+  };
+}
+
 type WeightedWeatherKind = {
   kind: string;
   weight: number;
@@ -302,13 +402,12 @@ const BASE_BIRD_FLOCKS_BY_SEASON: Record<string, number> = {
   [FOREST_SEASON_WINTER]: 0.6
 };
 
-// Golden hour gets the biggest weight on purpose: it is the most flattering
-// light for the stylized look (the beauty-first decision).
-const TIME_OF_DAY_WEIGHTS: { kind: string; weight: number }[] = [
-  { kind: FOREST_TIME_OF_DAY_DAY, weight: 0.35 },
-  { kind: FOREST_TIME_OF_DAY_GOLDEN_HOUR, weight: 0.45 },
-  { kind: FOREST_TIME_OF_DAY_DUSK, weight: 0.2 }
-];
+// Canonical order — ForestStyleProfile.timeOfDayWeights indexes into it.
+const TIME_OF_DAY_KINDS_IN_ORDER = [
+  FOREST_TIME_OF_DAY_DAY,
+  FOREST_TIME_OF_DAY_GOLDEN_HOUR,
+  FOREST_TIME_OF_DAY_DUSK
+] as const;
 
 type FloatRange = {
   minimum: number;
@@ -548,16 +647,20 @@ function weatherKindForRoll(roll: number, entries: WeightedWeatherKind[]): strin
   return entries[entries.length - 1].kind;
 }
 
-function timeOfDayForRoll(roll: number): string {
-  const total = TIME_OF_DAY_WEIGHTS.reduce((sum, entry) => sum + entry.weight, 0);
+function timeOfDayForRoll(roll: number, weights: readonly [number, number, number]): string {
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const lastKind = TIME_OF_DAY_KINDS_IN_ORDER[TIME_OF_DAY_KINDS_IN_ORDER.length - 1];
+  if (total <= 0) {
+    return lastKind;
+  }
   let cumulative = 0;
-  for (const entry of TIME_OF_DAY_WEIGHTS) {
-    cumulative += entry.weight;
+  for (let index = 0; index < weights.length; index++) {
+    cumulative += weights[index];
     if (roll < cumulative / total) {
-      return entry.kind;
+      return TIME_OF_DAY_KINDS_IN_ORDER[index];
     }
   }
-  return TIME_OF_DAY_WEIGHTS[TIME_OF_DAY_WEIGHTS.length - 1].kind;
+  return lastKind;
 }
 
 // Draw order: season roll, transition roll, transition direction, blend
@@ -593,7 +696,8 @@ function buildPreviewSeasonConfig(seed: string, moodProfile: ForestMoodProfile):
 function buildPreviewLightingConfig(
   seed: string,
   season: ForestSeasonConfig,
-  moodProfile: ForestMoodProfile
+  moodProfile: ForestMoodProfile,
+  styleProfile: ForestStyleProfile
 ): { lighting: ForestLightingConfig; bloomIntensity: number } {
   const nextRandomValue = randomFromSeed(seed + LIGHTING_SEED_SUFFIX);
   const timeOfDayRoll = nextRandomValue();
@@ -604,16 +708,25 @@ function buildPreviewLightingConfig(
   const fogDensityRoll = nextRandomValue();
   const bloomRoll = nextRandomValue();
 
-  const timeOfDay = timeOfDayForRoll(timeOfDayRoll);
+  const timeOfDay = timeOfDayForRoll(timeOfDayRoll, styleProfile.timeOfDayWeights);
   const elevationBounds = SUN_ELEVATION_BOUNDS_BY_TIME_OF_DAY[timeOfDay];
   const seasonKind = season.kind ?? FOREST_SEASON_SPRING;
   let fogDensity = 0;
-  if (fogRoll < FOG_PROBABILITY_BY_SEASON[seasonKind]) {
+  // The style biases the season's own probability rather than replacing it,
+  // so autumn stays foggier than summer under Mistwood as well as Wildwood.
+  const fogProbability = clampNumber(
+    FOG_PROBABILITY_BY_SEASON[seasonKind] + styleProfile.fogProbabilityBias,
+    MINIMUM_FOG_PROBABILITY,
+    MAXIMUM_FOG_PROBABILITY
+  );
+  if (fogRoll < fogProbability) {
     fogDensity = roundToThousandths(MINIMUM_FOG_DENSITY + fogDensityRoll * FOG_DENSITY_RANGE);
   }
   const bloomIntensity = roundToTwoDecimals(
     clampNumber(
-      (BASE_FOREST_BLOOM_INTENSITY + bloomRoll * FOREST_BLOOM_INTENSITY_RANGE) * moodProfile.bloomMultiplier,
+      (BASE_FOREST_BLOOM_INTENSITY + bloomRoll * FOREST_BLOOM_INTENSITY_RANGE) *
+        moodProfile.bloomMultiplier *
+        styleProfile.bloomMultiplier,
       MINIMUM_FOREST_BLOOM_INTENSITY,
       MAXIMUM_FOREST_BLOOM_INTENSITY
     )
@@ -672,7 +785,8 @@ function buildPreviewTerrainConfig(seed: string): { terrain: ForestTerrainConfig
 function buildPreviewTreesConfig(
   seed: string,
   season: ForestSeasonConfig,
-  moodProfile: ForestMoodProfile
+  moodProfile: ForestMoodProfile,
+  styleProfile: ForestStyleProfile
 ): ForestTreesConfig {
   const nextRandomValue = randomFromSeed(seed + TREES_SEED_SUFFIX);
   const treeCountDraw = BASE_TREE_COUNT + Math.floor(nextRandomValue() * TREE_COUNT_SPREAD);
@@ -686,7 +800,7 @@ function buildPreviewTreesConfig(
 
   const seasonKind = season.kind ?? FOREST_SEASON_SPRING;
   const countDesktop = clampInteger(
-    treeCountDraw * TREE_COUNT_MULTIPLIERS_BY_SEASON[seasonKind],
+    treeCountDraw * TREE_COUNT_MULTIPLIERS_BY_SEASON[seasonKind] * styleProfile.treeCountMultiplier,
     MINIMUM_TREE_COUNT,
     MAXIMUM_TREE_COUNT
   );
@@ -698,8 +812,14 @@ function buildPreviewTreesConfig(
     countDesktop,
     countMobile: Math.floor(countDesktop * MOBILE_TREE_FRACTION),
     speciesMix: mixes[mixIndex].map((entry) => ({ ...entry })),
-    scaleMin: roundToTwoDecimals(TREE_SCALE_MINIMUM_BASE + scaleMinimumRoll * TREE_SCALE_MINIMUM_RANGE),
-    scaleMax: roundToTwoDecimals(TREE_SCALE_MAXIMUM_BASE + scaleMaximumRoll * TREE_SCALE_MAXIMUM_RANGE),
+    // Both ends scale together, so a style changes how big the trees are
+    // without changing how VARIED they are.
+    scaleMin: roundToTwoDecimals(
+      (TREE_SCALE_MINIMUM_BASE + scaleMinimumRoll * TREE_SCALE_MINIMUM_RANGE) * styleProfile.treeScaleMultiplier
+    ),
+    scaleMax: roundToTwoDecimals(
+      (TREE_SCALE_MAXIMUM_BASE + scaleMaximumRoll * TREE_SCALE_MAXIMUM_RANGE) * styleProfile.treeScaleMultiplier
+    ),
     foliageTintStrength: roundToTwoDecimals(FOLIAGE_TINT_STRENGTH_BASE + tintStrengthRoll * FOLIAGE_TINT_STRENGTH_RANGE),
     windStrength: roundToTwoDecimals(
       clampNumber(
@@ -962,6 +1082,9 @@ function buildPreviewAssetsConfig(
 export function buildPreviewForestSceneConfig(input: PreviewSceneInput): SceneConfig {
   const seed = previewSeedFromInputs(input);
   const moodProfile = forestProfileForMood(input.mood);
+  // An unknown or absent style resolves to the neutral profile, which is a
+  // no-op in every field — mirroring forest_style_profile.go exactly.
+  const styleProfile = forestProfileForStyle(input.preferredWorldStyle);
 
   const primaryColor = input.favoriteColors[0] ?? DEFAULT_FOREST_PRIMARY_COLOR;
   const secondaryColor = input.favoriteColors[1] ?? DEFAULT_FOREST_SECONDARY_COLOR;
@@ -971,9 +1094,9 @@ export function buildPreviewForestSceneConfig(input: PreviewSceneInput): SceneCo
   const landmarkNames = previewPlanetNames(input.interests, input.traits);
 
   const season = buildPreviewSeasonConfig(seed, moodProfile);
-  const { lighting, bloomIntensity } = buildPreviewLightingConfig(seed, season, moodProfile);
+  const { lighting, bloomIntensity } = buildPreviewLightingConfig(seed, season, moodProfile, styleProfile);
   const { terrain, cameraDistance } = buildPreviewTerrainConfig(seed);
-  const trees = buildPreviewTreesConfig(seed, season, moodProfile);
+  const trees = buildPreviewTreesConfig(seed, season, moodProfile, styleProfile);
   const weather = buildPreviewWeatherConfig(seed, season);
   const wildlife = buildPreviewWildlifeConfig(seed, season, moodProfile);
   const ambientParticles = buildPreviewAmbientParticlesConfig(seed, season, lighting);
@@ -1010,7 +1133,7 @@ export function buildPreviewForestSceneConfig(input: PreviewSceneInput): SceneCo
       bloomIntensity,
       // The grade is a per-season table lookup (no PRNG draw), so two forests
       // in the same season always grade identically.
-      grade: FOREST_GRADES_BY_SEASON[season.kind ?? FOREST_SEASON_SPRING]
+      grade: addGrade(FOREST_GRADES_BY_SEASON[season.kind ?? FOREST_SEASON_SPRING], styleProfile.grade)
     },
     hud: { showTraitBars: true, showLabels: true },
     assets: buildPreviewAssetsConfig(lighting, trees, wildlife, landmarks)

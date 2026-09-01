@@ -27,7 +27,7 @@ type accessTokenClaims struct {
 // TokenIssuer mints and verifies the short-lived Ed25519 access JWT. Every
 // edge verifies locally with the public key, so no network hop is required
 // per request, and login still works when auth-service is cold - see
-// notes/vision/auth-and-admin-plan.md#tokens.
+// agent-system/plans/services/auth-and-admin-plan.md#tokens.
 type TokenIssuer struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey

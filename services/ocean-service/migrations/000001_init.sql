@@ -26,7 +26,7 @@ CREATE TABLE worlds (
   --      excluded.revision` is correct under JetStream reorderings; comparing
   --      wall-clock timestamps written by two different services is not.
   --
-  -- See notes/vision/analytics-service-plan.md#design-decision-a-revision-column-on-worlds.
+  -- See agent-system/plans/services/analytics-service-plan.md#design-decision-a-revision-column-on-worlds.
   revision INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 
 // Pinned, read-only — represents accounts.is_super_admin, NOT a role row.
-// notes/vision/auth-and-admin-plan.md#rbac is deliberate about this: a real
+// agent-system/plans/services/auth-and-admin-plan.md#rbac is deliberate about this: a real
 // role row can be edited or deleted like any other, which is exactly the
 // "system becomes unadministerable" risk the bypass flag exists to prevent.
 // This card exists so Roles still reads as "two system-level entries" without

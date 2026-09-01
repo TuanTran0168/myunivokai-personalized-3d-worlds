@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Enforces notes/vision/auth-and-admin-plan.md#the-admin-app's hard
+// Enforces agent-system/plans/services/auth-and-admin-plan.md#the-admin-app's hard
 // constraint: this app shares no code with apps/myunivokai-web and never
 // imports three.js — the two are meant to have zero runtime dependency on
 // each other, and a stray import here is exactly how that would happen

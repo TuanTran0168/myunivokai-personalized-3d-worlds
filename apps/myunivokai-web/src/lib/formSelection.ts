@@ -42,3 +42,14 @@ export function ensureRange(values: string[], defaults: string[], min: number, m
   }
   return padded.slice(0, max);
 }
+
+/**
+ * Adds `item` unless it is already present. Used when committing a typed
+ * custom value: `toggleItem` alone treats "already selected" as a toggle-OFF,
+ * which would remove an existing chip the moment a visitor typed and
+ * submitted its exact text as a "new" custom value instead of leaving it
+ * selected.
+ */
+export function addUnlessPresent(current: string[], item: string, min: number, max: number) {
+  return current.includes(item) ? current : toggleItem(current, item, min, max);
+}

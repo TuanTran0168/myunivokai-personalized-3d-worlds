@@ -154,7 +154,7 @@ func ZoneForDepth(metres float64) string {
 // rather than as one world under three colour grades, which is the acceptance
 // criterion this family was signed off against:
 //
-//   - 3-28 m is where reef-building coral actually lives, and where caustics
+//   - 12-32 m is where reef-building coral actually lives, and where caustics
 //     are still legible. A "reef in sunlit water" placed at 50 m is a dark
 //     green room.
 //   - 45-170 m is the deep blue with faint rays and silhouettes. Placed any
@@ -163,8 +163,20 @@ func ZoneForDepth(metres float64) string {
 //     water and lighting to a 2400 m abyssal one.
 //   - 1050-3800 m is below the sunlight floor, so every abyssal world is lit
 //     by bioluminescence alone as a matter of arithmetic.
+//
+// The shallows' own minimum moved once, from 3 m: at 3 m the camera is close
+// enough to the surface that the underwater-surface shader (Snell's window,
+// seen from below) has almost no water column left to be swallowed by fog
+// through, so a turbid style (Kelp Cathedral's clarity bias) painted a wall of
+// light overhead with the reef fogged out below it — reported against a real
+// frame, not a comment. The fix is not a shader clamp, it is this number: the
+// swallow the shader already does is `1 - exp(-(distance * fogDensity)^2)`, a
+// function of the REAL distance to the surface, and at 3 m no fog density this
+// family draws makes that distance mean anything. 12 m is not arbitrary either:
+// see TestOnBottomZonesCanActuallySeeTheirFloor below, which is what keeps this
+// number and the floor clearance one honest against each other.
 var depthBandByZone = map[string]floatRange{
-	ZoneSunlitShallows: {Minimum: 3, Maximum: 28},
+	ZoneSunlitShallows: {Minimum: 12, Maximum: 32},
 	ZoneTwilightReach:  {Minimum: 45, Maximum: 170},
 	ZoneAbyss:          {Minimum: 1050, Maximum: 3800},
 }
@@ -180,6 +192,7 @@ var depthBandByZone = map[string]floatRange{
 //   - A reef IS shallow water over a floor. You are on the continental shelf,
 //     the bottom is right there, and kelp confirms it: kelp forests are rarely
 //     deeper than 15-40 m because they need light. Floor visible.
+//
 //   - The twilight zone is OPEN WATER. Against a mean ocean depth of 3682 m,
 //     a world at 143 m has kilometres of nothing beneath it, so no floor.
 //
@@ -192,6 +205,7 @@ var depthBandByZone = map[string]floatRange{
 //     with some fish in it, which is the single ugliest thing this family can
 //     produce, and it produced it for a third of all worlds. See
 //     surfacedByBoundaryRule below.
+//
 //   - The abyssal worlds are placed ON the bottom, because everything that
 //     makes the abyss worth drawing lives there: hydrothermal vents (mean
 //     ~2100 m along the mid-ocean ridges), whale falls, tubeworm fields. An
@@ -205,8 +219,32 @@ var depthBandByZone = map[string]floatRange{
 // visibility down there is about 12 m, so a 3-26 m band left more than a third
 // of abyssal worlds staring into nothing. TestOnBottomZonesCanActuallySeeTheir
 // Floor pins this against the depth curve rather than against a comment.
+//
+// THE SHALLOWS BAND CAME DOWN FROM 6-18 m, and "in sight" was the wrong bar to
+// have set it against. Two separate numbers decide whether a floor is visible
+// and only one of them was being checked:
+//
+//   - the DEPTH CURVE's VisibilityMetres, which is how much light is left. That
+//     is what TestOnBottomZonesCanActuallySeeTheirFloor tests, and 18 m passed
+//     it comfortably at every depth in the band.
+//   - the WATER TYPE's own clarity, sightingRangeMetres, which is what the
+//     renderer actually divides by. It is not a function of depth at all.
+//
+// The shallows can roll 3C (kd475 0.420), whose sighting range is 11.85 m and
+// whose 1.5x boundary reach is 17.77 m. An 18 m clearance is therefore OUTSIDE
+// the reach outright — and even at 17.77 m the fog term the renderer applies,
+// 1 - exp(-(distance/range)^2), has already swallowed 89% of the seabed. A
+// floor that is technically in sight and 89% gone is not a floor.
+//
+// 10 m is where the worst water this zone can draw still leaves the seabed
+// legible: 1 - exp(-(10/11.85)^2) = 51% swallowed, a floor seen THROUGH water
+// rather than a rumour of one. In the clearest water the zone can roll (IB,
+// range 49.89 m) the same 10 m is 4% swallowed and crisp. The minimum came down
+// with it, to 5 m, so the band keeps its spread; below that the ambient kelp
+// (1.9-5.1 m tall, oceanRigFlora.ts) would close over the viewer's head.
+// TestOnBottomZonesSeeTheirFloorThroughTheirOwnWater pins the new bar.
 var floorClearanceBandByZone = map[string]floatRange{
-	ZoneSunlitShallows: {Minimum: 2, Maximum: 14},
+	ZoneSunlitShallows: {Minimum: 5, Maximum: 10},
 	ZoneTwilightReach:  {Minimum: 1900, Maximum: 3900},
 	ZoneAbyss:          {Minimum: 2, Maximum: 9},
 }
@@ -248,7 +286,7 @@ var nonHeroLandmarkKinds = []string{LandmarkSunkenRelic, LandmarkHydrothermalVen
 //
 // The ocean-1 catalogue resolves every key below to PROCEDURAL geometry built
 // in the browser, not to a downloaded GLB. That is the decision phase O4 of
-// notes/vision/ocean-service-plan.md left open, taken this way because no
+// agent-system/plans/services/ocean-service-plan.md left open, taken this way because no
 // agent-downloadable CC0 abyssal creature exists and a species list the
 // renderer cannot draw is the one mistake in this family that cannot be undone
 // cheaply — species are selected by floor(roll x len), so the order is frozen
@@ -674,11 +712,11 @@ const (
 	// band.
 	minimumBreachedSurfaceElevation = 0.06
 	breachedSurfaceElevationRange   = 0.64
-	exposureJitterRange     = 0.10
-	baseBloomIntensity      = 0.30
-	bloomIntensityRange     = 0.55
-	minimumBloomIntensity   = 0.25
-	maximumBloomIntensity   = 1.40
+	exposureJitterRange             = 0.10
+	baseBloomIntensity              = 0.30
+	bloomIntensityRange             = 0.55
+	minimumBloomIntensity           = 0.25
+	maximumBloomIntensity           = 1.40
 
 	// Grade jitter, applied on top of oceanGradesByZone. Small relative to the
 	// gap BETWEEN zones on every channel (saturation alone spans 0.24 across
@@ -706,14 +744,20 @@ const (
 	oceanCameraFOV             = 55.0
 
 	// current
-	currentIntensityBase     = 0.30
-	currentIntensityRange    = 0.55
-	minimumCurrentIntensity  = 0.05
-	maximumCurrentIntensity  = 1.00
-	gustFrequencyBase        = 0.18
-	gustFrequencyRange       = 0.34
-	baseMarineSnowCount      = 900
-	marineSnowCountSpread    = 901 // 900..1800
+	currentIntensityBase    = 0.30
+	currentIntensityRange   = 0.55
+	minimumCurrentIntensity = 0.05
+	maximumCurrentIntensity = 1.00
+	gustFrequencyBase       = 0.18
+	gustFrequencyRange      = 0.34
+	baseMarineSnowCount     = 900
+	marineSnowCountSpread   = 901 // 900..1800
+	// Bounds for the style multiplier, which is the only thing that moves this
+	// off the draw above. The ceiling is a performance bound as much as a
+	// visual one: marine snow is one instanced points system, but it is drawn
+	// through the whole water column in front of the camera.
+	minimumMarineSnowCount   = 400
+	maximumMarineSnowCount   = 3200
 	mobileMarineSnowFraction = 0.30
 
 	// flora
@@ -768,7 +812,7 @@ const (
 	bioluminescenceBloomRange = 0.55
 
 	// landmarks
-	landmarkAngleJitterRadians  = 0.25
+	landmarkAngleJitterRadians = 0.25
 	// LANDMARKS ARE PLACED RELATIVE TO THE CAMERA, NOT TO THE BASIN.
 	//
 	// They used to be a fraction of the basin radius, 0.50 to 0.88. The basin is
@@ -788,9 +832,49 @@ const (
 	// landscape rather than out past its edge.
 	landmarkCameraStandoffMetres = 8.0
 	landmarkRingDepthMetres      = 26.0
-	landmarkHeightBase          = 0.0
-	landmarkHeightRange         = 6.0
+
+	// How much two landmarks of the same kind differ in how deep they settled.
+	// Small, because settling is a variation and not a placement axis — see
+	// landmarkBedDepthMetresByKind for why there is no lift here at all.
+	landmarkBedDepthJitterMetres = 0.15
 )
+
+// How deep each landmark kind beds into the sediment, in metres, before the
+// jitter above. It is applied as a NEGATIVE heightAboveFloor.
+//
+// THIS REPLACED A LIFT. The two constants that were here, landmarkHeightBase =
+// 0 and landmarkHeightRange = 6, put every landmark 0 to 6 m ABOVE the floor on
+// a roll that never asked what kind it was. Every kind this family draws is a
+// bottom feature — a black smoker precipitated out of the basalt, a pinnacle
+// with talus at its foot, a coral head on rock, a kelp holdfast, a whale fall,
+// a wreck settled where it sank — and oceanLandmarkGeometry.ts normalises each
+// one's FOOT to y = 0 for the express purpose of standing it on the sediment.
+// The lift put it straight back into the water column, and it read as exactly
+// what it was: a rib cage and its bacterial mat hanging in clear water with
+// daylight underneath. Reported against a real frame, not inferred.
+//
+// The comment that justified the lift — "an ocean is a volume, so a landmark
+// can sit on the floor or hang in the water column" — is a true sentence about
+// oceans and a false one about these six shapes. The field stays in the
+// contract for the kind that eventually does hang, a jellyfish bloom or a
+// midwater aggregation, but it is no longer a free roll.
+//
+// None of the depths are zero, because a foot is a FOOTPRINT and not a point.
+// A landmark is placed against the seabed under its centre, and that seabed
+// carries 1.2 m dunes and is drawn as a mesh whose cells are 2.3 m across on
+// desktop and 5.7 m on mobile, so a shape resting at exactly the sampled height
+// still shows a gap under one edge. The renderer closes the rest of that gap by
+// sampling the whole footprint (lowestSeafloorUnderFootprint in oceanMath.ts);
+// bedding in is the half that belongs here, because it is also what a real
+// object does to sediment.
+var landmarkBedDepthMetresByKind = map[string]float64{
+	LandmarkKelpCathedral:    0.20, // a holdfast grips the rock it grew on
+	LandmarkHydrothermalVent: 0.30, // the chimney is precipitated out of the floor
+	LandmarkCoralGarden:      0.25, // a massive head sits on its own dead skeleton
+	LandmarkAbyssalTrench:    0.35, // talus at the pinnacle's foot buries its base
+	LandmarkWhaleFall:        0.50, // half in the sediment, which is the whole look
+	LandmarkSunkenRelic:      0.55, // a wreck settles into the bottom; it does not rest on it
+}
 
 // adjacentZone picks the zone above or below. Unlike the forest's seasons this
 // does NOT wrap: the surface has nothing above it and the abyss nothing below,

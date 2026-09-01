@@ -62,7 +62,7 @@ func writeAdminUnauthenticated(responseWriter http.ResponseWriter, request *http
 // RequireAdminAccessToken verifies the Ed25519 signature and expiry locally,
 // then checks the Redis-cached tokenVersion (falling back to one
 // auth-service call on a cache miss) - see
-// notes/vision/auth-and-admin-plan.md#how-b-works. No route in this phase is
+// agent-system/plans/services/auth-and-admin-plan.md#how-b-works. No route in this phase is
 // wired to it yet: the first permission-gated admin route is
 // S4-ANALYTICS-005, which this primitive is built and tested ahead of.
 func RequireAdminAccessToken(verifier AdminAccessVerifier, revocation AdminRevocationChecker) func(http.Handler) http.Handler {

@@ -40,9 +40,13 @@ func buildTestInput(seedValue, mood string, landmarkCount int) BuildOceanConfigI
 		Seed:      seedValue,
 		VariantNo: 1,
 		Input: models.VisualIntent{
-			Mood:                mood,
-			FavoriteColors:      []string{"#8B5CF6", "#06B6D4"},
-			PreferredWorldStyle: "aurora",
+			Mood:           mood,
+			FavoriteColors: []string{"#8B5CF6", "#06B6D4"},
+			// The neutral ocean style. It was "aurora" — a UNIVERSE style,
+			// accepted here because nothing read the field. It resolves to the
+			// same neutral profile either way, so the golden fixtures are
+			// untouched by the correction.
+			PreferredWorldStyle: StyleOpenWater,
 		},
 	}
 }
@@ -407,6 +411,59 @@ func TestLandmarksAreHeroFirstAndDeduped(t *testing.T) {
 		}
 		if landmark.AngleRadians < -landmarkAngleJitterRadians || landmark.AngleRadians > 2*math.Pi+landmarkAngleJitterRadians {
 			t.Fatalf("landmark %d angle %.2f is outside one turn", index, landmark.AngleRadians)
+		}
+	}
+}
+
+// Every landmark this family draws stands on the seabed, so none of them may be
+// placed above it.
+//
+// The builder used to lift each one 0 to 6 m off the floor on a roll that never
+// asked what kind it was, and the result was visible in the first frame anyone
+// looked at: a whale fall's rib cage and its bacterial mat hanging in clear
+// water with a gap under them. The renderer had already fixed the two OTHER
+// ways a landmark could end up hanging — midwater worlds and above-water worlds
+// — and the ordinary case, a floor that IS drawn, survived both fixes.
+//
+// So this is the bar as long as every kind in nonHeroLandmarkKinds plus the
+// hero is a bottom feature. A future kind that genuinely hangs — a jellyfish
+// bloom, a midwater aggregation — is what changes this test, deliberately, and
+// that is the point of having it.
+func TestEveryLandmarkKindSettlesIntoTheSeabedRatherThanHoveringOverIt(t *testing.T) {
+	kinds := append([]string{LandmarkKelpCathedral}, nonHeroLandmarkKinds...)
+	for _, kind := range kinds {
+		if _, ok := landmarkBedDepthMetresByKind[kind]; !ok {
+			t.Fatalf("landmark kind %q has no bed depth, so it would be placed exactly on the sampled floor and show a gap under one edge", kind)
+		}
+	}
+	if len(landmarkBedDepthMetresByKind) != len(kinds) {
+		t.Fatalf("landmarkBedDepthMetresByKind has %d entries for %d kinds, so it names a kind the builder cannot draw",
+			len(landmarkBedDepthMetresByKind), len(kinds))
+	}
+
+	// The deepest any landmark may bury itself. This keeps the bed depth a
+	// SETTLING rather than a way to hide a shape — the shortest kind this family
+	// draws stands 1.8 m, so a metre of burial would be most of it.
+	//
+	// The bar against each kind's OWN height is checked on the renderer's side,
+	// in oceanMath.test.ts, because that is where the standing heights live
+	// (LANDMARK_HEIGHT_METRES in oceanLandmarkGeometry.ts). Mirroring them here
+	// would be two tables to keep in step for one assertion.
+	const maximumBedDepthMetres = 0.8
+	builder := NewOceanConfigBuilder()
+	for _, mood := range []string{"dreamy", "energetic", "focused", "reflective"} {
+		for landmarkCount := 3; landmarkCount <= 7; landmarkCount++ {
+			config := builder.Build(buildTestInput(fmt.Sprintf("OCN-BED-%s-%d", mood, landmarkCount), mood, landmarkCount))
+			for index, landmark := range config.Landmarks {
+				if landmark.HeightAboveFloor > 0 {
+					t.Fatalf("%s/%d landmark %d (%s) is placed %.2f m ABOVE the floor; every kind this family draws stands on the seabed",
+						mood, landmarkCount, index, landmark.Kind, landmark.HeightAboveFloor)
+				}
+				if buried := -landmark.HeightAboveFloor; buried > maximumBedDepthMetres {
+					t.Fatalf("%s/%d landmark %d (%s) is buried %.2f m, past the %.2f m bar; that is hiding a shape, not settling it",
+						mood, landmarkCount, index, landmark.Kind, buried, maximumBedDepthMetres)
+				}
+			}
 		}
 	}
 }

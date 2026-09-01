@@ -17,7 +17,7 @@
       "name": "The Lantern Trench",
       "seed": "OCN-GOLDEN-SHALLOW",
       "config": {
-        "schemaVersion": "1.4",
+        "schemaVersion": "1.6",
         "sceneType": "ocean",
         "sceneName": "The Lantern Trench",
         "archetype": "Tidekeeper",
@@ -35,26 +35,26 @@
           ]
         },
         "depth": {
-          "metres": 18.66,
-          "seafloorMetres": 29.46,
+          "metres": 24.52,
+          "seafloorMetres": 33.19,
           "zone": "sunlitShallows"
         },
         "water": {
-          "fogColor": "#107184",
-          "fogDensity": 0.019,
+          "fogColor": "#0A677C",
+          "fogDensity": 0.02,
           "visibilityMetres": 49.89,
-          "tintStrength": 0.48,
+          "tintStrength": 0.51,
           "jerlovWaterType": "IB",
           "windSpeedMetresPerSecond": 9.56
         },
         "lighting": {
-          "surfaceLightColor": "#1A7B78",
+          "surfaceLightColor": "#0F6F70",
           "surfaceElevationRadians": 0.94,
           "surfaceAzimuthRadians": 0.06,
-          "godRayStrength": 0.46,
-          "causticStrength": 0.37,
-          "ambientColor": "#093E48",
-          "exposure": 1.21
+          "godRayStrength": 0.36,
+          "causticStrength": 0.29,
+          "ambientColor": "#053844",
+          "exposure": 1.22
         },
         "seafloor": {
           "placementSeed": "OCN-GOLDEN-SURGE-ocean-seafloor-scatter",
@@ -164,7 +164,7 @@
             "kind": "kelpCathedral",
             "angleRadians": -0.22,
             "radiusFromCenter": 49.96,
-            "heightAboveFloor": 3.94,
+            "heightAboveFloor": -0.3,
             "accentColor": "#06B6D4",
             "energy": 60
           },
@@ -175,7 +175,7 @@
             "kind": "sunkenRelic",
             "angleRadians": 1.61,
             "radiusFromCenter": 44.39,
-            "heightAboveFloor": 4.56,
+            "heightAboveFloor": -0.66,
             "accentColor": "#FACC15",
             "energy": 65
           },
@@ -186,7 +186,7 @@
             "kind": "abyssalTrench",
             "angleRadians": 3.33,
             "radiusFromCenter": 28.27,
-            "heightAboveFloor": 2.36,
+            "heightAboveFloor": -0.41,
             "accentColor": "#8B5CF6",
             "energy": 70
           },
@@ -197,7 +197,7 @@
             "kind": "whaleFall",
             "angleRadians": 4.79,
             "radiusFromCenter": 30.08,
-            "heightAboveFloor": 3.46,
+            "heightAboveFloor": -0.59,
             "accentColor": "#06B6D4",
             "energy": 75
           }

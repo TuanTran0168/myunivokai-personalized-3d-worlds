@@ -2,9 +2,9 @@
 
 > **The one service in this repository that is not written in Go.** That is a
 > deliberate, bounded decision, not an accident — see
-> [notes/vision/rust-adoption-research.md](../../notes/vision/rust-adoption-research.md)
+> [agent-system/evolution/rust-adoption-research.md](../../agent-system/evolution/rust-adoption-research.md)
 > for what was rejected in its favour and
-> [notes/vision/telemetry-service-plan.md](../../notes/vision/telemetry-service-plan.md)
+> [agent-system/plans/services/telemetry-service-plan.md](../../agent-system/plans/services/telemetry-service-plan.md)
 > for the approved design this implements.
 
 Consumes one aggregated rollup envelope per minute from the gateway, stores it
@@ -80,7 +80,7 @@ src/
 
 Why it is shaped this way — the language's own conventions, the official Cargo
 layout, the error-handling split, and why there is no ORM — is
-[notes/be/rust-service-architecture.md](../../notes/be/rust-service-architecture.md).
+[agent-system/knowledge/backend/rust-service-architecture.md](../../agent-system/knowledge/backend/rust-service-architecture.md).
 Read that before adding a layer.
 
 ## The sink switch
@@ -117,7 +117,7 @@ their raw-SQL escape hatch for every query in
 `repository/postgres/statements.rs` and leave the entity layer as decoration
 that still has to be kept in step with the schema by hand. The full reasoning,
 and what would change the answer for a future CRUD-shaped service, is in
-[notes/be/rust-service-architecture.md §6](../../notes/be/rust-service-architecture.md).
+[agent-system/knowledge/backend/rust-service-architecture.md §6](../../agent-system/knowledge/backend/rust-service-architecture.md).
 
 *No offline cache:* `sqlx`'s `query!` macros check SQL against a live database
 during `cargo build`. The usual answer is `SQLX_OFFLINE=true` plus a committed
@@ -199,7 +199,7 @@ more than it is. The thing that does prove it is the local stack: see
 
 This is the **seventh** free web service on the Render account. Check the
 instance-hour budget before syncing the blueprint, exactly as
-`notes/ops/auth-analytics-first-deploy-checklist.md` records for the sixth.
+`agent-system/skills/auth-analytics-first-deploy-checklist.md` records for the sixth.
 
 1. Create the Neon database `myunivokai_telemetry` and fill `DATABASE_URL` and
    `DATABASE_DIRECT_URL` in the Render dashboard. Without them the service

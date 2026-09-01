@@ -23,7 +23,7 @@ var ErrNotFound = errors.New("not found")
 // Store is deliberately asymmetric: exactly one write method, and it is only
 // ever called by the event consumer. Every other method reads. That asymmetry
 // is the design rule of this service — see
-// notes/vision/analytics-service-plan.md#what-this-service-is-in-one-sentence.
+// agent-system/plans/services/analytics-service-plan.md#what-this-service-is-in-one-sentence.
 type Store interface {
 	// Apply writes one event's inbox row and its projection in a single
 	// transaction, and reports whether the message was new. A false means

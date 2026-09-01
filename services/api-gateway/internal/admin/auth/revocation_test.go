@@ -77,7 +77,7 @@ func TestIsRevokedDetectsAStaleClaimFromTheCache(t *testing.T) {
 
 // A cache miss must call auth-service exactly once and repopulate the cache,
 // never be read as "not revoked" - see
-// notes/vision/auth-and-admin-plan.md#how-b-works.
+// agent-system/plans/services/auth-and-admin-plan.md#how-b-works.
 func TestIsRevokedFallsBackToAuthServiceExactlyOnceOnACacheMiss(t *testing.T) {
 	cache := newFakeTokenVersionCache()
 	requester := &fakeTokenVersionRequester{tokenVersion: 9}

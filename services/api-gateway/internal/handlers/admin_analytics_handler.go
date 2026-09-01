@@ -19,7 +19,7 @@ import (
 // It also publishes no domain-service subject. An admin page must wait on
 // exactly two processes — auth (for the token) and analytics — never on
 // universe, nature or dna, which on the free tier may be asleep. See
-// notes/vision/analytics-service-plan.md#admin-request-path.
+// agent-system/plans/services/analytics-service-plan.md#admin-request-path.
 type AdminAnalyticsHandler struct {
 	transport *RPCTransport
 }

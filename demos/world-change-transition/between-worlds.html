@@ -1,0 +1,969 @@
+<title>Between Worlds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+/* Deliberately single-theme. The subject is three dark 3D worlds and the
+   moment between them; a light ground would misrepresent every effect on the
+   page. Every colour is painted explicitly so the page holds on any host. */
+:root {
+  --ink: #0A0C11;
+  --surface: #12151D;
+  --surface-high: #1A1E28;
+  --line: #262B37;
+  --paper: #ECE7DB;
+  --muted: #8B93A3;
+  --brass: #C9A35B;
+  --brass-bright: #E8C989;
+  --universe: #F5B324;
+  --forest: #7CB463;
+  --ocean: #38A7C7;
+  --danger: #D9705B;
+  --stage-radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 56px 28px 96px;
+}
+
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--brass);
+  margin: 0 0 14px;
+}
+
+h1 {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-weight: 400;
+  font-size: clamp(38px, 6vw, 64px);
+  line-height: 1.04;
+  letter-spacing: -0.01em;
+  margin: 0 0 18px;
+  text-wrap: balance;
+}
+h1 em { font-style: italic; color: var(--brass-bright); }
+
+.lede {
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 17px;
+  margin: 0 0 34px;
+}
+.lede strong { color: var(--paper); font-weight: 500; }
+
+/* ---- measured facts strip ---- */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 0 0 56px;
+}
+.fact { background: var(--surface); padding: 16px 18px; }
+.fact dt {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+.fact dd {
+  margin: 0;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.fact dd small { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+h2 {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-weight: 400;
+  font-size: 30px;
+  margin: 0 0 8px;
+  letter-spacing: -0.005em;
+}
+.section-note { color: var(--muted); max-width: 60ch; margin: 0 0 26px; }
+
+section { margin-bottom: 64px; }
+
+/* ---- controls ---- */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 26px;
+}
+.control-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.seg { display: flex; gap: 6px; }
+.seg button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .18s, color .18s, border-color .18s;
+}
+.seg button:hover { color: var(--paper); border-color: #3A4150; }
+.seg button[aria-pressed="true"] {
+  color: var(--ink);
+  font-weight: 600;
+  border-color: transparent;
+}
+.seg button[data-world="universe"][aria-pressed="true"] { background: var(--universe); }
+.seg button[data-world="forest"][aria-pressed="true"] { background: var(--forest); }
+.seg button[data-world="ocean"][aria-pressed="true"] { background: var(--ocean); }
+
+.switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font-size: 13.5px; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .track {
+  width: 38px; height: 22px; border-radius: 999px;
+  background: #2A303D; border: 1px solid var(--line);
+  position: relative; transition: background .2s;
+}
+.switch .track::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--muted); transition: transform .2s, background .2s;
+}
+.switch input:checked + .track { background: rgba(201,163,91,.3); }
+.switch input:checked + .track::after { transform: translateX(16px); background: var(--brass-bright); }
+.switch input:focus-visible + .track { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+/* ---- effect cards ---- */
+.bench {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 22px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--stage-radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.card.is-pick { border-color: rgba(201,163,91,.55); }
+
+.stage {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  background: #05070B;
+  overflow: hidden;
+  isolation: isolate;
+}
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* the form rail that must stay put during a transition */
+.rail {
+  position: absolute;
+  left: 10px; top: 10px; bottom: 10px;
+  width: 33%;
+  border-radius: 9px;
+  background: rgba(10,12,17,.62);
+  border: 1px solid rgba(255,255,255,.09);
+  backdrop-filter: blur(9px);
+  -webkit-backdrop-filter: blur(9px);
+  padding: 11px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  pointer-events: none;
+}
+.rail i {
+  display: block; height: 6px; border-radius: 3px;
+  background: rgba(236,231,219,.16);
+}
+.rail i.w1 { width: 58%; background: rgba(201,163,91,.5); }
+.rail i.w2 { width: 84%; }
+.rail i.w3 { width: 70%; }
+.rail i.w4 { width: 46%; }
+.rail .pill-row { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 2px; }
+.rail .pill { height: 11px; border-radius: 999px; background: rgba(236,231,219,.12); }
+
+.card-body { padding: 15px 17px 17px; display: flex; flex-direction: column; gap: 9px; flex: 1; }
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.card h3 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.005em; }
+.tag {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 3px 7px; border-radius: 4px; white-space: nowrap;
+}
+.tag.ship { background: rgba(124,180,99,.16); color: var(--forest); }
+.tag.now { background: rgba(217,112,91,.16); color: var(--danger); }
+.tag.alt { background: rgba(139,147,163,.14); color: var(--muted); }
+.card p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+.card p b { color: var(--paper); font-weight: 500; }
+.play {
+  align-self: flex-start;
+  margin-top: 3px;
+  font: inherit; font-size: 13px; font-weight: 500;
+  padding: 7px 15px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface-high);
+  color: var(--paper); cursor: pointer;
+  transition: border-color .18s, background .18s;
+}
+.play:hover { border-color: var(--brass); background: #212633; }
+.play:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+.play[disabled] { opacity: .45; cursor: default; }
+
+/* ---- loaders ---- */
+.loaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
+.loader-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--stage-radius); overflow: hidden;
+}
+.loader-stage { position: relative; aspect-ratio: 4 / 3; }
+.loader-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.loader-meta { padding: 13px 15px 15px; }
+.loader-meta h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.loader-meta p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+/* ---- recommendation ---- */
+.rec {
+  border: 1px solid rgba(201,163,91,.4);
+  border-radius: var(--stage-radius);
+  background: linear-gradient(180deg, rgba(201,163,91,.07), rgba(201,163,91,0));
+  padding: 26px 28px;
+}
+.rec h2 { margin-bottom: 14px; }
+.rec ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 11px; }
+.rec li { color: var(--muted); }
+.rec li b { color: var(--paper); font-weight: 600; }
+.rec .timeline {
+  display: flex; margin: 22px 0 6px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--line); font-family: "IBM Plex Mono", monospace; font-size: 11px;
+}
+.rec .timeline div { padding: 9px 11px; white-space: nowrap; }
+.t-out { background: rgba(201,163,91,.22); color: var(--brass-bright); }
+.t-hold { background: rgba(56,167,199,.16); color: var(--ocean); flex: 1; }
+.t-in { background: rgba(124,180,99,.2); color: var(--forest); }
+
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 20px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Myunivokai · transition bench</p>
+  <h1>The two and a half seconds <em>between worlds</em></h1>
+  <p class="lede">
+    Changing world tears down the WebGL context and rebuilds it. That cost is
+    <strong>measured, not estimated</strong>, and it is not going away this week — so the
+    transition's job is not to hide the gap but to <strong>hold it deliberately</strong>.
+    Below: what ships today, three candidates, and a loader for each world.
+    Pick the target world, then play any stage.
+  </p>
+
+  <dl class="facts">
+    <div class="fact"><dt>Switch to forest</dt><dd>2108<small> ms blocked</small></dd></div>
+    <div class="fact"><dt>Texture re-upload</dt><dd>1121<small> ms</small></dd></div>
+    <div class="fact"><dt>One form edit</dt><dd>1108<small> ms blocked</small></dd></div>
+    <div class="fact"><dt>Warm shader cache</dt><dd>350<small> ms</small></dd></div>
+  </dl>
+
+  <div class="controls">
+    <span class="control-label">Arriving world</span>
+    <div class="seg" role="group" aria-label="Arriving world">
+      <button type="button" data-world="universe" aria-pressed="false">Universe</button>
+      <button type="button" data-world="forest" aria-pressed="true">Forest</button>
+      <button type="button" data-world="ocean" aria-pressed="false">Ocean</button>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="stall" checked>
+      <span class="track"></span>
+      <span>Simulate the 2.5&nbsp;s cold load</span>
+    </label>
+  </div>
+
+  <section>
+    <h2>Four ways to cross</h2>
+    <p class="section-note">
+      Every stage animates against the same floating form rail, because that rail is
+      what makes layering mistakes visible. Watch what happens to it.
+    </p>
+    <div class="bench" id="bench"></div>
+  </section>
+
+  <section>
+    <h2>A loader that belongs to its world</h2>
+    <p class="section-note">
+      Not a spinner. A spinner says "something is happening somewhere"; these say
+      which world is being built, in that world's own vocabulary, on its own palette.
+      Each is drawn on canvas, runs on the compositor's clock, and costs nothing the
+      main thread can steal.
+    </p>
+    <div class="loaders" id="loaders"></div>
+  </section>
+
+  <section class="rec">
+    <h2>What shipped</h2>
+    <p class="lede" style="margin-top:0">
+      Option 3 below was approved and built. It lives in
+      <code>apps/myunivokai-web/src/features/transitions/</code>, and the numbers
+      in the timeline are the constants in <code>worldChangeStages.ts</code>.
+      What changed between this bench and the shipped version is the one thing a
+      bench cannot show: <strong>the ordering</strong>. Both genie halves are
+      canvas <code>requestAnimationFrame</code> loops, so they freeze during the
+      compile block just as the old swipe did. The destination is therefore not
+      mounted until the departure has finished, and only the hold — DOM and CSS,
+      <code>transform</code> and <code>opacity</code> only, so it runs on the
+      compositor — overlaps the blocked main thread.
+    </p>
+    <ol>
+      <li><b>Genie out, loader holds, genie in.</b> The departure completes on its own terms before the wait begins, so the gap reads as the new world being built rather than as the app freezing mid-gesture.</li>
+      <li><b>The loader is the arriving world's, not the departing one's.</b> It is the first thing that says where you are going, and it appears the instant the old world has left.</li>
+      <li><b>Both halves sit on the canvas layer, never above the chrome.</b> The rail and header stay put throughout — that is what makes them read as chrome.</li>
+      <li><b>Nothing about the wait fidgets.</b> The loader breathes at roughly one cycle every two seconds; anything faster reads as anxiety and makes 2.5 s feel like 5.</li>
+    </ol>
+    <div class="timeline">
+      <div class="t-out">620 ms · world leaves</div>
+      <div class="t-hold">420 ms floor, 8 s ceiling · world-tinted hold</div>
+      <div class="t-in">620 ms · world arrives</div>
+    </div>
+  </section>
+
+  <footer>
+    Stages are hand-drawn stand-ins for the real scenes — enough to judge motion,
+    layering and pacing, and nothing more. The three rejected options run at
+    420&nbsp;ms; the approved one runs at the 620&nbsp;ms it shipped with. Curve
+    throughout is cubic-bezier(0.32, 0.72, 0, 1), the one iOS uses for a
+    navigation push.
+    <br><br>
+    <b>What this bench cannot show:</b> it never compiles a shader, so its
+    &ldquo;stall&rdquo; is a timer rather than a blocked main thread. Every stage
+    here would keep animating through a real one; only the shipped hold does,
+    and only because it is CSS. That is why the ordering above is a correction to
+    this page rather than a detail of it.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
+  var DURATION = 420;
+  var STALL_MS = 2500;
+
+  var WORLDS = {
+    universe: { name: "Universe", accent: "#F5B324", sky: ["#070A14", "#141026"] },
+    forest:   { name: "Forest",   accent: "#7CB463", sky: ["#9FB6C4", "#4E7A54"] },
+    ocean:    { name: "Ocean",    accent: "#38A7C7", sky: ["#2E8FB4", "#0B4A67"] }
+  };
+
+  var state = { from: "universe", to: "forest", stall: true };
+
+  /* ---------- world painting -------------------------------------------- */
+
+  function rng(seed) {
+    var s = seed;
+    return function () { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  }
+
+  function paintWorld(ctx, w, h, key) {
+    var world = WORLDS[key];
+    var g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, world.sky[0]);
+    g.addColorStop(1, world.sky[1]);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    if (key === "universe") paintUniverse(ctx, w, h);
+    if (key === "forest") paintForest(ctx, w, h);
+    if (key === "ocean") paintOcean(ctx, w, h);
+  }
+
+  function paintUniverse(ctx, w, h) {
+    var r = rng(7);
+    for (var i = 0; i < 220; i++) {
+      var x = r() * w, y = r() * h, a = 0.25 + r() * 0.75;
+      ctx.fillStyle = "rgba(255,255,255," + (a * 0.8).toFixed(3) + ")";
+      ctx.fillRect(x, y, a > 0.85 ? 2 : 1, a > 0.85 ? 2 : 1);
+    }
+    var cx = w * 0.62, cy = h * 0.5, rad = Math.min(w, h) * 0.19;
+    var glow = ctx.createRadialGradient(cx, cy, rad * 0.6, cx, cy, rad * 3);
+    glow.addColorStop(0, "rgba(245,179,36,.5)");
+    glow.addColorStop(1, "rgba(245,179,36,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+    var sun = ctx.createRadialGradient(cx - rad * .3, cy - rad * .3, rad * .1, cx, cy, rad);
+    sun.addColorStop(0, "#FFF0C4");
+    sun.addColorStop(.55, "#F5B324");
+    sun.addColorStop(1, "#C2760E");
+    ctx.fillStyle = sun;
+    ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(160,180,255,.32)";
+    ctx.lineWidth = 1;
+    for (var k = 1; k <= 3; k++) {
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rad * (1.7 + k * 0.75), rad * (0.5 + k * 0.24), -0.28, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#7FD8E8";
+    ctx.beginPath(); ctx.arc(cx - rad * 2.3, cy + rad * 0.62, rad * 0.2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function paintForest(ctx, w, h) {
+    var r = rng(19);
+    ctx.fillStyle = "rgba(255,255,255,.10)";
+    for (var m = 0; m < 5; m++) ctx.fillRect(0, h * (0.18 + m * 0.045), w, h * 0.02);
+    function band(yTop, scale, colour) {
+      ctx.fillStyle = colour;
+      for (var i = 0; i < 26; i++) {
+        var x = (i / 26) * w + (r() - 0.5) * 22;
+        var tw = w * 0.045 * scale, th = h * (0.2 + r() * 0.24) * scale;
+        ctx.beginPath();
+        ctx.moveTo(x, yTop);
+        ctx.lineTo(x + tw / 2, yTop - th);
+        ctx.lineTo(x + tw, yTop);
+        ctx.closePath(); ctx.fill();
+        ctx.fillRect(x + tw * 0.42, yTop, tw * 0.16, h * 0.06 * scale);
+      }
+    }
+    band(h * 0.68, 0.85, "#2F5637");
+    band(h * 0.78, 1.15, "#24462C");
+    var water = ctx.createLinearGradient(0, h * 0.72, 0, h);
+    water.addColorStop(0, "#3D6B7A");
+    water.addColorStop(1, "#1E3A46");
+    ctx.fillStyle = water;
+    ctx.fillRect(0, h * 0.78, w, h * 0.22);
+    ctx.fillStyle = "rgba(255,255,255,.13)";
+    for (var s = 0; s < 9; s++) ctx.fillRect(r() * w, h * (0.8 + r() * 0.17), w * 0.09, 1.5);
+    ctx.fillStyle = "#6E8F4E";
+    ctx.beginPath(); ctx.ellipse(w * 0.5, h * 0.99, w * 0.62, h * 0.1, 0, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function paintOcean(ctx, w, h) {
+    var r = rng(31);
+    ctx.strokeStyle = "rgba(255,255,255,.16)";
+    ctx.lineWidth = 2;
+    for (var c = 0; c < 7; c++) {
+      ctx.beginPath();
+      var y0 = h * (0.05 + c * 0.045);
+      ctx.moveTo(0, y0);
+      for (var x = 0; x <= w; x += 14) ctx.lineTo(x, y0 + Math.sin(x * 0.035 + c) * 5);
+      ctx.stroke();
+    }
+    var floor = ctx.createLinearGradient(0, h * 0.72, 0, h);
+    floor.addColorStop(0, "rgba(20,70,92,0)");
+    floor.addColorStop(1, "#0A3A50");
+    ctx.fillStyle = floor;
+    ctx.fillRect(0, h * 0.62, w, h * 0.38);
+    ctx.fillStyle = "#13556E";
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (var xx = 0; xx <= w; xx += 20) ctx.lineTo(xx, h * 0.86 + Math.sin(xx * 0.012) * h * 0.04);
+    ctx.lineTo(w, h); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "rgba(8,26,38,.85)";
+    for (var f = 0; f < 26; f++) {
+      var fx = r() * w, fy = h * (0.15 + r() * 0.6), fs = 5 + r() * 9;
+      ctx.beginPath();
+      ctx.ellipse(fx, fy, fs, fs * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(fx - fs, fy);
+      ctx.lineTo(fx - fs * 1.6, fy - fs * 0.35);
+      ctx.lineTo(fx - fs * 1.6, fy + fs * 0.35);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  /* ---------- offscreen world buffers ----------------------------------- */
+
+  function makeBuffer(w, h, key) {
+    var c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    paintWorld(c.getContext("2d"), w, h, key);
+    return c;
+  }
+
+  /* ---------- easing ----------------------------------------------------- */
+
+  function clamp01(t) { return t < 0 ? 0 : t > 1 ? 1 : t; }
+  function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+  function easeInQuad(t) { return t * t; }
+  function staggered(progress, delay) {
+    var span = 1 - delay;
+    if (span <= 0) return progress >= 1 ? 1 : 0;
+    return clamp01((progress - delay) / span);
+  }
+
+  /* ---------- the four stages -------------------------------------------- */
+
+  var CARDS = [
+    {
+      id: "cut",
+      title: "Hard cut",
+      tag: "now", tagText: "before",
+      copy: "What a world change looked like before any of this: the canvas drops to the background colour and the next world fades up in the same place. <b>Nothing says a different world arrived</b> — it says the same window was repainted, slowly.",
+      run: runCut
+    },
+    {
+      id: "push",
+      title: "Push with parallax",
+      tag: "alt", tagText: "shipped",
+      copy: "The gesture in the build today. Arriving panel travels the full width, the leaving one 32% while dimming — unequal travel is what reads as depth instead of a slideshow. <b>Honest, but it has nothing to say during the wait.</b>",
+      run: runPush
+    },
+    {
+      id: "genie",
+      title: "Genie, scanline",
+      tag: "alt", tagText: "mac-genie",
+      copy: "The macOS minimise, row by row: each scanline gets its own delayed start and its own interpolation, and that lag <i>is</i> the effect. Already in this codebase for the gallery reveal. <b>Expensive to run for 2.5 s, and it fights a rail it cannot move.</b>",
+      run: runGenie
+    },
+    {
+      id: "hold",
+      title: "Genie out · hold · in",
+      tag: "ship", tagText: "recommend",
+      copy: "The departure finishes on its own terms, the arriving world's loader holds the gap, then the world unfolds in. <b>The wait becomes part of the composition</b> rather than a freeze in the middle of a gesture.",
+      run: runHold,
+      pick: true
+    }
+  ];
+
+  var bench = document.getElementById("bench");
+
+  CARDS.forEach(function (card) {
+    var el = document.createElement("article");
+    el.className = "card" + (card.pick ? " is-pick" : "");
+    el.innerHTML =
+      '<div class="stage"><canvas></canvas>' +
+        '<div class="rail">' +
+          '<i class="w1"></i><i class="w2"></i><i class="w3"></i>' +
+          '<div class="pill-row"><span class="pill" style="width:38%"></span><span class="pill" style="width:26%"></span><span class="pill" style="width:30%"></span></div>' +
+          '<div class="pill-row"><span class="pill" style="width:30%"></span><span class="pill" style="width:42%"></span></div>' +
+          '<i class="w4"></i>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card-body">' +
+        '<div class="card-head"><h3>' + card.title + '</h3>' +
+        '<span class="tag ' + card.tag + '">' + card.tagText + '</span></div>' +
+        '<p>' + card.copy + '</p>' +
+        '<button class="play" type="button">Play</button>' +
+      '</div>';
+    bench.appendChild(el);
+    card.canvas = el.querySelector("canvas");
+    card.button = el.querySelector(".play");
+    card.button.addEventListener("click", function () { play(card); });
+  });
+
+  function sizeCanvas(canvas) {
+    var ratio = Math.min(2, window.devicePixelRatio || 1);
+    var rect = canvas.getBoundingClientRect();
+    var w = Math.max(1, Math.round(rect.width * ratio));
+    var h = Math.max(1, Math.round(rect.height * ratio));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    return { w: w, h: h };
+  }
+
+  function resetAll() {
+    CARDS.forEach(function (card) {
+      var size = sizeCanvas(card.canvas);
+      paintWorld(card.canvas.getContext("2d"), size.w, size.h, state.from);
+    });
+  }
+
+  function play(card) {
+    if (card.busy) return;
+    card.busy = true;
+    card.button.disabled = true;
+    var size = sizeCanvas(card.canvas);
+    var ctx = card.canvas.getContext("2d");
+    var from = makeBuffer(size.w, size.h, state.from);
+    var to = makeBuffer(size.w, size.h, state.to);
+    card.run(ctx, size, from, to, function () {
+      card.busy = false;
+      card.button.disabled = false;
+      paintWorld(ctx, size.w, size.h, state.to);
+    });
+  }
+
+  function animate(durationMs, onFrame, onDone) {
+    var start = null;
+    function frame(now) {
+      if (start === null) start = now;
+      var t = clamp01((now - start) / durationMs);
+      onFrame(t);
+      if (t < 1) requestAnimationFrame(frame); else onDone && onDone();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function wait(ms, done) { setTimeout(done, ms); }
+
+  /* --- 1. hard cut ------------------------------------------------------- */
+  function runCut(ctx, size, from, to, done) {
+    var hold = state.stall ? STALL_MS : 240;
+    animate(300, function (t) {
+      ctx.clearRect(0, 0, size.w, size.h);
+      ctx.globalAlpha = 1 - t;
+      ctx.drawImage(from, 0, 0);
+      ctx.globalAlpha = 1;
+    }, function () {
+      ctx.fillStyle = "#05070B";
+      ctx.fillRect(0, 0, size.w, size.h);
+      wait(hold, function () {
+        animate(700, function (t) {
+          ctx.fillStyle = "#05070B";
+          ctx.fillRect(0, 0, size.w, size.h);
+          ctx.globalAlpha = t;
+          ctx.drawImage(to, 0, 0);
+          ctx.globalAlpha = 1;
+        }, done);
+      });
+    });
+  }
+
+  /* --- 2. push with parallax --------------------------------------------- */
+  function drawPush(ctx, size, from, to, t) {
+    var e = easeInOutCubic(t);
+    ctx.clearRect(0, 0, size.w, size.h);
+    var outX = -size.w * 0.32 * e;
+    var scale = 1 - 0.06 * e;
+    ctx.save();
+    ctx.globalAlpha = 1 - 0.65 * e;
+    ctx.translate(outX + size.w / 2, size.h / 2);
+    ctx.scale(scale, scale);
+    ctx.drawImage(from, -size.w / 2, -size.h / 2);
+    ctx.restore();
+    ctx.drawImage(to, size.w * (1 - e), 0);
+  }
+
+  function runPush(ctx, size, from, to, done) {
+    var hold = state.stall ? STALL_MS : 200;
+    animate(DURATION, function (t) { drawPush(ctx, size, from, to, t); }, function () {
+      // The shipped build waits for the destination BEFORE moving, so the
+      // stall lands on a finished frame of the old world.
+      wait(hold, done);
+    });
+  }
+
+  /* --- 3. genie scanline -------------------------------------------------- */
+  var GENIE_STAGGER_H = 0.65, GENIE_STAGGER_V = 0.2, GENIE_NECK = 0.18, GENIE_BOW = 0.14;
+
+  function genieRow(rowRatio, progress, fromRect, toRect) {
+    var hz = easeInOutCubic(staggered(progress, rowRatio * GENIE_STAGGER_H));
+    var vt = easeInQuad(staggered(progress, rowRatio * GENIE_STAGGER_V));
+    var left = fromRect.x + (toRect.x - fromRect.x) * hz;
+    var right = (fromRect.x + fromRect.w) + ((toRect.x + toRect.w) - (fromRect.x + fromRect.w)) * hz;
+    var top = (fromRect.y + rowRatio * fromRect.h) + ((toRect.y + rowRatio * toRect.h) - (fromRect.y + rowRatio * fromRect.h)) * vt;
+    var arc = (hz <= 0 || hz >= 1) ? 0 : Math.sin(Math.PI * hz);
+    if (arc === 0) return { left: left, width: right - left, top: top };
+    var travel = (toRect.x + toRect.w / 2) - (fromRect.x + fromRect.w / 2);
+    var centre = (left + right) / 2 - travel * GENIE_BOW * arc;
+    var half = ((right - left) / 2) * (1 - GENIE_NECK * arc);
+    return { left: centre - half, width: half * 2, top: top };
+  }
+
+  function drawGenie(ctx, size, source, fromRect, toRect, progress, glowColour) {
+    var rows = Math.max(1, Math.min(240, Math.round(size.h / 2)));
+    var srcRowH = source.height / rows;
+    var next = genieRow(0, progress, fromRect, toRect);
+    for (var i = 0; i < rows; i++) {
+      var row = next;
+      next = genieRow((i + 1) / rows, progress, fromRect, toRect);
+      if (row.width < 0.8) continue;
+      ctx.drawImage(source, 0, i * srcRowH, source.width, srcRowH,
+        row.left, row.top, row.width, Math.max(1, next.top - row.top));
+    }
+    var alpha = (progress <= 0 || progress >= 1) ? 0 : 0.32 * Math.sin(Math.PI * progress);
+    if (alpha > 0 && next.width > 0.8) {
+      var half = Math.min(18, Math.max(2, next.width * 0.045));
+      var grad = ctx.createLinearGradient(0, next.top - half, 0, next.top + half);
+      grad.addColorStop(0, "rgba(201,163,91,0)");
+      grad.addColorStop(0.5, glowColour.replace("ALPHA", alpha.toFixed(3)));
+      grad.addColorStop(1, "rgba(201,163,91,0)");
+      var prev = ctx.globalCompositeOperation;
+      ctx.globalCompositeOperation = "lighter";
+      ctx.fillStyle = grad;
+      ctx.fillRect(next.left, next.top - half, next.width, half * 2);
+      ctx.globalCompositeOperation = prev;
+    }
+  }
+
+  function runGenie(ctx, size, from, to, done) {
+    var full = { x: 0, y: 0, w: size.w, h: size.h };
+    // Collapses toward a narrow slot on the leading edge, the way a window
+    // collapses toward its dock icon.
+    var slot = { x: -size.w * 0.06, y: size.h * 0.42, w: size.w * 0.1, h: size.h * 0.16 };
+    var hold = state.stall ? STALL_MS : 200;
+    animate(620, function (t) {
+      ctx.fillStyle = "#05070B";
+      ctx.fillRect(0, 0, size.w, size.h);
+      drawGenie(ctx, size, from, full, slot, t, "rgba(255,240,206,ALPHA)");
+    }, function () {
+      ctx.fillStyle = "#05070B";
+      ctx.fillRect(0, 0, size.w, size.h);
+      wait(hold, function () {
+        animate(620, function (t) {
+          ctx.fillStyle = "#05070B";
+          ctx.fillRect(0, 0, size.w, size.h);
+          drawGenie(ctx, size, to, slot, full, t, "rgba(255,240,206,ALPHA)");
+        }, done);
+      });
+    });
+  }
+
+  /* --- 4. genie out, loader holds, genie in -------------------------------- */
+  function runHold(ctx, size, from, to, done) {
+    var full = { x: 0, y: 0, w: size.w, h: size.h };
+    var slot = { x: -size.w * 0.06, y: size.h * 0.42, w: size.w * 0.1, h: size.h * 0.16 };
+    var hold = state.stall ? STALL_MS : 400;
+    animate(620, function (t) {
+      paintHoldGround(ctx, size, 0);
+      drawGenie(ctx, size, from, full, slot, t, "rgba(255,240,206,ALPHA)");
+    }, function () {
+      var start = performance.now();
+      var stop = false;
+      (function loop(now) {
+        if (stop) return;
+        paintHoldGround(ctx, size, (now - start) / 1000);
+        drawLoader(ctx, size.w / 2, size.h / 2, Math.min(size.w, size.h) * 0.16, (now - start) / 1000, state.to);
+        requestAnimationFrame(loop);
+      })(performance.now());
+      wait(hold, function () {
+        stop = true;
+        animate(620, function (t) {
+          paintHoldGround(ctx, size, 0);
+          ctx.globalAlpha = 1 - Math.min(1, t * 2.4);
+          drawLoader(ctx, size.w / 2, size.h / 2, Math.min(size.w, size.h) * 0.16, hold / 1000, state.to);
+          ctx.globalAlpha = 1;
+          drawGenie(ctx, size, to, slot, full, t, "rgba(255,240,206,ALPHA)");
+        }, done);
+      });
+    });
+  }
+
+  // The hold is painted in the ARRIVING world's ground colour, so the wait
+  // already belongs to where you are going.
+  function paintHoldGround(ctx, size, seconds) {
+    var world = WORLDS[state.to];
+    var g = ctx.createLinearGradient(0, 0, 0, size.h);
+    g.addColorStop(0, shade(world.sky[0], -0.45));
+    g.addColorStop(1, shade(world.sky[1], -0.5));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size.w, size.h);
+    if (seconds) {
+      var pulse = 0.04 + 0.03 * Math.sin(seconds * Math.PI);
+      var glow = ctx.createRadialGradient(size.w / 2, size.h / 2, 0, size.w / 2, size.h / 2, size.w * 0.6);
+      glow.addColorStop(0, hexToRgba(world.accent, pulse));
+      glow.addColorStop(1, hexToRgba(world.accent, 0));
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, size.w, size.h);
+    }
+  }
+
+  function hexToRgba(hex, alpha) {
+    var n = parseInt(hex.slice(1), 16);
+    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")";
+  }
+  function shade(hex, amount) {
+    var n = parseInt(hex.slice(1), 16);
+    var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    var f = amount < 0 ? 1 + amount : 1;
+    return "rgb(" + Math.round(r * f) + "," + Math.round(g * f) + "," + Math.round(b * f) + ")";
+  }
+
+  /* ---------- world loaders ---------------------------------------------- */
+
+  function drawLoader(ctx, cx, cy, radius, seconds, key) {
+    if (key === "universe") return loaderUniverse(ctx, cx, cy, radius, seconds);
+    if (key === "forest") return loaderForest(ctx, cx, cy, radius, seconds);
+    return loaderOcean(ctx, cx, cy, radius, seconds);
+  }
+
+  // Universe: one body completing an orbit. A full lap is two seconds, so the
+  // eye reads progress without a progress bar ever appearing.
+  function loaderUniverse(ctx, cx, cy, r, s) {
+    var accent = WORLDS.universe.accent;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-0.3);
+    ctx.strokeStyle = hexToRgba(accent, 0.2);
+    ctx.lineWidth = Math.max(1, r * 0.03);
+    ctx.beginPath(); ctx.ellipse(0, 0, r, r * 0.42, 0, 0, Math.PI * 2); ctx.stroke();
+    var angle = (s / 2) * Math.PI * 2;
+    for (var i = 0; i < 16; i++) {
+      var a = angle - i * 0.045;
+      var x = Math.cos(a) * r, y = Math.sin(a) * r * 0.42;
+      ctx.fillStyle = hexToRgba(accent, 0.5 * (1 - i / 16));
+      ctx.beginPath(); ctx.arc(x, y, r * 0.05 * (1 - i / 22), 0, Math.PI * 2); ctx.fill();
+    }
+    var px = Math.cos(angle) * r, py = Math.sin(angle) * r * 0.42;
+    var halo = ctx.createRadialGradient(px, py, 0, px, py, r * 0.34);
+    halo.addColorStop(0, hexToRgba(accent, 0.55));
+    halo.addColorStop(1, hexToRgba(accent, 0));
+    ctx.fillStyle = halo;
+    ctx.fillRect(px - r * 0.34, py - r * 0.34, r * 0.68, r * 0.68);
+    ctx.fillStyle = "#FFF3D2";
+    ctx.beginPath(); ctx.arc(px, py, r * 0.085, 0, Math.PI * 2); ctx.fill();
+    var core = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.3);
+    core.addColorStop(0, hexToRgba(accent, 0.5));
+    core.addColorStop(1, hexToRgba(accent, 0));
+    ctx.fillStyle = core;
+    ctx.fillRect(-r * 0.3, -r * 0.3, r * 0.6, r * 0.6);
+    ctx.restore();
+  }
+
+  // Forest: a growth ring completing, with motes drifting through it. Slow on
+  // purpose — a forest is the one world that must not look hurried.
+  function loaderForest(ctx, cx, cy, r, s) {
+    var accent = WORLDS.forest.accent;
+    ctx.save();
+    ctx.translate(cx, cy);
+    for (var k = 0; k < 3; k++) {
+      var phase = ((s / 2.4) + k / 3) % 1;
+      ctx.strokeStyle = hexToRgba(accent, 0.42 * (1 - phase));
+      ctx.lineWidth = Math.max(1, r * 0.045);
+      ctx.beginPath();
+      ctx.arc(0, 0, r * (0.28 + phase * 0.85), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    var sway = Math.sin(s * 1.5) * r * 0.06;
+    ctx.strokeStyle = hexToRgba(accent, 0.85);
+    ctx.lineWidth = Math.max(1.5, r * 0.06);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(0, r * 0.34);
+    ctx.quadraticCurveTo(sway, 0, sway * 1.4, -r * 0.34);
+    ctx.stroke();
+    for (var b = 0; b < 3; b++) {
+      var t = 0.2 + b * 0.28;
+      var lx = sway * t * 1.4, ly = r * 0.34 - t * r * 0.68;
+      var dir = b % 2 === 0 ? 1 : -1;
+      ctx.beginPath();
+      ctx.ellipse(lx + dir * r * 0.16, ly, r * 0.15, r * 0.07, dir * 0.6 + sway * 0.02, 0, Math.PI * 2);
+      ctx.fillStyle = hexToRgba(accent, 0.75);
+      ctx.fill();
+    }
+    for (var m = 0; m < 7; m++) {
+      var mp = ((s * 0.28) + m / 7) % 1;
+      var mx = Math.cos(m * 2.4) * r * 1.0;
+      var my = -r + mp * r * 2.2;
+      ctx.fillStyle = "rgba(226,240,205," + (0.45 * Math.sin(mp * Math.PI)).toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(mx + Math.sin(mp * 6 + m) * r * 0.1, my, r * 0.035, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // Ocean: bubbles rising to a surface line, wobbling as they go.
+  function loaderOcean(ctx, cx, cy, r, s) {
+    var accent = WORLDS.ocean.accent;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.strokeStyle = hexToRgba(accent, 0.35);
+    ctx.lineWidth = Math.max(1, r * 0.035);
+    ctx.beginPath();
+    for (var x = -r * 1.15; x <= r * 1.15; x += 4) {
+      var y = -r * 0.92 + Math.sin(x * 0.05 + s * 1.6) * r * 0.07;
+      if (x === -r * 1.15) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    for (var i = 0; i < 9; i++) {
+      var seed = i * 0.618;
+      var p = ((s * 0.42) + seed) % 1;
+      var bx = (seed % 1 - 0.5) * r * 1.7 + Math.sin(p * 7 + i) * r * 0.12;
+      var by = r * 0.95 - p * r * 1.85;
+      var rr = r * (0.05 + (seed % 0.5) * 0.14);
+      var fade = Math.sin(p * Math.PI);
+      ctx.strokeStyle = "rgba(214,244,255," + (0.55 * fade).toFixed(3) + ")";
+      ctx.lineWidth = Math.max(1, r * 0.022);
+      ctx.beginPath(); ctx.arc(bx, by, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255," + (0.16 * fade).toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(bx - rr * 0.3, by - rr * 0.3, rr * 0.3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* ---------- loader gallery ---------------------------------------------- */
+
+  var LOADER_COPY = {
+    universe: { title: "Universe", note: "One body completes an orbit every two seconds. Progress without a progress bar, and the trail gives the eye something to follow." },
+    forest:   { title: "Forest", note: "A sapling swaying inside growth rings that keep opening outward. The slowest of the three on purpose — a forest must not look hurried." },
+    ocean:    { title: "Ocean", note: "Bubbles wobble upward to a moving surface line. Rising motion reads as ascent, which is the one direction an ocean scene is always about." }
+  };
+
+  var loaders = document.getElementById("loaders");
+  Object.keys(WORLDS).forEach(function (key) {
+    var el = document.createElement("article");
+    el.className = "loader-card";
+    el.innerHTML =
+      '<div class="loader-stage"><canvas></canvas></div>' +
+      '<div class="loader-meta"><h3>' + LOADER_COPY[key].title + '</h3><p>' + LOADER_COPY[key].note + '</p></div>';
+    loaders.appendChild(el);
+    var canvas = el.querySelector("canvas");
+    var start = performance.now();
+    (function loop(now) {
+      var size = sizeCanvas(canvas);
+      var ctx = canvas.getContext("2d");
+      var world = WORLDS[key];
+      var g = ctx.createLinearGradient(0, 0, 0, size.h);
+      g.addColorStop(0, shade(world.sky[0], -0.45));
+      g.addColorStop(1, shade(world.sky[1], -0.5));
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, size.w, size.h);
+      drawLoader(ctx, size.w / 2, size.h / 2, Math.min(size.w, size.h) * 0.26, (now - start) / 1000, key);
+      requestAnimationFrame(loop);
+    })(performance.now());
+  });
+
+  /* ---------- controls ---------------------------------------------------- */
+
+  var segButtons = document.querySelectorAll(".seg button");
+  segButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      segButtons.forEach(function (other) { other.setAttribute("aria-pressed", String(other === button)); });
+      state.from = state.to;
+      state.to = button.dataset.world;
+      resetAll();
+    });
+  });
+
+  document.getElementById("stall").addEventListener("change", function (event) {
+    state.stall = event.target.checked;
+  });
+
+  window.addEventListener("resize", resetAll);
+  resetAll();
+})();
+</script>

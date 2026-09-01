@@ -10,8 +10,16 @@ import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { usePlanetPositionTracker } from "@/features/scene-renderers/shared/PlanetPositionTracker";
 import { getSoftCircleTexture } from "@/features/scene-renderers/shared/softCircleTexture";
 import { applyCaustics, type CausticsUniforms } from "./oceanCaustics";
-import { LANDMARK_BASE_COLORS, landmarkGeometry } from "./oceanLandmarkGeometry";
-import { mixHexColors, type SeafloorHeightSampler } from "./oceanMath";
+import {
+  LANDMARK_BASE_COLORS,
+  landmarkFootprintRadiusMetres,
+  landmarkGeometry
+} from "./oceanLandmarkGeometry";
+import {
+  lowestSeafloorUnderFootprint,
+  mixHexColors,
+  type SeafloorHeightSampler
+} from "./oceanMath";
 
 // The clickable POI layer — one hero object per Ocean DNA landmark, the ocean's
 // counterpart of planets and forest landmarks. Hover feeds the canvas tooltip;
@@ -30,6 +38,12 @@ const SELECTION_RING_SELECTED_OPACITY = 0.95;
 const LANDMARK_GLOW_SCALE = 2.6;
 const LANDMARK_GLOW_OPACITY = 0.18;
 const CAMERA_FOCUS_LIFT = 2.0;
+// Both of these lie flat ON the sand rather than on the landmark, so they are
+// measured from the sediment line and not from the group's origin — the group
+// sits BELOW the sediment by the config's bed depth. Just enough clearance to
+// win the depth test against the seabed mesh under them.
+const WHALE_FALL_MAT_CLEARANCE = 0.05;
+const SELECTION_RING_CLEARANCE = 0.1;
 
 // The vent's plume and the relic's glow are what make those two landmarks read
 // at a distance in water that swallows detail.
@@ -42,6 +56,12 @@ type OceanLandmarksProps = {
   /** Shared with the seabed so a formation catches the same wave the sand does. */
   causticsUniforms: CausticsUniforms;
   heightSampler: SeafloorHeightSampler;
+  /**
+   * The floor mesh's vertex spacing, read at placement time rather than passed
+   * as a number, because the rig that owns it is built after this renders. Zero
+   * means no mesh yet, and heightSampler is then the analytic fallback.
+   */
+  floorCellSizeSampler: () => number;
   selectedPlanetKey: string | null;
   hoveredPlanetKey: string | null;
   onHoverPlanet: (pointOfInterest: PlanetSceneConfig | null) => void;
@@ -56,6 +76,7 @@ export function OceanLandmarks({
   water,
   causticsUniforms,
   heightSampler,
+  floorCellSizeSampler,
   selectedPlanetKey,
   hoveredPlanetKey,
   onHoverPlanet,
@@ -97,6 +118,7 @@ export function OceanLandmarks({
             water={water}
             causticsUniforms={causticsUniforms}
             heightSampler={heightSampler}
+            floorCellSizeSampler={floorCellSizeSampler}
             forceRelic={landmarkIndex === relicIndex}
             isSelected={identityKey === selectedPlanetKey}
             isHovered={identityKey === hoveredPlanetKey}
@@ -182,6 +204,7 @@ type OceanLandmarkProps = {
   water?: OceanWaterConfig;
   causticsUniforms: CausticsUniforms;
   heightSampler: SeafloorHeightSampler;
+  floorCellSizeSampler: () => number;
   forceRelic: boolean;
   isSelected: boolean;
   isHovered: boolean;
@@ -197,6 +220,7 @@ function OceanLandmark({
   water,
   causticsUniforms,
   heightSampler,
+  floorCellSizeSampler,
   forceRelic,
   isSelected,
   isHovered,
@@ -214,10 +238,33 @@ function OceanLandmark({
     const radius = landmark.radiusFromCenter ?? 10;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
+    // The floor under the whole FOOTPRINT, not under the centre point. A
+    // landmark's geometry has its foot normalised to y = 0 (see standOn in
+    // oceanLandmarkGeometry.ts), so one sample on a dune slope leaves the
+    // downhill edge in open water.
+    const floorHeight = lowestSeafloorUnderFootprint(
+      heightSampler,
+      x,
+      z,
+      landmarkFootprintRadiusMetres(kind, `${worldSeed}:${landmarkIndex}`),
+      floorCellSizeSampler()
+    );
     // heightAboveFloor is the one field the forest has no use for: an ocean is
-    // a volume, so a landmark can sit on the floor or hang in the water column.
-    return new Vector3(x, heightSampler(x, z) + (landmark.heightAboveFloor ?? 0), z);
-  }, [landmark.angleRadians, landmark.heightAboveFloor, landmark.radiusFromCenter, heightSampler]);
+    // a volume, so a landmark can in principle sit on the floor or hang in the
+    // water column. Every kind this family draws is a bottom feature, so from
+    // schemaVersion 1.6 the service ships it NEGATIVE — how deep the shape beds
+    // into the sediment. It used to be a 0-6 m lift, and it showed.
+    return new Vector3(x, floorHeight + (landmark.heightAboveFloor ?? 0), z);
+  }, [
+    landmark.angleRadians,
+    landmark.heightAboveFloor,
+    landmark.radiusFromCenter,
+    heightSampler,
+    floorCellSizeSampler,
+    kind,
+    worldSeed,
+    landmarkIndex
+  ]);
 
   const identityKey = planetIdentityKey(pointOfInterest, landmarkIndex);
   useEffect(() => {
@@ -251,6 +298,16 @@ function OceanLandmark({
       ),
     [fogColor, kind, tintStrength]
   );
+  // The group's origin is the landmark's FOOT, and the foot is bedded into the
+  // sediment (heightAboveFloor is negative — see landmarkBedDepthMetresByKind in
+  // ocean_scene_profile.go). Anything that belongs on the sand rather than on
+  // the object has to climb back out by that much, or it is buried: the whale
+  // fall's bacterial mat is the reason that landmark reads as an ecosystem, and
+  // a selection ring nobody can see is a click with no feedback.
+  //
+  // Clamped at zero so a kind that one day HANGS in the water column keeps its
+  // ring at its own base instead of dropping it to a seabed far below.
+  const sedimentLineHeight = Math.max(0, -(landmark.heightAboveFloor ?? 0));
   const softCircleTexture = getSoftCircleTexture();
   const glowColor = useMemo(() => new Color(accentColor), [accentColor]);
 
@@ -292,7 +349,10 @@ function OceanLandmark({
       {/* A whale fall runs an ecosystem for decades: the bacterial mat is the
           reason it is a landmark rather than a bone pile. */}
       {kind === "whaleFall" ? (
-        <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh
+          position={[0, sedimentLineHeight + WHALE_FALL_MAT_CLEARANCE, 0]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
           <circleGeometry args={[4.2, 24]} />
           <meshBasicMaterial color="#E8F0C8" transparent opacity={0.18} depthWrite={false} />
         </mesh>
@@ -312,7 +372,10 @@ function OceanLandmark({
       ) : null}
 
       {isHovered || isSelected ? (
-        <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh
+          position={[0, sedimentLineHeight + SELECTION_RING_CLEARANCE, 0]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
           <torusGeometry args={[SELECTION_RING_RADIUS, SELECTION_RING_TUBE_RADIUS, 8, 40]} />
           <meshBasicMaterial
             color={accentColor}

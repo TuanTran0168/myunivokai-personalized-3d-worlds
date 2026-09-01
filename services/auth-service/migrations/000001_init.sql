@@ -18,7 +18,7 @@ CREATE TABLE accounts (
 
 -- Permissions are declared in Go and synced into this table at
 -- migration/startup; staff read them, they never invent them. See
--- notes/vision/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
+-- agent-system/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
 CREATE TABLE permissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   codename TEXT NOT NULL UNIQUE,
@@ -54,7 +54,7 @@ CREATE TABLE account_roles (
 -- family_id groups every refresh token descended from one login. Reusing a
 -- token whose used_at is already set is the theft signal the rotation design
 -- exists to catch; the response is to revoke every row sharing its family_id,
--- not just the reused row. See notes/vision/auth-and-admin-plan.md#tokens.
+-- not just the reused row. See agent-system/plans/services/auth-and-admin-plan.md#tokens.
 CREATE TABLE refresh_tokens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

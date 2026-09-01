@@ -5,7 +5,7 @@
 -- consumes events, writes this database and answers queries — it publishes
 -- nothing and calls no other service. A reviewer who finds an outbox in this
 -- schema should treat it as a design violation, not an omission. See
--- notes/vision/analytics-service-plan.md#analytics-schema.
+-- agent-system/plans/services/analytics-service-plan.md#analytics-schema.
 
 -- world_projections is a second copy of production data, so its columns are
 -- an allow list rather than a mirror: no raw input, no generated profile, no

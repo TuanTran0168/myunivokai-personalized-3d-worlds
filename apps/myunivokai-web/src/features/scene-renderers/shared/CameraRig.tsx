@@ -3,10 +3,23 @@
 import { OrbitControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
-import { Vector3 } from "three";
+import { Spherical, Vector3 } from "three";
 import type { OrbitControls as OrbitControlsImplementation } from "three-stdlib";
+import { REDUCED_MOTION_MEDIA_QUERY } from "@/lib/formRailCollapse";
 import { usePlanetPositionTracker } from "./PlanetPositionTracker";
 import { useTerrainHeightSampler } from "./TerrainHeightSampler";
+import {
+  CAMERA_INTRO_START_POSE,
+  cameraIntroFrameSeconds,
+  cameraIntroOffsetAt,
+  cameraIntroProgress,
+  cameraIntroStartOffset,
+  cameraIntroPoseForDuration,
+  minimumPolarAngleUnderCeiling,
+  NO_POLAR_FLOOR,
+  pickCameraIntroPose,
+  type SphericalOffset
+} from "./cameraIntro";
 
 // How far above the sampled terrain the lens must stay. Small enough that
 // approaching the seabed still feels like approaching it, large enough that
@@ -46,6 +59,25 @@ type CameraRigProps = {
   minimumDistance?: number;
   maximumDistance?: number;
   maximumPolarAngleRadians?: number;
+  /**
+   * The height the lens may not rise above, for a family whose camera is INSIDE
+   * something it must not come out of.
+   *
+   * Only the ocean sets it, and only underwater: a scene with a sheet of water
+   * over the camera has a ceiling in the same way the forest has a floor. Left
+   * undefined, nothing here restricts the lift at all — every other family's
+   * camera is outside its subject looking in, and has nothing overhead to
+   * breach.
+   *
+   * The clamp derived from it is REAPPLIED EVERY FRAME AGAINST THE LIVE ORBIT
+   * RADIUS, not solved once, because the lift a tilt buys is the radius times
+   * the cosine of the polar angle. A single fixed angle would have to be the one
+   * that survives the widest zoom-out, and would then forbid at 3 m a look that
+   * is perfectly safe at 3 m — which is the same asymmetry the owner reported
+   * from the other side: zoomed in the frame is fine, zoomed out the same drag
+   * puts the lens through the surface.
+   */
+  maximumCameraHeightMetres?: number;
   /** Decorative canvases (gallery backdrop) opt out of keyboard movement. */
   keyboardMoveEnabled?: boolean;
   /**
@@ -60,6 +92,31 @@ type CameraRigProps = {
    * want to look pass it; nothing else changes.
    */
   restingTarget?: { x: number; y: number; z: number };
+  /**
+   * Length of the opening move, in seconds. 0 parks the camera on the framing
+   * immediately, which is what the decorative gallery backdrops want and what
+   * `prefers-reduced-motion: reduce` forces regardless of what is passed.
+   */
+  introDurationSeconds?: number;
+  /**
+   * Where the opening move is in its life.
+   *
+   * `waiting` — the scene has not rendered a frame yet, so the move must not
+   * start: it would spend itself behind a loading veil and reveal a camera that
+   * had already arrived.
+   * `held` — pose the camera at the start of the move but do not advance it.
+   * The genie reveal uses this while it unfolds a still of the first frame:
+   * a camera that kept moving underneath would no longer match the still by the
+   * time the two are swapped.
+   * `running` — advance.
+   */
+  introPhase?: "waiting" | "held" | "running";
+  /**
+   * Which of the opening shots this scene gets. The scene seed, normally — the
+   * same world then opens the same way every visit while different worlds open
+   * differently. Omitted, every scene opens on the canonical pull-back.
+   */
+  introPoseSeed?: string;
 };
 
 /**
@@ -73,8 +130,12 @@ export function CameraRig({
   minimumDistance = ORBIT_CONTROLS_MINIMUM_DISTANCE,
   maximumDistance = ORBIT_CONTROLS_MAXIMUM_DISTANCE,
   maximumPolarAngleRadians = ORBIT_CONTROLS_MAXIMUM_POLAR_ANGLE,
+  maximumCameraHeightMetres,
   keyboardMoveEnabled = true,
-  restingTarget
+  restingTarget,
+  introDurationSeconds = 0,
+  introPhase = "waiting",
+  introPoseSeed
 }: CameraRigProps) {
   const orbitControlsReference = useRef<OrbitControlsImplementation>(null);
   const planetPositionTracker = usePlanetPositionTracker();
@@ -86,6 +147,47 @@ export function CameraRig({
   // Once the user drives with the keyboard we stop auto-recentering the target,
   // so free-roam position is not yanked back to the origin every frame.
   const hasFreeRoamedRef = useRef(false);
+
+  // Opening move. The resting offset is captured on the first armed frame —
+  // that is the framing the family solved, before anything here has touched it.
+  const introRestingOffsetReference = useRef<SphericalOffset | null>(null);
+  const introStartOffsetReference = useRef<SphericalOffset | null>(null);
+  const introElapsedSecondsReference = useRef(0);
+  const isIntroSpentReference = useRef(false);
+  const prefersReducedMotionReference = useRef(false);
+  const introSpherical = useMemo(() => new Spherical(), []);
+  const scratchIntroOffset = useMemo(() => new Vector3(), []);
+  // Sized for the duration it has to play in: the full cinematic entry gets the
+  // whole shot, the create page's short settle gets a fraction of it rather
+  // than the same travel at two and a half times the speed.
+  const introPose = useMemo(
+    () =>
+      cameraIntroPoseForDuration(
+        introPoseSeed ? pickCameraIntroPose(introPoseSeed) : CAMERA_INTRO_START_POSE,
+        introDurationSeconds
+      ),
+    [introPoseSeed, introDurationSeconds]
+  );
+
+  useEffect(() => {
+    prefersReducedMotionReference.current = window.matchMedia(REDUCED_MOTION_MEDIA_QUERY).matches;
+  }, []);
+
+  // The move yields to the visitor the instant they reach for the scene. Hooked
+  // to the controls' own "start" event rather than window pointer events: that
+  // is the one signal that already means "this drag/pinch/wheel is going to
+  // move the camera", and it fires for touch and trackpad the same way.
+  useEffect(() => {
+    const orbitControls = orbitControlsReference.current;
+    if (!orbitControls) {
+      return;
+    }
+    function endIntro() {
+      isIntroSpentReference.current = true;
+    }
+    orbitControls.addEventListener("start", endIntro);
+    return () => orbitControls.removeEventListener("start", endIntro);
+  }, []);
 
   useEffect(() => {
     if (!keyboardMoveEnabled) {
@@ -134,6 +236,61 @@ export function CameraRig({
   const scratchRight = useMemo(() => new Vector3(), []);
   const scratchMove = useMemo(() => new Vector3(), []);
 
+  // Terrain clamp, extracted so the opening move gets it too. Only a family with
+  // a ground plane (ocean) ever sets the sampler; every other family's clamp
+  // here is a no-op.
+  //
+  // Shifting camera.position AND orbitControls.target by the same delta — not
+  // position alone — is the same technique the WASD block below already uses to
+  // move the rig without changing what it is looking at: OrbitControls derives
+  // position from (target, spherical offset), so translating both by one vector
+  // preserves the offset and therefore the view, while translating position
+  // alone would silently re-pitch the camera toward whatever it had just been
+  // clamped away from.
+  function clampCameraAboveTerrain(orbitControls: OrbitControlsImplementation) {
+    const sampleTerrainHeight = terrainHeightSampler.current;
+    if (!sampleTerrainHeight) {
+      return;
+    }
+    let minimumY = sampleTerrainHeight(camera.position.x, camera.position.z) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES;
+    // A floor is never allowed to push the lens through the ceiling. Without
+    // this the terrain clamp is a way AROUND the polar clamp rather than a
+    // companion to it: it lifts the camera after the controls have already had
+    // their say, and it lifts the orbit TARGET with it, which raises the ceiling
+    // crossing for every subsequent frame too. Where the corridor is genuinely
+    // too thin to hold both, the ceiling wins — a lens in the sand is a dark
+    // frame, a lens through the surface is a white one with the whole world
+    // hidden behind it.
+    if (maximumCameraHeightMetres !== undefined) {
+      minimumY = Math.min(minimumY, maximumCameraHeightMetres);
+    }
+    if (camera.position.y < minimumY) {
+      const deltaY = minimumY - camera.position.y;
+      camera.position.y += deltaY;
+      orbitControls.target.y += deltaY;
+      orbitControls.update();
+    }
+  }
+
+  // The ceiling, expressed in the one language OrbitControls speaks. Written
+  // straight onto the controls instead of clamping the position afterwards,
+  // because the controls re-derive the camera from (target, radius, polar,
+  // azimuth) on every update: a position correction would be recomputed away on
+  // the next frame, while a polar bound is enforced by the same code that moves
+  // the camera. It also means the drag simply STOPS at the surface rather than
+  // reaching it and being shoved back, which is the difference between a limit
+  // and a glitch.
+  function applyCameraCeiling(orbitControls: OrbitControlsImplementation, orbitRadius?: number) {
+    if (maximumCameraHeightMetres === undefined) {
+      return;
+    }
+    orbitControls.minPolarAngle = minimumPolarAngleUnderCeiling(
+      maximumCameraHeightMetres,
+      orbitControls.target.y,
+      orbitRadius ?? camera.position.distanceTo(orbitControls.target)
+    );
+  }
+
   useFrame((_, deltaTimeSeconds) => {
     const orbitControls = orbitControlsReference.current;
     if (!orbitControls) {
@@ -146,6 +303,75 @@ export function CameraRig({
         appliedRestingTargetRef.current = key;
         orbitControls.target.set(restingTarget.x, restingTarget.y, restingTarget.z);
         orbitControls.update();
+      }
+    }
+
+    // After the resting target is in place and before every update() below, so
+    // no branch of this frame can move the camera under a bound solved for a
+    // target it no longer has. The bound is a function of the target's height,
+    // and the first frame moves that height from the scene centre to wherever
+    // the family aimed it.
+    applyCameraCeiling(orbitControls);
+
+    // Opening move, ahead of everything else and returning while it runs: a
+    // focus glide or a WASD glide fighting the entrance for the same camera
+    // would read as two shots at once. Both are still reachable — the first
+    // touch on the controls, or the first movement key, spends the move.
+    const introDuration = prefersReducedMotionReference.current ? 0 : introDurationSeconds;
+    if (introPhase !== "waiting" && introDuration > 0 && !isIntroSpentReference.current) {
+      if (pressedKeysRef.current.size > 0) {
+        isIntroSpentReference.current = true;
+      } else {
+        let restingOffset = introRestingOffsetReference.current;
+        if (!restingOffset || !introStartOffsetReference.current) {
+          introSpherical.setFromVector3(scratchIntroOffset.copy(camera.position).sub(orbitControls.target));
+          restingOffset = {
+            radius: introSpherical.radius,
+            polarRadians: introSpherical.phi,
+            azimuthRadians: introSpherical.theta
+          };
+          introRestingOffsetReference.current = restingOffset;
+          introStartOffsetReference.current = cameraIntroStartOffset(
+            restingOffset,
+            {
+              minimumRadius: minimumDistance,
+              maximumRadius: maximumDistance,
+              maximumPolarRadians: maximumPolarAngleRadians,
+              // Solved against the radius the start pose lands on, which is the
+              // pulled-back one: every pose in the set lifts AND pulls back, and
+              // the lift a pose buys is the radius times the cosine, so the two
+              // compound. Without this the entrance is the one camera move that
+              // can breach the surface before the visitor has touched anything.
+              minimumPolarRadiansAtRadius:
+                maximumCameraHeightMetres === undefined
+                  ? NO_POLAR_FLOOR
+                  : (startRadius: number) =>
+                      minimumPolarAngleUnderCeiling(
+                        maximumCameraHeightMetres,
+                        orbitControls.target.y,
+                        startRadius
+                      )
+            },
+            introPose
+          );
+        }
+
+        if (introPhase === "running") {
+          introElapsedSecondsReference.current += cameraIntroFrameSeconds(deltaTimeSeconds);
+        }
+        const progress = cameraIntroProgress(introElapsedSecondsReference.current, introDuration);
+        const offset = cameraIntroOffsetAt(introStartOffsetReference.current, restingOffset, progress);
+        introSpherical.set(offset.radius, offset.polarRadians, offset.azimuthRadians);
+        camera.position.copy(orbitControls.target).add(scratchIntroOffset.setFromSpherical(introSpherical));
+        // Against the radius THIS frame of the move is posing at, not the one
+        // the frame began with: the move travels along the radius axis too.
+        applyCameraCeiling(orbitControls, offset.radius);
+        orbitControls.update();
+        if (progress >= 1) {
+          isIntroSpentReference.current = true;
+        }
+        clampCameraAboveTerrain(orbitControls);
+        return;
       }
     }
 
@@ -210,28 +436,17 @@ export function CameraRig({
     }
     orbitControls.update();
 
+    // A second pass, because a scroll-zoom is applied INSIDE update(): the bound
+    // set at the top of the frame was solved for the radius the frame started
+    // at, and the wheel has since widened it. One frame of a stale bound is one
+    // frame of white water, so it is re-solved and re-enforced here rather than
+    // left to the next tick.
+    applyCameraCeiling(orbitControls);
+    orbitControls.update();
+
     // Terrain clamp, last, so it corrects whatever this frame's zoom/orbit/pan
-    // just produced rather than something a later step could still undo. Only
-    // a family with a ground plane (ocean) ever sets the sampler; every other
-    // family's clamp here is a no-op.
-    //
-    // Shifting camera.position AND orbitControls.target by the same delta —
-    // not position alone — is the same technique the WASD block above already
-    // uses to move the rig without changing what it is looking at: OrbitControls
-    // derives position from (target, spherical offset), so translating both by
-    // one vector preserves the offset and therefore the view, while translating
-    // position alone would silently re-pitch the camera toward whatever it had
-    // just been clamped away from.
-    const sampleTerrainHeight = terrainHeightSampler.current;
-    if (sampleTerrainHeight) {
-      const minimumY = sampleTerrainHeight(camera.position.x, camera.position.z) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES;
-      if (camera.position.y < minimumY) {
-        const deltaY = minimumY - camera.position.y;
-        camera.position.y += deltaY;
-        orbitControls.target.y += deltaY;
-        orbitControls.update();
-      }
-    }
+    // just produced rather than something a later step could still undo.
+    clampCameraAboveTerrain(orbitControls);
   });
 
   return (

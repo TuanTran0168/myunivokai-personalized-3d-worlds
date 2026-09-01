@@ -10,10 +10,15 @@ import {
   Noise,
   Vignette
 } from "@react-three/postprocessing";
+import { useThree } from "@react-three/fiber";
 import { BlendFunction } from "postprocessing";
 import { Vector2 } from "three";
 import type { ScenePostFXConfig, ScenePostFXGradeConfig } from "@/lib/types";
 import { sceneGradeForTheme, type SceneGrade } from "@/lib/scene";
+import {
+  composerMultisamplingFor,
+  shouldComputeAmbientOcclusionAtHalfResolution
+} from "./renderQuality";
 
 const DEFAULT_BLOOM_INTENSITY = 0.8;
 // Selective bloom by luminance: with the composer's HDR (half-float) buffer,
@@ -22,9 +27,10 @@ const DEFAULT_BLOOM_INTENSITY = 0.8;
 // it and no longer leak muddy glow.
 const BLOOM_LUMINANCE_THRESHOLD = 0.85;
 const BLOOM_LUMINANCE_SMOOTHING = 0.2;
-// Pinned explicitly (the library default is also 8 on WebGL2) so a dependency
-// update can never silently drop edge anti-aliasing.
-const COMPOSER_MULTISAMPLING = 8;
+// Multisampling is no longer a constant: it comes from the device pixel ratio
+// via composerMultisamplingFor, because an 8x-resolved RGBA16F target is the
+// single largest per-pixel cost in the frame and its value falls away as the
+// display's own density rises. See renderQuality.ts for the measurements.
 
 // Ground-contact ambient occlusion for the forest family (universe scenes are
 // emissive-lit and have no ground, so they skip it). Softly darkens the creases
@@ -84,13 +90,28 @@ type PostEffectsProps = {
 export function PostEffects({ postFX, theme, ambientOcclusion = false }: PostEffectsProps) {
   const bloomIntensity = postFX?.bloomIntensity ?? DEFAULT_BLOOM_INTENSITY;
   const grade = resolveSceneGrade(postFX?.grade, theme);
+  // The RENDERER's ratio, not the display's. Reading the display's was tried,
+  // on the argument that a HiDPI panel makes the extra samples invisible even
+  // when AdaptiveResolution has dropped the render ratio under it — and it
+  // measured WORSE, 37 fps against 47 on the forest at 4K. The argument was
+  // wrong: rendering at ratio 1 and letting the browser upscale to a dpr-2
+  // panel produces a dpr-1 image with dpr-1 aliasing, and multisampling is
+  // still what smooths it. Samples per RENDERED pixel is the thing that
+  // matters, and the renderer is the only one that knows it.
+  const pixelRatio = useThree((state) => state.gl.getPixelRatio());
 
   // Built as a filtered array so the AO effect can be conditionally present
   // (EffectComposer's children type rejects a literal null child). AO goes
   // first, so it darkens the lit color before bloom/grade read it.
   const effects = [
     ambientOcclusion ? (
-      <N8AO key="n8ao" aoRadius={FOREST_AO_RADIUS} intensity={FOREST_AO_INTENSITY} distanceFalloff={FOREST_AO_DISTANCE_FALLOFF} />
+      <N8AO
+        key="n8ao"
+        aoRadius={FOREST_AO_RADIUS}
+        intensity={FOREST_AO_INTENSITY}
+        distanceFalloff={FOREST_AO_DISTANCE_FALLOFF}
+        halfRes={shouldComputeAmbientOcclusionAtHalfResolution(pixelRatio)}
+      />
     ) : null,
     <Bloom
       key="bloom"
@@ -117,5 +138,5 @@ export function PostEffects({ postFX, theme, ambientOcclusion = false }: PostEff
     // React 19 removed the global JSX namespace; it lives under React now.
   ].filter((effect): effect is React.JSX.Element => effect !== null);
 
-  return <EffectComposer multisampling={COMPOSER_MULTISAMPLING}>{effects}</EffectComposer>;
+  return <EffectComposer multisampling={composerMultisamplingFor(pixelRatio)}>{effects}</EffectComposer>;
 }

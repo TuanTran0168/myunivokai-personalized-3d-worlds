@@ -4,7 +4,7 @@ Auth Service is the private NATS bounded context for staff identity. It owns
 `myunivokai_auth` and answers login/refresh/logout/tokenversion/account
 queries through Core NATS. It exposes no HTTP business API — the same rule
 every other domain service follows — and it never reads a world, a variant
-or a job. See [notes/vision/auth-and-admin-plan.md](../../notes/vision/auth-and-admin-plan.md).
+or a job. See [agent-system/plans/services/auth-and-admin-plan.md](../../agent-system/plans/services/auth-and-admin-plan.md).
 
 `internal/services/AuthService` owns the login/refresh/logout/lockout rules;
 `internal/security` owns Argon2id password hashing and Ed25519 access-token
@@ -52,7 +52,7 @@ the same `LoginResponseData` shape a normal login returns.
 `TokenVerifier` accepts a list of public keys, so a rotation adds the new
 key to the gateway before switching auth-service to sign with it, and only
 removes the old key once every session has had time to refresh. See
-[notes/ops/admin-key-rotation-drill.md](../../notes/ops/admin-key-rotation-drill.md)
+[agent-system/skills/admin-key-rotation-drill.md](../../agent-system/skills/admin-key-rotation-drill.md)
 for the exact steps and a real run's observed results.
 
 ## First run
@@ -88,6 +88,6 @@ go run ./cmd/service
 Production uses `Dockerfile.prod` as a Render web service, `myunivokai-auth`
 — a free-tier `PORT`-bound health server for the same cold-start reason every
 other domain service has one; see
-[notes/vision/service-wake-mechanism.md](../../notes/vision/service-wake-mechanism.md).
+[agent-system/plans/architecture/service-wake-mechanism.md](../../agent-system/plans/architecture/service-wake-mechanism.md).
 Local integrated startup is owned by the root Compose aggregator; component
 Compose expects shared `infra` to be running.

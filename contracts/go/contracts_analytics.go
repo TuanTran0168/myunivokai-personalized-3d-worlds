@@ -11,7 +11,7 @@ const (
 	// creation. Creation itself carries its snapshot on the existing
 	// completed event, so analytics has exactly one projection function
 	// rather than two — see
-	// notes/vision/analytics-service-plan.md#design-decision-snapshot-events-not-fine-grained-events.
+	// agent-system/plans/services/analytics-service-plan.md#design-decision-snapshot-events-not-fine-grained-events.
 	//
 	// Neither subject needed a stream or ACL change: MYUNIVOKAI_EVENTS
 	// already filters on "myunivokai.events.>", and both family services
@@ -58,7 +58,7 @@ func (family WorldFamily) WorldChangedEventSubject() (string, error) {
 // rather than a deny list: this struct IS the complete set of fields that may
 // ever be copied out of a family database into the analytics database.
 // Nothing may be added without a matching line in
-// notes/vision/analytics-service-plan.md#data-boundary.
+// agent-system/plans/services/analytics-service-plan.md#data-boundary.
 //
 // Nickname is the only user-entered value here, kept deliberately so an admin
 // table has a human label; raw_input, profile_dna, dna_snapshot, quote,

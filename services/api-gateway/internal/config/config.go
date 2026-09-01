@@ -104,7 +104,7 @@ type Config struct {
 	// a fresh deploy of this binary must not crash-loop the product edge over
 	// admin-only vars nobody has filled in yet, and the switch itself exists
 	// so the admin surface can be taken offline without redeploying — see
-	// notes/vision/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
+	// agent-system/plans/services/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
 	AdminRoutesEnabled              bool
 	AdminAllowedOrigin              string
 	AdminRateLimitRequestsPerSecond float64
@@ -114,7 +114,7 @@ type Config struct {
 	// never the private key, which only auth-service ever holds. More than
 	// one during a rotation drill: add the new key before removing the old
 	// one so no session is force-logged-out - see
-	// notes/vision/auth-and-admin-plan.md#tokens.
+	// agent-system/plans/services/auth-and-admin-plan.md#tokens.
 	AdminAccessPublicKeys     []ed25519.PublicKey
 	AdminTokenVersionCacheTTL time.Duration
 	// ServiceWakePlatform names the hosting mechanism used to start a
@@ -281,7 +281,7 @@ func (loadedConfig Config) Validate() error {
 		// No wildcard is acceptable here at any point, dev included — the
 		// admin origin check is unconditional, unlike the product group's
 		// (which only tightens in production) — see
-		// notes/vision/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
+		// agent-system/plans/services/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
 		if err := validateOriginFormat(loadedConfig.AdminAllowedOrigin); err != nil {
 			return fmt.Errorf("ADMIN_ALLOWED_ORIGIN: %w", err)
 		}

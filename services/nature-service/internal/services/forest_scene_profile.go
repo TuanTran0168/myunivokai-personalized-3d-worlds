@@ -299,18 +299,15 @@ var baseBirdFlocksBySeason = map[string]float64{
 	SeasonWinter: 0.6,
 }
 
-type timeOfDayWeightEntry struct {
-	Kind   string
-	Weight float64
-}
+// Canonical order. Like seasonKindsInOrder this order is part of the contract:
+// forestStyleProfile.TimeOfDayWeights indexes into it.
+var timeOfDayKindsInOrder = []string{TimeOfDayDay, TimeOfDayGoldenHour, TimeOfDayDusk}
 
 // Golden hour gets the biggest weight on purpose: it is the most flattering
-// light for the stylized asset packs (the beauty-first decision).
-var timeOfDayWeights = []timeOfDayWeightEntry{
-	{Kind: TimeOfDayDay, Weight: 0.35},
-	{Kind: TimeOfDayGoldenHour, Weight: 0.45},
-	{Kind: TimeOfDayDusk, Weight: 0.20},
-}
+// light for the stylized asset packs (the beauty-first decision). These are the
+// weights a world with no style gets, and neutralForestStyleProfile is these
+// exact numbers.
+var timeOfDayWeights = [3]float64{0.35, 0.45, 0.20}
 
 type floatRange struct {
 	Minimum float64
@@ -532,19 +529,22 @@ func weatherKindForRoll(roll float64, entries []weightedWeatherKind) string {
 	return entries[len(entries)-1].Kind
 }
 
-func timeOfDayForRoll(roll float64) string {
+func timeOfDayForRoll(roll float64, weights [3]float64) string {
 	total := 0.0
-	for _, entry := range timeOfDayWeights {
-		total += entry.Weight
+	for _, weight := range weights {
+		total += weight
+	}
+	if total <= 0 {
+		return timeOfDayKindsInOrder[len(timeOfDayKindsInOrder)-1]
 	}
 	cumulative := 0.0
-	for _, entry := range timeOfDayWeights {
-		cumulative += entry.Weight
+	for index, weight := range weights {
+		cumulative += weight
 		if roll < cumulative/total {
-			return entry.Kind
+			return timeOfDayKindsInOrder[index]
 		}
 	}
-	return timeOfDayWeights[len(timeOfDayWeights)-1].Kind
+	return timeOfDayKindsInOrder[len(timeOfDayKindsInOrder)-1]
 }
 
 func clampFloat(value, minimum, maximum float64) float64 {

@@ -38,11 +38,11 @@ const FIXTURES = {
  * picture of every sea a visitor can actually ask for, and a preset that
  * stops working stops working here first.
  *
- *   ocean-surface   Glass Shallows      24.0 m UP,   sun  4.6 deg   golden hour
- *   ocean-daylight  Glass Shallows      17.8 m UP,   sun 37.2 deg   midday sea
- *   ocean-shallow   Reef Crest          14.0 m down, floor at 23 m  lit reef
- *   ocean-twilight  Mesophotic Current  58.1 m down, floor at 2 km  midwater
- *   ocean-abyss     The Abyss           1144 m down, floor at 1150  on the bottom
+ *   ocean-surface   Glass Shallows      10.1 m UP,   sun  4.6 deg   golden hour
+ *   ocean-daylight  Glass Shallows       9.5 m UP,   sun 37.2 deg   midday sea
+ *   ocean-shallow   Reef Crest          24.5 m down, floor at 33 m  lit reef
+ *   ocean-twilight  Mesophotic Current  62.7 m down, floor at 3.7 km midwater
+ *   ocean-abyss     The Abyss           2209 m down, floor at 2214  on the bottom
  *
  * Depth is this family's whole axis, and the failure it is prone to is one no
  * single image can show: two worlds hundreds of metres apart that render
