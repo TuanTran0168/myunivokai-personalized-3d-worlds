@@ -51,6 +51,96 @@ export function createSeafloorHeightSampler(seafloor?: OceanSeafloorConfig): Sea
   };
 }
 
+// How many points around the rim of a footprint are sampled when there is no
+// mesh to sample instead. Eight is where the gap this closes stops narrowing:
+// the seabed's shortest wavelength is the wind ripple at about 11 m and a
+// footprint is a few metres across, so the surface under one object is close to
+// a plane, and a ring of eight finds its low corner.
+const FOOTPRINT_RIM_SAMPLE_COUNT = 8;
+// The most mesh vertices this will look at along one axis, whatever the
+// footprint and cell size ask for. A guard against a pathological call, not a
+// quality setting: the real cases need three or four.
+const MAXIMUM_FOOTPRINT_SAMPLES_PER_AXIS = 12;
+
+/**
+ * The LOWEST the DRAWN seabed gets anywhere under a footprint of this radius.
+ *
+ * Two things put a landmark in the air, and this answers both.
+ *
+ * The foot is a footprint, not a point, and it used to be placed against a
+ * single sample taken at its centre. The seabed carries 1.2 m dunes over an
+ * 18 m wavelength, so a shape five metres across standing on a slope has its
+ * uphill edge buried and its downhill edge in open water however correct its
+ * centre is.
+ *
+ * And `heightSampler` is the height FUNCTION, while what the eye sees is that
+ * function sampled on a grid and joined with flat triangles. Those triangles
+ * cut every corner, so the drawn floor hangs BELOW the function — by about
+ * 0.2 m at desktop's 2.27 m vertex spacing and 0.6 m at mobile's 5.67 m. An
+ * object placed on the function is that far above the sand it appears to
+ * stand on, and it is worse on the weaker device, which is the opposite of
+ * how a quality setting should fail.
+ *
+ * So when the mesh spacing is known the samples are taken AT ITS VERTICES,
+ * across every cell the footprint touches. Their minimum is at or below the
+ * drawn surface everywhere inside the footprint, because a triangle never dips
+ * below its own corners — which makes this exact rather than an estimate. With
+ * no mesh (`meshCellSizeMetres` of 0, the first frames before the rig exists)
+ * it falls back to a ring on the function itself.
+ *
+ * The minimum is the right end of the range and not the mean: an object half a
+ * metre into the seabed reads as settled, and the same object half a metre
+ * above it reads as broken.
+ */
+export function lowestSeafloorUnderFootprint(
+  heightSampler: SeafloorHeightSampler,
+  centreX: number,
+  centreZ: number,
+  footprintRadiusMetres: number,
+  meshCellSizeMetres: number
+): number {
+  let lowest = heightSampler(centreX, centreZ);
+  if (!(footprintRadiusMetres > 0)) {
+    return lowest;
+  }
+
+  if (!(meshCellSizeMetres > 0)) {
+    for (let sampleIndex = 0; sampleIndex < FOOTPRINT_RIM_SAMPLE_COUNT; sampleIndex += 1) {
+      const angle = (sampleIndex / FOOTPRINT_RIM_SAMPLE_COUNT) * Math.PI * 2;
+      const sampled = heightSampler(
+        centreX + Math.cos(angle) * footprintRadiusMetres,
+        centreZ + Math.sin(angle) * footprintRadiusMetres
+      );
+      if (sampled < lowest) {
+        lowest = sampled;
+      }
+    }
+    return lowest;
+  }
+
+  // Every vertex of every cell the footprint overlaps, so the whole triangle
+  // fan under the shape is accounted for and not just the part inside the
+  // circle.
+  const firstColumn = Math.floor((centreX - footprintRadiusMetres) / meshCellSizeMetres);
+  const lastColumn = Math.ceil((centreX + footprintRadiusMetres) / meshCellSizeMetres);
+  const firstRow = Math.floor((centreZ - footprintRadiusMetres) / meshCellSizeMetres);
+  const lastRow = Math.ceil((centreZ + footprintRadiusMetres) / meshCellSizeMetres);
+  const columnCount = Math.min(MAXIMUM_FOOTPRINT_SAMPLES_PER_AXIS, lastColumn - firstColumn + 1);
+  const rowCount = Math.min(MAXIMUM_FOOTPRINT_SAMPLES_PER_AXIS, lastRow - firstRow + 1);
+  for (let column = 0; column < columnCount; column += 1) {
+    for (let row = 0; row < rowCount; row += 1) {
+      const sampled = heightSampler(
+        (firstColumn + column) * meshCellSizeMetres,
+        (firstRow + row) * meshCellSizeMetres
+      );
+      if (sampled < lowest) {
+        lowest = sampled;
+      }
+    }
+  }
+  return lowest;
+}
+
 /**
  * The lowest the seafloor gets, for anything that needs to know where the world
  * bottoms out — the graded water backdrop anchors its dark end here.

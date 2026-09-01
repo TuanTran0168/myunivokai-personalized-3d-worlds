@@ -37,7 +37,7 @@ import { clampNumber, depthAt, roundToHundredths, roundToThousandths } from "./o
 // logic rather than a duplicated table.
 
 // Mirrors oceanSchemaVersion in ocean_config_builder.go.
-export const OCEAN_PREVIEW_SCHEMA_VERSION = "1.5";
+export const OCEAN_PREVIEW_SCHEMA_VERSION = "1.6";
 
 // Depth zones, in canonical order from the surface down. Both boundaries are
 // physical constants of the depth curve rather than round numbers: the sunlit
@@ -764,7 +764,26 @@ const LANDMARK_ANGLE_JITTER_RADIANS = 0.25;
 // the camera's own distance makes that impossible by construction.
 const LANDMARK_CAMERA_STANDOFF_METRES = 8;
 const LANDMARK_RING_DEPTH_METRES = 26;
-const LANDMARK_HEIGHT_RANGE = 6;
+
+// How deep each kind beds into the sediment, in metres, before the jitter
+// below. Applied as a NEGATIVE heightAboveFloor.
+//
+// This replaced LANDMARK_HEIGHT_RANGE = 6, a blind lift of 0 to 6 m ABOVE the
+// floor. Every kind this family draws is a bottom feature, and
+// oceanLandmarkGeometry.ts normalises each one's foot to y = 0 for the express
+// purpose of standing it on the sediment; the lift put it back in the water
+// column, where a whale fall's rib cage and bacterial mat hung with a visible
+// gap under them. Mirrors landmarkBedDepthMetresByKind in
+// ocean_scene_profile.go, including the reasoning behind each depth.
+const LANDMARK_BED_DEPTH_METRES_BY_KIND: Record<string, number> = {
+  [OCEAN_LANDMARK_KELP_CATHEDRAL]: 0.2,
+  [OCEAN_LANDMARK_HYDROTHERMAL_VENT]: 0.3,
+  [OCEAN_LANDMARK_CORAL_GARDEN]: 0.25,
+  [OCEAN_LANDMARK_ABYSSAL_TRENCH]: 0.35,
+  [OCEAN_LANDMARK_WHALE_FALL]: 0.5,
+  [OCEAN_LANDMARK_SUNKEN_RELIC]: 0.55
+};
+const LANDMARK_BED_DEPTH_JITTER_METRES = 0.15;
 const LANDMARK_COLOR_CYCLE_LENGTH = 3;
 const FIRST_LANDMARK_ENERGY = 60;
 const LANDMARK_ENERGY_STEP = 5;
@@ -1279,7 +1298,7 @@ function buildPreviewLandmarkConfigs(
     const kindRoll = nextRandomValue();
     const angleJitterRoll = nextRandomValue();
     const radiusRoll = nextRandomValue();
-    const heightRoll = nextRandomValue();
+    const bedDepthRoll = nextRandomValue();
 
     let kind = OCEAN_LANDMARK_KELP_CATHEDRAL;
     if (index > 0) {
@@ -1311,7 +1330,11 @@ function buildPreviewLandmarkConfigs(
       radiusFromCenter: roundToHundredths(
         cameraDistance + LANDMARK_CAMERA_STANDOFF_METRES + radiusRoll * LANDMARK_RING_DEPTH_METRES
       ),
-      heightAboveFloor: roundToHundredths(heightRoll * LANDMARK_HEIGHT_RANGE),
+      // Negative: every kind is a bottom feature, so the offset is how deep
+      // it beds into the sediment rather than how far it floats over it.
+      heightAboveFloor: roundToHundredths(
+        -((LANDMARK_BED_DEPTH_METRES_BY_KIND[kind] ?? 0) + bedDepthRoll * LANDMARK_BED_DEPTH_JITTER_METRES)
+      ),
       accentColor,
       energy: Math.min(MAXIMUM_LANDMARK_ENERGY, FIRST_LANDMARK_ENERGY + index * LANDMARK_ENERGY_STEP)
     };

@@ -25,12 +25,21 @@ import (
 // worlds sat the camera as little as 3 m from the surface, which is not
 // enough real distance for the underwater-surface shader's own fog-based
 // swallow to do anything, so a turbid style could paint a wall of light
-// straight overhead. No reader is kept for 1.1 through 1.4 because this
-// family has not shipped and nothing has ever been stored at any of them — a
-// compatibility shim for zero rows is a liability, not caution. The version
-// still moves so the renderer key does.
+// straight overhead.
+//
+// 1.6 turns landmarks.heightAboveFloor from a 0-6 m LIFT into a per-kind bed
+// depth, which is negative (see landmarkBedDepthMetresByKind in
+// ocean_scene_profile.go): all six kinds are seabed features and the lift left
+// them hanging in the water column with a gap underneath.
+//
+// No reader is kept for 1.1 through 1.5 because this family has not shipped and
+// nothing has ever been stored at any of them — a compatibility shim for zero
+// rows is a liability, not caution. The version still moves so the renderer key
+// does, and so contracts/scenes/ocean-scene-config.schema.json has to move with
+// it: that file's `const` is what makes the contracts conformance test the
+// thing that catches a forgotten bump.
 const (
-	oceanSchemaVersion = "1.5"
+	oceanSchemaVersion = "1.6"
 	oceanSceneType     = "ocean"
 )
 
@@ -555,8 +564,8 @@ func buildBioluminescenceConfig(input BuildOceanConfigInput, depth models.DepthC
 	}
 }
 
-// Draw order per landmark (DNA order): kind roll, angle jitter, radius, height
-// above the floor. The first landmark is always the kelp cathedral; accent
+// Draw order per landmark (DNA order): kind roll, angle jitter, radius, how
+// deep it settled. The first landmark is always the kelp cathedral; accent
 // colours cycle secondary/accent/primary exactly like universe planets and
 // forest landmarks, so the palette reads the same across all three portraits.
 func buildLandmarkConfigs(input BuildOceanConfigInput, cameraDistance float64, primary, secondary string) []models.LandmarkSceneConfig {
@@ -568,7 +577,7 @@ func buildLandmarkConfigs(input BuildOceanConfigInput, cameraDistance float64, p
 		kindRoll := rng.Float64()
 		angleJitterRoll := rng.Float64()
 		radiusRoll := rng.Float64()
-		heightRoll := rng.Float64()
+		bedDepthRoll := rng.Float64()
 
 		kind := LandmarkKelpCathedral
 		if index > 0 {
@@ -595,7 +604,9 @@ func buildLandmarkConfigs(input BuildOceanConfigInput, cameraDistance float64, p
 			Kind:             kind,
 			AngleRadians:     round(baseAngle + (angleJitterRoll-0.5)*2*landmarkAngleJitterRadians),
 			RadiusFromCenter: round(cameraDistance + landmarkCameraStandoffMetres + radiusRoll*landmarkRingDepthMetres),
-			HeightAboveFloor: round(landmarkHeightBase + heightRoll*landmarkHeightRange),
+			// Negative: every kind is a bottom feature, so the offset is how
+			// deep it beds into the sediment. See landmarkBedDepthMetresByKind.
+			HeightAboveFloor: round(-(landmarkBedDepthMetresByKind[kind] + bedDepthRoll*landmarkBedDepthJitterMetres)),
 			AccentColor:      accentColor,
 			Energy:           dnaLandmark.Energy,
 		})

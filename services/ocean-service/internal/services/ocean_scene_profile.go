@@ -832,9 +832,49 @@ const (
 	// landscape rather than out past its edge.
 	landmarkCameraStandoffMetres = 8.0
 	landmarkRingDepthMetres      = 26.0
-	landmarkHeightBase           = 0.0
-	landmarkHeightRange          = 6.0
+
+	// How much two landmarks of the same kind differ in how deep they settled.
+	// Small, because settling is a variation and not a placement axis — see
+	// landmarkBedDepthMetresByKind for why there is no lift here at all.
+	landmarkBedDepthJitterMetres = 0.15
 )
+
+// How deep each landmark kind beds into the sediment, in metres, before the
+// jitter above. It is applied as a NEGATIVE heightAboveFloor.
+//
+// THIS REPLACED A LIFT. The two constants that were here, landmarkHeightBase =
+// 0 and landmarkHeightRange = 6, put every landmark 0 to 6 m ABOVE the floor on
+// a roll that never asked what kind it was. Every kind this family draws is a
+// bottom feature — a black smoker precipitated out of the basalt, a pinnacle
+// with talus at its foot, a coral head on rock, a kelp holdfast, a whale fall,
+// a wreck settled where it sank — and oceanLandmarkGeometry.ts normalises each
+// one's FOOT to y = 0 for the express purpose of standing it on the sediment.
+// The lift put it straight back into the water column, and it read as exactly
+// what it was: a rib cage and its bacterial mat hanging in clear water with
+// daylight underneath. Reported against a real frame, not inferred.
+//
+// The comment that justified the lift — "an ocean is a volume, so a landmark
+// can sit on the floor or hang in the water column" — is a true sentence about
+// oceans and a false one about these six shapes. The field stays in the
+// contract for the kind that eventually does hang, a jellyfish bloom or a
+// midwater aggregation, but it is no longer a free roll.
+//
+// None of the depths are zero, because a foot is a FOOTPRINT and not a point.
+// A landmark is placed against the seabed under its centre, and that seabed
+// carries 1.2 m dunes and is drawn as a mesh whose cells are 2.3 m across on
+// desktop and 5.7 m on mobile, so a shape resting at exactly the sampled height
+// still shows a gap under one edge. The renderer closes the rest of that gap by
+// sampling the whole footprint (lowestSeafloorUnderFootprint in oceanMath.ts);
+// bedding in is the half that belongs here, because it is also what a real
+// object does to sediment.
+var landmarkBedDepthMetresByKind = map[string]float64{
+	LandmarkKelpCathedral:    0.20, // a holdfast grips the rock it grew on
+	LandmarkHydrothermalVent: 0.30, // the chimney is precipitated out of the floor
+	LandmarkCoralGarden:      0.25, // a massive head sits on its own dead skeleton
+	LandmarkAbyssalTrench:    0.35, // talus at the pinnacle's foot buries its base
+	LandmarkWhaleFall:        0.50, // half in the sediment, which is the whole look
+	LandmarkSunkenRelic:      0.55, // a wreck settles into the bottom; it does not rest on it
+}
 
 // adjacentZone picks the zone above or below. Unlike the forest's seasons this
 // does NOT wrap: the surface has nothing above it and the abyss nothing below,

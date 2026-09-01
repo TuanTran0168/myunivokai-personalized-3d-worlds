@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.5",
+  "schemaVersion": "1.6",
   "sceneType": "ocean",
   "sceneName": "The Lantern Trench",
   "archetype": "Tidekeeper",
@@ -129,7 +129,7 @@
       "kind": "kelpCathedral",
       "angleRadians": 0.12,
       "radiusFromCenter": 48.03,
-      "heightAboveFloor": 1.8,
+      "heightAboveFloor": -0.24,
       "accentColor": "#06B6D4",
       "energy": 60
     },
@@ -140,7 +140,7 @@
       "kind": "sunkenRelic",
       "angleRadians": 1.62,
       "radiusFromCenter": 33.61,
-      "heightAboveFloor": 1.05,
+      "heightAboveFloor": -0.58,
       "accentColor": "#FACC15",
       "energy": 65
     },
@@ -151,7 +151,7 @@
       "kind": "hydrothermalVent",
       "angleRadians": 3.34,
       "radiusFromCenter": 49.68,
-      "heightAboveFloor": 0.93,
+      "heightAboveFloor": -0.32,
       "accentColor": "#8B5CF6",
       "energy": 70
     },
@@ -162,7 +162,7 @@
       "kind": "coralGarden",
       "angleRadians": 4.65,
       "radiusFromCenter": 54.71,
-      "heightAboveFloor": 2.51,
+      "heightAboveFloor": -0.31,
       "accentColor": "#06B6D4",
       "energy": 75
     }

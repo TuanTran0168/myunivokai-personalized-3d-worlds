@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://myunivokai.com/contracts/scenes/ocean-scene-config.schema.json",
   "title": "OceanSceneConfig",
-  "description": "Scene contract for the ocean family, produced by ocean-service (sceneType 'ocean', schemaVersion '1.4'). Renderers are keyed by (sceneType, schemaVersion). Only semantic and hero placements are stored; mass scatter (flora, marine snow, plankton, school paths) is derived frontend-side from the placement/path seeds embedded here. The whole water and lighting section is DERIVED from depth.metres by services/ocean-service/internal/services/depth_curve.go and then stored, so re-tuning the curve never changes a world that already exists. There is no hdriKey anywhere: the sky, where a world has one, is evaluated analytically (Preetham) rather than sampled, and below the waterline there is no sky to sample at all. Golden fixtures in services/ocean-service/internal/services/testdata are the executable form of this contract.",
+  "description": "Scene contract for the ocean family, produced by ocean-service (sceneType 'ocean', schemaVersion '1.6'). Renderers are keyed by (sceneType, schemaVersion). Only semantic and hero placements are stored; mass scatter (flora, marine snow, plankton, school paths) is derived frontend-side from the placement/path seeds embedded here. The whole water and lighting section is DERIVED from depth.metres by services/ocean-service/internal/services/depth_curve.go and then stored, so re-tuning the curve never changes a world that already exists. There is no hdriKey anywhere: the sky, where a world has one, is evaluated analytically (Preetham) rather than sampled, and below the waterline there is no sky to sample at all. Golden fixtures in services/ocean-service/internal/services/testdata are the executable form of this contract.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -28,7 +28,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "1.4"
+      "const": "1.6"
     },
     "sceneType": {
       "const": "ocean"
@@ -559,7 +559,7 @@
     },
     "landmarks": {
       "type": "array",
-      "description": "One per Ocean DNA landmark — the clickable POI layer. The first is always the kelp cathedral. Placement is polar around the basin centre, plus heightAboveFloor, which is the one field the forest has no use for: an ocean is a volume.",
+      "description": "One per Ocean DNA landmark — the clickable POI layer. The first is always the kelp cathedral. Placement is polar around the basin centre, plus heightAboveFloor, which is the one field the forest has no use for: an ocean is a volume, and a landmark can in principle sit on the floor or hang in the water column.",
       "minItems": 3,
       "maxItems": 7,
       "items": {
@@ -607,7 +607,8 @@
           },
           "heightAboveFloor": {
             "type": "number",
-            "minimum": 0,
+            "description": "Where the landmark sits relative to the seabed under it. NEGATIVE for every kind this family currently draws, because all six are bottom features and the value is how deep the shape beds into the sediment. It was a 0-6 m LIFT until schemaVersion 1.6, which put rib cages and wrecks in open water with a gap underneath; the positive half of the range is kept open for the kind that eventually does hang, a jellyfish bloom or a midwater aggregation, and is unused today.",
+            "minimum": -0.8,
             "maximum": 6
           },
           "accentColor": {

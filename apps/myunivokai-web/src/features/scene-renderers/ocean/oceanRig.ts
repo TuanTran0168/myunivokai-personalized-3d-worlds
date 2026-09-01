@@ -103,6 +103,16 @@ const BOUNDARY_SIGHT_MULTIPLIER = 1.5;
  * to the horizon.
  */
 const BACKDROP_RADIUS_METRES = 420;
+/**
+ * The seabed mesh: how far it reaches, and how finely it is sampled at each
+ * quality level. The vertex spacing that falls out of these two — 2.27 m and
+ * 5.67 m — is what anything standing on the floor has to know about, because
+ * between vertices the drawn triangles hang below the height function. Exposed
+ * as `floorCellSizeMetres` for that reason.
+ */
+const SEABED_EXTENT_METRES = 680;
+const SEABED_SEGMENTS_HIGH = 300;
+const SEABED_SEGMENTS_LOW = 120;
 
 export type OceanRigOptions = {
   renderer: WebGLRenderer;
@@ -165,6 +175,12 @@ export type OceanRig = {
    * exactly as far above the sand as the two disagree.
    */
   heightAt: (x: number, z: number) => number;
+  /**
+   * The floor mesh's vertex spacing, in metres, or 0 when no floor is drawn.
+   * What separates the height FUNCTION from the surface actually rasterised —
+   * see Seabed.cellSizeMetres.
+   */
+  floorCellSizeMetres: number;
   update: (elapsed: number, camera: Camera) => void;
   dispose: () => void;
 };
@@ -685,8 +701,8 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
   let seabed: Seabed | null = null;
   if (seafloorInSight) {
     seabed = createSeabed({
-      extent: 680,
-      segments: high ? 300 : 120,
+      extent: SEABED_EXTENT_METRES,
+      segments: high ? SEABED_SEGMENTS_HIGH : SEABED_SEGMENTS_LOW,
       windDirectionRadians,
       seed,
       renderer,
@@ -868,6 +884,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
   return {
     group,
     heightAt: (x, z) => (seabed ? seabed.heightAt(x, z) : 0),
+    floorCellSizeMetres: seabed ? seabed.cellSizeMetres : 0,
     state: {
       seaState,
       sightingRangeMetres: range,

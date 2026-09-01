@@ -3,10 +3,12 @@ import { buildPreviewOceanSceneConfig } from "@/lib/oceanScene";
 import type { PreviewSceneInput } from "@/lib/scene";
 import { minimumPolarAngleUnderCeiling } from "../shared/cameraIntro";
 import {
+  lowestSeafloorUnderFootprint,
   oceanCameraCeilingMetres,
   oceanCameraFraming,
   oceanSurfaceClearanceMetres
 } from "./oceanMath";
+import { LANDMARK_HEIGHT_METRES, LANDMARK_KINDS } from "./oceanLandmarkGeometry";
 
 /**
  * The camera envelope, checked against worlds the generator can actually make.
@@ -231,6 +233,143 @@ describe("the ocean camera envelope, across worlds the generator can make", () =
       ) as number;
       const floor = -(seafloorMetres - depthMetres) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES;
       expect(ceiling - floor).toBeGreaterThan(MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES);
+    }
+  });
+});
+
+/**
+ * Where a landmark's foot ends up.
+ *
+ * The reported frame: a whale fall's rib cage and its bacterial mat hanging in
+ * clear water with daylight underneath. Two independent causes, both of which
+ * put the same "it is floating" on screen, and both pinned here:
+ *
+ *   - the service lifted every landmark 0 to 6 m off the floor on a roll that
+ *     never asked what kind it was, while all six kinds are bottom features
+ *     whose geometry has its foot normalised to y = 0 on purpose;
+ *   - the renderer placed that foot against ONE sample of the seabed, taken at
+ *     the centre, so a shape several metres across on a dune slope had its
+ *     downhill edge in the water however correct its y was.
+ */
+describe("lowestSeafloorUnderFootprint", () => {
+  // A slope with nothing else on it: height falls away with x.
+  const SLOPE_FALL_PER_METRE = 0.4;
+  const slopingFloor = (x: number) => -x * SLOPE_FALL_PER_METRE;
+  // The analytic path — no mesh yet, which is the first frames of every world.
+  const NO_MESH = 0;
+
+  it("never sits higher than the centre sample it replaced", () => {
+    for (const footprintRadius of [0, 0.5, 1, 2.5, 4]) {
+      for (const centreX of [-12, -3, 0, 7, 19]) {
+        expect(
+          lowestSeafloorUnderFootprint(slopingFloor, centreX, 0, footprintRadius, NO_MESH)
+        ).toBeLessThanOrEqual(slopingFloor(centreX));
+      }
+    }
+  });
+
+  it("finds the downhill edge, which is the corner that used to hover", () => {
+    const FOOTPRINT_RADIUS_METRES = 3;
+    const found = lowestSeafloorUnderFootprint(slopingFloor, 0, 0, FOOTPRINT_RADIUS_METRES, NO_MESH);
+    // The rim ring includes the point directly downhill, so the answer is the
+    // full fall across the footprint's radius rather than some fraction of it.
+    expect(found).toBeCloseTo(-FOOTPRINT_RADIUS_METRES * SLOPE_FALL_PER_METRE, 6);
+  });
+
+  it("is the centre sample when the shape has no width", () => {
+    const flatAt = () => -4.25;
+    expect(lowestSeafloorUnderFootprint(flatAt, 3, 9, 0, NO_MESH)).toBe(-4.25);
+  });
+
+  // The mesh path. What the eye sees is the height function sampled on a grid
+  // and joined with flat triangles, and those triangles hang BELOW the function
+  // everywhere between vertices — 0.2 m at desktop's spacing, 0.6 m at
+  // mobile's. Placing a landmark on the function leaves it that far above the
+  // sand, worse on the weaker device.
+  describe("when the floor is a mesh", () => {
+    const MESH_CELL_SIZE_METRES = 2;
+    const VERTEX_DEPTH = -9;
+    // Low only AT the vertices, flat everywhere else. A sampler that can tell
+    // whether the vertices were actually the points asked for.
+    const lowOnlyAtVertices = (x: number, z: number) =>
+      x % MESH_CELL_SIZE_METRES === 0 && z % MESH_CELL_SIZE_METRES === 0 ? VERTEX_DEPTH : 0;
+
+    it("reads the mesh's own vertices, not the function between them", () => {
+      expect(lowestSeafloorUnderFootprint(lowOnlyAtVertices, 1, 1, 0.5, MESH_CELL_SIZE_METRES)).toBe(
+        VERTEX_DEPTH
+      );
+    });
+
+    it("covers every cell the footprint touches, including the corners outside it", () => {
+      // A pit at one vertex of a cell the footprint overlaps but does not
+      // reach. The triangles of that cell still pass under the shape, so their
+      // low corner is the floor the shape has to clear.
+      const PIT_X = 4;
+      const pitAtOneVertex = (x: number, z: number) => (x === PIT_X && z === 0 ? VERTEX_DEPTH : 0);
+      const FOOTPRINT_RADIUS_METRES = 1.5;
+      expect(Math.hypot(PIT_X, 0)).toBeGreaterThan(FOOTPRINT_RADIUS_METRES);
+      expect(
+        lowestSeafloorUnderFootprint(pitAtOneVertex, 3, 0, FOOTPRINT_RADIUS_METRES, MESH_CELL_SIZE_METRES)
+      ).toBe(VERTEX_DEPTH);
+    });
+
+    it("ignores a dip that no cell under the shape reaches", () => {
+      const farAwayPit = (x: number) => (x === 40 ? VERTEX_DEPTH : -1);
+      expect(lowestSeafloorUnderFootprint(farAwayPit, 0, 0, 2, MESH_CELL_SIZE_METRES)).toBe(-1);
+    });
+  });
+});
+
+describe("where the service puts a landmark, across worlds the generator can make", () => {
+  it("never places one above the seabed, because every kind it draws stands on it", () => {
+    for (const scene of previewsAcrossMoodsAndNicknames(30)) {
+      for (const landmark of scene.landmarks ?? []) {
+        expect(landmark.heightAboveFloor ?? 0).toBeLessThanOrEqual(0);
+      }
+    }
+  });
+
+  // The other end of the same range. A bed depth is a SETTLING, and past some
+  // fraction of the shape's own height it is a way of hiding the shape.
+  //
+  // The fraction is 0.4 rather than something tighter because the whale fall is
+  // DEFINED as half in the sediment — that is what the kind is — and its stated
+  // height is its girth, 1.8 m, because it is lying down. A third of it under
+  // the sand is the look; the bar is where the rib arcs stop reading as a rib
+  // cage. The kinds that stand up are all far under it: the kelp cathedral beds
+  // 0.2 m of 6.4.
+  //
+  // This bar lives on this side rather than in ocean_config_builder_test.go
+  // because the standing heights live here, in oceanLandmarkGeometry.ts. The Go
+  // test holds the absolute cap; this one holds it against each kind.
+  it("beds a landmark in rather than burying it", () => {
+    const MAXIMUM_BURIED_FRACTION_OF_OWN_HEIGHT = 0.4;
+    const checkedKinds = new Set<string>();
+    for (const scene of previewsAcrossMoodsAndNicknames(30)) {
+      for (const landmark of scene.landmarks ?? []) {
+        const kind = landmark.kind ?? "";
+        const standingHeight = LANDMARK_HEIGHT_METRES[kind];
+        expect(standingHeight, `landmark kind ${kind} has no standing height`).toBeGreaterThan(0);
+        expect(-(landmark.heightAboveFloor ?? 0)).toBeLessThanOrEqual(
+          standingHeight * MAXIMUM_BURIED_FRACTION_OF_OWN_HEIGHT
+        );
+        checkedKinds.add(kind);
+      }
+    }
+    // Non-vacuity: a bar that only ever saw the hero kind would prove nothing
+    // about the five that are chosen by a roll.
+    expect(checkedKinds.size).toBe(LANDMARK_KINDS.length);
+  });
+
+  // The reason no kind beds in at zero. The renderer closes the gap between the
+  // height function and the drawn mesh exactly, but it closes it to a SEAM: the
+  // shape's lowest point then touches the sand at one place and clears it
+  // everywhere else, which still reads as resting on rather than settled into.
+  it("beds every kind in by something", () => {
+    for (const scene of previewsAcrossMoodsAndNicknames(10)) {
+      for (const landmark of scene.landmarks ?? []) {
+        expect(-(landmark.heightAboveFloor ?? 0)).toBeGreaterThan(0);
+      }
     }
   });
 });

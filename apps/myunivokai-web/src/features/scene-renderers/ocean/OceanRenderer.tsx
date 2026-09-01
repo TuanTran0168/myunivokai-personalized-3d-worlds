@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import type { Group, PerspectiveCamera } from "three";
 import type { SceneRendererProps } from "@/features/scene-renderers/types";
@@ -112,6 +112,12 @@ export function OceanRenderer({
     () => (x, z) => (rigRef.current ? rigRef.current.heightAt(x, z) : fallbackSampler(x, z)),
     [fallbackSampler],
   );
+  // The rig's floor is a MESH, and its triangles hang below the height function
+  // heightSampler evaluates. A landmark placed on the function stands that far
+  // above the sand it appears to rest on, so the spacing travels with the
+  // sampler — see lowestSeafloorUnderFootprint. Zero until the rig exists,
+  // which is the fallback sampler's case: an analytic floor with no mesh.
+  const floorCellSizeSampler = useCallback(() => rigRef.current?.floorCellSizeMetres ?? 0, []);
   const pointsOfInterest = useMemo(() => pointsOfInterestFromScene(scene), [scene]);
   const worldSeed = seed || String(scene.seed ?? "ocean");
 
@@ -319,6 +325,7 @@ export function OceanRenderer({
           water={water}
           causticsUniforms={landmarkCaustics}
           heightSampler={heightSampler}
+          floorCellSizeSampler={floorCellSizeSampler}
           selectedPlanetKey={selectedPlanetKey}
           hoveredPlanetKey={hoveredPlanetKey}
           onHoverPlanet={onHoverPlanet}

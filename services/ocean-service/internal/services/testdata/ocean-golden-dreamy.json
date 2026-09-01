@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.5",
+  "schemaVersion": "1.6",
   "sceneType": "ocean",
   "sceneName": "The Lantern Trench",
   "archetype": "Tidekeeper",
@@ -137,7 +137,7 @@
       "kind": "kelpCathedral",
       "angleRadians": -0.21,
       "radiusFromCenter": 41.59,
-      "heightAboveFloor": 5.19,
+      "heightAboveFloor": -0.33,
       "accentColor": "#06B6D4",
       "energy": 60
     },
@@ -148,7 +148,7 @@
       "kind": "sunkenRelic",
       "angleRadians": 0.93,
       "radiusFromCenter": 42.56,
-      "heightAboveFloor": 1.64,
+      "heightAboveFloor": -0.59,
       "accentColor": "#FACC15",
       "energy": 65
     },
@@ -159,7 +159,7 @@
       "kind": "hydrothermalVent",
       "angleRadians": 1.6,
       "radiusFromCenter": 51.78,
-      "heightAboveFloor": 3.4,
+      "heightAboveFloor": -0.38,
       "accentColor": "#8B5CF6",
       "energy": 70
     },
@@ -170,7 +170,7 @@
       "kind": "abyssalTrench",
       "angleRadians": 2.65,
       "radiusFromCenter": 37.6,
-      "heightAboveFloor": 5.1,
+      "heightAboveFloor": -0.48,
       "accentColor": "#06B6D4",
       "energy": 75
     },
@@ -181,7 +181,7 @@
       "kind": "coralGarden",
       "angleRadians": 3.55,
       "radiusFromCenter": 35.23,
-      "heightAboveFloor": 2.63,
+      "heightAboveFloor": -0.32,
       "accentColor": "#FACC15",
       "energy": 80
     },
@@ -192,7 +192,7 @@
       "kind": "whaleFall",
       "angleRadians": 4.6,
       "radiusFromCenter": 48.83,
-      "heightAboveFloor": 2.55,
+      "heightAboveFloor": -0.56,
       "accentColor": "#8B5CF6",
       "energy": 85
     },
@@ -203,7 +203,7 @@
       "kind": "sunkenRelic",
       "angleRadians": 5.47,
       "radiusFromCenter": 47.59,
-      "heightAboveFloor": 4.83,
+      "heightAboveFloor": -0.67,
       "accentColor": "#06B6D4",
       "energy": 90
     }
