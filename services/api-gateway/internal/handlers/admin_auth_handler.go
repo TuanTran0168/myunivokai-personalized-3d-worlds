@@ -17,7 +17,7 @@ import (
 // adminAuthCookiePath scopes the refresh cookie to exactly the two routes
 // that ever read it - refresh and logout - so it is never sent on the wider
 // admin surface those routes' siblings will grow. See
-// notes/vision/auth-and-admin-plan.md#tokens.
+// agent-system/plans/services/auth-and-admin-plan.md#tokens.
 const adminAuthCookiePath = "/api/admin/auth"
 
 type loginRequestBody struct {

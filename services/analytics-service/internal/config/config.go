@@ -25,7 +25,7 @@ const (
 // Config carries no Redis and no AI settings: analytics-service verifies no
 // token and calls no provider. It also carries no outbox settings, because it
 // publishes nothing — see
-// notes/vision/analytics-service-plan.md#analytics-schema.
+// agent-system/plans/services/analytics-service-plan.md#analytics-schema.
 type Config struct {
 	AppEnvironment             string
 	DatabaseURL                string

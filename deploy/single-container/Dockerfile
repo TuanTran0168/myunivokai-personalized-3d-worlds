@@ -130,7 +130,7 @@ COPY --from=telemetry-builder  /workspace/services/telemetry-service/target/rele
 
 # Migrations directories: each cmd/service main.go runs its own migration on
 # boot against DATABASE_DIRECT_URL before it does anything else (see
-# notes/ops/production-deployment-guide.md §5) — nothing here invokes
+# agent-system/skills/production-deployment-guide.md §5) — nothing here invokes
 # cmd/migrate separately, this only has to put the SQL where MIGRATIONS_DIR
 # (set per-process in supervisord.conf) points. telemetry-service needs no
 # entry here: sqlx::migrate! embeds its migrations into the binary itself.

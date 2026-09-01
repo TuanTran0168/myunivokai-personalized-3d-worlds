@@ -43,7 +43,7 @@ func (service *GenerationService) Generate(ctx context.Context, envelope contrac
 		return fmt.Errorf("invalid world family %q", envelope.Data.Family)
 	}
 	input := envelope.Data.Input.Normalize()
-	if validationDetails := input.Validate(); len(validationDetails) > 0 {
+	if validationDetails := input.Validate(envelope.Data.Family); len(validationDetails) > 0 {
 		return fmt.Errorf("invalid world input: %s", validationDetails[0].Message)
 	}
 	normalizedEnvelope := contracts.Envelope[contracts.GenerateDNAData]{
@@ -98,7 +98,7 @@ func (service *GenerationService) FailGeneration(ctx context.Context, envelope c
 		return fmt.Errorf("invalid world family %q", envelope.Data.Family)
 	}
 	normalizedInput := envelope.Data.Input.Normalize()
-	if validationDetails := normalizedInput.Validate(); len(validationDetails) > 0 {
+	if validationDetails := normalizedInput.Validate(envelope.Data.Family); len(validationDetails) > 0 {
 		return fmt.Errorf("invalid world input: %s", validationDetails[0].Message)
 	}
 	normalizedEnvelope := contracts.Envelope[contracts.GenerateDNAData]{

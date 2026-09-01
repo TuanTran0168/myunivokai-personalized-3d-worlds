@@ -7,7 +7,7 @@ publish = false
 description = "Consumes the gateway's HTTP/NATS/cache rollups and answers admin telemetry queries"
 
 # The one service in this repository that is not written in Go. See
-# notes/be/source-overview.md for why, and notes/vision/rust-adoption-research.md
+# agent-system/knowledge/backend/source-overview.md for why, and agent-system/evolution/rust-adoption-research.md
 # for what was rejected in its favour.
 
 [dependencies]

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SweepRail } from "@/components/SweepRail";
 
 const STATUS_MESSAGE_ROTATION_INTERVAL_MILLISECONDS = 2200;
 
@@ -63,7 +64,13 @@ export function GeneratingOverlay({ isVisible, status }: GeneratingOverlayProps)
           <p className="min-h-7 text-lg font-semibold text-on-surface" aria-live="polite">
             {status === "queued" ? "Your request is safely queued..." : GENERATION_STATUS_MESSAGES[statusMessageIndex]}
           </p>
-          <p className="text-sm text-on-surface-variant">This usually takes a few seconds.</p>
+          {/* The rings above turn, which says the app is alive; they do not say
+              anything is going anywhere. This is the longest wait in the
+              product, so it gets the one element that reads as travel. */}
+          <div className="mx-auto mt-1 w-48">
+            <SweepRail />
+          </div>
+          <p className="mt-1 text-sm text-on-surface-variant">This usually takes a few seconds.</p>
         </div>
       </div>
     </div>

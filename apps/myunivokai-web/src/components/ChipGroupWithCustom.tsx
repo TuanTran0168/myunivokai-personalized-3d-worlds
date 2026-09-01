@@ -113,7 +113,7 @@ export const ChipGroupWithCustom = forwardRef<ChipGroupWithCustomHandle, ChipGro
                 key={item}
                 type="button"
                 onClick={() => toggle(item)}
-                className={`focus-ring tappable rounded-full border px-4 py-1.5 text-sm ${chipClassName} ${
+                className={`focus-ring tappable rounded-full border px-3.5 py-1.5 text-[13px] ${chipClassName} ${
                   isSelected
                     ? SELECTED_CHIP_CLASSNAME[accent]
                     : "border-white/15 bg-white/5 text-on-surface-variant hover:border-white/35 hover:text-on-surface"
@@ -131,7 +131,7 @@ export const ChipGroupWithCustom = forwardRef<ChipGroupWithCustomHandle, ChipGro
               type="button"
               aria-pressed="true"
               onClick={() => toggle(item)}
-              className={`focus-ring tappable rounded-full border px-4 py-1.5 text-sm font-semibold text-paper ${CUSTOM_CHIP_CLASSNAME[accent]} ${chipClassName}`}
+              className={`focus-ring tappable rounded-full border px-3.5 py-1.5 text-[13px] font-semibold text-paper ${CUSTOM_CHIP_CLASSNAME[accent]} ${chipClassName}`}
             >
               {item}
             </button>
@@ -156,14 +156,14 @@ export const ChipGroupWithCustom = forwardRef<ChipGroupWithCustomHandle, ChipGro
               maxLength={maximumCharacters}
               placeholder={customPlaceholder}
               aria-label={customAriaLabel}
-              className="focus-ring w-40 rounded-full border border-primary/50 bg-transparent px-4 py-1.5 text-sm text-on-surface placeholder:text-outline"
+              className="focus-ring w-40 rounded-full border border-primary/50 bg-transparent px-3.5 py-1.5 text-[13px] text-on-surface placeholder:text-outline"
             />
           ) : (
             <button
               type="button"
               onClick={() => setIsAddingCustom(true)}
               disabled={selected.length >= maximumItems}
-              className="focus-ring tappable inline-flex items-center gap-1 rounded-full border border-dashed border-white/20 bg-white/5 px-4 py-1.5 text-sm text-on-surface-variant hover:border-primary/40 hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
+              className="focus-ring tappable inline-flex items-center gap-1 rounded-full border border-dashed border-white/20 bg-white/5 px-3.5 py-1.5 text-[13px] text-on-surface-variant hover:border-primary/40 hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
             >
               <Plus className="h-3.5 w-3.5" aria-hidden="true" />
               Custom

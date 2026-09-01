@@ -44,7 +44,7 @@
 //! Diesel would call their raw-SQL escape hatch for every one of them and
 //! leave an entity layer as decoration. `sqlx` is the ecosystem's answer for
 //! exactly this case. The full reasoning, and what would change the answer, is
-//! in `notes/be/rust-service-architecture.md`.
+//! in `agent-system/knowledge/backend/rust-service-architecture.md`.
 
 pub mod config;
 pub mod domain;

@@ -1,6 +1,6 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree, type RootState } from "@react-three/fiber";
 import { Suspense, useMemo, useRef, useState } from "react";
 import { ACESFilmicToneMapping, AgXToneMapping } from "three";
 import type { Vector3 } from "three";
@@ -9,7 +9,10 @@ import { backgroundColorFromScene, isForestScene, isOceanScene, pointsOfInterest
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { resolveSceneRenderer, resolveSceneTypeRenderer } from "@/features/scene-renderers/registry";
 import { FallbackUniverseRenderer } from "@/features/scene-renderers/fallback/FallbackUniverseRenderer";
-import { oceanCameraFraming as oceanCameraFramingFor } from "@/features/scene-renderers/ocean/oceanMath";
+import {
+  oceanCameraFraming as oceanCameraFramingFor,
+  oceanCameraCeilingMetres
+} from "@/features/scene-renderers/ocean/oceanMath";
 import { forestShoreCameraFraming } from "@/features/scene-renderers/forest/forestMath";
 import {
   cameraDistanceFromConfig,
@@ -19,7 +22,17 @@ import {
 import { AmbientSoundToggle } from "@/components/AmbientSoundToggle";
 import { useAmbientSoundscape } from "@/features/audio/useAmbientSoundscape";
 import { CameraRig } from "@/features/scene-renderers/shared/CameraRig";
+import {
+  CAMERA_INTRO_DURATION_SECONDS,
+  CAMERA_SETTLE_DURATION_SECONDS
+} from "@/features/scene-renderers/shared/cameraIntro";
 import { CanvasLoader } from "@/features/scene-renderers/shared/CanvasLoader";
+import {
+  ADAPTIVE_SAMPLE_WINDOW_SECONDS,
+  ADAPTIVE_SLOW_WINDOWS_BEFORE_ACTING,
+  ADAPTIVE_WARM_UP_SECONDS,
+  adaptiveDevicePixelRatio
+} from "@/features/scene-renderers/shared/renderQuality";
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
 import { PlanetPositionTrackerContext } from "@/features/scene-renderers/shared/PlanetPositionTracker";
 import { TerrainHeightSamplerContext, type TerrainHeightSampler } from "@/features/scene-renderers/shared/TerrainHeightSampler";
@@ -43,10 +56,135 @@ const FOREST_MAXIMUM_CAMERA_DISTANCE = 70;
 // clamp (84.6) sat just inside that, so OrbitControls' first update would have
 // silently tilted the shallowest seeds back up.
 const FOREST_MAXIMUM_POLAR_ANGLE_RADIANS = Math.PI * 0.492;
+// Only worlds stored before the service began carrying a wind speed reach this,
+// and for those OceanRenderer derives one from the seed anywhere in 5-13 m/s.
+// The ceiling has to hold for whichever it lands on, so it is solved for the
+// windiest — the sea with the deepest troughs — at the cost of a couple of
+// metres of headroom in a handful of legacy worlds. Matches the top of
+// windSpeedFromSeed's own band in OceanRenderer.tsx.
+const OCEAN_FALLBACK_WIND_SPEED_METRES_PER_SECOND = 13;
 // Render at native device resolution (the old 1.8 cap under-sampled every
 // HiDPI display — a uniform blur). Quality-first scope: weak devices are
 // explicitly out of scope for now.
+//
+// This is the CEILING, not a fixed setting. AdaptiveResolution below starts
+// here and only ever steps back from it when frames are actually being missed,
+// so a strong machine renders every pixel its display has and a 4K panel gets
+// whatever the GPU can hold sixty frames at.
 const CANVAS_DEVICE_PIXEL_RATIO_RANGE: [number, number] = [1, 3];
+
+/**
+ * Skips a synchronous diagnostic readback on every shader program's first use.
+ *
+ * `WebGLRenderer.debug.checkShaderErrors` (on by default) has three.js read
+ * `getProgramInfoLog` back from the driver the first time each program is
+ * bound, purely to print a message if the link failed. `gl.linkProgram` above
+ * it already queued that work without blocking; the log READ is what forces
+ * the driver to stop and wait for a link it would otherwise finish on its own
+ * schedule. Kept on in development so a real shader error still prints
+ * instead of the scene silently rendering nothing.
+ *
+ * On its own this is a small, real saving, not a fix for the freeze a first
+ * scene mount causes (see the note on `canvasRemountKey` for what that freeze
+ * actually is and why it was left alone). Profiling with this off showed the
+ * same multi-second stall move into `getProgramParameter`, three.js's other
+ * call in the same first-use path, reading back active uniform/attribute
+ * locations — not optional the way the error log is, since three.js cannot
+ * build its uniform-setter map without it.
+ *
+ * `WebGLRenderer.compileAsync`, the standard fix for exactly this class of
+ * freeze, was tried and measured to do nothing on this project's ANGLE/D3D11
+ * target: `KHR_parallel_shader_compile` is present (confirmed by reading
+ * `getSupportedExtensions()` off a throwaway context), but its completion
+ * query blocked for the SAME ~2.5-3s the plain path did, in both headless and
+ * headed real Chrome — this driver does not honour the extension's
+ * non-blocking contract. Left out rather than shipped as dead weight.
+ */
+function disableShaderErrorCheckingInProduction(state: RootState) {
+  if (process.env.NODE_ENV === "production") {
+    state.gl.debug.checkShaderErrors = false;
+  }
+}
+
+/**
+ * Holds the frame rate at or above sixty by giving back resolution, and only
+ * resolution, and only when it has to.
+ *
+ * Measured on an RTX 4060 at 2560x1440 on a HiDPI display: the forest ran at 11
+ * frames a second. Its draw calls and triangle count were identical to the
+ * 100 fps case at 1600x900 — ten times the pixels, nine times the frame time,
+ * the same geometry — so what it is short of is fill rate, and the only lever
+ * that touches fill rate without touching what is IN the scene is how many
+ * pixels the scene is drawn into.
+ *
+ * Everything about the policy is in renderQuality.ts and unit-tested. What is
+ * here is the wiring: count frames over a window, hand the rate to the pure
+ * function, apply what it returns. The policy is MONOTONIC — it only ever gives
+ * resolution back — so there is nothing here to guard against oscillation.
+ *
+ * The frame counting is done here rather than with drei's PerformanceMonitor,
+ * and that was measured too. The monitor reports a FACTOR that saturates: once
+ * it has fully declined it stops firing `onChange`, so a scene needing three
+ * steps got one and settled at 36 fps having been told it was finished.
+ */
+function AdaptiveResolution({ isSceneReady }: { isSceneReady: boolean }) {
+  const setDpr = useThree((state) => state.setDpr);
+  const renderer = useThree((state) => state.gl);
+  // Seeded from what the renderer is ACTUALLY rendering at, never from the
+  // canvas's ceiling. Seeding it from the ceiling was measured and was worse
+  // than doing nothing: the range tops out at 3, a display at 2 starts there,
+  // and the first "step down" from the ceiling computed 2.75 — RAISING the
+  // ratio on a scene that was already too slow, taking a 30 fps forest to 19.
+  const samplingReference = useRef({
+    pixelRatio: renderer.getPixelRatio(),
+    frames: 0,
+    elapsedSeconds: 0,
+    warmUpSeconds: 0,
+    slowWindows: 0
+  });
+
+  useFrame((_, deltaSeconds) => {
+    // Named 'sampling', not 'window': shadowing the global inside a hot frame
+    // callback is exactly the kind of thing that reads fine and then bites.
+    const sampling = samplingReference.current;
+    if (!isSceneReady) {
+      return;
+    }
+    if (sampling.warmUpSeconds < ADAPTIVE_WARM_UP_SECONDS) {
+      sampling.warmUpSeconds += deltaSeconds;
+      return;
+    }
+    sampling.frames += 1;
+    sampling.elapsedSeconds += deltaSeconds;
+    if (sampling.elapsedSeconds < ADAPTIVE_SAMPLE_WINDOW_SECONDS) {
+      return;
+    }
+    const framesPerSecond = sampling.frames / sampling.elapsedSeconds;
+    sampling.frames = 0;
+    sampling.elapsedSeconds = 0;
+
+    const nextPixelRatio = adaptiveDevicePixelRatio(sampling.pixelRatio, framesPerSecond);
+    if (nextPixelRatio === sampling.pixelRatio) {
+      sampling.slowWindows = 0;
+      return;
+    }
+    // Two in a row, not one. A single slow window is a texture decode or a
+    // collection, and giving up resolution for one is permanent — measured
+    // walking a 219 fps universe down four steps on load-time readings alone.
+    sampling.slowWindows += 1;
+    if (sampling.slowWindows < ADAPTIVE_SLOW_WINDOWS_BEFORE_ACTING) {
+      return;
+    }
+    sampling.slowWindows = 0;
+    sampling.pixelRatio = nextPixelRatio;
+    // Re-arm the warm-up: reallocating every render target makes the next frame
+    // slow on its own, and measuring that would chase the change it just made.
+    sampling.warmUpSeconds = 0;
+    setDpr(nextPixelRatio);
+  });
+
+  return null;
+}
 
 /**
  * Mounts inside the scene's Suspense boundary, so its first rendered frame
@@ -86,6 +224,43 @@ type UniverseCanvasProps = {
    * all play over each other.
    */
   enableAmbientSound?: boolean;
+  /**
+   * How the scene arrives.
+   *
+   * `cinematic` — the full opening move plus a title card, for the one scene a
+   * route exists to show (world, share).
+   * `settle` — a short camera settle and a bare colour hold, for the create
+   * page's live preview, which re-solves its framing on every option toggle and
+   * would otherwise announce itself like a premiere each time.
+   * `none` — arrive parked, for decorative backdrops.
+   */
+  entryMotion?: "cinematic" | "settle" | "none";
+  /**
+   * Something else is presenting this frame right now — currently the genie
+   * reveal unfolding the scene out of the gallery card that opened it.
+   *
+   * While held, the canvas stays hidden and the opening camera move sits at its
+   * first pose instead of advancing, so the still the reveal snapshotted keeps
+   * matching the live frame it eventually hands back to.
+   */
+  revealHeld?: boolean;
+  /**
+   * Skip the reveal crossfade. For a route whose reveal is owned by something
+   * that has already drawn the frame: fading in underneath it would dissolve
+   * away the very thing that just arrived.
+   */
+  revealWithoutFade?: boolean;
+  /** Fired on the frame the scene first renders, every time the canvas remounts. */
+  onSceneReady?: () => void;
+};
+
+const CAMERA_INTRO_DURATION_SECONDS_BY_ENTRY_MOTION: Record<
+  NonNullable<UniverseCanvasProps["entryMotion"]>,
+  number
+> = {
+  cinematic: CAMERA_INTRO_DURATION_SECONDS,
+  settle: CAMERA_SETTLE_DURATION_SECONDS,
+  none: 0
 };
 
 /**
@@ -101,7 +276,11 @@ export function UniverseCanvas({
   preserveDrawingBuffer = false,
   devicePixelRatioRange = CANVAS_DEVICE_PIXEL_RATIO_RANGE,
   enableKeyboardMove = true,
-  enableAmbientSound = false
+  enableAmbientSound = false,
+  entryMotion = "cinematic",
+  revealHeld = false,
+  revealWithoutFade = false,
+  onSceneReady
 }: UniverseCanvasProps) {
   const ambientSoundscape = useAmbientSoundscape(scene, enableAmbientSound);
   const [hoveredPlanet, setHoveredPlanet] = useState<PlanetSceneConfig | null>(null);
@@ -151,6 +330,17 @@ export function UniverseCanvas({
         scene?.depth?.seafloorMetres,
       )
     : null;
+  // How high the ocean's lens may go before it is out of its own sea. The
+  // renderer decides above-or-below ONCE, when it builds the rig, so a camera
+  // that leaves the water leaves a rig that still believes it is submerged —
+  // see oceanCameraCeilingMetres for what that looks like on screen and why the
+  // bug only ever showed at the wide end of the zoom.
+  const oceanCameraCeiling = isOceanFamilyScene
+    ? oceanCameraCeilingMetres(
+        scene?.depth?.metres ?? 20,
+        scene?.water?.windSpeedMetresPerSecond ?? OCEAN_FALLBACK_WIND_SPEED_METRES_PER_SECOND,
+      )
+    : null;
   const cameraPosition: [number, number, number] = forestCameraFraming
     ? [0, forestCameraFraming.height, forestCameraFraming.distance]
     : oceanCameraFraming
@@ -167,8 +357,73 @@ export function UniverseCanvas({
   // The key has to carry the position actually used, not the config's distance:
   // a forest's framing comes from its lake, so the same rolled distance can want
   // two different camera positions.
+  //
+  // This key changing tears down the whole WebGL context, and that is
+  // EXPENSIVE — but as of the investigation below it is also load-bearing, so
+  // read this before trying to make it cheaper.
+  //
+  // React unmounting the old <Canvas> makes r3f call `forceContextLoss()` and
+  // then `dispose(scene)`, and that dispose walks every object AND ITS PROPS,
+  // so it frees the geometries, the materials, the compiled programs and the
+  // uploaded textures in one synchronous sweep. Measured on this page with a
+  // long-task observer, that sweep-and-rebuild costs:
+  //
+  //   toggle one interest chip     1108 ms blocked
+  //   fill in the nickname field   1575 ms blocked
+  //   switch family to forest      2108 ms blocked
+  //
+  // A CPU profile put 1121 ms of the family switch inside `texSubImage2D`,
+  // re-uploading the universe family's 8K textures (8192x4096 is 134 MB of
+  // RGBA once decoded, before mipmaps), and most of the rest in
+  // `getProgramParameter`, re-linking its shader programs.
+  //
+  // The obvious fix — keep ONE <Canvas> for the page's whole life, move the
+  // key down onto the scene contents, and apply the camera pose and tone curve
+  // imperatively (r3f creates the camera once and passes `gl` straight to the
+  // WebGLRenderer constructor, so neither is re-read from props) — was built
+  // and measured. Its first switch is a big win: 2108 ms -> 401 ms, and
+  // `texSubImage2D` disappears from the profile entirely.
+  //
+  // It was REVERTED because it leaks, unboundedly, and the leak is worse than
+  // the stall. Reading `renderer.info` after each change, with the context
+  // kept alive:
+  //
+  //   six family switches   geometries  58 -> 323, textures 37 -> 214, programs  26 -> 361
+  //   ten form edits        geometries  58 -> 518, textures 37 -> 105, programs  26 -> 215
+  //
+  // Nothing is ever released, and the block time climbs with it — the tenth
+  // form edit cost 2185 ms, worse than the remount it replaced. The cause is
+  // that r3f only frees a removed object via `disposeOnIdle`, which schedules
+  // the work at React's *IdlePriority*; a scene rendering continuously never
+  // yields an idle slot, so the queue is never drained. The synchronous
+  // `dispose(scene)` on full unmount is the only thing that actually collects
+  // this scene graph today.
+  //
+  // Making the persistent canvas correct therefore means giving each renderer
+  // family explicit ownership of its own GPU resources, which cannot be done
+  // by a blanket traverse-and-dispose from here: the forest's meshes share
+  // geometry with the `useLoader` GLTF cache (three's `clone()` shares
+  // geometry and material references), so disposing what a scene traverse
+  // finds would break the cache for every later mount. That is a real,
+  // separate piece of work per family, and is not what shipped here.
+  //
+  // What DOES already help, for anyone using their normal Chrome rather than a
+  // fresh profile: Chrome keeps compiled shader BINARIES in an on-disk cache
+  // keyed by source, independent of any one page's WebGLRenderer. Measured
+  // with a persistent browser profile: the second time the forest's shaders
+  // are ever compiled on a machine — even in a brand new tab, brand new
+  // context, brand new renderer — the same program readback drops from ~2.5s
+  // to ~230ms.
   const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}`;
   const isSceneReady = lastReadyCanvasKey === canvasRemountKey;
+
+  const introDurationSeconds = CAMERA_INTRO_DURATION_SECONDS_BY_ENTRY_MOTION[entryMotion];
+  const titleCardName = entryMotion === "cinematic" ? scene?.sceneName?.trim() : undefined;
+  const isCanvasVisible = isSceneReady && !revealHeld;
+  // Armed by readiness, not by mount: the move has to be the first thing the
+  // visitor sees, and a scene that took two seconds to resolve would otherwise
+  // reveal a camera that had already finished arriving.
+  const introPhase = !isSceneReady ? "waiting" : revealHeld ? "held" : "running";
 
   return (
     <div
@@ -176,9 +431,9 @@ export function UniverseCanvas({
       style={{ backgroundColor, cursor: hoveredPlanet ? "pointer" : "grab" }}
     >
       <div
-        className={`h-full w-full transition-opacity duration-700 ease-out ${
-          isSceneReady ? "opacity-100" : "opacity-0"
-        }`}
+        className={`h-full w-full transition-opacity ease-out ${
+          revealWithoutFade ? "duration-0" : "duration-1000"
+        } ${isCanvasVisible ? "opacity-100" : "opacity-0"}`}
       >
         <Canvas
           key={canvasRemountKey}
@@ -206,6 +461,7 @@ export function UniverseCanvas({
             powerPreference: "high-performance",
             toneMapping: isOceanFamilyScene ? ACESFilmicToneMapping : AgXToneMapping,
           }}
+          onCreated={disableShaderErrorCheckingInProduction}
           onPointerMissed={() => onSelectPlanet?.(null)}
         >
           <color attach="background" args={[backgroundColor]} />
@@ -238,39 +494,61 @@ export function UniverseCanvas({
                   ambientOcclusion={isForestFamilyScene}
                 />
               )}
-              <SceneReadySignal onSceneReady={() => setLastReadyCanvasKey(canvasRemountKey)} />
+              <SceneReadySignal
+                onSceneReady={() => {
+                  setLastReadyCanvasKey(canvasRemountKey);
+                  onSceneReady?.();
+                }}
+              />
             </Suspense>
+            <AdaptiveResolution isSceneReady={isSceneReady} />
             <CameraRig
               selectedPlanetKey={selectedPlanetKey ?? null}
               minimumDistance={isForestFamilyScene ? FOREST_MINIMUM_CAMERA_DISTANCE : undefined}
               maximumDistance={isForestFamilyScene ? FOREST_MAXIMUM_CAMERA_DISTANCE : undefined}
               maximumPolarAngleRadians={isForestFamilyScene ? FOREST_MAXIMUM_POLAR_ANGLE_RADIANS : undefined}
+              maximumCameraHeightMetres={oceanCameraCeiling ?? undefined}
               keyboardMoveEnabled={enableKeyboardMove}
               restingTarget={oceanCameraFraming?.target}
+              introDurationSeconds={introDurationSeconds}
+              introPhase={introPhase}
+              introPoseSeed={seed}
             />
           </TerrainHeightSamplerContext.Provider>
           </PlanetPositionTrackerContext.Provider>
         </Canvas>
       </div>
-      {/* Loading veil: option toggles change the preview seed, which remounts
-          the whole canvas — the veil turns that swap into an intentional
-          crossfade (armillary-style counter-spinning brass rings) instead of
-          a black flash. */}
+      {/* The hold before the scene arrives. Deliberately NOT a spinner: a pair
+          of counter-spinning rings used to sit here, and it said nothing about
+          the world being built behind it — a generic wait widget in front of a
+          product whose whole promise is that the world is yours. What replaces
+          it is the world's own background colour (already painted by the
+          wrapper, which is why this layer stays transparent) and, on the routes
+          that exist to show one scene, that scene's name. The reveal itself is
+          the event: the canvas dissolves up underneath while the card lifts
+          away, and CameraRig's opening move carries it from there.
+
+          Nothing animates during the wait on purpose. A wait that does not
+          fidget reads as composure; the motion is saved for the arrival. */}
       <div
         aria-hidden="true"
-        className={`pointer-events-none absolute inset-0 z-10 grid place-items-center transition-opacity duration-500 ${
-          isSceneReady ? "opacity-0" : "opacity-100"
+        className={`pointer-events-none absolute inset-0 z-10 grid place-items-center transition-opacity duration-700 ease-out ${
+          isSceneReady ? "opacity-0 delay-200" : "opacity-100"
         }`}
       >
-        <div className="flex flex-col items-center gap-3">
-          <span className="relative h-12 w-12">
-            <span className="absolute inset-0 animate-spin rounded-full border border-white/10 border-t-brass" />
-            <span className="absolute inset-2 animate-spin rounded-full border border-white/10 border-b-brass [animation-direction:reverse] [animation-duration:1.6s]" />
-          </span>
-          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-white/60">
-            {isForestFamilyScene ? "Rendering forest" : "Rendering universe"}
-          </p>
-        </div>
+        {titleCardName ? (
+          <div
+            className={`flex flex-col items-center gap-2.5 px-8 text-center transition-transform duration-1000 ease-out ${
+              isSceneReady ? "-translate-y-1.5" : "translate-y-0"
+            }`}
+          >
+            {scene?.archetype ? (
+              <p className="font-mono text-[10px] uppercase tracking-[0.32em] text-brass/85">{scene.archetype}</p>
+            ) : null}
+            <p className="font-display text-lg font-medium tracking-wide text-white/75">{titleCardName}</p>
+            <span className="mt-1 h-px w-14 bg-white/20" />
+          </div>
+        ) : null}
       </div>
       {hoveredPlanet ? (
         <div className="pointer-events-none absolute bottom-[68px] left-4 z-10 max-w-xs rounded-lg border border-white/15 bg-black/55 px-3 py-2 backdrop-blur">

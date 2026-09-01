@@ -6,7 +6,7 @@
  * the same lamp, and threading eight uniforms through eight components is how
  * they drift apart. One module owns the floor.
  *
- * The rules encoded here are argued in notes/fe/ocean-visual-direction-research.md:
+ * The rules encoded here are argued in agent-system/evolution/ocean-visual-direction-research.md:
  *
  *   - the seabed is DARKER than the water above it (§3, the value ladder), and
  *     the frame flattens into poster paint the moment it is not;
@@ -314,6 +314,17 @@ export type Seabed = {
   rockMaterials: MeshStandardMaterial[];
   causticUniforms: CausticUniforms;
   heightAt: (x: number, z: number) => number;
+  /**
+   * How far apart the floor mesh's vertices are, in metres.
+   *
+   * `heightAt` is the height FUNCTION; the mesh is that function sampled on a
+   * grid and joined with flat triangles, so between vertices the drawn floor
+   * hangs below the function by up to a fifth of a metre at 300 segments and
+   * two thirds of one at 120. Anything that has to sit ON the drawn floor
+   * rather than on the function needs this to know where the two part company
+   * — see lowestSeafloorUnderFootprint in oceanMath.ts.
+   */
+  cellSizeMetres: number;
   dispose: () => void;
 };
 
@@ -441,6 +452,7 @@ export function createSeabed(options: SeabedOptions): Seabed {
     rockMaterials,
     causticUniforms,
     heightAt,
+    cellSizeMetres: extent / segments,
     dispose: () => {
       for (const item of disposables) item.dispose();
     },

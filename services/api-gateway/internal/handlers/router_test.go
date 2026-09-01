@@ -387,5 +387,12 @@ func testGatewayConfig() config.Config {
 }
 
 func validWorldInputJSON() string {
-	return `{"nickname":" Nova ","role":"Builder","interests":["AI","music","space"],"traits":["curious","calm","focused"],"goal":"Build a meaningful creative universe","mood":"curious","favoriteColors":["#8B5CF6"],"preferredWorldStyle":"nebula"}`
+	return worldInputJSONWithStyle("nebula")
+}
+
+// The world style is the one field whose vocabulary is per family, so a body
+// posted to /api/nature/worlds cannot carry a universe style. Every other field
+// is family-agnostic.
+func worldInputJSONWithStyle(style string) string {
+	return `{"nickname":" Nova ","role":"Builder","interests":["AI","music","space"],"traits":["curious","calm","focused"],"goal":"Build a meaningful creative universe","mood":"curious","favoriteColors":["#8B5CF6"],"preferredWorldStyle":"` + style + `"}`
 }

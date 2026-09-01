@@ -78,13 +78,38 @@ const UNIVERSAL = {
  */
 const LUMA_TOLERANCE = 0.09;
 
+/*
+ * REBASELINED 2026-09-01, and the reason is the point of the file.
+ *
+ * schemaVersion 1.5 moved the sunlit shallows from 3-28 m down to 12-32 m and
+ * the floor clearance from 2-14 m to 5-10 m, because at 3 m the underwater
+ * surface shader has no water column left to be fogged through and a turbid
+ * style painted a wall of light overhead. Every one of these five presets is a
+ * golden fixture, so all five moved with it, and two moved past this file's
+ * tolerance:
+ *
+ *   ocean-shallow  Reef Crest        14.0 m -> 24.5 m down    luma 0.570 -> 0.432
+ *   ocean-surface  Glass Shallows    24.0 m -> 10.1 m up      luma 0.411 -> 0.257
+ *
+ * A deeper reef is a darker reef and that is the change working. The other
+ * three drifted inside tolerance and their numbers moved with them anyway,
+ * because a reference that is stale by less than the tolerance is still stale.
+ *
+ * The numbers below are the MEASURED values of the re-shot frames, not widened
+ * bounds. Widening the tolerance to absorb a deliberate change is how this file
+ * stops being able to see the next accidental one.
+ *
+ * This is also the file behaving exactly as its header describes: the re-shoot
+ * and the failure landed in the same commit, with the offending images in the
+ * same diff.
+ */
 const PRESETS = [
   // The four DEPTH & MOOD options, one shot each, plus the second sample of the
   // above-water option that brackets its sun band.
   {
     shot: "ocean-surface",
     label: "Glass Shallows, golden hour",
-    luma: 0.411,
+    luma: 0.257,
     // Above water is desaturated by nature: haze, grey sea, pale sky. The floor
     // is here only to catch a frame that has lost colour altogether.
     minimumSaturation: 0.1,
@@ -92,13 +117,13 @@ const PRESETS = [
   {
     shot: "ocean-daylight",
     label: "Glass Shallows, midday",
-    luma: 0.621,
+    luma: 0.541,
     minimumSaturation: 0.05,
   },
   {
     shot: "ocean-shallow",
     label: "Reef Crest",
-    luma: 0.57,
+    luma: 0.432,
     // Underwater, so the water must still have a hue. This is the bound that the
     // grey-water bug (saturation 0.02) would have failed.
     minimumSaturation: 0.3,
@@ -106,13 +131,13 @@ const PRESETS = [
   {
     shot: "ocean-twilight",
     label: "Mesophotic Current",
-    luma: 0.453,
+    luma: 0.393,
     minimumSaturation: 0.3,
   },
   {
     shot: "ocean-abyss",
     label: "The Abyss",
-    luma: 0.177,
+    luma: 0.136,
     // The trench keeps less hue than the reef but must not go grey. It measured
     // 0.02 once, and 0.60 in the prototype.
     minimumSaturation: 0.12,
@@ -210,12 +235,15 @@ describe("what the ocean's frames contain", () => {
    * create-page presets came back within 0.008 luma of each other: the instrument
    * was pointed at furniture.
    */
+  // Rebaselined 2026-09-01 with the desktop set, and for the same reason — see
+  // the note above PRESETS. Reef Crest moved furthest here too, 0.502 -> 0.340,
+  // because it is the preset the depth change moved furthest.
   const MOBILE = [
-    { shot: "ocean-surface", luma: 0.335, minimumSaturation: 0.1 },
-    { shot: "ocean-daylight", luma: 0.536, minimumSaturation: 0.05 },
-    { shot: "ocean-shallow", luma: 0.502, minimumSaturation: 0.3 },
-    { shot: "ocean-twilight", luma: 0.389, minimumSaturation: 0.3 },
-    { shot: "ocean-abyss", luma: 0.193, minimumSaturation: 0.1 },
+    { shot: "ocean-surface", luma: 0.283, minimumSaturation: 0.1 },
+    { shot: "ocean-daylight", luma: 0.519, minimumSaturation: 0.05 },
+    { shot: "ocean-shallow", luma: 0.34, minimumSaturation: 0.3 },
+    { shot: "ocean-twilight", luma: 0.364, minimumSaturation: 0.3 },
+    { shot: "ocean-abyss", luma: 0.197, minimumSaturation: 0.1 },
   ] as const;
 
   for (const preset of MOBILE) {

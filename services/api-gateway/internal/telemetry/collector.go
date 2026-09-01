@@ -6,7 +6,7 @@
 // broker publish on the hot path and multiplies stream volume by three orders
 // of magnitude. Everything below exists so that volume drops to one message
 // per interval per instance regardless of traffic — see
-// notes/vision/platform-evolution-research.md#b2--http-rollups-aggregated-in-the-gateway.
+// agent-system/evolution/platform-evolution-research.md#b2--http-rollups-aggregated-in-the-gateway.
 //
 // # The cardinality rule
 //
@@ -15,7 +15,7 @@
 // id, a share slug or a client address into a key would give every one of them
 // its own time series and grow the store without bound; it is the single most
 // common way a home-grown metrics pipeline dies, and
-// notes/vision/telemetry-architecture-research.md measured this system at ~200
+// agent-system/evolution/telemetry-architecture-research.md measured this system at ~200
 // series under the rule and unbounded without it.
 //
 // # Removing this

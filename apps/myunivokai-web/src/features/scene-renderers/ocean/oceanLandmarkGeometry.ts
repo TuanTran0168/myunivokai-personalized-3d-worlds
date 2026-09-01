@@ -117,6 +117,10 @@ function standOn(geometry: BufferGeometry, height: number): BufferGeometry {
   );
   geometry.scale(scale, scale, scale);
   geometry.computeBoundingSphere();
+  // Recomputed AFTER the transform, so `boundingBox` describes the shape as it
+  // will be drawn rather than as it was built. landmarkFootprintRadiusMetres
+  // reads it to decide how wide a patch of seabed the shape has to stand on.
+  geometry.computeBoundingBox();
   return geometry;
 }
 
@@ -527,6 +531,29 @@ export function landmarkGeometry(kind: string, seed: string): BufferGeometry {
   );
   cache.set(key, geometry);
   return geometry;
+}
+
+/**
+ * How far this landmark's shape reaches from its own centre in x and z, in
+ * metres — the radius of the patch of seabed it has to stand on.
+ *
+ * Read from the geometry rather than declared in a table beside
+ * LANDMARK_HEIGHT_METRES, because the shapes are seeded: two whale falls are
+ * two different whale falls, and a hand-maintained footprint would be right for
+ * one of them. The geometry is cached per (kind, seed), so this is a lookup
+ * after the first call.
+ */
+export function landmarkFootprintRadiusMetres(kind: string, seed: string): number {
+  const bounds = landmarkGeometry(kind, seed).boundingBox;
+  if (!bounds) {
+    return 0;
+  }
+  return Math.max(
+    Math.abs(bounds.min.x),
+    Math.abs(bounds.max.x),
+    Math.abs(bounds.min.z),
+    Math.abs(bounds.max.z),
+  );
 }
 
 /**

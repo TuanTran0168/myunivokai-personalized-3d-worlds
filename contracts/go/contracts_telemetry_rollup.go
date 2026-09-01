@@ -17,7 +17,7 @@ import (
 // Every type below has a hand-maintained mirror in contracts/rust, and both
 // are decoded from contracts/fixtures/telemetry-http-rollup-event.v1.json by
 // their own test suite. That fixture is the only thing keeping the two
-// languages honest — see notes/vision/telemetry-service-plan.md#rust-contracts.
+// languages honest — see agent-system/plans/services/telemetry-service-plan.md#rust-contracts.
 
 const (
 	// TelemetryHTTPRollupEventSubject needed no stream or ACL change: it
@@ -29,7 +29,7 @@ const (
 	// free tier, and Core NATS delivers to whoever is subscribed right now or
 	// not at all — which would lose every interval for as long as the service
 	// slept, not merely one interval on an unclean shutdown. See
-	// notes/vision/telemetry-service-plan.md#durability-and-wake.
+	// agent-system/plans/services/telemetry-service-plan.md#durability-and-wake.
 	TelemetryHTTPRollupEventSubject = "myunivokai.events.telemetry.http.v1"
 
 	// The query subjects follow the same "myunivokai.queries.<service>.*"
@@ -111,7 +111,7 @@ type TelemetryHistogram [TelemetryHistogramBucketCount]int64
 // RoutePattern is chi's route TEMPLATE — "/api/universe/worlds/{worldID}" —
 // and never request.URL.Path. This is the single rule that decides whether
 // this system stays inside a free metrics tier or grows series without bound;
-// see notes/vision/telemetry-architecture-research.md, which measured ~200
+// see agent-system/evolution/telemetry-architecture-research.md, which measured ~200
 // series for the whole gateway under this rule.
 type HTTPRollupBucket struct {
 	RoutePattern  string             `json:"routePattern"`

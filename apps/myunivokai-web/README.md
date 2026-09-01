@@ -56,4 +56,4 @@ Route params are Promises: the share pages `await` them, and
 `worlds/[worldId]` reads them with React's `use` because it is a client
 component. `three` and ESLint are deliberately held back — each is its own
 separately revertible change. See
-[notes/vision/frontend-modernization-research.md](../../notes/vision/frontend-modernization-research.md).
+[agent-system/evolution/frontend-modernization-research.md](../../agent-system/evolution/frontend-modernization-research.md).

@@ -73,7 +73,7 @@ func TestVerifyRejectsAnExpiredToken(t *testing.T) {
 }
 
 // A rotation adds the new public key before removing the old one so no
-// session is force-logged-out - see notes/vision/auth-and-admin-plan.md#tokens.
+// session is force-logged-out - see agent-system/plans/services/auth-and-admin-plan.md#tokens.
 func TestVerifyAcceptsEitherKeyDuringRotation(t *testing.T) {
 	oldPublicKey, oldPrivateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {

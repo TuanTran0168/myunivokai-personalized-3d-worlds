@@ -1,8 +1,19 @@
 // --- Written arrangements ----------------------------------------------------
 //
 // The notes the world actually plays are a real composition, not a random walk
-// across a scale. Six public-domain piano pieces ship as note data; the arranger
-// in lib/ambientSoundscape picks one and decides how it is performed.
+// across a scale. Sixteen public-domain piano pieces ship as note data; the
+// arranger in lib/ambientSoundscape picks one and decides how it is performed.
+//
+// It was six, then twelve, and twelve still left three pieces answering for two
+// slots each — and, worse, for two slots in DIFFERENT FAMILIES. Clair de Lune
+// played both a sunlit forest and a drifting ocean, and drift is the most
+// common current in every zone, so the two families a visitor is most likely to
+// compare played the same tune. That is the whole reported complaint: "forest
+// and ocean sound the same as before".
+//
+// Sixteen is the number at which every slot in every family has a piece nobody
+// else uses. A test asserts it, because this is the property that decays
+// silently every time a slot is added.
 //
 // Why: the generated version was rejected as disjointed, and it was. Drawing a
 // consonant note at a random gap produces a note *sequence*; a melody needs a
@@ -23,16 +34,36 @@ export type ArrangementPieceId =
   | "satie-gymnopedie-2"
   | "satie-gymnopedie-3"
   | "bach-prelude-c-major"
+  | "bach-wtc2-prelude-c-major"
+  | "chopin-prelude-e-minor"
+  | "chopin-prelude-raindrop"
   | "debussy-arabesque-1"
-  | "debussy-clair-de-lune";
+  | "debussy-clair-de-lune"
+  | "schumann-traumerei"
+  | "scriabin-prelude-op11-1"
+  | "tchaikovsky-seasons-january"
+  | "chopin-etude-op10-1"
+  | "schumann-romanze-op28-2"
+  | "tchaikovsky-old-french-song"
+  | "faure-apres-un-reve";
 
 export const ARRANGEMENT_PIECE_IDS: ArrangementPieceId[] = [
   "satie-gymnopedie-1",
   "satie-gymnopedie-2",
   "satie-gymnopedie-3",
   "bach-prelude-c-major",
+  "bach-wtc2-prelude-c-major",
+  "chopin-prelude-e-minor",
+  "chopin-prelude-raindrop",
   "debussy-arabesque-1",
-  "debussy-clair-de-lune"
+  "debussy-clair-de-lune",
+  "schumann-traumerei",
+  "scriabin-prelude-op11-1",
+  "tchaikovsky-seasons-january",
+  "chopin-etude-op10-1",
+  "schumann-romanze-op28-2",
+  "tchaikovsky-old-french-song",
+  "faure-apres-un-reve"
 ];
 
 /**

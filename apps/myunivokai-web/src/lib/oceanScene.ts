@@ -37,7 +37,7 @@ import { clampNumber, depthAt, roundToHundredths, roundToThousandths } from "./o
 // logic rather than a duplicated table.
 
 // Mirrors oceanSchemaVersion in ocean_config_builder.go.
-export const OCEAN_PREVIEW_SCHEMA_VERSION = "1.4";
+export const OCEAN_PREVIEW_SCHEMA_VERSION = "1.6";
 
 // Depth zones, in canonical order from the surface down. Both boundaries are
 // physical constants of the depth curve rather than round numbers: the sunlit
@@ -61,8 +61,17 @@ export function oceanZoneForDepth(metres: number): string {
   return OCEAN_ZONE_ABYSS;
 }
 
+// The shallows' own minimum moved once, from 3 m: at 3 m the camera is close
+// enough to the surface that the underwater-surface shader (Snell's window,
+// seen from below) has almost no water column left to be swallowed by fog
+// through, so a turbid style (Kelp Cathedral's clarity bias) painted a wall
+// of light overhead with the reef fogged out below it. The fix is not a
+// shader clamp, it is this number: the swallow the shader already does is
+// `1 - exp(-(distance * fogDensity)^2)`, a function of the REAL distance to
+// the surface, and at 3 m no fog density this family draws makes that
+// distance mean anything. Mirrors depthBandByZone in ocean_scene_profile.go.
 const DEPTH_BAND_BY_ZONE: Record<string, { minimum: number; maximum: number }> = {
-  [OCEAN_ZONE_SUNLIT_SHALLOWS]: { minimum: 3, maximum: 28 },
+  [OCEAN_ZONE_SUNLIT_SHALLOWS]: { minimum: 12, maximum: 32 },
   [OCEAN_ZONE_TWILIGHT_REACH]: { minimum: 45, maximum: 170 },
   [OCEAN_ZONE_ABYSS]: { minimum: 1050, maximum: 3800 }
 };
@@ -73,7 +82,14 @@ const DEPTH_BAND_BY_ZONE: Record<string, { minimum: number; maximum: number }> =
 // shows no floor; abyssal worlds sit ON the bottom, because the vents, whale
 // falls and tubeworm fields that make the abyss worth drawing are all there.
 const FLOOR_CLEARANCE_BAND_BY_ZONE: Record<string, { minimum: number; maximum: number }> = {
-  [OCEAN_ZONE_SUNLIT_SHALLOWS]: { minimum: 2, maximum: 14 },
+  // Set against the WATER TYPE's clarity, not the depth curve's remaining
+  // light. The shallows can roll 3C, whose sighting range is 11.85 m: an 18 m
+  // clearance fell outside the 1.5x boundary reach entirely, and even at the
+  // reach the renderer's own fog term had swallowed 89% of the seabed. At 10 m
+  // the worst water this zone draws leaves it 51% swallowed — a floor seen
+  // through water rather than a rumour of one. Mirrors floorClearanceBandByZone
+  // in ocean_scene_profile.go.
+  [OCEAN_ZONE_SUNLIT_SHALLOWS]: { minimum: 5, maximum: 10 },
   [OCEAN_ZONE_TWILIGHT_REACH]: { minimum: 1900, maximum: 3900 },
   // Kept inside the ~12 m visibility of the abyss. A wider band silently turns
   // "this world sits on the seabed" into "this world sits just too far above
@@ -237,6 +253,98 @@ const OCEAN_MOOD_PROFILES: Record<string, OceanMoodProfile> = {
 
 function oceanProfileForMood(mood: string): OceanMoodProfile {
   return OCEAN_MOOD_PROFILES[mood.trim().toLowerCase()] ?? NEUTRAL_OCEAN_PROFILE;
+}
+
+// --- World style -------------------------------------------------------------
+//
+// Mirrors ocean_style_profile.go one-for-one. In this family MOOD owns depth —
+// each of the four moods names a zone — so style owns the other thing an ocean
+// is: THE WATER, and what grows and swims in it.
+//
+// waterClarityBias shifts the water-type roll before it indexes the zone own
+// candidate list: negative is clearer, positive is more turbid. It cannot reach
+// water the ZONE does not offer.
+export const OCEAN_STYLE_OPEN_WATER = "open-water";
+export const OCEAN_STYLE_CORAL_GARDEN = "coral-garden";
+export const OCEAN_STYLE_KELP_CATHEDRAL = "kelp-cathedral";
+export const OCEAN_STYLE_CRYSTAL_SHOAL = "crystal-shoal";
+export const OCEAN_STYLE_SILT_DRIFT = "silt-drift";
+
+type OceanStyleProfile = {
+  waterClarityBias: number;
+  floraMultiplier: number;
+  faunaMultiplier: number;
+  bloomMultiplier: number;
+  marineSnowMultiplier: number;
+  grade: ScenePostFXGradeConfig;
+};
+
+const NEUTRAL_OCEAN_GRADE: ScenePostFXGradeConfig = { hueRadians: 0, saturation: 0, brightness: 0, contrast: 0 };
+
+// Exactly neutral, and it has to stay that way: these are the numbers an ocean
+// with no style gets, and they are what keeps the backend golden fixtures valid
+// for every world stored before styles existed.
+const NEUTRAL_OCEAN_STYLE_PROFILE: OceanStyleProfile = {
+  waterClarityBias: 0,
+  floraMultiplier: 1.0,
+  faunaMultiplier: 1.0,
+  bloomMultiplier: 1.0,
+  marineSnowMultiplier: 1.0,
+  grade: NEUTRAL_OCEAN_GRADE
+};
+
+const OCEAN_STYLE_PROFILES: Record<string, OceanStyleProfile> = {
+  [OCEAN_STYLE_OPEN_WATER]: NEUTRAL_OCEAN_STYLE_PROFILE,
+  [OCEAN_STYLE_CORAL_GARDEN]: {
+    waterClarityBias: -0.2,
+    floraMultiplier: 1.6,
+    faunaMultiplier: 1.25,
+    bloomMultiplier: 1.05,
+    marineSnowMultiplier: 0.85,
+    grade: { hueRadians: -0.02, saturation: 0.14, brightness: 0, contrast: 0.04 }
+  },
+  [OCEAN_STYLE_KELP_CATHEDRAL]: {
+    waterClarityBias: 0.28,
+    floraMultiplier: 2.0,
+    faunaMultiplier: 0.85,
+    bloomMultiplier: 1.2,
+    marineSnowMultiplier: 1.15,
+    grade: { hueRadians: 0.05, saturation: 0.06, brightness: -0.03, contrast: 0.06 }
+  },
+  [OCEAN_STYLE_CRYSTAL_SHOAL]: {
+    waterClarityBias: -0.45,
+    floraMultiplier: 0.45,
+    faunaMultiplier: 1.45,
+    bloomMultiplier: 1.25,
+    marineSnowMultiplier: 0.55,
+    grade: { hueRadians: 0.02, saturation: -0.05, brightness: 0.05, contrast: -0.03 }
+  },
+  [OCEAN_STYLE_SILT_DRIFT]: {
+    waterClarityBias: 0.5,
+    floraMultiplier: 0.7,
+    faunaMultiplier: 0.65,
+    bloomMultiplier: 0.85,
+    marineSnowMultiplier: 1.8,
+    grade: { hueRadians: 0.04, saturation: -0.16, brightness: -0.04, contrast: -0.06 }
+  }
+};
+
+function oceanProfileForStyle(style: string): OceanStyleProfile {
+  return OCEAN_STYLE_PROFILES[style.trim().toLowerCase()] ?? NEUTRAL_OCEAN_STYLE_PROFILE;
+}
+
+/**
+ * Layers a style grade offset on the zone one. Both are offsets from neutral,
+ * and every field is optional because the FE mirrors the BE JSON contract,
+ * where an older stored world may simply not carry one.
+ */
+function addGrade(base: ScenePostFXGradeConfig, overlay: ScenePostFXGradeConfig): ScenePostFXGradeConfig {
+  return {
+    hueRadians: (base.hueRadians ?? 0) + (overlay.hueRadians ?? 0),
+    saturation: (base.saturation ?? 0) + (overlay.saturation ?? 0),
+    brightness: (base.brightness ?? 0) + (overlay.brightness ?? 0),
+    contrast: (base.contrast ?? 0) + (overlay.contrast ?? 0)
+  };
 }
 
 // Mirrors oceanZoneDriftWeights / oceanZoneDriftWeightsByMood in
@@ -594,6 +702,10 @@ const MAXIMUM_CURRENT_INTENSITY = 1.0;
 const GUST_FREQUENCY_BASE = 0.18;
 const GUST_FREQUENCY_RANGE = 0.34;
 const BASE_MARINE_SNOW_COUNT = 900;
+// Bounds for the style multiplier, which is the only thing that moves the count
+// off the draw. The ceiling is a performance bound as much as a visual one.
+const MINIMUM_MARINE_SNOW_COUNT = 400;
+const MAXIMUM_MARINE_SNOW_COUNT = 3200;
 const MARINE_SNOW_COUNT_SPREAD = 901;
 const MOBILE_MARINE_SNOW_FRACTION = 0.3;
 
@@ -652,7 +764,26 @@ const LANDMARK_ANGLE_JITTER_RADIANS = 0.25;
 // the camera's own distance makes that impossible by construction.
 const LANDMARK_CAMERA_STANDOFF_METRES = 8;
 const LANDMARK_RING_DEPTH_METRES = 26;
-const LANDMARK_HEIGHT_RANGE = 6;
+
+// How deep each kind beds into the sediment, in metres, before the jitter
+// below. Applied as a NEGATIVE heightAboveFloor.
+//
+// This replaced LANDMARK_HEIGHT_RANGE = 6, a blind lift of 0 to 6 m ABOVE the
+// floor. Every kind this family draws is a bottom feature, and
+// oceanLandmarkGeometry.ts normalises each one's foot to y = 0 for the express
+// purpose of standing it on the sediment; the lift put it back in the water
+// column, where a whale fall's rib cage and bacterial mat hung with a visible
+// gap under them. Mirrors landmarkBedDepthMetresByKind in
+// ocean_scene_profile.go, including the reasoning behind each depth.
+const LANDMARK_BED_DEPTH_METRES_BY_KIND: Record<string, number> = {
+  [OCEAN_LANDMARK_KELP_CATHEDRAL]: 0.2,
+  [OCEAN_LANDMARK_HYDROTHERMAL_VENT]: 0.3,
+  [OCEAN_LANDMARK_CORAL_GARDEN]: 0.25,
+  [OCEAN_LANDMARK_ABYSSAL_TRENCH]: 0.35,
+  [OCEAN_LANDMARK_WHALE_FALL]: 0.5,
+  [OCEAN_LANDMARK_SUNKEN_RELIC]: 0.55
+};
+const LANDMARK_BED_DEPTH_JITTER_METRES = 0.15;
 const LANDMARK_COLOR_CYCLE_LENGTH = 3;
 const FIRST_LANDMARK_ENERGY = 60;
 const LANDMARK_ENERGY_STEP = 5;
@@ -799,14 +930,19 @@ function buildPreviewWaterConfig(
   seed: string,
   metres: number,
   zone: string,
-  moodProfile: OceanMoodProfile
+  moodProfile: OceanMoodProfile,
+  styleProfile: OceanStyleProfile
 ): OceanWaterConfig {
   const nextRandomValue = randomFromSeed(seed + SEA_STATE_SEED_SUFFIX);
   const windRoll = nextRandomValue();
   const waterTypeRoll = nextRandomValue();
 
   const candidates = WATER_TYPES_BY_ZONE[zone] ?? WATER_TYPES_BY_ZONE[OCEAN_ZONE_TWILIGHT_REACH];
-  const jerlovWaterType = candidates[Math.min(candidates.length - 1, Math.floor(waterTypeRoll * candidates.length))];
+  // The style shifts WHERE IN THE ZONE OWN LIST the draw lands, never what is
+  // on the list: the abyss offers no coastal water however silty the style is.
+  const biasedWaterTypeRoll = clampNumber(waterTypeRoll + styleProfile.waterClarityBias, 0, 1);
+  const jerlovWaterType =
+    candidates[Math.min(candidates.length - 1, Math.floor(biasedWaterTypeRoll * candidates.length))];
   const windSpeedMetresPerSecond = roundToHundredths(
     clampNumber(
       (MINIMUM_WIND_SPEED_METRES_PER_SECOND + windRoll * WIND_SPEED_RANGE_METRES_PER_SECOND) *
@@ -840,7 +976,8 @@ function buildPreviewLightingConfig(
   seed: string,
   metres: number,
   zone: string,
-  moodProfile: OceanMoodProfile
+  moodProfile: OceanMoodProfile,
+  styleProfile: OceanStyleProfile
 ): { lighting: OceanLightingConfig; bloomIntensity: number; grade: ScenePostFXGradeConfig } {
   const nextRandomValue = randomFromSeed(seed + LIGHTING_SEED_SUFFIX);
   const surfaceElevationRoll = nextRandomValue();
@@ -862,7 +999,10 @@ function buildPreviewLightingConfig(
   const elevationFloor = above ? MINIMUM_BREACHED_SURFACE_ELEVATION : MINIMUM_SURFACE_ELEVATION;
   const elevationRange = above ? BREACHED_SURFACE_ELEVATION_RANGE : SURFACE_ELEVATION_RANGE;
 
-  const baseGrade = OCEAN_GRADES_BY_ZONE[zone];
+  // The style grade is layered on the zone one before the per-world jitter, so
+  // two oceans in the same zone and style still differ by the jitter and never
+  // by more than it.
+  const baseGrade = addGrade(OCEAN_GRADES_BY_ZONE[zone], styleProfile.grade);
   const grade: ScenePostFXGradeConfig = {
     hueRadians: roundToHundredths((baseGrade.hueRadians ?? 0) + (hueJitterRoll - 0.5) * 2 * GRADE_HUE_JITTER_RANGE),
     saturation: roundToHundredths(
@@ -890,7 +1030,9 @@ function buildPreviewLightingConfig(
     },
     bloomIntensity: roundToHundredths(
       clampNumber(
-        (BASE_BLOOM_INTENSITY + bloomRoll * BLOOM_INTENSITY_RANGE) * moodProfile.bloomMultiplier,
+        (BASE_BLOOM_INTENSITY + bloomRoll * BLOOM_INTENSITY_RANGE) *
+          moodProfile.bloomMultiplier *
+          styleProfile.bloomMultiplier,
         MINIMUM_BLOOM_INTENSITY,
         MAXIMUM_BLOOM_INTENSITY
       )
@@ -927,13 +1069,25 @@ function buildPreviewSeafloorConfig(seed: string): { seafloor: OceanSeafloorConf
 
 // Draw order: current kind, intensity, direction, gust frequency, marine snow
 // count. Marine snow is drawn at every depth.
-function buildPreviewCurrentConfig(seed: string, zone: string, moodProfile: OceanMoodProfile): OceanCurrentConfig {
+function buildPreviewCurrentConfig(
+  seed: string,
+  zone: string,
+  moodProfile: OceanMoodProfile,
+  styleProfile: OceanStyleProfile
+): OceanCurrentConfig {
   const nextRandomValue = randomFromSeed(seed + CURRENT_SEED_SUFFIX);
   const kindRoll = nextRandomValue();
   const intensityRoll = nextRandomValue();
   const directionRoll = nextRandomValue();
   const gustFrequencyRoll = nextRandomValue();
   const marineSnowDraw = BASE_MARINE_SNOW_COUNT + integerFromRoll(nextRandomValue(), MARINE_SNOW_COUNT_SPREAD);
+  // Sediment IS marine snow, from the viewer side of the water: the silt style
+  // is mostly this number.
+  const marineSnowCount = clampNumber(
+    Math.floor(marineSnowDraw * styleProfile.marineSnowMultiplier),
+    MINIMUM_MARINE_SNOW_COUNT,
+    MAXIMUM_MARINE_SNOW_COUNT
+  );
 
   return {
     kind: currentKindForRoll(kindRoll, CURRENT_WEIGHTS_BY_ZONE[zone]),
@@ -946,14 +1100,19 @@ function buildPreviewCurrentConfig(seed: string, zone: string, moodProfile: Ocea
     ),
     directionRadians: roundToHundredths(directionRoll * FULL_CIRCLE_RADIANS),
     gustFrequency: roundToHundredths(GUST_FREQUENCY_BASE + gustFrequencyRoll * GUST_FREQUENCY_RANGE),
-    marineSnowCountDesktop: marineSnowDraw,
-    marineSnowCountMobile: Math.floor(marineSnowDraw * MOBILE_MARINE_SNOW_FRACTION)
+    marineSnowCountDesktop: marineSnowCount,
+    marineSnowCountMobile: Math.floor(marineSnowCount * MOBILE_MARINE_SNOW_FRACTION)
   };
 }
 
 // Draw order: flora count, species-mix pick, scale minimum, scale maximum, sway
 // strength, depth tint.
-function buildPreviewFloraConfig(seed: string, zone: string, moodProfile: OceanMoodProfile): OceanFloraConfig {
+function buildPreviewFloraConfig(
+  seed: string,
+  zone: string,
+  moodProfile: OceanMoodProfile,
+  styleProfile: OceanStyleProfile
+): OceanFloraConfig {
   const nextRandomValue = randomFromSeed(seed + FLORA_SEED_SUFFIX);
   const floraCountDraw = BASE_FLORA_COUNT + integerFromRoll(nextRandomValue(), FLORA_COUNT_SPREAD);
   const speciesMixRoll = nextRandomValue();
@@ -962,7 +1121,11 @@ function buildPreviewFloraConfig(seed: string, zone: string, moodProfile: OceanM
   const swayStrengthRoll = nextRandomValue();
   const depthTintRoll = nextRandomValue();
 
-  const countDesktop = clampNumber(floraCountDraw, MINIMUM_FLORA_COUNT, MAXIMUM_FLORA_COUNT);
+  const countDesktop = clampNumber(
+    Math.floor(floraCountDraw * styleProfile.floraMultiplier),
+    MINIMUM_FLORA_COUNT,
+    MAXIMUM_FLORA_COUNT
+  );
   const mixes = FLORA_SPECIES_MIXES_BY_ZONE[zone];
   const mixIndex = Math.min(mixes.length - 1, Math.floor(speciesMixRoll * mixes.length));
 
@@ -994,7 +1157,8 @@ function buildPreviewFaunaConfig(
   seed: string,
   zone: string,
   visibilityMetres: number,
-  moodProfile: OceanMoodProfile
+  moodProfile: OceanMoodProfile,
+  styleProfile: OceanStyleProfile
 ): OceanFaunaConfig {
   const nextRandomValue = randomFromSeed(seed + FAUNA_SEED_SUFFIX);
   const schoolDraws = Array.from({ length: MAXIMUM_SCHOOL_SLOTS }, () => ({
@@ -1017,13 +1181,14 @@ function buildPreviewFaunaConfig(
   const giantApproachRoll = nextRandomValue();
   const giantDurationRoll = nextRandomValue();
 
+  const faunaMultiplier = moodProfile.faunaMultiplier * styleProfile.faunaMultiplier;
   const activeSchoolSlots = clampNumber(
-    Math.round(BASE_SCHOOL_SLOTS_BY_ZONE[zone] * moodProfile.faunaMultiplier),
+    Math.round(BASE_SCHOOL_SLOTS_BY_ZONE[zone] * faunaMultiplier),
     0,
     MAXIMUM_SCHOOL_SLOTS
   );
   const activeDrifterSlots = clampNumber(
-    Math.round(BASE_DRIFTER_SLOTS_BY_ZONE[zone] * moodProfile.faunaMultiplier),
+    Math.round(BASE_DRIFTER_SLOTS_BY_ZONE[zone] * faunaMultiplier),
     0,
     MAXIMUM_DRIFTER_SLOTS
   );
@@ -1092,7 +1257,8 @@ function buildPreviewFaunaConfig(
 function buildPreviewBioluminescenceConfig(
   seed: string,
   zone: string,
-  moodProfile: OceanMoodProfile
+  moodProfile: OceanMoodProfile,
+  styleProfile: OceanStyleProfile
 ): OceanBioluminescenceConfig {
   const nextRandomValue = randomFromSeed(seed + BIOLUMINESCENCE_SEED_SUFFIX);
   const planktonCount =
@@ -1104,7 +1270,13 @@ function buildPreviewBioluminescenceConfig(
     // Brightens light that is already in the scene; never what makes it
     // visible. An abyssal world has to read with post-processing switched off.
     bloomIntensity: roundToHundredths(
-      clampNumber((BIOLUMINESCENCE_BLOOM_BASE + bloomRoll * BIOLUMINESCENCE_BLOOM_RANGE) * moodProfile.bloomMultiplier, 0, 1)
+      clampNumber(
+        (BIOLUMINESCENCE_BLOOM_BASE + bloomRoll * BIOLUMINESCENCE_BLOOM_RANGE) *
+          moodProfile.bloomMultiplier *
+          styleProfile.bloomMultiplier,
+        0,
+        1
+      )
     ),
     emissiveColors: [...OCEAN_BIOLUMINESCENCE_COLORS_BY_ZONE[zone]],
     flickerSeed: seed + BIOLUMINESCENCE_FLICKER_SUFFIX
@@ -1126,7 +1298,7 @@ function buildPreviewLandmarkConfigs(
     const kindRoll = nextRandomValue();
     const angleJitterRoll = nextRandomValue();
     const radiusRoll = nextRandomValue();
-    const heightRoll = nextRandomValue();
+    const bedDepthRoll = nextRandomValue();
 
     let kind = OCEAN_LANDMARK_KELP_CATHEDRAL;
     if (index > 0) {
@@ -1158,7 +1330,11 @@ function buildPreviewLandmarkConfigs(
       radiusFromCenter: roundToHundredths(
         cameraDistance + LANDMARK_CAMERA_STANDOFF_METRES + radiusRoll * LANDMARK_RING_DEPTH_METRES
       ),
-      heightAboveFloor: roundToHundredths(heightRoll * LANDMARK_HEIGHT_RANGE),
+      // Negative: every kind is a bottom feature, so the offset is how deep
+      // it beds into the sediment rather than how far it floats over it.
+      heightAboveFloor: roundToHundredths(
+        -((LANDMARK_BED_DEPTH_METRES_BY_KIND[kind] ?? 0) + bedDepthRoll * LANDMARK_BED_DEPTH_JITTER_METRES)
+      ),
       accentColor,
       energy: Math.min(MAXIMUM_LANDMARK_ENERGY, FIRST_LANDMARK_ENERGY + index * LANDMARK_ENERGY_STEP)
     };
@@ -1219,6 +1395,9 @@ export function buildPreviewOceanSceneConfig(
 ): SceneConfig {
   const seed = previewSeedFromInputs(input);
   const moodProfile = oceanProfileForMood(input.mood);
+  // An unknown or absent style resolves to the neutral profile, which is a
+  // no-op in every field — mirroring ocean_style_profile.go exactly.
+  const styleProfile = oceanProfileForStyle(input.preferredWorldStyle);
 
   const primaryColor = input.favoriteColors[0] ?? DEFAULT_OCEAN_PRIMARY_COLOR;
   const secondaryColor = input.favoriteColors[1] ?? DEFAULT_OCEAN_SECONDARY_COLOR;
@@ -1231,13 +1410,13 @@ export function buildPreviewOceanSceneConfig(
   const metres = depth.metres ?? DEPTH_BAND_BY_ZONE[OCEAN_ZONE_SUNLIT_SHALLOWS].minimum;
   const zone = depth.zone ?? OCEAN_ZONE_SUNLIT_SHALLOWS;
 
-  const water = buildPreviewWaterConfig(seed, metres, zone, moodProfile);
-  const { lighting, bloomIntensity, grade } = buildPreviewLightingConfig(seed, metres, zone, moodProfile);
+  const water = buildPreviewWaterConfig(seed, metres, zone, moodProfile, styleProfile);
+  const { lighting, bloomIntensity, grade } = buildPreviewLightingConfig(seed, metres, zone, moodProfile, styleProfile);
   const { seafloor, cameraDistance } = buildPreviewSeafloorConfig(seed);
-  const current = buildPreviewCurrentConfig(seed, zone, moodProfile);
-  const flora = buildPreviewFloraConfig(seed, zone, moodProfile);
-  const fauna = buildPreviewFaunaConfig(seed, zone, water.visibilityMetres ?? 12, moodProfile);
-  const bioluminescence = buildPreviewBioluminescenceConfig(seed, zone, moodProfile);
+  const current = buildPreviewCurrentConfig(seed, zone, moodProfile, styleProfile);
+  const flora = buildPreviewFloraConfig(seed, zone, moodProfile, styleProfile);
+  const fauna = buildPreviewFaunaConfig(seed, zone, water.visibilityMetres ?? 12, moodProfile, styleProfile);
+  const bioluminescence = buildPreviewBioluminescenceConfig(seed, zone, moodProfile, styleProfile);
   const landmarks = buildPreviewLandmarkConfigs(
     seed,
     landmarkNames,

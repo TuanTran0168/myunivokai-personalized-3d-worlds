@@ -86,7 +86,7 @@ func tokenVersionResponseEnvelope(t *testing.T) contracts.Envelope[contracts.RPC
 
 // Every /api/admin route must reject an unauthenticated request except
 // login, which is public by design - see the S4-AUTH-003 default-deny
-// scenario in notes/sprints/sprint-04-2026-08-06/user-stories.md. A route
+// scenario in agent-system/plans/sprints/sprint-04-2026-08-06/user-stories.md. A route
 // added later without wiring RequireAdminRefreshCookie or
 // RequireAdminAccessToken fails this test instead of shipping open.
 func TestAdminRoutesDefaultDenyUnlessExplicitlyPublic(t *testing.T) {

@@ -28,7 +28,7 @@ type TokenVersionRequester interface {
 // RevocationChecker answers whether an access token's tokenVersion claim is
 // stale. The common path is one Redis read; only a cache miss calls
 // auth-service, and a miss is never read as "not revoked" — see
-// notes/vision/auth-and-admin-plan.md#how-b-works.
+// agent-system/plans/services/auth-and-admin-plan.md#how-b-works.
 type RevocationChecker struct {
 	cache        TokenVersionCache
 	requester    TokenVersionRequester

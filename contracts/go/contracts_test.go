@@ -76,12 +76,57 @@ func TestJSONSchemasAreValidDocuments(t *testing.T) {
 
 func TestWorldInputValidationPreservesExistingBoundary(t *testing.T) {
 	input := validWorldInput()
-	if details := input.Validate(); len(details) != 0 {
+	if details := input.Validate(WorldFamilyUniverse); len(details) != 0 {
 		t.Fatalf("expected valid input, got %#v", details)
 	}
 	input.Goal = "short"
-	if details := input.Validate(); len(details) != 1 || details[0].Field != "goal" {
+	if details := input.Validate(WorldFamilyUniverse); len(details) != 1 || details[0].Field != "goal" {
 		t.Fatalf("expected goal validation detail, got %#v", details)
+	}
+}
+
+func TestWorldStyleIsValidatedAgainstItsOwnFamily(t *testing.T) {
+	// The whole point of making this per-family: "nebula" is a real universe
+	// and a nonsense forest, and until now both were accepted everywhere.
+	input := validWorldInput()
+	input.PreferredWorldStyle = "nebula"
+	if details := input.Validate(WorldFamilyUniverse); len(details) != 0 {
+		t.Fatalf("nebula must be a valid universe style, got %#v", details)
+	}
+	details := input.Validate(WorldFamilyNature)
+	if len(details) != 1 || details[0].Field != "preferredWorldStyle" {
+		t.Fatalf("nebula must be rejected for the forest, got %#v", details)
+	}
+
+	input.PreferredWorldStyle = "mistwood"
+	if details := input.Validate(WorldFamilyNature); len(details) != 0 {
+		t.Fatalf("mistwood must be a valid forest style, got %#v", details)
+	}
+	if details := input.Validate(WorldFamilyOcean); len(details) != 1 {
+		t.Fatalf("mistwood must be rejected for the ocean, got %#v", details)
+	}
+}
+
+func TestEveryFamilyDefaultStyleIsOneOfItsOwn(t *testing.T) {
+	// A default outside its family's own set would fail validation on the very
+	// first world created after a family gains styles.
+	for _, family := range []WorldFamily{WorldFamilyUniverse, WorldFamilyNature, WorldFamilyOcean} {
+		style := DefaultWorldStyleForFamily(family)
+		if !WorldStyleAllowedForFamily(family, style) {
+			t.Fatalf("%s default style %q is not in its own set", family, style)
+		}
+	}
+}
+
+func TestAnEmptyWorldStyleStaysReadable(t *testing.T) {
+	// Worlds stored before their family had styles carry no style at all, and
+	// rejecting those would make old records unreadable.
+	input := validWorldInput()
+	input.PreferredWorldStyle = ""
+	for _, family := range []WorldFamily{WorldFamilyUniverse, WorldFamilyNature, WorldFamilyOcean} {
+		if details := input.Validate(family); len(details) != 0 {
+			t.Fatalf("%s rejected an empty style: %#v", family, details)
+		}
 	}
 }
 

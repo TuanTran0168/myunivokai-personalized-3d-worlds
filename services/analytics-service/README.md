@@ -19,7 +19,7 @@ Two structural consequences you will notice reading the code:
   asked). The ACL in [infra/nats/nats-server.conf](../../infra/nats/nats-server.conf)
   enforces the rule rather than trusting the code to honour it.
 
-See [notes/vision/analytics-service-plan.md](../../notes/vision/analytics-service-plan.md)
+See [agent-system/plans/services/analytics-service-plan.md](../../agent-system/plans/services/analytics-service-plan.md)
 for why this exists instead of the gateway fanning out to universe, nature and
 dna: three processes serve an admin page (gateway, auth, analytics), and no
 sleeping domain service is ever on that path.
@@ -212,7 +212,7 @@ before merging to `main`**, or the service crash-loops on first boot.
    Synadia Cloud with **one account user shared by every service**, supplied
    as a `nats.creds` secret file, so this service reuses the existing
    Environment Group unchanged — see
-   [notes/ops/production-deployment-guide.md](../../notes/ops/production-deployment-guide.md).
+   [agent-system/skills/production-deployment-guide.md](../../agent-system/skills/production-deployment-guide.md).
    Set `NATS_URL=tls://connect.ngs.global:4222` and
    `NATS_CREDENTIALS=/etc/secrets/nats.creds`, and **do not** set
    `NATS_USERNAME` / `NATS_PASSWORD`.
@@ -266,7 +266,7 @@ observes. Since 2026-08-14 the gateway wakes this service on each of the four
 world mutations that produce an event, after the write is accepted rather than
 before it, so the consumer starts at the moment there is something to consume.
 Reads still wake nothing. See `WorldHandler.wakeReadModel` in api-gateway and
-[service-wake-mechanism.md](../../notes/vision/service-wake-mechanism.md).
+[service-wake-mechanism.md](../../agent-system/plans/architecture/service-wake-mechanism.md).
 
 An outage still ends in a permanent gap, and one thing remains uncovered by
 design: a `service.started` event nobody asked the gateway for can still expire

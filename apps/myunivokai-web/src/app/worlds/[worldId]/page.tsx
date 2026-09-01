@@ -15,6 +15,14 @@ import { StatusMessage } from "@/components/StatusMessage";
 import { PlanetDetailsPanel } from "@/components/PlanetDetailsPanel";
 import { RareFeatureBadge } from "@/components/RareFeatureBadge";
 import { UniverseCanvas } from "@/components/UniverseCanvas";
+import { GenieReveal } from "@/features/transitions/GenieReveal";
+import { WorldTransition, type WorldTransitionRequest } from "@/features/transitions/WorldTransition";
+import { captureSceneStill } from "@/features/transitions/sceneStill";
+import {
+  isWorldChangeWorthPlaying,
+  worldChangeDirectionBetween
+} from "@/features/transitions/worldChangeDirection";
+import { takeWorldOpenOrigin, type WorldOpenOrigin } from "@/features/transitions/worldOpenOrigin";
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { prefetchSceneRendererForFamily } from "@/features/scene-renderers/registry";
 import { VariantList } from "@/components/VariantList";
@@ -24,7 +32,7 @@ import { WORLD_PANELS_ELEMENT_ID } from "@/lib/formRailCollapse";
 // `params` is a Promise from Next 15 onward. This file is "use client", so it
 // cannot await — React's `use` is the documented equivalent, and it works on 14
 // as well, which is why this lands ahead of the version bump. See
-// notes/vision/frontend-modernization-research.md#the-exact-code-change-all-three-files.
+// agent-system/evolution/frontend-modernization-research.md#the-exact-code-change-all-three-files.
 type PageProps = {
   params: Promise<{
     worldId: string;
@@ -67,12 +75,48 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   const { collapseState, toggleCollapse, toggleButtonReference } = useWorldChromeCollapse({ worldFamily: family });
   const sceneContainerReference = useRef<HTMLDivElement>(null);
 
+  // The transition that carries one variant off when another is picked. Same
+  // shape as the create page's family switch, and the same container ref the
+  // genie reveal already works against.
+  const [transitionRequest, setTransitionRequest] = useState<WorldTransitionRequest | null>(null);
+  const transitionTokenReference = useRef(0);
+  // Separate from `hasSceneRendered` below: that one only ever goes false to
+  // true, once, for the genie's benefit. This has to go back to false on every
+  // transition request, or the hold would end on its floor every time past the
+  // first variant this page ever showed.
+  const [isTransitionDestinationReady, setIsTransitionDestinationReady] = useState(false);
+  // Which variant the CANVAS is drawing, as opposed to which one the list has
+  // highlighted. The two are the same except during a transition, when this one
+  // lags by exactly the length of the departure — see the comment on
+  // `renderedWorldFamily` on the create page, and `worldChangeStages.ts`, for why
+  // that lag is what keeps the whole change at 60 fps.
+  const [renderedVariantId, setRenderedVariantId] = useState<string>();
+
+  // The rectangle the gallery card occupied, if a card is what opened this
+  // world. Consumed on read, so a variant switch, a reload or a back-forward
+  // later in the same tab does not replay the reveal out of a rectangle
+  // nothing is standing in any more.
+  const [pendingOpenOrigin, setPendingOpenOrigin] = useState<WorldOpenOrigin | null>(null);
+  const [hasSceneRendered, setHasSceneRendered] = useState(false);
+  const [hasRevealFinished, setHasRevealFinished] = useState(false);
+
+  useEffect(() => {
+    setPendingOpenOrigin(takeWorldOpenOrigin(worldId));
+  }, [worldId]);
+
+  // Held from the first render rather than from the moment the reveal starts:
+  // releasing it for even one commit in between would flash the finished frame
+  // before the thing that is supposed to unfold into it has drawn anything.
+  const isRevealHeld = pendingOpenOrigin !== null && !hasRevealFinished;
+  const genieOrigin = isRevealHeld && hasSceneRendered ? pendingOpenOrigin : null;
+
   async function loadWorld() {
     setError("");
     const nextWorld = await api.getWorld(worldId, family);
     setWorld(nextWorld);
     const active = selectedVariant(nextWorld);
     setActiveVariantId((current) => current || active?.id);
+    setRenderedVariantId((current) => current || active?.id);
   }
 
   useEffect(() => {
@@ -89,6 +133,9 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
         }
         setWorld(nextWorld);
         setActiveVariantId(selectedVariant(nextWorld)?.id);
+        // The first variant this page ever shows has nothing to transition out
+        // of, so the canvas is allowed to draw it straight away.
+        setRenderedVariantId(selectedVariant(nextWorld)?.id);
         addWorldIdentifierToGallery(nextWorld.id, family);
         // Unconditional, unlike the add above: this is the one signal the
         // gallery's ambient backdrop uses to know which world the visitor
@@ -103,6 +150,8 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     };
   }, [family, worldId]);
 
+  // What the variant list highlights and what the API calls act on. Moves the
+  // instant a variant is picked, so the click never feels like it was ignored.
   const activeVariant = useMemo(() => {
     if (!world) {
       return undefined;
@@ -110,21 +159,31 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     return world.variants.find((variant) => variant.id === activeVariantId) ?? selectedVariant(world);
   }, [activeVariantId, world]);
 
-  const activeScene = useMemo(() => sceneFromVariant(activeVariant), [activeVariant]);
+  // What is actually on screen. Everything scene-derived hangs off this one —
+  // the canvas, the title, the details panel, the export filename — so the HUD
+  // can never be describing a world the visitor is not looking at.
+  const renderedVariant = useMemo(() => {
+    if (!world) {
+      return undefined;
+    }
+    return world.variants.find((variant) => variant.id === renderedVariantId) ?? selectedVariant(world);
+  }, [renderedVariantId, world]);
+
+  const renderedScene = useMemo(() => sceneFromVariant(renderedVariant), [renderedVariant]);
   // Planets for universe worlds, landmarks for forest worlds — the details
   // panel, selection and camera focus all run off the same adapter.
-  const activeScenePlanets = useMemo(() => pointsOfInterestFromScene(activeScene), [activeScene]);
+  const renderedScenePlanets = useMemo(() => pointsOfInterestFromScene(renderedScene), [renderedScene]);
 
   useEffect(() => {
     setSelectedPlanetKey(null);
-  }, [activeVariantId]);
+  }, [renderedVariantId]);
 
   function handleSelectPlanet(planet: PlanetSceneConfig | null) {
     if (!planet) {
       setSelectedPlanetKey(null);
       return;
     }
-    const planetIndex = activeScenePlanets.indexOf(planet);
+    const planetIndex = renderedScenePlanets.indexOf(planet);
     setSelectedPlanetKey(planetIdentityKey(planet, planetIndex));
   }
 
@@ -133,6 +192,11 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     try {
       const variant = await api.regenerateVariant(worldId, family);
       await loadWorld();
+      // A variant that did not exist a moment ago has no position in the list
+      // to compare against, so worldChangeDirectionBetween's forward default is
+      // what carries it in — which is the right reading anyway: it is the next
+      // one.
+      requestVariantTransition(variant.id);
       setActiveVariantId(variant.id);
       toast.success("Variant created.");
     } catch (err) {
@@ -142,8 +206,45 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     }
   }
 
+  /**
+   * Carry the world that is on screen off, in the direction the variant list
+   * moved, hold the gap in this family's own colours, and unfold the next one
+   * back out of the same slot.
+   *
+   * The still is captured before the state update for the same reason the
+   * create page does it there: one render later the canvas may have been
+   * swapped and the frame worth keeping is gone. A null capture is not an
+   * error — it just means this change is a plain cut, which is what it always
+   * used to be, and the canvas is released to draw the new variant at once.
+   */
+  function requestVariantTransition(nextVariantId: string) {
+    const still =
+      world && isWorldChangeWorthPlaying(activeVariantId ?? "", nextVariantId)
+        ? captureSceneStill(sceneContainerReference.current)
+        : null;
+    if (!world || !still) {
+      setRenderedVariantId(nextVariantId);
+      return;
+    }
+    transitionTokenReference.current += 1;
+    setIsTransitionDestinationReady(false);
+    setTransitionRequest({
+      still,
+      direction: worldChangeDirectionBetween(
+        world.variants.findIndex((variant) => variant.id === activeVariantId),
+        world.variants.findIndex((variant) => variant.id === nextVariantId)
+      ),
+      // A variant switch never leaves the family, so the wait wears the same
+      // world's colours it started in — which is the point: nothing about the
+      // place has changed, only which version of it is being shown.
+      family,
+      token: transitionTokenReference.current
+    });
+  }
+
   async function selectCurrentVariant(variant: WorldVariant) {
     setAction("select");
+    requestVariantTransition(variant.id);
     setActiveVariantId(variant.id);
     try {
       await api.selectVariant(worldId, variant.id, family);
@@ -173,7 +274,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   }
 
   function exportSceneImage() {
-    const exportFileName = `myunivokai-${activeScene.sceneName ?? world?.id ?? "universe"}`;
+    const exportFileName = `myunivokai-${renderedScene.sceneName ?? world?.id ?? "universe"}`;
     const exportSucceeded = exportSceneCanvasAsPng(sceneContainerReference.current, exportFileName);
     if (exportSucceeded) {
       toast.success("Image exported.");
@@ -216,7 +317,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   return (
     <main
       className={`relative flex min-h-screen flex-col lg:block lg:h-screen lg:overflow-hidden ${
-        isForestScene(activeScene) ? "forest-chrome" : ""
+        isForestScene(renderedScene) ? "forest-chrome" : ""
       }`}
     >
       {/* Clears every HUD island off the world and brings them back. Outside the
@@ -240,14 +341,38 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
         }`}
       >
         <UniverseCanvas
-          scene={activeScene}
+          scene={renderedScene}
           className="h-full"
           selectedPlanetKey={selectedPlanetKey}
           onSelectPlanet={handleSelectPlanet}
           preserveDrawingBuffer
           enableAmbientSound
+          revealHeld={isRevealHeld}
+          // The genie owns this route's reveal whenever a card opened it, and
+          // it has already drawn the frame by the time it hands over. Fading
+          // in underneath would dissolve away what just arrived.
+          revealWithoutFade={pendingOpenOrigin !== null}
+          onSceneReady={() => {
+            setHasSceneRendered(true);
+            setIsTransitionDestinationReady(true);
+          }}
         />
       </div>
+      <GenieReveal
+        origin={genieOrigin}
+        sceneContainerReference={sceneContainerReference}
+        onFinished={() => setHasRevealFinished(true)}
+      />
+      <WorldTransition
+        request={transitionRequest}
+        sceneContainerReference={sceneContainerReference}
+        isDestinationReady={isTransitionDestinationReady}
+        // Reads the variant the list already moved to rather than closing over
+        // the one the request was made with: if a second pick landed while the
+        // first was still leaving, the canvas has to end up on the LAST one.
+        onDeparted={() => setRenderedVariantId(activeVariantId)}
+        onFinished={() => setTransitionRequest(null)}
+      />
 
       {/* HUD overlay — a normal scrolling column on mobile; on desktop it becomes
           a pointer-transparent layer so orbit-drag passes through the gaps, while
@@ -285,20 +410,20 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
           {/* Left island: identity + variants */}
           <div className="pointer-events-auto flex w-full flex-col gap-4 lg:max-h-full lg:w-[320px] lg:min-h-0 lg:overflow-y-auto">
             <div className="glass-panel glass-panel-glow glass-rise rounded-2xl p-5">
-              {activeScene.archetype ? (
-                <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-brass">{activeScene.archetype}</p>
+              {renderedScene.archetype ? (
+                <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-brass">{renderedScene.archetype}</p>
               ) : null}
-              <RareFeatureBadge scene={activeScene} />
+              <RareFeatureBadge scene={renderedScene} />
               <h1 className="font-display text-2xl font-semibold tracking-normal text-paper">
-                {activeScene.sceneName || world.title || (isForestScene(activeScene) ? "Untitled forest" : "Untitled universe")}
+                {renderedScene.sceneName || world.title || (isForestScene(renderedScene) ? "Untitled forest" : "Untitled universe")}
               </h1>
               {world.nickname ? (
                 <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-grey">
                   A portrait of {world.nickname}
                 </p>
               ) : null}
-              {activeScene.quote ? (
-                <p className="mt-2 text-sm italic leading-6 text-on-surface">&ldquo;{activeScene.quote}&rdquo;</p>
+              {renderedScene.quote ? (
+                <p className="mt-2 text-sm italic leading-6 text-on-surface">&ldquo;{renderedScene.quote}&rdquo;</p>
               ) : null}
               {world.summary ? <p className="mt-2 text-sm leading-6 text-on-surface-variant">{world.summary}</p> : null}
             </div>
@@ -321,7 +446,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
           {/* Right island: World DNA (planets) + share */}
           <div className="pointer-events-auto flex w-full flex-col gap-4 lg:max-h-full lg:w-[340px] lg:min-h-0 lg:overflow-y-auto">
             <PlanetDetailsPanel
-              planets={activeScenePlanets}
+              planets={renderedScenePlanets}
               selectedPlanetKey={selectedPlanetKey}
               onSelectPlanet={handleSelectPlanet}
             />

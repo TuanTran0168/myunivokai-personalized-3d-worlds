@@ -187,6 +187,47 @@ func TestOnBottomZonesCanActuallySeeTheirFloor(t *testing.T) {
 	}
 }
 
+// TestOnBottomZonesSeeTheirFloorThroughTheirOwnWater is the second half of the
+// bar, and the half that was missing.
+//
+// The test above measures the floor against the DEPTH CURVE's visibility — how
+// much light is left at that depth. The renderer does not divide by that. It
+// divides by the WATER TYPE's own clarity, sightingRangeMetres, which does not
+// depend on depth at all, and then applies 1 - exp(-(distance/range)^2).
+//
+// So a band could pass the light test and still be invisible: the shallows can
+// roll 3C, sighting range 11.85 m, and the old 18 m clearance was both outside
+// the 1.5x boundary reach AND 89% swallowed by fog at the reach itself.
+//
+// This pins the honest bar — the WORST water a zone can draw must still leave
+// the seabed legible at the FURTHEST the world can be placed above it.
+func TestOnBottomZonesSeeTheirFloorThroughTheirOwnWater(t *testing.T) {
+	// Where a floor stops reading as a floor. At 0.60 the seabed is a surface
+	// seen through water; past it, it is a suggestion of one.
+	const maximumFloorFogSwallow = 0.60
+	for _, zone := range onBottomZones {
+		clearanceBand := floorClearanceBandByZone[zone]
+		murkiestRange := math.Inf(1)
+		murkiestName := ""
+		for _, waterTypeName := range waterTypesByZone[zone] {
+			candidateRange := SightingRangeForWaterType(waterTypeName)
+			if candidateRange < murkiestRange {
+				murkiestRange = candidateRange
+				murkiestName = waterTypeName
+			}
+		}
+		if murkiestName == "" {
+			t.Fatalf("zone %s lists no water types, so nothing decides how far its viewer can see", zone)
+		}
+		// The same expression the renderer runs, in oceanRig.ts.
+		swallowed := 1 - math.Exp(-math.Pow(clearanceBand.Maximum/murkiestRange, 2))
+		if swallowed > maximumFloorFogSwallow {
+			t.Fatalf("zone %s in %s water (sighting range %.2f m): worst-case clearance %.1f m leaves the seabed %.0f%% swallowed by fog, past the %.0f%% bar",
+				zone, murkiestName, murkiestRange, clearanceBand.Maximum, swallowed*100, maximumFloorFogSwallow*100)
+		}
+	}
+}
+
 // The twilight reach must fail that same check — its floor is kilometres down
 // and is supposed to be invisible. A band that crept into sight would quietly
 // give the midwater a bottom again.

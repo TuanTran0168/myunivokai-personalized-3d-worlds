@@ -7,7 +7,7 @@ Dockerfile* text eol=lf
 *.sql text eol=lf
 
 # GitHub Linguist Overrides - Go #1, TypeScript #2
-notes/** linguist-documentation=true
+agent-system/** linguist-documentation=true
 
 # Ignore generated lockfiles, contracts & static assets
 package-lock.json linguist-generated=true

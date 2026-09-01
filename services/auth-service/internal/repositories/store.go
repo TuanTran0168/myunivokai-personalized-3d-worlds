@@ -47,7 +47,7 @@ type RefreshToken struct {
 
 // PermissionDefinition is the Go-declared source of truth synced into the
 // permissions table at startup. Staff read these; they never invent them -
-// see notes/vision/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
+// see agent-system/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
 type PermissionDefinition struct {
 	Codename    contracts.PermissionCode
 	Description string
@@ -86,7 +86,7 @@ type InviteAccountParams struct {
 }
 
 // Role is the half staff compose freely at runtime, unlike Permission which
-// is Go-declared - see notes/vision/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
+// is Go-declared - see agent-system/plans/services/auth-and-admin-plan.md#amended--dynamic-modelled-on-django-auth.
 type Role struct {
 	ID                  string
 	Name                string
@@ -151,7 +151,7 @@ type Store interface {
 	// AccountPermissionsExcludingRole computes what an account's permission
 	// set WOULD be if roleID were revoked, without revoking it - the read
 	// RevokeRole's self-revoke guard needs before deciding whether the write
-	// is allowed. See notes/vision/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
+	// is allowed. See agent-system/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
 	AccountPermissionsExcludingRole(ctx context.Context, accountID, excludeRoleID string) ([]string, error)
 
 	ListPermissions(ctx context.Context) ([]Permission, error)

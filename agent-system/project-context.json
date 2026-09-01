@@ -1,0 +1,259 @@
+{
+  "$comment": "Machine-readable map of this repository and of agent-system/. Human equivalent: agent-system/README.md. Keep the two in step — a reader that trusts this file will not open the other one.",
+  "schemaVersion": 1,
+  "lastSourceReview": "2026-08-29",
+  "project": {
+    "name": "Myunivokai",
+    "meaning": "My Unique OK AI. NOT 'my universe' — the universe family is one of several and the branding must not privilege it.",
+    "mission": "Turn a person's answers into a living 3D world that is exactly, only, theirs.",
+    "primaryLanguages": [
+      "Go",
+      "TypeScript",
+      "Rust"
+    ]
+  },
+  "knowledgeBase": {
+    "root": "agent-system/",
+    "principle": "Knowledge describes, plans prescribe, memory records. Which folder a document is in decides who is wrong when it disagrees with the code.",
+    "areas": {
+      "rules": {
+        "path": "agent-system/rules/",
+        "question": "What am I not allowed to get wrong?",
+        "readWhen": "always, first",
+        "authority": "gate — a change can fail on it"
+      },
+      "knowledge": {
+        "path": "agent-system/knowledge/",
+        "question": "How does this actually work?",
+        "readWhen": "before changing something you did not write",
+        "authority": "descriptive — if it disagrees with the code, the document is wrong"
+      },
+      "plans": {
+        "path": "agent-system/plans/",
+        "question": "What am I supposed to build?",
+        "readWhen": "before starting a feature",
+        "authority": "prescriptive — if it disagrees with the code, the code changes",
+        "warning": "Several plans carry a corrections section that contradicts their own earlier sections. Read it first."
+      },
+      "memory": {
+        "path": "agent-system/memory/",
+        "question": "What happened last time, and where was the plan wrong?",
+        "readWhen": "before trusting a plan",
+        "authority": "historical — never a current plan"
+      },
+      "evolution": {
+        "path": "agent-system/evolution/",
+        "question": "Why did the direction change?",
+        "readWhen": "before revisiting a decision",
+        "authority": "research — nothing in it is approved or built"
+      },
+      "skills": {
+        "path": "agent-system/skills/",
+        "question": "How do I perform this procedure?",
+        "readWhen": "while executing, step by step",
+        "authority": "runbook — every stage has a verification"
+      },
+      "agents": {
+        "path": "agent-system/agents/",
+        "question": "Which of all this applies to my task?",
+        "readWhen": "first, to avoid reading the rest",
+        "authority": "reading list"
+      }
+    },
+    "formerlyKnownAs": "notes/ — renamed when the folder stopped being a document store and started being loaded and executed"
+  },
+  "runtime": {
+    "$comment": "What actually loads. Claude Code discovers agents and skills only under .claude/, so that directory holds thin entry points and agent-system/ holds the substance. Exactly one copy of every definition exists, and it is in agent-system/.",
+    "alwaysInContext": {
+      "file": "CLAUDE.md",
+      "imports": [
+        "AGENTS.md",
+        "agent-system/rules/git-convention.md",
+        "agent-system/rules/coding-style.md"
+      ],
+      "notImported": {
+        "agent-system/rules/ci-quality-gates.md": "matters when a PR is opened, not while code is being written"
+      }
+    },
+    "subagents": [
+      {
+        "name": "frontend",
+        "entryPoint": ".claude/agents/frontend.md",
+        "definition": "agent-system/agents/frontend-agent.md"
+      },
+      {
+        "name": "backend",
+        "entryPoint": ".claude/agents/backend.md",
+        "definition": "agent-system/agents/backend-agent.md"
+      },
+      {
+        "name": "operations",
+        "entryPoint": ".claude/agents/operations.md",
+        "definition": "agent-system/agents/operations-agent.md"
+      },
+      {
+        "name": "research",
+        "entryPoint": ".claude/agents/research.md",
+        "definition": "agent-system/agents/research-agent.md"
+      }
+    ],
+    "skills": [
+      {
+        "name": "deploy",
+        "entryPoint": ".claude/skills/deploy/SKILL.md",
+        "definition": "agent-system/skills/render-deployment.md"
+      },
+      {
+        "name": "record-to-memory",
+        "entryPoint": ".claude/skills/record-to-memory/SKILL.md",
+        "writesTo": "agent-system/memory/execution-records/"
+      }
+    ]
+  },
+  "requiredReading": {
+    "$comment": "Ordered. Everything else is selected through agent-system/agents/.",
+    "always": [
+      "CLAUDE.md imports the first two automatically; read the third before opening a PR",
+      "agent-system/rules/git-convention.md",
+      "agent-system/rules/coding-style.md",
+      "agent-system/rules/ci-quality-gates.md"
+    ],
+    "byTask": {
+      "frontend": "agent-system/agents/frontend-agent.md",
+      "backend": "agent-system/agents/backend-agent.md",
+      "operations": "agent-system/agents/operations-agent.md",
+      "research": "agent-system/agents/research-agent.md",
+      "artifactOrDemo": "agent-system/rules/demos-and-artifacts.md"
+    }
+  },
+  "repository": {
+    "apps": [
+      {
+        "name": "myunivokai-web",
+        "path": "apps/myunivokai-web",
+        "stack": "Next.js, TypeScript, Tailwind, React Three Fiber",
+        "devPort": 41300,
+        "commands": {
+          "dev": "npm run dev",
+          "typecheck": "npm run typecheck",
+          "lint": "npm run lint",
+          "unitTests": "npm test",
+          "screenshots": "npm run shoot"
+        },
+        "docs": "agent-system/knowledge/frontend/"
+      },
+      {
+        "name": "myunivokai-admin",
+        "path": "apps/myunivokai-admin",
+        "stack": "Next.js, TypeScript",
+        "devPort": 41900,
+        "docs": "agent-system/plans/services/auth-and-admin-plan.md"
+      }
+    ],
+    "services": [
+      {
+        "name": "api-gateway",
+        "language": "go",
+        "role": "the one origin the web app talks to",
+        "localBaseUrl": "http://localhost:41800"
+      },
+      {
+        "name": "dna-service",
+        "language": "go",
+        "role": "turns answers into the semantic personality profile"
+      },
+      {
+        "name": "universe-service",
+        "language": "go",
+        "role": "universe family scenes",
+        "family": "universe"
+      },
+      {
+        "name": "nature-service",
+        "language": "go",
+        "role": "forest family scenes",
+        "family": "nature"
+      },
+      {
+        "name": "ocean-service",
+        "language": "go",
+        "role": "ocean family scenes",
+        "family": "ocean"
+      },
+      {
+        "name": "auth-service",
+        "language": "go",
+        "role": "staff auth and RBAC"
+      },
+      {
+        "name": "analytics-service",
+        "language": "go",
+        "role": "CQRS read model fed by NATS events"
+      },
+      {
+        "name": "telemetry-service",
+        "language": "rust",
+        "role": "the one service not written in Go",
+        "docs": "agent-system/knowledge/backend/rust-service-architecture.md"
+      }
+    ],
+    "contracts": {
+      "path": "contracts/",
+      "$comment": "The only surface the client shares with the backend. If a frontend document would change a backend decision, this is underspecified."
+    },
+    "localStack": "infra/docker-compose-local.yaml",
+    "demos": {
+      "path": "demos",
+      "what": "prototypes and every artifact built for the owner, committed rather than left as a claude.ai artifact URL",
+      "rule": "agent-system/rules/demos-and-artifacts.md",
+      "readme": "demos/README.md",
+      "notProductionCode": true
+    }
+  },
+  "worldFamilies": {
+    "$comment": "The `family` key every backend service stamps into its configs. Adding one is NOT only a code change — see the two manual steps below.",
+    "values": [
+      "universe",
+      "nature",
+      "ocean"
+    ],
+    "labels": {
+      "universe": "Universe",
+      "nature": "Forest",
+      "ocean": "Ocean"
+    },
+    "planned": [
+      "city"
+    ],
+    "addingAFamilyAlsoRequires": [
+      "a Postgres migration widening the family CHECK constraint",
+      "widening the dna-family-results-v1 JetStream consumer subject filter — this one fails silently"
+    ]
+  },
+  "constraints": {
+    "performance": {
+      "frameRateFloor": 60,
+      "policy": "quality first; never lowered for weaker hardware",
+      "measureWith": "a real GPU (--use-angle=d3d11 --enable-gpu --ignore-gpu-blocklist)",
+      "neverMeasureWith": "swiftshader, which the e2e suite pins deliberately for comparability and which is roughly 10x slower",
+      "knownStall": "a cold scene mount blocks the main thread for up to ~2.7s compiling shaders; compileAsync was tried and does nothing on this project's driver"
+    },
+    "assets": "A 3D model needs isDownloadable and a CC licence before it can ship. A licence stated on a collection page is not a licence on an asset.",
+    "ai": "Never called from the client, and produces the semantic profile only — never geometry.",
+    "integrations": "One interface per vendor: ai.Provider, wake.Platform, TelemetrySink. Business services depend on the interface."
+  },
+  "conventions": {
+    "language": {
+      "code": "English",
+      "commits": "English",
+      "conversationWithOwner": "Vietnamese"
+    },
+    "documentStatuses": [
+      "Active",
+      "Implemented",
+      "Needs re-baseline",
+      "Historical / archived",
+      "Reference"
+    ]
+  }
+}

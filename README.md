@@ -394,7 +394,15 @@ make local-down
 │   └── telemetry-service/            # Platform metrics read model (Rust)
 ├── contracts/                        # Cross-service schemas, Go contracts & OpenAPI specifications
 ├── infra/                            # Local development Docker Compose, NATS & PostgreSQL configs
-└── notes/                            # Comprehensive engineering and architecture documentation
+└── agent-system/                     # Knowledge base + the wiring that runs it
+    ├── rules/                        # Gates: git convention, coding style, CI
+    ├── knowledge/                    # How the system IS — frontend, backend, product, references
+    ├── plans/                        # What to build — architecture, services, backlog, sprints
+    ├── memory/                       # What happened, and where a plan turned out wrong
+    ├── evolution/                    # Research that moved the target; nothing here is approved
+    ├── skills/                       # Runbooks with a verification per step
+    ├── agents/                       # One reading list per kind of task
+    └── project-context.json          # The same map, machine-readable
 ```
 
 ### Root Configs & Files
@@ -413,14 +421,34 @@ make local-down
 
 ## Documentation
 
-Comprehensive internal engineering documents are maintained in the [`notes/`](notes/README.md) folder.
+[`agent-system/`](agent-system/README.md) is two things at once: every file in
+it is written to be read by a person, and several are also loaded and executed
+by Claude Code without anyone opening them — `CLAUDE.md` imports the mandatory
+rules into every session, `.claude/agents/` makes `frontend` / `backend` /
+`operations` / `research` dispatchable, and `.claude/skills/` makes `/deploy` and
+`/record-to-memory` invokable. Those are thin entry points; the substance lives
+in `agent-system/`, in exactly one copy.
 
-Key references:
-- [`notes/coding/git-convention.md`](notes/coding/git-convention.md) — Mandatory branch naming and commit conventions
-- [`notes/coding/coding-style.md`](notes/coding/coding-style.md) — Code style rules (no hardcoded values, clean names)
-- [`notes/be/source-overview.md`](notes/be/source-overview.md) — Backend architecture & microservice patterns
-- [`notes/be/request-lifecycle.md`](notes/be/request-lifecycle.md) — Detailed request paths & cache invalidation
-- [`notes/be/design-decisions.md`](notes/be/design-decisions.md) — Design rationales (AI boundaries, deterministic math, public domain music)
-- [`notes/fe/source-overview.md`](notes/fe/source-overview.md) — Frontend architecture & 3D scene registry
-- [`notes/fe/threejs-scene-architecture.md`](notes/fe/threejs-scene-architecture.md) — 3D scene rendering principles
-- [`notes/ops/production-deployment-guide.md`](notes/ops/production-deployment-guide.md) — Full production deployment runbook
+It is organised by what you are asking rather than by who wrote it:
+[`rules/`](agent-system/rules/README.md) (what you may not get wrong),
+[`knowledge/`](agent-system/knowledge/README.md) (how the system is),
+[`plans/`](agent-system/plans/README.md) (what to build),
+[`memory/`](agent-system/memory/README.md) (what happened, and where a plan was wrong),
+[`evolution/`](agent-system/evolution/README.md) (research that moved the target),
+[`skills/`](agent-system/skills/README.md) (runbooks), and
+[`agents/`](agent-system/agents/README.md) (one reading list per kind of task).
+
+The split has one rule: **knowledge describes, plans prescribe, memory records.**
+Which folder a document is in decides who is wrong when it disagrees with the
+code. [`agent-system/README.md`](agent-system/README.md) has the full explanation;
+[`agent-system/project-context.json`](agent-system/project-context.json) is the same map for a
+program to read.
+
+Start here:
+- [`agent-system/agents/`](agent-system/agents/README.md) — pick the definition matching your task; it names what to read and what to skip
+- [`agent-system/rules/git-convention.md`](agent-system/rules/git-convention.md) — mandatory branch naming and commit conventions
+- [`agent-system/rules/coding-style.md`](agent-system/rules/coding-style.md) — no hardcoded values, no abbreviated names
+- [`agent-system/knowledge/backend/source-overview.md`](agent-system/knowledge/backend/source-overview.md) — backend architecture and microservice patterns
+- [`agent-system/knowledge/backend/request-lifecycle.md`](agent-system/knowledge/backend/request-lifecycle.md) — request paths and cache invalidation
+- [`agent-system/knowledge/frontend/source-overview.md`](agent-system/knowledge/frontend/source-overview.md) — frontend architecture and the 3D scene registry
+- [`agent-system/skills/production-deployment-guide.md`](agent-system/skills/production-deployment-guide.md) — the full production deployment runbook

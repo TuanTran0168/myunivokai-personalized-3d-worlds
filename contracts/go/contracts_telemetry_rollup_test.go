@@ -42,7 +42,7 @@ func TestTelemetryRollupFixtureDecodesIntoTheContract(t *testing.T) {
 
 	// The route-pattern rule is the one thing this contract exists to enforce.
 	// A raw path would carry a world id, and every world id would become its
-	// own series - see notes/vision/telemetry-architecture-research.md.
+	// own series - see agent-system/evolution/telemetry-architecture-research.md.
 	worldGetBucket := envelope.Data.Buckets[1]
 	if worldGetBucket.RoutePattern != "/api/universe/worlds/{worldID}" {
 		t.Errorf("routePattern = %q, want the chi template", worldGetBucket.RoutePattern)
