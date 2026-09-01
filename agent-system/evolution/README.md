@@ -17,6 +17,8 @@ Each one graduates: when its conclusion is accepted it produces a document in
 | [ocean-visual-direction-research.md](ocean-visual-direction-research.md) | The look the ocean family was aiming at. |
 | [ocean-demo-port-ba.md](ocean-demo-port-ba.md) | Business analysis written after reading both sides, before the depth rig was ported into the app. |
 | [ocean-fauna-ecosystem-ba.md](ocean-fauna-ecosystem-ba.md) | The fauna expansion argument. |
+| [ocean-seabed-props-research.md](ocean-seabed-props-research.md) | The shipwreck and the glowing vent. Measured: exactly one CC0 wreck exists on Sketchfab and its GLB is larger than the whole ocean catalogue, and no CC0 vent exists at all. Also what a black smoker really emits, which is not what the request assumed. |
+| [ocean-underwater-audio-research.md](ocean-underwater-audio-research.md) | Bubble and reef sound. The Minnaert relation makes bubble pitch a function of depth, which hands this family its own axis for free; snapping shrimp are the loudest thing on a real reef. |
 | [platform-evolution-research.md](platform-evolution-research.md) | How the platform's shape should change as it grows. |
 | [rust-adoption-research.md](rust-adoption-research.md) | Whether to introduce Rust at all — the reasoning behind `services/telemetry-service`. |
 | [telemetry-architecture-research.md](telemetry-architecture-research.md) | How large systems actually do telemetry; extends into `plans/services/telemetry-service-plan.md`. |

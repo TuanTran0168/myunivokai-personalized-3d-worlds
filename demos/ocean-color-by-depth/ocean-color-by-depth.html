@@ -1,0 +1,1742 @@
+<title>The Water Column</title>
+<!--
+  The colour of seawater, computed rather than picked.
+
+  WHY THIS EXISTS
+  The owner asked which colours to use below the waterline. Answering that with
+  a mood board would be guessing, because the answer is not a taste question:
+  seawater's colour at a depth is fixed by how much of each wavelength survives
+  the trip down, and that is measured physics with published numbers. So this
+  page computes it — pure-water absorption from Pope & Fry (1997), a turbidity
+  load per Jerlov water type, propagated through the water column, integrated
+  against the CIE 1931 observer under D65 and converted to sRGB.
+
+  It also puts what ocean-service SHIPS today next to it, at the same depth, so
+  the gap is a picture rather than an argument.
+
+  ONE FILE ON PURPOSE. demos/README asks for a shell plus one script; this is a
+  single file instead because measure.mjs reads THIS file and evaluates the
+  model block out of it, so the numbers that are checked are the numbers the
+  page draws. A separate module would be a second copy that can drift. No
+  network, no library, no Math.random.
+
+  WHAT IT DOES NOT PROVE
+  - It is a model of the LIGHT, not a render. It says what colour arrives; it
+    says nothing about how a renderer's tone map, bloom or exposure will treat
+    that colour once it is in a frame.
+  - The pure-water half is uncalibrated published data. The turbidity half is a
+    SHAPE assumption (see TURBIDITY_CDOM_SHARE) fitted to reproduce the
+    green-over-blue ratio real coastal Kd spectra show. It is right about which
+    way coastal water goes and roughly how far; it is not a measurement.
+  - Horizontal sight lines reuse Kd as their attenuation coefficient, because
+    that is what ocean-service's own sighting range does. True beam attenuation
+    is several times larger, so distance effects here are conservative.
+  - One sun: overhead D65, no surface roughness, no sun angle, no inelastic
+    scattering, no bioluminescence.
+-->
+<style>
+  /*
+    A FIXED DARK GROUND, DELIBERATELY, and not a theme oversight. This page
+    exists to judge colour, and simultaneous contrast means the same swatch
+    reads as a different colour against a light ground. An instrument for
+    picking underwater colour has to keep its own surround constant and dark,
+    which is also the surround those colours will be seen in.
+  */
+  :root {
+    color-scheme: dark;
+
+    --sea-void: #05080C;
+    --sea-panel: #0B121A;
+    --sea-panel-high: #101A24;
+    --sea-line: #1C2A38;
+    --sea-line-bright: #2C4054;
+
+    --text: #DFE8F0;
+    --text-quiet: #8FA1B4;
+    --text-faint: #5F7285;
+
+    --brass: #D2A63C;
+    --brass-quiet: #8A6F2A;
+
+    --measure: 68ch;
+    --radius: 10px;
+
+    --font-display: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    --font-text: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-data: ui-monospace, "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--sea-void);
+    color: var(--text);
+    font-family: var(--font-text);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--brass); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  .eyebrow {
+    font-family: var(--font-data);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 10px;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.08;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+
+  h2 {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--font-data);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+
+  p { margin: 0 0 12px; max-width: var(--measure); color: var(--text-quiet); }
+  p strong { color: var(--text); font-weight: 600; }
+
+  .page {
+    max-width: 1220px;
+    margin: 0 auto;
+    padding: 40px 24px 96px;
+  }
+
+  header.masthead {
+    border-bottom: 1px solid var(--sea-line);
+    padding-bottom: 28px;
+    margin-bottom: 28px;
+  }
+
+  .finding {
+    border: 1px solid var(--sea-line-bright);
+    border-left: 3px solid var(--brass);
+    background: var(--sea-panel);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 16px 18px;
+    margin: 22px 0 0;
+    max-width: var(--measure);
+  }
+  .finding p:last-child { margin-bottom: 0; }
+
+  /* --- the column and the content sit side by side ----------------------- */
+
+  .layout {
+    display: grid;
+    grid-template-columns: 108px minmax(0, 1fr);
+    gap: 28px;
+    align-items: start;
+  }
+
+  .column-rail {
+    position: sticky;
+    top: 24px;
+  }
+  .column-rail canvas {
+    display: block;
+    width: 108px;
+    height: 620px;
+    border-radius: var(--radius);
+    border: 1px solid var(--sea-line);
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .column-rail .rail-caption {
+    font-family: var(--font-data);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-top: 8px;
+    text-align: center;
+  }
+
+  section { margin: 0 0 44px; }
+
+  /* --- controls ---------------------------------------------------------- */
+
+  .controls {
+    display: grid;
+    gap: 18px;
+    background: var(--sea-panel);
+    border: 1px solid var(--sea-line);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .chip {
+    font-family: var(--font-data);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    padding: 6px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--sea-line-bright);
+    background: transparent;
+    color: var(--text-quiet);
+    cursor: pointer;
+  }
+  .chip:hover { border-color: var(--brass-quiet); color: var(--text); }
+  .chip[aria-pressed="true"] {
+    background: var(--brass);
+    border-color: var(--brass);
+    color: #14100A;
+    font-weight: 600;
+  }
+  .chip .in-play {
+    display: inline-block;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--brass);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .chip[aria-pressed="true"] .in-play { background: #14100A; }
+
+  .depth-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 14px;
+  }
+  .depth-readout {
+    font-family: var(--font-display);
+    font-size: 40px;
+    line-height: 1;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .depth-readout small {
+    font-family: var(--font-data);
+    font-size: 13px;
+    color: var(--text-faint);
+    letter-spacing: 0.08em;
+    margin-left: 4px;
+  }
+  .depth-zone {
+    font-family: var(--font-data);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brass);
+  }
+  input[type="range"] { width: 100%; accent-color: var(--brass); }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--sea-line);
+    border: 1px solid var(--sea-line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .fact { background: var(--sea-panel-high); padding: 12px 14px; }
+  .fact dt {
+    font-family: var(--font-data);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 4px;
+  }
+  .fact dd {
+    margin: 0;
+    font-family: var(--font-data);
+    font-size: 17px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- swatches ---------------------------------------------------------- */
+
+  .hero-swatches {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+  }
+  .hero-swatch {
+    border: 1px solid var(--sea-line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--sea-panel);
+    text-align: left;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: copy;
+    display: block;
+    width: 100%;
+  }
+  .hero-swatch:hover { border-color: var(--brass-quiet); }
+  .hero-swatch .fill { height: 132px; }
+  .hero-swatch .label { padding: 11px 13px 13px; }
+  .hero-swatch .name {
+    font-family: var(--font-data);
+    font-size: 10px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    display: block;
+    margin-bottom: 3px;
+  }
+  .hero-swatch .hex {
+    font-family: var(--font-data);
+    font-size: 16px;
+    letter-spacing: 0.05em;
+    color: var(--text);
+  }
+  .hero-swatch .note {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-quiet);
+  }
+
+  /* --- the object grid --------------------------------------------------- */
+
+  .object-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .object-controls input[type="color"] {
+    width: 42px; height: 32px; padding: 0;
+    border: 1px solid var(--sea-line-bright);
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .object-controls input[type="text"] {
+    font-family: var(--font-data);
+    font-size: 14px;
+    width: 10ch;
+    padding: 6px 9px;
+    color: var(--text);
+    background: var(--sea-panel-high);
+    border: 1px solid var(--sea-line-bright);
+    border-radius: 6px;
+  }
+
+  table.grid {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-family: var(--font-data);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .scroller { overflow-x: auto; border: 1px solid var(--sea-line); border-radius: var(--radius); }
+  table.grid th {
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-size: 10px;
+    padding: 10px 8px;
+    text-align: center;
+    background: var(--sea-panel);
+    border-bottom: 1px solid var(--sea-line);
+    white-space: nowrap;
+  }
+  table.grid th.row-head, table.grid td.row-head {
+    text-align: right;
+    color: var(--text-quiet);
+    background: var(--sea-panel);
+    border-right: 1px solid var(--sea-line);
+    padding-right: 12px;
+    white-space: nowrap;
+    position: sticky;
+    left: 0;
+  }
+  table.grid td { padding: 3px; }
+  .cell {
+    width: 100%;
+    min-width: 78px;
+    border: 0;
+    border-radius: 6px;
+    padding: 14px 4px 6px;
+    cursor: copy;
+    font-family: var(--font-data);
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    display: block;
+    text-align: center;
+  }
+  .cell:hover { outline: 1px solid var(--brass); outline-offset: 1px; }
+
+  .legend {
+    font-family: var(--font-data);
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 8px;
+    letter-spacing: 0.03em;
+  }
+
+  /* --- method ------------------------------------------------------------ */
+
+  .method { border-top: 1px solid var(--sea-line); padding-top: 26px; }
+  .method ul { max-width: var(--measure); color: var(--text-quiet); padding-left: 20px; }
+  .method li { margin-bottom: 7px; }
+  .method code {
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--sea-panel-high);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translateX(-50%) translateY(14px);
+    background: var(--brass);
+    color: #14100A;
+    font-family: var(--font-data);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 9px 16px;
+    border-radius: 999px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+  .toast.shown { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast { transition: none; }
+  }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .column-rail { position: static; }
+    .column-rail canvas { width: 100%; height: 74px; }
+  }
+</style>
+
+<div class="page">
+  <header class="masthead">
+    <p class="eyebrow">Myunivokai · ocean family · demo</p>
+    <h1>The Water Column</h1>
+    <p>
+      Every colour on this page is <strong>computed, not chosen</strong>. Pure-water absorption
+      measured by Pope &amp; Fry (1997), a turbidity load per Jerlov water type, propagated down
+      the column, integrated against the CIE 1931 observer under D65 and converted to sRGB.
+      Click any swatch to copy its hex.
+    </p>
+
+    <div class="finding">
+      <p><strong>What this turned up.</strong> <code style="font-family:var(--font-data);font-size:12.5px">DepthAt(metres)</code>
+      in <code style="font-family:var(--font-data);font-size:12.5px">depth_curve.go</code> is a pure function of depth, so
+      <strong>the water type never touches the colour</strong> — only the sight distance. A reef in
+      gin-clear Jerlov IB and the same reef in soupy 3C are shipped the identical fog colour.
+      In the real ocean those are a blue sea and a green one. Switch the water type below and watch
+      the computed swatch move while the shipped swatch does not.</p>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="column-rail">
+      <canvas id="rail" width="216" height="1240" aria-label="The water column: colour against depth. Click to choose a depth."></canvas>
+      <p class="rail-caption">0 → 1000 m</p>
+    </aside>
+
+    <div>
+      <section>
+        <div class="controls">
+          <div>
+            <h3>Water type — Jerlov 1976</h3>
+            <div class="chip-row" id="water-chips"></div>
+            <p class="legend">A dot marks the five this family can actually roll. Open ocean I → III, then coastal 1C → 9C.</p>
+          </div>
+
+          <div>
+            <h3>Depth</h3>
+            <div class="depth-line">
+              <span class="depth-readout" id="depth-readout">18<small>m</small></span>
+              <span class="depth-zone" id="depth-zone"></span>
+            </div>
+            <input type="range" id="depth-slider" min="0" max="1000" step="1" value="18"
+                   aria-label="Depth in metres">
+            <div class="chip-row" id="depth-presets" style="margin-top:10px"></div>
+          </div>
+
+          <dl class="facts" id="facts"></dl>
+        </div>
+      </section>
+
+      <section>
+        <h2>The water itself</h2>
+        <p>
+          What the sea in front of the lens is made of. The first swatch compresses luminance the
+          way the eye does — and the way <code style="font-family:var(--font-data);font-size:12.5px">depth_curve.go</code>
+          already does, with the same 0.30 exponent. The second keeps the luminance the physics
+          leaves, which is what a frame with no exposure compensation shows.
+        </p>
+        <div class="hero-swatches" id="hero-swatches"></div>
+      </section>
+
+      <section>
+        <h2>What the water does to a colour</h2>
+        <p>
+          Pick a colour and this shows what it <em>becomes</em> at this depth, across a sight line.
+          The reflected light is attenuated on the way to the eye and the water's own colour is
+          layered over the gap. Every cell is exposed against a white card at the same depth and
+          distance, so at the surface with the lens on the object your colour comes back exactly as
+          you typed it and every shift below that is the water. This is why a red coral reads brown
+          at thirty metres, and why picking colours against a white monitor and hoping is how an
+          ocean scene goes flat.
+        </p>
+        <div class="object-controls">
+          <input type="color" id="object-color" value="#C0392B" aria-label="Object colour">
+          <input type="text" id="object-hex" value="#C0392B" spellcheck="false" aria-label="Object colour, hex">
+          <div class="chip-row" id="object-presets"></div>
+        </div>
+        <div class="scroller">
+          <table class="grid">
+            <thead><tr id="distance-head"></tr></thead>
+            <tbody id="distance-body"></tbody>
+          </table>
+        </div>
+        <p class="legend">Rows are the depth chosen above and two either side of it. Columns are how far away the object is.</p>
+      </section>
+
+      <section>
+        <h2>Pick from the table</h2>
+        <p>
+          The whole family at once: every depth this generator can place a world at, against every
+          water type it can roll. Perceptually compressed, so these are hues to build a palette from
+          rather than final pixel values.
+        </p>
+        <div class="scroller">
+          <table class="grid">
+            <thead><tr id="palette-head"></tr></thead>
+            <tbody id="palette-body"></tbody>
+          </table>
+        </div>
+        <p class="legend">Click a cell to copy. The last column is what ocean-service ships at that depth, whatever the water.</p>
+      </section>
+
+      <section class="method">
+        <h2>How it is computed, and what it is not</h2>
+        <h3>The chain</h3>
+        <ul>
+          <li><strong>Pure water.</strong> Absorption <code>a_w(λ)</code> from Pope &amp; Fry (1997),
+            400–700 nm at 10 nm, plus molecular scattering
+            <code>b_w(λ) = 0.0029308·(λ/500)^−4.32</code> (Morel 1974), combined as
+            <code>Kd ≈ 1.0395·(a + b_b)/μ_d</code> with <code>μ_d = 0.86</code>.
+            <strong>Nothing here is tuned</strong> — and it lands on 0.0162 m⁻¹ at 475 nm and
+            0.0695 at 550 nm, against the 0.016 and 0.065 that
+            <code>ocean_water_optics.go</code> already carries as hand-set constants. That agreement
+            is the reason to trust the rest.</li>
+          <li><strong>The turbidity load.</strong> Each Jerlov type's published <code>kd475</code>
+            minus the pure-water value, spread across the spectrum as 86 % CDOM-shaped
+            (<code>exp(−0.014·(λ−475))</code>) and 14 % particle-shaped (<code>(475/λ)</code>).
+            The split is <strong>an assumption</strong>, set so the model reproduces the
+            green-over-blue ratio real coastal Kd spectra show. It is right about which way coastal
+            water goes; it is not a measurement.</li>
+          <li><strong>Down the column.</strong> <code>E(λ,z) = D65(λ)·exp(−Kd(λ)·z)</code>.</li>
+          <li><strong>The water's own colour.</strong> <code>E(λ,z)/Kd(λ)</code> — the wavelengths
+            that survive longest are the ones that dominate the scattered field. One assumption,
+            stated.</li>
+          <li><strong>An object at distance.</strong>
+            <code>I = R·E·exp(−Kd·d) + V·(1 − exp(−Kd·d))</code>, the standard underwater image
+            formation model, exposed against a white card at the same depth and distance.
+            Reflectance is reconstructed from the input hex on three smooth bases and
+            <strong>solved</strong>, not fitted, so the surface round-trip is exact to a byte.</li>
+          <li><strong>To sRGB.</strong> CIE 1931 2° observer, D65 white point, the sRGB matrix and
+            transfer function.</li>
+        </ul>
+
+        <h3>What it does not prove</h3>
+        <ul>
+          <li>It is a model of the <strong>light</strong>, not a render. It says what colour
+            arrives; it says nothing about what a tone map, a bloom pass or an exposure will do to
+            that colour once it is in a frame.</li>
+          <li>Horizontal sight lines reuse <code>Kd</code> as the attenuation coefficient, because
+            that is what ocean-service's own sighting range does. True beam attenuation is several
+            times larger, so distance effects here are <strong>conservative</strong>.</li>
+          <li>One sun, overhead, no surface roughness, no sun angle, no inelastic scattering, no
+            bioluminescence. The abyss below the sunlight floor is black here, and in the game it
+            is not — everything down there is lit by animals.</li>
+          <li>A saturated input colour can imply a reflectance above 1 or below 0, which no real
+            surface has. The direction of the shift is still right; the magnitude at the extreme
+            end of the gamut is not.</li>
+          <li><strong>Single scattering only.</strong> Real seawater is less saturated than this
+            model makes it, because multiple scattering and broadband skylight keep the spectrum
+            from narrowing as hard as pure Beer–Lambert says it does. Most of what is computed
+            here sits outside sRGB and is brought back by desaturating just far enough to stop a
+            channel going negative and then scaling the brightness down — so the hues are true and
+            a little purer than a camera would record, and the luminance of the deepest swatches
+            is lower than the model's own arithmetic says.</li>
+        </ul>
+
+        <h3>Sources</h3>
+        <ul>
+          <li>Pope, R. M. &amp; Fry, E. S. (1997). Absorption spectrum (380–700 nm) of pure water. II.
+            <em>Applied Optics</em> 36(33), 8710–8723. Data via
+            <a href="https://omlc.org/spectra/water/abs/index.html">omlc.org</a>.</li>
+          <li>Morel, A. (1974). Optical properties of pure water and pure sea water — molecular
+            scattering.</li>
+          <li>Jerlov, N. G. (1976). <em>Marine Optics</em>. The water-type classification and the
+            <code>kd475</code> values, mirrored in <code>ocean_water_optics.go</code>.</li>
+          <li>Solonenko, M. G. &amp; Mobley, C. D. (2015). Inherent optical properties of Jerlov
+            water types. <em>Applied Optics</em> 54(17), 5392–5401 — the chlorophyll concentrations
+            behind each type, and the reason the coastal types are green rather than merely dim.</li>
+          <li>Gordon, H. R. (1989). Can the Lambert–Beer law be applied to the diffuse attenuation
+            coefficient of ocean water? — the 1.0395 factor.</li>
+        </ul>
+
+        <h3>Check it</h3>
+        <ul>
+          <li><code>node demos/ocean-color-by-depth/measure.mjs</code> — reads this file, evaluates
+            the model out of it, and checks five claims numerically, including that the shipped
+            column really does reproduce the committed golden fixtures.</li>
+        </ul>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script id="ocean-colour-model">
+/*
+ * OCEAN COLOUR MODEL — pure functions, no DOM, no randomness.
+ *
+ * measure.mjs extracts this whole block out of the HTML and evaluates it, so
+ * what is checked is what the page draws. Keep it free of anything that
+ * touches `document` or `window`.
+ */
+var OceanColourModel = (function () {
+  "use strict";
+
+  var WAVELENGTH_START_NANOMETRES = 400;
+  var WAVELENGTH_STEP_NANOMETRES = 10;
+  var WAVELENGTH_COUNT = 31;
+
+  /**
+   * Pure water absorption, 1/cm, 400-700 nm at 10 nm.
+   * Pope & Fry 1997, integrating-cavity measurements — the definitive set.
+   */
+  var PURE_WATER_ABSORPTION_PER_CENTIMETRE = [
+    0.0000663, 0.0000473, 0.0000454, 0.0000495, 0.0000635, 0.0000922, 0.0000979,
+    0.000106, 0.000127, 0.00015, 0.000204, 0.000325, 0.000409, 0.000434,
+    0.000474, 0.000565, 0.000619, 0.000695, 0.000896, 0.001351, 0.002224,
+    0.002644, 0.002755, 0.002916, 0.003108, 0.0034, 0.0041, 0.00439, 0.00465,
+    0.00516, 0.00624
+  ];
+
+  /** CIE 1931 2-degree colour matching functions, same wavelength grid. */
+  var COLOUR_MATCHING_X = [
+    0.0143, 0.0435, 0.1344, 0.2839, 0.3483, 0.3362, 0.2908, 0.1954, 0.0956,
+    0.0320, 0.0049, 0.0093, 0.0633, 0.1655, 0.2904, 0.4334, 0.5945, 0.7621,
+    0.9163, 1.0263, 1.0622, 1.0026, 0.8544, 0.6424, 0.4479, 0.2835, 0.1649,
+    0.0874, 0.0468, 0.0227, 0.0114
+  ];
+  var COLOUR_MATCHING_Y = [
+    0.0004, 0.0012, 0.0040, 0.0116, 0.0230, 0.0380, 0.0600, 0.0910, 0.1390,
+    0.2080, 0.3230, 0.5030, 0.7100, 0.8620, 0.9540, 0.9950, 0.9950, 0.9520,
+    0.8700, 0.7570, 0.6310, 0.5030, 0.3810, 0.2650, 0.1750, 0.1070, 0.0610,
+    0.0320, 0.0170, 0.0082, 0.0041
+  ];
+  var COLOUR_MATCHING_Z = [
+    0.0679, 0.2074, 0.6456, 1.3856, 1.7471, 1.7721, 1.6692, 1.2876, 0.8130,
+    0.4652, 0.2720, 0.1582, 0.0782, 0.0422, 0.0203, 0.0087, 0.0039, 0.0021,
+    0.0017, 0.0011, 0.0008, 0.0003, 0.0002, 0.0000, 0.0000, 0.0000, 0.0000,
+    0.0000, 0.0000, 0.0000, 0.0000
+  ];
+
+  /** CIE D65 relative spectral power, same grid. Daylight above the surface. */
+  var DAYLIGHT_D65 = [
+    82.75, 91.49, 93.43, 86.68, 104.86, 117.01, 117.81, 114.86, 115.92, 108.81,
+    109.35, 107.80, 104.79, 107.69, 104.41, 104.05, 100.00, 96.33, 95.79, 88.69,
+    90.01, 89.60, 87.70, 83.29, 83.70, 80.03, 80.21, 82.28, 78.28, 69.72, 71.61
+  ];
+
+  // --- pure seawater ---------------------------------------------------------
+
+  /** Morel 1974: molecular scattering of pure sea water at 500 nm, per metre. */
+  var PURE_SEAWATER_SCATTER_AT_500 = 0.0029308;
+  var PURE_SEAWATER_SCATTER_EXPONENT = -4.32;
+  /** Half of molecular scattering goes backward — it is symmetric. */
+  var MOLECULAR_BACKSCATTER_FRACTION = 0.5;
+  /** Gordon 1989, the factor that makes Kd behave like Beer-Lambert. */
+  var DIFFUSE_ATTENUATION_SHAPE_FACTOR = 1.0395;
+  /** Mean cosine of the downwelling field under a high sun, in water. */
+  var MEAN_DOWNWELLING_COSINE = 0.86;
+
+  // --- turbidity -------------------------------------------------------------
+
+  /**
+   * How the load a water type carries is spread across the spectrum.
+   *
+   * THIS IS THE ONE ASSUMPTION IN THE MODEL. What makes coastal water turbid is
+   * mostly CDOM and phytoplankton, which absorb hardest at SHORT wavelengths —
+   * that, and nothing else, is why coastal water is green while the open ocean
+   * is blue. The rest is particle scattering, which is nearly flat.
+   *
+   * The 86/14 split is set so the model reproduces the green-over-blue ratio of
+   * about 0.42 that published coastal Kd spectra show. Turn it to 0 and turbid
+   * water goes grey; turn it to 1 and it goes lurid.
+   */
+  var TURBIDITY_CDOM_SHARE = 0.86;
+  var TURBIDITY_CDOM_SLOPE_PER_NANOMETRE = 0.014;
+  var TURBIDITY_PARTICLE_EXPONENT = 1.0;
+  var TURBIDITY_REFERENCE_NANOMETRES = 475;
+
+  /**
+   * Jerlov 1976 optical water types, clearest first, with the published
+   * downwelling attenuation at 475 nm in m^-1.
+   *
+   * Mirrors jerlovWaterTypes in services/ocean-service/internal/services/
+   * ocean_water_optics.go. `inPlay` marks the five the ocean family can
+   * actually roll (waterTypesByZone, same file).
+   */
+  var WATER_TYPES = [
+    { name: "I", kd475: 0.025, inPlay: true, note: "open ocean, gin clear" },
+    { name: "IA", kd475: 0.038, inPlay: true, note: "open ocean" },
+    { name: "IB", kd475: 0.050, inPlay: true, note: "open ocean" },
+    { name: "II", kd475: 0.085, inPlay: true, note: "clear shelf" },
+    { name: "III", kd475: 0.130, inPlay: true, note: "shelf" },
+    { name: "1C", kd475: 0.200, inPlay: true, note: "coastal, clean" },
+    { name: "3C", kd475: 0.420, inPlay: true, note: "coastal, green" },
+    { name: "5C", kd475: 0.700, inPlay: false, note: "coastal, turbid" },
+    { name: "7C", kd475: 1.200, inPlay: false, note: "harbour" },
+    { name: "9C", kd475: 2.000, inPlay: false, note: "estuary" }
+  ];
+
+  function wavelengthAt(index) {
+    return WAVELENGTH_START_NANOMETRES + index * WAVELENGTH_STEP_NANOMETRES;
+  }
+
+  function pureSeawaterScatter(wavelength) {
+    return (
+      PURE_SEAWATER_SCATTER_AT_500 *
+      Math.pow(wavelength / 500, PURE_SEAWATER_SCATTER_EXPONENT)
+    );
+  }
+
+  /** Kd of pure sea water, per metre. Nothing in here is fitted to anything. */
+  function pureSeawaterAttenuation(index) {
+    var wavelength = wavelengthAt(index);
+    var absorption = PURE_WATER_ABSORPTION_PER_CENTIMETRE[index] * 100;
+    var backscatter = MOLECULAR_BACKSCATTER_FRACTION * pureSeawaterScatter(wavelength);
+    return (
+      (DIFFUSE_ATTENUATION_SHAPE_FACTOR * (absorption + backscatter)) /
+      MEAN_DOWNWELLING_COSINE
+    );
+  }
+
+  function turbidityShape(wavelength) {
+    var offset = wavelength - TURBIDITY_REFERENCE_NANOMETRES;
+    var cdom = Math.exp(-TURBIDITY_CDOM_SLOPE_PER_NANOMETRE * offset);
+    var particles = Math.pow(TURBIDITY_REFERENCE_NANOMETRES / wavelength, TURBIDITY_PARTICLE_EXPONENT);
+    return TURBIDITY_CDOM_SHARE * cdom + (1 - TURBIDITY_CDOM_SHARE) * particles;
+  }
+
+  var pureAttenuationCache = null;
+  function pureAttenuationSpectrum() {
+    if (!pureAttenuationCache) {
+      pureAttenuationCache = [];
+      for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+        pureAttenuationCache.push(pureSeawaterAttenuation(index));
+      }
+    }
+    return pureAttenuationCache;
+  }
+
+  /** The reference index for 475 nm sits between samples, so interpolate. */
+  function pureAttenuationAt475() {
+    var pure = pureAttenuationSpectrum();
+    var lowerIndex = Math.floor((475 - WAVELENGTH_START_NANOMETRES) / WAVELENGTH_STEP_NANOMETRES);
+    var fraction = (475 - wavelengthAt(lowerIndex)) / WAVELENGTH_STEP_NANOMETRES;
+    return pure[lowerIndex] * (1 - fraction) + pure[lowerIndex + 1] * fraction;
+  }
+
+  /** Kd(λ) for a named water type, per metre. */
+  function attenuationSpectrum(waterTypeName) {
+    var waterType = waterTypeByName(waterTypeName);
+    var pure = pureAttenuationSpectrum();
+    var load = Math.max(0, waterType.kd475 - pureAttenuationAt475());
+    var spectrum = [];
+    for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+      spectrum.push(pure[index] + load * turbidityShape(wavelengthAt(index)));
+    }
+    return spectrum;
+  }
+
+  function waterTypeByName(name) {
+    for (var index = 0; index < WATER_TYPES.length; index += 1) {
+      if (WATER_TYPES[index].name === name) return WATER_TYPES[index];
+    }
+    return WATER_TYPES[2];
+  }
+
+  // --- colour ----------------------------------------------------------------
+
+  var WHITE_POINT_NORMALISER = (function () {
+    var total = 0;
+    for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+      total += COLOUR_MATCHING_Y[index] * DAYLIGHT_D65[index];
+    }
+    return 1 / total;
+  })();
+
+  /** A spectrum of radiance to CIE XYZ, scaled so surface D65 white is Y = 1. */
+  function spectrumToXyz(spectrum) {
+    var x = 0;
+    var y = 0;
+    var z = 0;
+    for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+      x += COLOUR_MATCHING_X[index] * spectrum[index];
+      y += COLOUR_MATCHING_Y[index] * spectrum[index];
+      z += COLOUR_MATCHING_Z[index] * spectrum[index];
+    }
+    return {
+      x: x * WHITE_POINT_NORMALISER,
+      y: y * WHITE_POINT_NORMALISER,
+      z: z * WHITE_POINT_NORMALISER
+    };
+  }
+
+  function xyzToLinearSrgb(xyz) {
+    return {
+      red: 3.2406 * xyz.x - 1.5372 * xyz.y - 0.4986 * xyz.z,
+      green: -0.9689 * xyz.x + 1.8758 * xyz.y + 0.0415 * xyz.z,
+      blue: 0.0557 * xyz.x - 0.204 * xyz.y + 1.057 * xyz.z
+    };
+  }
+
+  function encodeSrgbChannel(value) {
+    var clamped = Math.min(1, Math.max(0, value));
+    return clamped <= 0.0031308
+      ? clamped * 12.92
+      : 1.055 * Math.pow(clamped, 1 / 2.4) - 0.055;
+  }
+
+  function decodeSrgbChannel(value) {
+    return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+  }
+
+  /**
+   * Bring a colour into sRGB, giving up brightness before saturation.
+   *
+   * This matters more here than it usually does. The open ocean is one of the
+   * most saturated colours in nature, and the model makes it more saturated
+   * still, because it is single-scattering and knows nothing about the multiple
+   * scattering and broadband skylight that keep a real sea from narrowing onto
+   * one wavelength. So most of what this page computes sits outside sRGB.
+   *
+   * There are two ways out and they are not interchangeable. Clipping each
+   * channel gave #00FFFF — a display primary, which is not a colour any ocean
+   * has ever been. Desaturating to a fixed luminance was worse in a subtler
+   * way: it took the most saturation off the CLEAREST water, because that is
+   * where the spectrum is narrowest, so the table said gin-clear Jerlov I was
+   * paler than a soupy shelf sea. Exactly backwards.
+   *
+   * So: desaturate only as far as it takes to stop a channel going negative,
+   * then scale the whole triple down until it fits. Brightness is the thing
+   * that gives way, which is also what happens when you look into deep water —
+   * it goes dark and stays blue.
+   */
+  function gamutMapLinear(linear) {
+    var luminance = Math.max(
+      0,
+      0.2126 * linear.red + 0.7152 * linear.green + 0.0722 * linear.blue
+    );
+    function mixedTowardNeutral(amount) {
+      return {
+        red: luminance + (linear.red - luminance) * amount,
+        green: luminance + (linear.green - luminance) * amount,
+        blue: luminance + (linear.blue - luminance) * amount
+      };
+    }
+    function lowestChannel(colour) {
+      return Math.min(colour.red, colour.green, colour.blue);
+    }
+    var inGamut = linear;
+    if (lowestChannel(linear) < 0) {
+      var low = 0;
+      var high = 1;
+      for (var step = 0; step < 24; step += 1) {
+        var middle = (low + high) / 2;
+        if (lowestChannel(mixedTowardNeutral(middle)) >= 0) {
+          low = middle;
+        } else {
+          high = middle;
+        }
+      }
+      inGamut = mixedTowardNeutral(low);
+    }
+    var brightest = Math.max(inGamut.red, inGamut.green, inGamut.blue);
+    if (brightest <= 1) return inGamut;
+    return {
+      red: inGamut.red / brightest,
+      green: inGamut.green / brightest,
+      blue: inGamut.blue / brightest
+    };
+  }
+
+  function linearSrgbToHex(linear) {
+    var mapped = gamutMapLinear(linear);
+    var channels = [mapped.red, mapped.green, mapped.blue].map(function (channel) {
+      var byte = Math.round(encodeSrgbChannel(channel) * 255);
+      return byte.toString(16).toUpperCase().padStart(2, "0");
+    });
+    return "#" + channels.join("");
+  }
+
+  function hexToLinearSrgb(hex) {
+    var cleaned = hex.replace("#", "");
+    if (cleaned.length === 3) {
+      cleaned = cleaned[0] + cleaned[0] + cleaned[1] + cleaned[1] + cleaned[2] + cleaned[2];
+    }
+    return {
+      red: decodeSrgbChannel(parseInt(cleaned.slice(0, 2), 16) / 255),
+      green: decodeSrgbChannel(parseInt(cleaned.slice(2, 4), 16) / 255),
+      blue: decodeSrgbChannel(parseInt(cleaned.slice(4, 6), 16) / 255)
+    };
+  }
+
+  /**
+   * How the falling light is put on a screen.
+   *
+   * Two ways, and the difference between them is the whole reason both are
+   * shown. TRUE keeps the luminance the physics gives, so the swatch goes dark
+   * as fast as the sea does. AS-THE-EYE-READS-IT raises it to the 0.30 power
+   * first, which is close to the cube root the eye's lightness response
+   * follows — light falls off far faster than anyone reads it falling off.
+   *
+   * 0.30 is not a taste setting: it is brightnessCompression from
+   * services/ocean-service/internal/services/depth_curve.go, the exponent the
+   * service already applies for exactly this reason. Using the same one means a
+   * hue picked here sits in the same perceptual space as the values that ship.
+   *
+   * A FULL renormalisation to constant lightness was tried here first and was
+   * wrong: with the luminance thrown away, every depth in clear water came back
+   * as the same saturated cyan, because the chromaticity converges on whatever
+   * wavelength has the lowest Kd. The whole column read as one colour. What
+   * changes with depth is mostly brightness, and a swatch that discards
+   * brightness discards the subject.
+   */
+  var PERCEPTUAL_COMPRESSION = 0.3;
+  /** What "just below the surface" is drawn at, leaving headroom above it. */
+  var SURFACE_DISPLAY_LUMINANCE = 0.62;
+
+  function scaleXyzToLuminance(xyz, luminance) {
+    if (!(xyz.y > 0)) return { x: 0, y: 0, z: 0 };
+    var scale = luminance / xyz.y;
+    return { x: xyz.x * scale, y: xyz.y * scale, z: xyz.z * scale };
+  }
+
+  // --- the water column ------------------------------------------------------
+
+  /** Downwelling spectral irradiance at a depth, relative to just below the surface. */
+  function downwellingSpectrum(waterTypeName, depthMetres) {
+    var attenuation = attenuationSpectrum(waterTypeName);
+    var spectrum = [];
+    for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+      spectrum.push(DAYLIGHT_D65[index] * Math.exp(-attenuation[index] * Math.max(0, depthMetres)));
+    }
+    return spectrum;
+  }
+
+  /**
+   * The colour of the water itself — the veiling light a distant object is lost
+   * into, and the colour of the volume between the lens and everything in it.
+   *
+   * Taken as the downwelling field weighted by 1/Kd: the wavelengths that
+   * survive longest are the ones that dominate the scattered field. One
+   * assumption, and the one that decides whether coastal water reads green.
+   */
+  function veilingSpectrum(waterTypeName, depthMetres) {
+    var attenuation = attenuationSpectrum(waterTypeName);
+    var downwelling = downwellingSpectrum(waterTypeName, depthMetres);
+    var spectrum = [];
+    for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+      spectrum.push(downwelling[index] / attenuation[index]);
+    }
+    return spectrum;
+  }
+
+  /**
+   * The water's colour at a depth, both ways.
+   *
+   * Both are measured against the veiling spectrum AT THE SURFACE in the same
+   * water, so what the swatch shows is the falloff with depth and not an
+   * arbitrary exposure.
+   */
+  function waterColourAt(waterTypeName, depthMetres) {
+    var atDepth = spectrumToXyz(veilingSpectrum(waterTypeName, depthMetres));
+    var atSurface = spectrumToXyz(veilingSpectrum(waterTypeName, 0));
+    var luminanceFraction = atSurface.y > 0 ? atDepth.y / atSurface.y : 0;
+    var readable = SURFACE_DISPLAY_LUMINANCE * Math.pow(Math.max(0, luminanceFraction), PERCEPTUAL_COMPRESSION);
+    var honest = SURFACE_DISPLAY_LUMINANCE * Math.max(0, luminanceFraction);
+    return {
+      asTheEyeReadsIt: linearSrgbToHex(xyzToLinearSrgb(scaleXyzToLuminance(atDepth, readable))),
+      trueBrightness: linearSrgbToHex(xyzToLinearSrgb(scaleXyzToLuminance(atDepth, honest))),
+      luminanceFraction: luminanceFraction
+    };
+  }
+
+  /** Photosynthetically available radiation left at a depth, as a fraction. */
+  function parFractionAt(waterTypeName, depthMetres) {
+    var attenuation = attenuationSpectrum(waterTypeName);
+    var atDepth = 0;
+    var atSurface = 0;
+    for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+      atSurface += DAYLIGHT_D65[index];
+      atDepth += DAYLIGHT_D65[index] * Math.exp(-attenuation[index] * Math.max(0, depthMetres));
+    }
+    return atDepth / atSurface;
+  }
+
+  /** The depth at which PAR falls to a fraction of its surface value. */
+  function depthForParFraction(waterTypeName, fraction) {
+    var low = 0;
+    var high = 4000;
+    for (var step = 0; step < 60; step += 1) {
+      var middle = (low + high) / 2;
+      if (parFractionAt(waterTypeName, middle) > fraction) {
+        low = middle;
+      } else {
+        high = middle;
+      }
+    }
+    return (low + high) / 2;
+  }
+
+  // --- objects in the water --------------------------------------------------
+
+  /**
+   * Three smooth reflectance bases. A colour is a weighted sum of them, and the
+   * weights are solved so the surface round-trip is EXACT — pick #C0392B at
+   * zero depth and zero distance and #C0392B is what comes back.
+   */
+  var REFLECTANCE_BASIS_CENTRES = [610, 545, 465];
+  var REFLECTANCE_BASIS_HALF_WIDTH = 110;
+
+  function reflectanceBasis(basisIndex, wavelength) {
+    var offset = (wavelength - REFLECTANCE_BASIS_CENTRES[basisIndex]) / REFLECTANCE_BASIS_HALF_WIDTH;
+    if (offset <= -1 || offset >= 1) return 0;
+    return 0.5 * (1 + Math.cos(Math.PI * offset));
+  }
+
+  var basisToLinearMatrix = null;
+  var linearToBasisMatrix = null;
+
+  function invert3x3(m) {
+    var a = m[0][0], b = m[0][1], c = m[0][2];
+    var d = m[1][0], e = m[1][1], f = m[1][2];
+    var g = m[2][0], h = m[2][1], i = m[2][2];
+    var determinant =
+      a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    return [
+      [(e * i - f * h) / determinant, (c * h - b * i) / determinant, (b * f - c * e) / determinant],
+      [(f * g - d * i) / determinant, (a * i - c * g) / determinant, (c * d - a * f) / determinant],
+      [(d * h - e * g) / determinant, (b * g - a * h) / determinant, (a * e - b * d) / determinant]
+    ];
+  }
+
+  function buildBasisMatrices() {
+    if (basisToLinearMatrix) return;
+    var columns = [];
+    for (var basisIndex = 0; basisIndex < 3; basisIndex += 1) {
+      var spectrum = [];
+      for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+        spectrum.push(reflectanceBasis(basisIndex, wavelengthAt(index)) * DAYLIGHT_D65[index]);
+      }
+      var linear = xyzToLinearSrgb(spectrumToXyz(spectrum));
+      columns.push([linear.red, linear.green, linear.blue]);
+    }
+    basisToLinearMatrix = [
+      [columns[0][0], columns[1][0], columns[2][0]],
+      [columns[0][1], columns[1][1], columns[2][1]],
+      [columns[0][2], columns[1][2], columns[2][2]]
+    ];
+    linearToBasisMatrix = invert3x3(basisToLinearMatrix);
+  }
+
+  /** Reflectance spectrum whose appearance under D65 is exactly this hex. */
+  function reflectanceSpectrumForHex(hex) {
+    buildBasisMatrices();
+    var target = hexToLinearSrgb(hex);
+    var vector = [target.red, target.green, target.blue];
+    var weights = linearToBasisMatrix.map(function (row) {
+      return row[0] * vector[0] + row[1] * vector[1] + row[2] * vector[2];
+    });
+    var spectrum = [];
+    for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+      var wavelength = wavelengthAt(index);
+      spectrum.push(
+        weights[0] * reflectanceBasis(0, wavelength) +
+          weights[1] * reflectanceBasis(1, wavelength) +
+          weights[2] * reflectanceBasis(2, wavelength)
+      );
+    }
+    return spectrum;
+  }
+
+  /**
+   * What a colour becomes, seen from `distanceMetres` away at `depthMetres`.
+   *
+   * The standard underwater image formation model: what is left of the light
+   * the object reflected, plus the water's own colour filling in the rest.
+   *
+   * EXPOSED AGAINST A WHITE CARD at the same depth and the same distance, which
+   * is what a camera on auto does and what an eye does on its own. Two things
+   * follow, both wanted: at the surface with the lens against the object the
+   * colour comes back EXACTLY as it went in, so every shift on the grid is the
+   * water and none of it is the arithmetic; and at depth the grid stays
+   * readable instead of fading to black and hiding the hue shift, which is the
+   * only thing worth looking at.
+   */
+  function objectColourAt(hex, waterTypeName, depthMetres, distanceMetres) {
+    var reflectance = reflectanceSpectrumForHex(hex);
+    var attenuation = attenuationSpectrum(waterTypeName);
+    var downwelling = downwellingSpectrum(waterTypeName, depthMetres);
+    var veiling = veilingSpectrum(waterTypeName, depthMetres);
+    var veilingXyz = spectrumToXyz(veiling);
+    // Put the veiling light on the same scale as the reflected light, so the
+    // blend between them is a blend and not a brightness jump.
+    var reflectedWhite = spectrumToXyz(downwelling);
+    var veilingScale = veilingXyz.y > 0 ? reflectedWhite.y / veilingXyz.y : 0;
+
+    var received = [];
+    var whiteCard = [];
+    for (var index = 0; index < WAVELENGTH_COUNT; index += 1) {
+      var transmission = Math.exp(-attenuation[index] * Math.max(0, distanceMetres));
+      var veil = veiling[index] * veilingScale * (1 - transmission);
+      received.push(reflectance[index] * downwelling[index] * transmission + veil);
+      whiteCard.push(downwelling[index] * transmission + veil);
+    }
+    var exposure = spectrumToXyz(whiteCard).y;
+    var scale = exposure > 0 ? 1 / exposure : 0;
+    var xyz = spectrumToXyz(received);
+    return linearSrgbToHex(xyzToLinearSrgb({ x: xyz.x * scale, y: xyz.y * scale, z: xyz.z * scale }));
+  }
+
+  // --- what ocean-service actually ships -------------------------------------
+
+  /*
+   * A mirror of DepthAt in services/ocean-service/internal/services/
+   * depth_curve.go, and of its TypeScript twin in src/lib/oceanDepthCurve.ts.
+   *
+   * Here so the page can put shipped next to computed at the same depth.
+   * measure.mjs checks this mirror against the committed golden fixtures, so it
+   * cannot quietly drift from the thing it claims to be showing.
+   */
+  var SUNLIGHT_FLOOR_METRES = 1000;
+  var LIGHT_ANCHORS = [
+    { metres: 0, fraction: 1.0 },
+    { metres: 1, fraction: 0.45 },
+    { metres: 10, fraction: 0.16 },
+    { metres: 40, fraction: 0.05 },
+    { metres: 100, fraction: 0.01 }
+  ];
+  var RED_DEATH_METRES = 10;
+  var ORANGE_DEATH_METRES = 40;
+  var YELLOW_DEATH_METRES = 100;
+  var GREEN_DEATH_METRES = 250;
+  var BRIGHTNESS_COMPRESSION = 0.3;
+  var CLEAR_WATER_COLOUR = { red: 0.55, green: 0.86, blue: 0.92 };
+  var ABYSSAL_FLOOR_COLOUR = { red: 0.012, green: 0.035, blue: 0.078 };
+
+  function shippedLightFraction(depth) {
+    if (depth <= 0) return 1;
+    for (var index = 1; index < LIGHT_ANCHORS.length; index += 1) {
+      var previous = LIGHT_ANCHORS[index - 1];
+      var current = LIGHT_ANCHORS[index];
+      if (depth <= current.metres) {
+        var coefficient =
+          Math.log(previous.fraction / current.fraction) / (current.metres - previous.metres);
+        return previous.fraction * Math.exp(-coefficient * (depth - previous.metres));
+      }
+    }
+    if (depth >= SUNLIGHT_FLOOR_METRES) return 0;
+    var last = LIGHT_ANCHORS[LIGHT_ANCHORS.length - 1];
+    var beforeLast = LIGHT_ANCHORS[LIGHT_ANCHORS.length - 2];
+    var tailCoefficient =
+      Math.log(beforeLast.fraction / last.fraction) / (last.metres - beforeLast.metres);
+    var decayed = last.fraction * Math.exp(-tailCoefficient * (depth - last.metres));
+    return decayed * (1 - (depth - last.metres) / (SUNLIGHT_FLOOR_METRES - last.metres));
+  }
+
+  function smoothstep(t) {
+    var clamped = Math.min(1, Math.max(0, t));
+    return clamped * clamped * (3 - 2 * clamped);
+  }
+
+  function bandSurvival(depth, deathMetres) {
+    if (depth >= deathMetres) return 0;
+    if (depth <= 0) return 1;
+    return 1 - smoothstep(depth / deathMetres);
+  }
+
+  function shippedFogColour(depthMetres) {
+    var depth = Math.max(0, depthMetres);
+    var lightFraction = shippedLightFraction(depth);
+    var brightness =
+      lightFraction > 0
+        ? Math.min(1, Math.max(0, Math.exp(BRIGHTNESS_COMPRESSION * Math.log(lightFraction))))
+        : 0;
+    var red = bandSurvival(depth, RED_DEATH_METRES);
+    var orange = bandSurvival(depth, ORANGE_DEATH_METRES);
+    var yellow = bandSurvival(depth, YELLOW_DEATH_METRES);
+    var green = bandSurvival(depth, GREEN_DEATH_METRES);
+    var blue = bandSurvival(depth, SUNLIGHT_FLOOR_METRES);
+    var multiplier = {
+      red: 0.65 * red + 0.35 * orange,
+      green: 0.45 * yellow + 0.55 * green,
+      blue: blue
+    };
+    var channels = ["red", "green", "blue"].map(function (channel) {
+      var value =
+        CLEAR_WATER_COLOUR[channel] * brightness * multiplier[channel] +
+        ABYSSAL_FLOOR_COLOUR[channel] * (1 - brightness);
+      var byte = Math.round(Math.min(1, Math.max(0, value)) * 255);
+      return byte.toString(16).toUpperCase().padStart(2, "0");
+    });
+    return "#" + channels.join("");
+  }
+
+  return {
+    WATER_TYPES: WATER_TYPES,
+    WAVELENGTH_COUNT: WAVELENGTH_COUNT,
+    wavelengthAt: wavelengthAt,
+    pureSeawaterAttenuation: pureSeawaterAttenuation,
+    pureAttenuationAt475: pureAttenuationAt475,
+    attenuationSpectrum: attenuationSpectrum,
+    downwellingSpectrum: downwellingSpectrum,
+    veilingSpectrum: veilingSpectrum,
+    waterColourAt: waterColourAt,
+    parFractionAt: parFractionAt,
+    depthForParFraction: depthForParFraction,
+    reflectanceSpectrumForHex: reflectanceSpectrumForHex,
+    objectColourAt: objectColourAt,
+    shippedFogColour: shippedFogColour,
+    hexToLinearSrgb: hexToLinearSrgb,
+    linearSrgbToHex: linearSrgbToHex
+  };
+})();
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = OceanColourModel;
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var model = OceanColourModel;
+
+  // The depths the ocean family can actually place a world at, plus the stops
+  // in between that show where the colour turns over.
+  var PALETTE_DEPTHS = [0, 3, 6, 10, 14, 20, 28, 45, 70, 110, 170, 260, 450, 700, 1000];
+  var SIGHT_DISTANCES = [0.5, 2, 6, 15, 40];
+  var DEPTH_PRESETS = [
+    { label: "Snorkel · 3 m", depth: 3 },
+    { label: "Reef Crest · 24 m", depth: 24 },
+    { label: "Mesophotic · 63 m", depth: 63 },
+    { label: "Twilight · 170 m", depth: 170 },
+    { label: "Sunlight floor · 1000 m", depth: 1000 }
+  ];
+  var OBJECT_PRESETS = [
+    { label: "Coral red", hex: "#C0392B" },
+    { label: "Sand", hex: "#D8BE93" },
+    { label: "Kelp", hex: "#3F6B37" },
+    { label: "Bone", hex: "#D9D3C4" },
+    { label: "Brass", hex: "#D2A63C" },
+    { label: "Skin", hex: "#C68B62" }
+  ];
+  // The zones ocean-service names, with the boundaries from ocean_scene_profile.go.
+  var ZONE_BOUNDARIES = [
+    { until: 40, name: "Sunlit shallows" },
+    { until: 200, name: "Mesophotic / twilight" },
+    { until: 1000, name: "Twilight reach" },
+    { until: Infinity, name: "Below the sunlight floor" }
+  ];
+
+  var RAIL_TOP_METRES = 0;
+  var RAIL_BOTTOM_METRES = 1000;
+  // A log scale, because the first ten metres do more to the colour than the
+  // next nine hundred and a linear rail would spend 99 % of itself on blue.
+  var RAIL_LOG_OFFSET = 1.5;
+
+  var state = {
+    waterType: "IB",
+    depthMetres: 18,
+    objectHex: "#C0392B"
+  };
+
+  var elements = {
+    rail: document.getElementById("rail"),
+    waterChips: document.getElementById("water-chips"),
+    depthPresets: document.getElementById("depth-presets"),
+    depthSlider: document.getElementById("depth-slider"),
+    depthReadout: document.getElementById("depth-readout"),
+    depthZone: document.getElementById("depth-zone"),
+    facts: document.getElementById("facts"),
+    heroSwatches: document.getElementById("hero-swatches"),
+    objectColour: document.getElementById("object-color"),
+    objectHex: document.getElementById("object-hex"),
+    objectPresets: document.getElementById("object-presets"),
+    distanceHead: document.getElementById("distance-head"),
+    distanceBody: document.getElementById("distance-body"),
+    paletteHead: document.getElementById("palette-head"),
+    paletteBody: document.getElementById("palette-body"),
+    toast: document.getElementById("toast")
+  };
+
+  // --- small helpers ---------------------------------------------------------
+
+  function zoneNameFor(depthMetres) {
+    for (var index = 0; index < ZONE_BOUNDARIES.length; index += 1) {
+      if (depthMetres < ZONE_BOUNDARIES[index].until) return ZONE_BOUNDARIES[index].name;
+    }
+    return "";
+  }
+
+  /** Pick black or white text so a label stays readable on its own swatch. */
+  function readableInkOn(hex) {
+    var linear = model.hexToLinearSrgb(hex);
+    var luminance = 0.2126 * linear.red + 0.7152 * linear.green + 0.0722 * linear.blue;
+    return luminance > 0.24 ? "#0A0F14" : "#EAF2F8";
+  }
+
+  function showToast(message) {
+    elements.toast.textContent = message;
+    elements.toast.classList.add("shown");
+    window.clearTimeout(showToast.timer);
+    showToast.timer = window.setTimeout(function () {
+      elements.toast.classList.remove("shown");
+    }, 1400);
+  }
+
+  function copyHex(hex) {
+    var copied = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(hex);
+        copied = true;
+      }
+    } catch (error) {
+      copied = false;
+    }
+    if (!copied) {
+      try {
+        var scratch = document.createElement("textarea");
+        scratch.value = hex;
+        scratch.setAttribute("readonly", "");
+        scratch.style.position = "fixed";
+        scratch.style.opacity = "0";
+        document.body.appendChild(scratch);
+        scratch.select();
+        document.execCommand("copy");
+        document.body.removeChild(scratch);
+        copied = true;
+      } catch (error) {
+        copied = false;
+      }
+    }
+    showToast(copied ? hex + " copied" : hex);
+  }
+
+  function isValidHex(text) {
+    return /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(text.trim());
+  }
+
+  // --- the rail --------------------------------------------------------------
+
+  function railFractionForDepth(depthMetres) {
+    var top = Math.log(RAIL_TOP_METRES + RAIL_LOG_OFFSET);
+    var bottom = Math.log(RAIL_BOTTOM_METRES + RAIL_LOG_OFFSET);
+    return (Math.log(Math.max(0, depthMetres) + RAIL_LOG_OFFSET) - top) / (bottom - top);
+  }
+
+  function depthForRailFraction(fraction) {
+    var top = Math.log(RAIL_TOP_METRES + RAIL_LOG_OFFSET);
+    var bottom = Math.log(RAIL_BOTTOM_METRES + RAIL_LOG_OFFSET);
+    var clamped = Math.min(1, Math.max(0, fraction));
+    return Math.exp(top + clamped * (bottom - top)) - RAIL_LOG_OFFSET;
+  }
+
+  var RAIL_TICKS = [0, 3, 10, 30, 100, 300, 1000];
+
+  function drawRail() {
+    var canvas = elements.rail;
+    var box = canvas.getBoundingClientRect();
+    var isVertical = box.height > box.width;
+    var pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.max(1, Math.round(box.width * pixelRatio));
+    canvas.height = Math.max(1, Math.round(box.height * pixelRatio));
+    var context = canvas.getContext("2d");
+    if (!context) return;
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.clearRect(0, 0, box.width, box.height);
+
+    var alongLength = isVertical ? box.height : box.width;
+    var stepPixels = 2;
+    for (var offset = 0; offset < alongLength; offset += stepPixels) {
+      var depth = depthForRailFraction(offset / alongLength);
+      var colour = model.waterColourAt(state.waterType, depth);
+      context.fillStyle = colour.asTheEyeReadsIt;
+      if (isVertical) {
+        context.fillRect(0, offset, box.width, stepPixels + 1);
+      } else {
+        context.fillRect(offset, 0, stepPixels + 1, box.height);
+      }
+    }
+
+    context.font = "10px ui-monospace, Consolas, monospace";
+    context.textBaseline = "middle";
+    for (var tickIndex = 0; tickIndex < RAIL_TICKS.length; tickIndex += 1) {
+      var tick = RAIL_TICKS[tickIndex];
+      var position = railFractionForDepth(tick) * alongLength;
+      var tickColour = model.waterColourAt(state.waterType, tick).asTheEyeReadsIt;
+      context.fillStyle = readableInkOn(tickColour);
+      context.globalAlpha = 0.75;
+      if (isVertical) {
+        context.fillText(tick + " m", 6, Math.min(box.height - 8, Math.max(8, position)));
+      } else {
+        context.save();
+        context.translate(Math.min(box.width - 4, Math.max(4, position)), box.height / 2);
+        context.fillText(tick + "", 2, 0);
+        context.restore();
+      }
+      context.globalAlpha = 1;
+    }
+
+    // The chosen depth.
+    var markerPosition = railFractionForDepth(state.depthMetres) * alongLength;
+    context.strokeStyle = "#D2A63C";
+    context.lineWidth = 2;
+    context.beginPath();
+    if (isVertical) {
+      context.moveTo(0, markerPosition);
+      context.lineTo(box.width, markerPosition);
+    } else {
+      context.moveTo(markerPosition, 0);
+      context.lineTo(markerPosition, box.height);
+    }
+    context.stroke();
+  }
+
+  function pickDepthFromRail(event) {
+    var box = elements.rail.getBoundingClientRect();
+    var isVertical = box.height > box.width;
+    var fraction = isVertical
+      ? (event.clientY - box.top) / box.height
+      : (event.clientX - box.left) / box.width;
+    setDepth(depthForRailFraction(fraction));
+  }
+
+  // --- rendering -------------------------------------------------------------
+
+  function renderWaterChips() {
+    elements.waterChips.innerHTML = "";
+    model.WATER_TYPES.forEach(function (waterType) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.setAttribute("aria-pressed", String(waterType.name === state.waterType));
+      chip.title = waterType.note + " · kd475 " + waterType.kd475.toFixed(3) + " m⁻¹";
+      chip.innerHTML = waterType.name + (waterType.inPlay ? '<span class="in-play"></span>' : "");
+      chip.addEventListener("click", function () {
+        state.waterType = waterType.name;
+        renderEverything();
+      });
+      elements.waterChips.appendChild(chip);
+    });
+  }
+
+  function renderDepthPresets() {
+    elements.depthPresets.innerHTML = "";
+    DEPTH_PRESETS.forEach(function (preset) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.textContent = preset.label;
+      chip.setAttribute("aria-pressed", String(Math.round(state.depthMetres) === preset.depth));
+      chip.addEventListener("click", function () {
+        setDepth(preset.depth);
+      });
+      elements.depthPresets.appendChild(chip);
+    });
+  }
+
+  function renderFacts() {
+    var water = model.waterColourAt(state.waterType, state.depthMetres);
+    var euphoticDepth = model.depthForParFraction(state.waterType, 0.01);
+    var waterType = model.WATER_TYPES.filter(function (candidate) {
+      return candidate.name === state.waterType;
+    })[0];
+    var facts = [
+      ["Light left", (model.parFractionAt(state.waterType, state.depthMetres) * 100).toFixed(2) + " %"],
+      ["Water's own luminance", (water.luminanceFraction * 100).toFixed(1) + " % of surface"],
+      ["1 % light depth", euphoticDepth.toFixed(0) + " m"],
+      ["kd at 475 nm", waterType.kd475.toFixed(3) + " m⁻¹"]
+    ];
+    elements.facts.innerHTML = "";
+    facts.forEach(function (fact) {
+      var term = document.createElement("dt");
+      term.textContent = fact[0];
+      var value = document.createElement("dd");
+      value.textContent = fact[1];
+      var group = document.createElement("div");
+      group.className = "fact";
+      group.appendChild(term);
+      group.appendChild(value);
+      elements.facts.appendChild(group);
+    });
+  }
+
+  function heroSwatch(name, hex, note) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "hero-swatch";
+    button.addEventListener("click", function () {
+      copyHex(hex);
+    });
+
+    var fill = document.createElement("div");
+    fill.className = "fill";
+    fill.style.background = hex;
+
+    var label = document.createElement("div");
+    label.className = "label";
+    var nameNode = document.createElement("span");
+    nameNode.className = "name";
+    nameNode.textContent = name;
+    var hexNode = document.createElement("span");
+    hexNode.className = "hex";
+    hexNode.textContent = hex;
+    var noteNode = document.createElement("span");
+    noteNode.className = "note";
+    noteNode.textContent = note;
+    label.appendChild(nameNode);
+    label.appendChild(hexNode);
+    label.appendChild(noteNode);
+
+    button.appendChild(fill);
+    button.appendChild(label);
+    return button;
+  }
+
+  function renderHeroSwatches() {
+    var water = model.waterColourAt(state.waterType, state.depthMetres);
+    var shipped = model.shippedFogColour(state.depthMetres);
+    elements.heroSwatches.innerHTML = "";
+    elements.heroSwatches.appendChild(
+      heroSwatch(
+        "Computed · as the eye reads it",
+        water.asTheEyeReadsIt,
+        "Luminance raised to the 0.30 power, the same compression depth_curve.go applies. Pick palettes from this one."
+      )
+    );
+    elements.heroSwatches.appendChild(
+      heroSwatch(
+        "Computed · true irradiance",
+        water.trueBrightness,
+        "The same colour at the luminance the physics actually leaves, against the surface in the same water."
+      )
+    );
+    elements.heroSwatches.appendChild(
+      heroSwatch(
+        "Shipped · fogColor",
+        shipped,
+        "What DepthAt(" + state.depthMetres.toFixed(0) + ") emits today. It does not depend on the water type."
+      )
+    );
+  }
+
+  function renderObjectGrid() {
+    elements.distanceHead.innerHTML = "";
+    var corner = document.createElement("th");
+    corner.className = "row-head";
+    corner.textContent = "depth";
+    elements.distanceHead.appendChild(corner);
+    SIGHT_DISTANCES.forEach(function (distance) {
+      var head = document.createElement("th");
+      head.textContent = distance + " m away";
+      elements.distanceHead.appendChild(head);
+    });
+
+    var depths = [
+      Math.max(0, state.depthMetres * 0.25),
+      Math.max(0, state.depthMetres * 0.6),
+      state.depthMetres,
+      state.depthMetres * 1.8,
+      state.depthMetres * 3.2
+    ];
+
+    elements.distanceBody.innerHTML = "";
+    depths.forEach(function (depth) {
+      var row = document.createElement("tr");
+      var head = document.createElement("td");
+      head.className = "row-head";
+      head.textContent = depth.toFixed(depth < 10 ? 1 : 0) + " m";
+      row.appendChild(head);
+      SIGHT_DISTANCES.forEach(function (distance) {
+        row.appendChild(gridCell(model.objectColourAt(state.objectHex, state.waterType, depth, distance)));
+      });
+      elements.distanceBody.appendChild(row);
+    });
+  }
+
+  function gridCell(hex) {
+    var cell = document.createElement("td");
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "cell";
+    button.style.background = hex;
+    button.style.color = readableInkOn(hex);
+    button.textContent = hex;
+    button.addEventListener("click", function () {
+      copyHex(hex);
+    });
+    cell.appendChild(button);
+    return cell;
+  }
+
+  function renderPalette() {
+    var inPlayTypes = model.WATER_TYPES.filter(function (waterType) {
+      return waterType.inPlay;
+    });
+
+    elements.paletteHead.innerHTML = "";
+    var corner = document.createElement("th");
+    corner.className = "row-head";
+    corner.textContent = "depth";
+    elements.paletteHead.appendChild(corner);
+    inPlayTypes.forEach(function (waterType) {
+      var head = document.createElement("th");
+      head.textContent = "Jerlov " + waterType.name;
+      elements.paletteHead.appendChild(head);
+    });
+    var shippedHead = document.createElement("th");
+    shippedHead.textContent = "shipped";
+    elements.paletteHead.appendChild(shippedHead);
+
+    elements.paletteBody.innerHTML = "";
+    PALETTE_DEPTHS.forEach(function (depth) {
+      var row = document.createElement("tr");
+      var head = document.createElement("td");
+      head.className = "row-head";
+      head.textContent = depth + " m";
+      row.appendChild(head);
+      inPlayTypes.forEach(function (waterType) {
+        row.appendChild(gridCell(model.waterColourAt(waterType.name, depth).asTheEyeReadsIt));
+      });
+      row.appendChild(gridCell(model.shippedFogColour(depth)));
+      elements.paletteBody.appendChild(row);
+    });
+  }
+
+  function renderEverything() {
+    renderWaterChips();
+    renderDepthPresets();
+    elements.depthReadout.innerHTML =
+      state.depthMetres.toFixed(state.depthMetres < 10 ? 1 : 0) + "<small>m</small>";
+    elements.depthZone.textContent = zoneNameFor(state.depthMetres);
+    elements.depthSlider.value = String(Math.round(state.depthMetres));
+    renderFacts();
+    renderHeroSwatches();
+    renderObjectGrid();
+    renderPalette();
+    drawRail();
+  }
+
+  function setDepth(depthMetres) {
+    state.depthMetres = Math.min(RAIL_BOTTOM_METRES, Math.max(0, depthMetres));
+    renderEverything();
+  }
+
+  // --- wiring ----------------------------------------------------------------
+
+  elements.depthSlider.addEventListener("input", function (event) {
+    setDepth(Number(event.target.value));
+  });
+
+  var railIsDragging = false;
+  elements.rail.addEventListener("pointerdown", function (event) {
+    railIsDragging = true;
+    elements.rail.setPointerCapture(event.pointerId);
+    pickDepthFromRail(event);
+  });
+  elements.rail.addEventListener("pointermove", function (event) {
+    if (railIsDragging) pickDepthFromRail(event);
+  });
+  elements.rail.addEventListener("pointerup", function () {
+    railIsDragging = false;
+  });
+
+  elements.objectColour.addEventListener("input", function (event) {
+    state.objectHex = event.target.value.toUpperCase();
+    elements.objectHex.value = state.objectHex;
+    renderObjectGrid();
+  });
+
+  elements.objectHex.addEventListener("input", function (event) {
+    var text = event.target.value;
+    if (!isValidHex(text)) return;
+    state.objectHex = (text.charAt(0) === "#" ? text : "#" + text).toUpperCase();
+    elements.objectColour.value = state.objectHex.length === 4
+      ? "#" + state.objectHex[1] + state.objectHex[1] + state.objectHex[2] + state.objectHex[2] + state.objectHex[3] + state.objectHex[3]
+      : state.objectHex;
+    renderObjectGrid();
+  });
+
+  OBJECT_PRESETS.forEach(function (preset) {
+    var chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = preset.label;
+    chip.addEventListener("click", function () {
+      state.objectHex = preset.hex;
+      elements.objectColour.value = preset.hex;
+      elements.objectHex.value = preset.hex;
+      renderObjectGrid();
+    });
+    elements.objectPresets.appendChild(chip);
+  });
+
+  window.addEventListener("resize", drawRail);
+
+  renderEverything();
+})();
+</script>

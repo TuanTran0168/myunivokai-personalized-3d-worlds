@@ -680,6 +680,26 @@ Standing constraints that still apply:
 | Coral | **procedural** (extend `buildCoralGarden`) | Needs to vary per world from a seed; a fixed mesh would repeat visibly |
 | Shipwreck | **loaded model**, if a clean CC0/CC-BY one exists | The one prop whose realism comes from man-made detail a seeded generator cannot invent. `buildSunkenRelic` is the fallback and stays |
 
+**The conditional in that last row has now been tested**, and the correction to
+`threejs-assets.md` above has been made — the Download API answers HTTP 200 to
+the account token, no browser. See
+[`../../evolution/ocean-seabed-props-research.md`](../../evolution/ocean-seabed-props-research.md).
+The short version, because it changes what "if a clean one exists" is worth:
+there is **exactly one CC0 shipwreck on Sketchfab**, it is a 250 k-triangle
+museum photoscan whose GLB is 14.5 MB — larger than all fifteen of this family's
+existing models put together — and **no CC0 hydrothermal vent exists at all**.
+Everything cheap is CC-BY and reads as a game prop. The research recommends the
+photoscan, decimated hard, and only as the rare `sunkenRelic` lottery prop; and
+it recommends building the vent, whose visual identity is a plume and a light
+rather than geometry.
+
+It also answers the second half of the owner's request, "các mỏ dưới đáy biển
+phát sáng", with something better than the request: almost nothing on a real
+seabed glows, but a black smoker does — dull red-orange thermal radiation at the
+mouth, and *stochastic blue-white flickers* at the precipitation front from
+crystalloluminescence and collapsing bubbles. Measured at real vents, and
+nothing in this repo does anything like it.
+
 ## Ordering, and what breaks
 
 The dependencies are real; this order is not arbitrary.

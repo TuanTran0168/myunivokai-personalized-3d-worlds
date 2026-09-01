@@ -1,7 +1,7 @@
 # Three.js and 3D asset references
 
 > **Document status:** Reference catalog
-> **Last link review:** 2026-07-24
+> **Last link review:** 2026-09-01
 
 This catalog collects places to find models, environments and textures suitable
 for Three.js/React Three Fiber. In this project, "Three.js compatible" normally
@@ -122,12 +122,29 @@ geometry — consistent with the Draco-decoder-self-hosting debt noted in
 - Browse [Sketchfab](https://sketchfab.com/) for visual quality and models that
   explicitly allow download.
 - Check the exact model license and [Sketchfab license terms](https://sketchfab.com/licenses).
-- **Downloading requires a signed-in account** — the [Download API](https://sketchfab.com/developers/download-api)
-  needs an `Authorization` header (OAuth2 Bearer *or* a static account API
-  token). A public model page or `isDownloadable` flag does NOT enable anonymous
-  or CI download. **[verified]** This confirms the project's earlier HTTP 401
-  finding: agents/CI cannot pull Sketchfab files; the owner downloads them
-  logged-in and places the GLB in the repo.
+- **Downloading requires an `Authorization` header** — the [Download API](https://sketchfab.com/developers/download-api)
+  takes an OAuth2 Bearer token *or* a static account API token. A public model
+  page or an `isDownloadable` flag does NOT enable anonymous download.
+  **[verified]**
+- **CORRECTED 2026-09-01: Sketchfab IS agent-downloadable for this project.**
+  This section previously read "agents/CI cannot pull Sketchfab files; the owner
+  downloads them logged-in", drawn from an HTTP 401 seen with no credential at
+  all. That conclusion did not follow from the evidence, and its own bullet
+  above already said a static account API token is accepted. The owner has since
+  provisioned exactly such a token in
+  `apps/myunivokai-web/.env.local.secret` (gitignored, offline tooling only, no
+  `NEXT_PUBLIC_` prefix), and both endpoints were exercised with it:
+  `GET /v3/search?type=models&downloadable=true&license=cc0` returns results, and
+  `GET /v3/models/{uid}/download` returns **HTTP 200** with signed `glb`, `gltf`,
+  `usdz` and `source` URLs valid for 300 seconds. No browser, no OAuth round
+  trip, no human in the loop. **[verified 2026-09-01]**
+- What that does NOT change: the licence rule (CC0 or CC-BY only, attribution
+  recorded where CC-BY), the no-whole-scene-mesh rule, and the size problem.
+  Sketchfab's realistic assets are photoscans — the one CC0 shipwreck in the
+  whole catalogue ships a **14.5 MB GLB at 250 k triangles**, against 8.9 MB for
+  all fifteen of the ocean family's existing models put together. Reachable is
+  not the same as usable; see
+  [../../evolution/ocean-seabed-props-research.md](../../evolution/ocean-seabed-props-research.md).
 - Never commit an OAuth/API token. Never redistribute a raw asset when its
   license forbids stand-alone redistribution.
 
@@ -140,8 +157,10 @@ they are not approved production assets:
 
 ## Avoid / caveats
 
-- **Sketchfab for automation** — download needs login/OAuth even for CC0/CC-BY
-  models. **[verified]** Reference only, or owner-manual download.
+- **Sketchfab for automation** — usable with the account token now provisioned
+  (see the Sketchfab section above, corrected 2026-09-01), but its realistic
+  catalogue is photoscans that need aggressive decimation before they fit the
+  web budget. The constraint is size and licence, not access.
 - **3d.si.edu (Smithsonian direct site)** — did not extract reliably for an
   agent; use the [Harvard LIL mirror](https://source.coop/harvard-lil/smithsonian-open-access) instead.
 - **Khronos glTF-Sample-Assets** — per-asset **mixed** licenses including

@@ -162,3 +162,66 @@ analytic sky, not a render target, so it is exact only for an empty horizon — 
 anything at the waterline and that term has to change. And no frame here has been
 seen on real GPU hardware; `measure.mjs` narrows what can hide there but does not
 replace it.
+
+### `ocean-color-by-depth/`
+
+The colour of seawater against depth, **computed rather than picked**, because
+the owner asked which colours to use below the waterline and that is not a taste
+question — the answer is fixed by how much of each wavelength survives the trip
+down, and it has published numbers.
+
+```
+# no build step; open it directly
+demos/ocean-color-by-depth/ocean-color-by-depth.html
+node demos/ocean-color-by-depth/measure.mjs   # checks its eight claims
+```
+
+One self-contained file rather than the shell-plus-script shape the rules ask
+for, and deliberately: `measure.mjs` reads the page, pulls the model block out
+of it and evaluates that, so the numbers checked are the numbers drawn. A
+separate module would be a second copy that can drift.
+
+The page is a section through the water column. Drag the rail, switch the Jerlov
+water type, and it gives three things: the colour of the water itself, what a
+colour you pick **becomes** at that depth across a sight line, and a table of
+every depth this generator can place a world at against every water type it can
+roll.
+
+Eight claims, all checked numerically:
+
+| Claim | How it is checked |
+| --- | --- |
+| the pure-water half is not tuned to anything | Pope & Fry plus Morel scattering lands on 0.0163 and 0.0695 m⁻¹, against the 0.016 and 0.065 `ocean_water_optics.go` carries as hand-set constants — 1.8 % and 6.9 % out |
+| the "shipped" column really is what the service emits | the page's mirror of `DepthAt()` reproduced against every committed golden fixture, byte for byte |
+| the computed sea turns green as the water turns coastal | hue at 20 m: Jerlov I 213°, 3C 99° |
+| the shipped sea does not turn at all | all ten water types ship `#0E6F82` at 20 m |
+| red survives least, at every depth, in every water this family can roll | 35 depth × water-type combinations, none inverted |
+| the window the sea leaves open walks toward the red | argmin Kd: I 440 → 3C 570 → 9C 590 nm, monotone |
+| the 1 % light depth is where oceanography puts it | I 138 m, III 32 m, 9C 5 m, all inside published ranges |
+| a colour picked at the surface comes back unchanged | seven probes, worst 0 of 255 out |
+
+**What it proves.** That `DepthAt(metres)` in `depth_curve.go` is a pure
+function of depth, so **the water type never touches the colour** — only the
+sight distance. A reef in gin-clear Jerlov IB and the same reef in soupy 3C ship
+the identical fog colour, and in the real ocean those are a blue sea and a green
+one. The mechanism is the sixth claim: the window the water leaves open walks
+150 nm to the red as clarity falls, and the family's own generator rolls across
+seven types that span most of that walk.
+
+Two things were measured and turned out the other way round from the first
+guess, and both are written into the page where they happened. A claim that red
+always dies first fails at 5C and worse, because there the CDOM load kills blue
+faster than pure water kills red — which is why an estuary is brown; the model
+was right and the claim was wrong. And renormalising every swatch to a constant
+lightness, which is the obvious way to make deep colours pickable, took the most
+saturation off the *clearest* water and said Jerlov I was paler than a shelf
+sea. Exactly backwards.
+
+**What it does not prove.** It is a model of the light, not a render: nothing
+here says what a tone map, a bloom pass or an exposure will do to these colours
+once they are in a frame. The turbidity half is a shape assumption, not a
+measurement. Horizontal sight lines reuse `Kd` as their attenuation coefficient
+because that is what the service's own sighting range does, so distance effects
+are conservative. And it is single-scattering, so it over-saturates: most of
+what it computes sits outside sRGB and is brought back by desaturating just far
+enough to stop a channel going negative, then scaling the brightness down.
