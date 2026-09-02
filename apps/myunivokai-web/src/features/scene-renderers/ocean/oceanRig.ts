@@ -121,6 +121,22 @@ export type OceanRigOptions = {
   viewerDepthMetres: number;
   seafloorDepthMetres: number;
   waterType?: JerlovWaterType;
+  /**
+   * How far the camera can actually see underwater, in metres, from
+   * `water.visibilityMetres` — the SHORTER of the light-limited range and the
+   * clarity-limited range (`ocean_config_builder.go`'s `buildWaterConfig`).
+   * This rig used to re-derive a clarity-ONLY figure from `waterType` alone,
+   * which let it disagree with `oceanCameraFraming` (`oceanMath.ts`, fed the
+   * same backend field through `UniverseCanvas.tsx`) by as much as 17.6 m on
+   * whether the surface or the seafloor was even in reach — two renderers
+   * measuring the same water and getting two different answers is the bug,
+   * not either formula alone.
+   *
+   * Undefined for a caller with no stored value — a demo, a test, a world
+   * saved before this field existed — falls back to the old clarity-only
+   * estimate exactly as before.
+   */
+  visibilityMetres?: number;
   windSpeedMps?: number;
   windDirectionRadians?: number;
   sunElevationDegrees?: number;
@@ -214,6 +230,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     viewerDepthMetres,
     seafloorDepthMetres,
     waterType = DEFAULT_WATER_TYPE,
+    visibilityMetres,
     windSpeedMps = 9,
     windDirectionRadians = 0.62,
     sunElevationDegrees = 46,
@@ -262,7 +279,9 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
   const above = isAboveWater(viewerDepthMetres);
   const attenuation = waterAttenuation(waterType);
   const palette = above ? airPalette() : waterPalette(waterType, viewerDepthMetres);
-  const range = above ? AIR_SIGHTING_RANGE_METRES : sightingRangeMetres(attenuation);
+  const range = above
+    ? AIR_SIGHTING_RANGE_METRES
+    : (visibilityMetres ?? sightingRangeMetres(attenuation));
   const fogColor = new Color(palette.fog[0], palette.fog[1], palette.fog[2]);
   const floorClearance = Math.max(0, seafloorDepthMetres - viewerDepthMetres);
   const reach = range * BOUNDARY_SIGHT_MULTIPLIER;

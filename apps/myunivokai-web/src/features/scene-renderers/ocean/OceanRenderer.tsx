@@ -149,8 +149,12 @@ export function OceanRenderer({
     ? water.jerlovWaterType
     : waterTypeForVisibility(water?.visibilityMetres);
   const windSpeedMps = water?.windSpeedMetresPerSecond ?? windSpeedFromSeed(worldSeed);
+  // The same authoritative figure the rig and the camera framing read — see
+  // OceanRigOptions.visibilityMetres. Falls back to the old clarity-only
+  // estimate only for a world stored before schemaVersion 1.1 carried it.
   const sightLimit =
-    sightingRangeMetres(waterAttenuation(waterType)) * BOUNDARY_SIGHT_MULTIPLIER;
+    (water?.visibilityMetres ?? sightingRangeMetres(waterAttenuation(waterType))) *
+    BOUNDARY_SIGHT_MULTIPLIER;
   // A landmark is a thing that STANDS ON THE SEABED, so it exists only when the
   // seabed does. Two situations used to draw them anyway, and both were visible
   // as furniture hanging in open water:
@@ -229,6 +233,7 @@ export function OceanRenderer({
       viewerDepthMetres: viewerMetres,
       seafloorDepthMetres: seafloorMetres,
       waterType,
+      visibilityMetres: water?.visibilityMetres,
       windSpeedMps,
       sunElevationDegrees:
         ((lighting?.surfaceElevationRadians ?? 0.9) * 180) / Math.PI,
@@ -299,6 +304,7 @@ export function OceanRenderer({
     viewerMetres,
     seafloorMetres,
     waterType,
+    water?.visibilityMetres,
     windSpeedMps,
     lighting?.surfaceElevationRadians,
     lighting?.surfaceAzimuthRadians,

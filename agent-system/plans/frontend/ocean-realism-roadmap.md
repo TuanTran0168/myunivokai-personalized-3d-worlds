@@ -249,16 +249,41 @@ zoom-out away, and the landmark-ring argument for capping it is a composition
 argument that belongs with work item 4 and should be measured there, not
 smuggled in under a bug fix.
 
-### Still open: the two sighting ranges disagree
+### The two sighting ranges disagree — DONE. Shipped.
 
 `UniverseCanvas.tsx:314-322` passes `scene.water.visibilityMetres` (the
 **light**-limited minimum, `ocean_config_builder.go:270`) into
-`oceanCameraFraming`, while `oceanRig.ts:227` uses `sightingRangeMetres(attenuation)`
-(the **clarity** limit alone). They can disagree about `surfaceInSight`, which
-changes the chosen pitch — and therefore `T_y` — by up to 17.6 m. The ceiling
-work is not blocked by it: the clamp is solved from whatever `T_y` the framing
-actually produced, so it is correct either way. What is still wrong is that the
-two can disagree about whether a surface is drawn at all.
+`oceanCameraFraming`, while `oceanRig.ts:227` used `sightingRangeMetres(attenuation)`
+(the **clarity** limit alone) — and `OceanRenderer.tsx`'s own `sightLimit`
+(gating whether landmarks stand on anything at all) re-derived that same
+clarity-only figure a second time, independently. Three call sites, two
+different formulas, disagreeing by up to 17.6 m on whether a surface,
+seafloor, or landmark should even be drawn.
+
+Fixed by making `visibilityMetres` a stored config field on `OceanRigOptions`,
+following the exact shape `godRayStrength`/`causticStrength` already use: a
+caller with a real backend value passes it and it wins outright; a caller
+with none — a demo, a test, a world saved before this field existed — falls
+back to the old clarity-only estimate, unchanged. `OceanRenderer.tsx` now
+passes `water?.visibilityMetres` into `createOceanRig`, and its own local
+`sightLimit` reads the same field before falling back, so all three
+computations that used to disagree now read one number when the backend has
+supplied one. The backend's own value is already the correct one to defer
+to — `buildWaterConfig` (`ocean_config_builder.go:270`) computes it as
+`min(depthResponse.VisibilityMetres, SightingRangeForWaterType(waterType))`,
+the light and clarity limits together, which is exactly the quantity "how
+far can you actually see" means.
+
+Not independently unit-tested: `createOceanRig` and `OceanRenderer` both need
+a real WebGL context/DOM this repo's Node test environment doesn't have (the
+same boundary `causticStrength`'s wiring hit). Pinned by `tsc`, the full 628-
+test vitest run, and the GLSL lint — not by a render. `oceanFrameBudget.test.ts`
+cannot catch this either: it reads committed screenshots, not a live render,
+so a fixture whose world happens to have light- and clarity-limits that
+already agreed would show no diff regardless. Any world where they diverge
+will now render its surface/seafloor/landmarks/god-rays at a different reach
+than before this fix — an intentional correction, not a regression, but a
+real behaviour change with no automated visual proof.
 ## Work item 2 — the fish
 
 The owner reported two things, and they are two different bugs. Do not conflate
@@ -859,11 +884,11 @@ The dependencies are real; this order is not arbitrary.
   polar clamp rather than the fixed clamp plus distance cap this plan first
   called for; work item 1 says why, and the owner's zoom-in/zoom-out
   observation is the reason.
-1. **Reconcile the two sighting ranges** — everything downstream reads `T_y`,
-   and 3b made the disagreement between them the load-bearing number. No longer
-   blocking work item 1, which is solved from whatever `T_y` the framing
-   produced; still wrong that the two can disagree about whether a surface is
-   drawn at all.
+1. ~~**Reconcile the two sighting ranges**~~ — **done**. Everything downstream
+   reads `T_y`, and 3b made the disagreement between them the load-bearing
+   number; it never blocked work item 1, which is solved from whatever `T_y`
+   the framing produced, but the two — now three — call sites could disagree
+   about whether a surface was even drawn.
 2. **Make `ocean-look-down.spec.ts` drive the camera.** It does not, measured;
    see below. Until then the family has no end-to-end coverage of its own camera
    at all, and this is the second time a wrong belief about that file has cost a
