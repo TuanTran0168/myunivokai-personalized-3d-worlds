@@ -549,8 +549,14 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
         // Beyond sin(theta) = 1/1.333 nothing can refract in, so the surface
         // goes total-internal-reflection: a mirror, not a window.
         float window = 1.0 - smoothstep(0.70, 0.775, sinTheta);
+        // How far out across the cone we are: 0 at the zenith, 1 at the
+        // critical angle. The sky's own gradient, compressed.
+        float coneT = clamp(sinTheta / 0.75, 0.0, 1.0);
         vec3 sky = skyThroughSnellsWindow(view, sinTheta) * uSkyGain;
-        sky += uSunColor * pow(max(0.0, n.y), 6.0) * 0.06 * window;
+        // Ripple sparkle, strongest where refraction magnifies the slope,
+        // fading radially toward the window's rim instead of holding flat
+        // then cutting off with the window's own hard edge.
+        sky += uSunColor * pow(max(0.0, n.y), 6.0) * 0.06 * (1.0 - coneT);
 
         vec3 mirror = mix(uDeepColor, uWaterColor, pow(upness, 0.7)) + uWaterColor * 0.85;
         float fresnel = 0.02 + 0.98 * pow(1.0 - upness, 5.0);

@@ -697,7 +697,7 @@ reviewed and liked, and it is cheap.
 | 1 | **Unify caustics** on the differential-area form (4c) | high / medium | `oceanRigTerrain.ts`, `oceanRigFlora.ts`, `oceanRig.ts` | DONE |
 | 2 | **Restore anisotropic god-ray sampling.** Prototype samples the beam cross-section at `section * vec2(0.30, 0.075)`; production uses isotropic `beamPlane * 0.09`. The 4:1 anisotropy is what makes a shaft a *curtain* instead of a blob. Also restore the `grain` octave, the depth `fade`, and the per-fragment march jitter that hides 24-step banding | high / small | `oceanRig.ts` | DONE |
 | 3 | **Wire up `BLUE_SEA_YAW_OFFSET_RADIANS`** (118°, `oceanSky.ts:117-128`) — it is written, documented, and imported by nothing. Above-water worlds currently always shoot *into* the sun. Prototype measurements: facing the sun gives saturation 0.12, facing 118° away gives 0.17 overall and 0.31 in the near field, same shaders. Apply only for a high sun; keep yaw 0 for golden hour | high / small | `oceanMath.ts` | DONE |
-| 4 | **Window-centred sparkle falloff** — restore `* (1.0 - coneT)` in place of `* window`, so Snell's window has a radial gradient rather than a flat disc with a hard rim | low / trivial | `oceanRig.ts` | not started |
+| 4 | **Window-centred sparkle falloff** — restore `* (1.0 - coneT)` in place of `* window`, so Snell's window has a radial gradient rather than a flat disc with a hard rim | low / trivial | `oceanRig.ts` | DONE |
 
 ### Item 2 — DONE. Shipped.
 
@@ -743,6 +743,25 @@ bearing above water under a low sun, turns exactly
 `BLUE_SEA_YAW_OFFSET_RADIANS` away from it under a high one, never applies
 underwater even under a high sun, and defaults to no offset for a caller that
 passes no elevation at all.
+
+### Item 4 — DONE. Shipped.
+
+`oceanRig.ts`'s water-surface fragment shader gained the prototype's own
+`coneT = clamp(sinTheta / 0.75, 0.0, 1.0)` — the same critical-angle geometry
+the window's own `smoothstep(0.70, 0.775, sinTheta)` is built from, just
+un-smoothed into a plain ratio — and the sparkle term switched from
+`* window` to `* (1.0 - coneT)`. `window` is a flat 1 across the whole disc
+and only drops at the rim over a 0.075-wide smoothstep band, so the sparkle
+it gated was a flat highlight with a thin dark ring at the edge. `coneT` is 0
+at the zenith and rises linearly to 1 at the critical angle, so `1 - coneT`
+gives the sparkle a radial falloff across the whole window — brightest
+looking straight up, fading gradually toward the rim — matching how the
+prototype's own comment describes it: *"strongest where refraction magnifies
+the slope."* Not independently testable: this is a pure fragment-shader
+change with no CPU-side logic, caught only by `oceanShaderSource.test.ts`'s
+GLSL lint (which found nothing to flag — no new reserved words or shadowed
+built-ins) and otherwise falling into the same Node/no-DOM boundary as items
+2 and 3 above.
 
 ### From the open web
 
