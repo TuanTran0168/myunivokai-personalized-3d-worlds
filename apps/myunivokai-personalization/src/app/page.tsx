@@ -2,37 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  ArrowRight,
-  Check,
-  CircleDashed,
-  CircuitBoard,
-  Cloud,
-  CloudFog,
-  Eclipse,
-  Fish,
-  Flame,
-  Flower2,
-  Gem,
-  Lamp,
-  Leaf,
-  Loader2,
-  Moon,
-  Orbit,
-  Rainbow,
-  Satellite,
-  Shell,
-  Snowflake,
-  Sparkles,
-  Sprout,
-  Sun,
-  TreePine,
-  Trees,
-  Waves,
-  Wheat
-} from "lucide-react";
+import { ArrowRight, Check, Loader2 } from "lucide-react";
 import { api, apiErrorMessage } from "@/lib/api";
 import { addWorldIdentifierToGallery } from "@/lib/savedWorlds";
+import { resolveGalleryOwnerKey } from "@/lib/galleryOwner";
 import { UniverseCanvas } from "@/components/UniverseCanvas";
 import { GeneratingOverlay } from "@/components/GeneratingOverlay";
 import { StatusMessage } from "@/components/StatusMessage";
@@ -56,153 +29,14 @@ import { prefetchSceneRendererForFamily } from "@/features/scene-renderers/regis
 import { worldPagePath } from "@/lib/worldRoutes";
 import type { GenerationJobStatus, PlanetSceneConfig, WorldFamily } from "@/lib/types";
 
-// The world-family picker: which backend curates the portrait. Universe =
-// universe-service (solar system), Forest = nature-service (living forest),
-// Ocean = ocean-service (a sea at one depth). Same inputs, same mechanism —
-// only the scene family differs.
-const familyOptions: { label: string; value: WorldFamily; description: string; Icon: typeof Orbit }[] = [
-  { label: "Universe", value: "universe", description: "A solar system of you", Icon: Orbit },
-  { label: "Forest", value: "nature", description: "A living forest of you", Icon: Trees },
-  { label: "Ocean", value: "ocean", description: "A sea of you, at depth", Icon: Waves }
-];
-
-const interestOptions = ["Technology", "Art", "Science", "Design", "Music", "AI", "Storytelling", "Product"];
-const traitOptions = ["curious", "builder", "focused", "creative", "calm", "explorer"];
-// Same four mood VALUES for every family (the backend contract keys off
-// them); only the label/swatch changes so the card reads in the family's own
-// language — universe moods are cosmic, forest moods are seasonal (each label
-// names the season that mood leans toward in the forest builder).
-const moodOptions: readonly SwatchOption[] = [
-  { label: "Cybernetic", value: "focused", swatch: "#3b82f6", Icon: CircuitBoard },
-  { label: "Nebula", value: "dreamy", swatch: "#a855f7", Icon: Sparkles },
-  { label: "Solar", value: "energetic", swatch: "#eab308", Icon: Sun },
-  { label: "Void", value: "reflective", swatch: "#ef4444", Icon: CircleDashed }
-];
-const natureMoodOptions: readonly SwatchOption[] = [
-  { label: "Frostwood", value: "focused", swatch: "#93C5FD", Icon: Snowflake },
-  { label: "Blossom", value: "dreamy", swatch: "#F9A8D4", Icon: Flower2 },
-  { label: "Summer Meadow", value: "energetic", swatch: "#4ADE80", Icon: Wheat },
-  { label: "Amber Autumn", value: "reflective", swatch: "#F59E0B", Icon: Leaf }
-];
-// Each ocean label names the depth that mood IS — a coordinate on the
-// family's one axis, not a character bias the way the forest's seasons are.
-// Named from the real oceanography, not invented: epipelagic ("Sunlight
-// Zone") down to "Glass Shallows"/"Reef Crest", the mesophotic edge of it to
-// "Mesophotic Current", and the bathypelagic ("Midnight Zone") to "The
-// Abyss" — kept colloquial rather than renamed to "Midnight", because that is
-// how documentaries and aquariums actually talk about it. Three of the four
-// still pin their zone every seed; "Glass Shallows" is a weighted MOSTLY
-// rather than an absolute promise — see AboveWaterProbability in
-// ocean_scene_profile.go for why turning that pin into a lean was deliberate.
-// See OCEAN_MOOD_PROFILES in lib/oceanScene.ts and oceanMoodProfiles in
-// ocean_scene_profile.go.
-const oceanMoodOptions: readonly SwatchOption[] = [
-  // The icons here name the DEPTH, because that is what these four options
-  // actually are: sun at the surface, the twilight edge of the light, the reef
-  // where the fauna is, and the moon for the midnight zone.
-  { label: "Glass Shallows", value: "focused", swatch: "#5EEAD4", Icon: Sun },
-  { label: "Mesophotic Current", value: "dreamy", swatch: "#A78BFA", Icon: Eclipse },
-  { label: "Reef Crest", value: "energetic", swatch: "#F2B24C", Icon: Fish },
-  { label: "The Abyss", value: "reflective", swatch: "#1E3A5F", Icon: Moon }
-];
-
-// World Style, one vocabulary per family, mirroring allowedWorldStylesByFamily
-// in contracts/go/contracts.go. Posting one family's style to another is a 400.
-//
-// It used to be these five for everyone, and nature-service and ocean-service
-// stored whichever arrived and never read it — so the picker was hidden for
-// both rather than left offering a control that changed nothing. Each family
-// now has its own axis and its own service reads it.
-//
-// THE FIRST ENTRY OF EVERY FAMILY IS ITS NEUTRAL STYLE: the world as the
-// builder already made it. That is what lets the picker come back without
-// changing a single stored world.
-const universeStyleOptions: readonly SwatchOption[] = [
-  { label: "Cosmic", value: "cosmic-galaxy", swatch: "#8B5CF6", Icon: Orbit },
-  // A cloud, not the sparkles the Nebula MOOD carries. The two have shared a
-  // name in this form since it was written, and until now they also looked
-  // identical in a list of coloured dots.
-  { label: "Nebula", value: "nebula", swatch: "#a855f7", Icon: Cloud },
-  { label: "Crystal", value: "crystal", swatch: "#22d3ee", Icon: Gem },
-  { label: "Aurora", value: "aurora", swatch: "#34d399", Icon: Rainbow },
-  { label: "Cyber Orbit", value: "cyber-orbit", swatch: "#38bdf8", Icon: Satellite }
-];
-
-// Mood decides the forest's season; style decides how it is grown and lit.
-// See forest_style_profile.go and the mirror in lib/forestScene.ts.
-const natureStyleOptions: readonly SwatchOption[] = [
-  { label: "Wildwood", value: "wildwood", swatch: "#7CB463", Icon: Trees },
-  { label: "Ancient Grove", value: "ancient-grove", swatch: "#4E7A54", Icon: TreePine },
-  { label: "Mistwood", value: "mistwood", swatch: "#B8C7CE", Icon: CloudFog },
-  { label: "Emberfall", value: "emberfall", swatch: "#E07A3C", Icon: Flame },
-  { label: "Lanternwood", value: "lanternwood", swatch: "#F2C464", Icon: Lamp }
-];
-
-// Mood decides the ocean's depth; style decides the water and what lives in it.
-// See ocean_style_profile.go and the mirror in lib/oceanScene.ts.
-const oceanStyleOptions: readonly SwatchOption[] = [
-  { label: "Open Water", value: "open-water", swatch: "#38A7C7", Icon: Waves },
-  { label: "Coral Garden", value: "coral-garden", swatch: "#F2775A", Icon: Shell },
-  { label: "Kelp Cathedral", value: "kelp-cathedral", swatch: "#5A9E6F", Icon: Sprout },
-  { label: "Crystal Shoal", value: "crystal-shoal", swatch: "#7DD3FC", Icon: Gem },
-  { label: "Silt Drift", value: "silt-drift", swatch: "#9CA3AF", Icon: CloudFog }
-];
-// Everything the create page says differently per family, in one record typed
-// by WorldFamily. It replaced a run of `worldFamily === "nature" ? ... : ...`
-// ternaries, each of which quietly treated a third family as "universe" — the
-// compiler now refuses to let a family be added without answering all of this.
-const FAMILY_COPY: Record<
-  WorldFamily,
-  {
-    noun: string;
-    moodLabel: string;
-    moodOptions: readonly SwatchOption[];
-    /** The field label for World Style — each family styles a different thing. */
-    styleLabel: string;
-    styleOptions: readonly SwatchOption[];
-    chromeClassName: string;
-    submitLabel: string;
-  }
-> = {
-  universe: {
-    noun: "Universe",
-    moodLabel: "Atmospheric Mood",
-    moodOptions,
-    styleLabel: "World Style",
-    styleOptions: universeStyleOptions,
-    chromeClassName: "",
-    submitLabel: "Curate this universe"
-  },
-  nature: {
-    noun: "Forest",
-    moodLabel: "Forest Mood",
-    moodOptions: natureMoodOptions,
-    styleLabel: "Forest Style",
-    styleOptions: natureStyleOptions,
-    chromeClassName: "forest-chrome",
-    submitLabel: "Curate this forest"
-  },
-  ocean: {
-    noun: "Ocean",
-    moodLabel: "Depth & Mood",
-    moodOptions: oceanMoodOptions,
-    styleLabel: "Water & Life",
-    styleOptions: oceanStyleOptions,
-    chromeClassName: "forest-chrome",
-    submitLabel: "Curate this ocean"
-  }
-};
-
-/**
- * The neutral style of a family — its first option, which every family's
- * service treats as a no-op. Switching family has to swap the stored style with
- * it, because a style belongs to exactly one family now and posting the wrong
- * one is a 400 from the gateway.
- */
-function defaultStyleForFamily(family: WorldFamily): string {
-  return FAMILY_COPY[family].styleOptions[0].value;
-}
-const colorOptions = ["#8B5CF6", "#06B6D4", "#F97316", "#22C55E", "#F43F5E", "#EAB308"];
+import {
+  COLOR_OPTIONS,
+  FAMILY_COPY,
+  FAMILY_OPTIONS,
+  INTEREST_OPTIONS,
+  TRAIT_OPTIONS,
+  defaultStyleForFamily
+} from "@/features/world-form/worldFormOptions";
 
 // One entry per scrollable field group in the rail, in DOM order — the single
 // source of truth for both each group's `data-form-section` marker below and
@@ -376,8 +210,8 @@ export default function HomePage() {
       setTransitionRequest({
         still,
         direction: worldChangeDirectionBetween(
-          familyOptions.findIndex((option) => option.value === worldFamily),
-          familyOptions.findIndex((option) => option.value === nextFamily)
+          FAMILY_OPTIONS.findIndex((option) => option.value === worldFamily),
+          FAMILY_OPTIONS.findIndex((option) => option.value === nextFamily)
         ),
         family: nextFamily,
         token: transitionTokenReference.current
@@ -488,7 +322,17 @@ export default function HomePage() {
           }
           return;
         }
-        addWorldIdentifierToGallery(result.world.id, result.family);
+        // The shelf is resolved rather than assumed: a world made while
+        // signed in belongs to the account, and one made signed out belongs to
+        // the anonymous shelf.
+        //
+        // Not awaited here, unlike onSubmit's save: this callback is not async
+        // and the navigation below must not wait on it. The write lands either
+        // way — a client-side navigation does not tear down this module — and
+        // the gallery is not the screen being navigated to.
+        void resolveGalleryOwnerKey().then((ownerKey) =>
+          addWorldIdentifierToGallery(result.world.id, result.family, ownerKey)
+        );
         // Success: keep the overlay up through navigation (same reason as
         // onSubmit); do NOT clear loading here.
         router.push(worldPagePath(result.world.id, result.family));
@@ -575,7 +419,7 @@ export default function HomePage() {
   // paint. The world and share routes, which know their family for certain,
   // still fetch exactly one renderer.
   useEffect(() => {
-    for (const option of familyOptions) {
+    for (const option of FAMILY_OPTIONS) {
       prefetchSceneRendererForFamily(option.value);
     }
   }, []);
@@ -606,7 +450,7 @@ export default function HomePage() {
       const world = await api.createWorld(payload, worldFamily, {
         onProgress: (job) => setGenerationStatus(job.status)
       });
-      addWorldIdentifierToGallery(world.id, worldFamily);
+      addWorldIdentifierToGallery(world.id, worldFamily, await resolveGalleryOwnerKey());
       // Keep the overlay up THROUGH the navigation. router.push is async: it
       // returns before the world route mounts and its scene renders. Clearing
       // loading here (the old `finally`) hid the overlay while this create page
@@ -815,7 +659,7 @@ export default function HomePage() {
                 {/* grid-cols-3, not -2: with exactly 3 options a 2-column grid always
                     orphans the third card alone on its own row. */}
                 <div className="grid grid-cols-3 gap-2">
-                  {familyOptions.map((option) => {
+                  {FAMILY_OPTIONS.map((option) => {
                     const selected = worldFamily === option.value;
                     return (
                       <button
@@ -893,7 +737,7 @@ export default function HomePage() {
                 <ChipGroupWithCustom
                   ref={interestsChipGroupReference}
                   fieldLabel="Core Interests"
-                  predefinedOptions={interestOptions}
+                  predefinedOptions={INTEREST_OPTIONS}
                   selected={interests}
                   onChange={setInterests}
                   minimumItems={MINIMUM_INTERESTS}
@@ -909,7 +753,7 @@ export default function HomePage() {
                 <ChipGroupWithCustom
                   ref={traitsChipGroupReference}
                   fieldLabel="Traits"
-                  predefinedOptions={traitOptions}
+                  predefinedOptions={TRAIT_OPTIONS}
                   selected={traits}
                   onChange={setTraits}
                   minimumItems={MINIMUM_TRAITS}
@@ -977,7 +821,7 @@ export default function HomePage() {
               <div className="grid gap-2" data-form-section={PROGRESS_SECTION_IDS[9]}>
                 <span className="font-mono text-xs uppercase tracking-widest text-brass">Palette</span>
                 <div className="flex flex-wrap gap-2">
-                  {colorOptions.map((color) => {
+                  {COLOR_OPTIONS.map((color) => {
                     const selected = favoriteColors.includes(color);
                     return (
                       <button

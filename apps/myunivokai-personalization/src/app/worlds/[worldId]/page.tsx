@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { api, apiErrorMessage } from "@/lib/api";
 import { exportSceneCanvasAsPng } from "@/lib/exportImage";
 import { addWorldIdentifierToGallery, recordLastViewedWorld } from "@/lib/savedWorlds";
+import { resolveGalleryOwnerKey } from "@/lib/galleryOwner";
 import { isForestScene, pointsOfInterestFromScene, sceneFromVariant, selectedVariant } from "@/lib/scene";
 import { sharePagePath, worldFamilyFromQueryValue, WORLD_FAMILY_QUERY_PARAMETER } from "@/lib/worldRoutes";
 import type { PlanetSceneConfig, World, WorldFamily, WorldVariant } from "@/lib/types";
@@ -136,7 +137,12 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
         // The first variant this page ever shows has nothing to transition out
         // of, so the canvas is allowed to draw it straight away.
         setRenderedVariantId(selectedVariant(nextWorld)?.id);
-        addWorldIdentifierToGallery(nextWorld.id, family);
+        // Fire-and-forget, unlike the create page's awaited save: this
+        // handler is not async and the page has nothing to do with the answer.
+        // A world already on any shelf is not moved - see the cross-shelf
+        // dedupe in addWorldIdentifierToGallery, which is what keeps opening
+        // an anonymous world while signed in from quietly claiming it.
+        void resolveGalleryOwnerKey().then((ownerKey) => addWorldIdentifierToGallery(nextWorld.id, family, ownerKey));
         // Unconditional, unlike the add above: this is the one signal the
         // gallery's ambient backdrop uses to know which world the visitor
         // last had open, and a re-view has to update it every time.

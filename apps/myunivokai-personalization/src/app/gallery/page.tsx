@@ -8,7 +8,7 @@ import { AmbientWorld } from "@/features/gallery/AmbientWorld";
 import { useSavedWorlds } from "@/features/gallery/useSavedWorlds";
 
 export default function GalleryPage() {
-  const { savedWorldEntries, isLoading, removeSavedWorld } = useSavedWorlds();
+  const { savedWorldEntries, isLoading, removeSavedWorld, otherOwnerWorldCount, isSignedIn } = useSavedWorlds();
 
   const loadedWorldEntries = savedWorldEntries.filter((entry) => entry.world);
   const failedWorldEntries = savedWorldEntries.filter((entry) => !entry.world);
@@ -29,8 +29,17 @@ export default function GalleryPage() {
         <div>
           <div className="mb-2 font-mono text-xs uppercase tracking-[0.2em] text-brass">Saved Worlds</div>
           <h1 className="font-display text-4xl font-semibold tracking-normal text-paper">Your Gallery</h1>
+          {/* Two different sentences, because they are two different claims.
+              Signed out, this really is "whatever this browser made". Signed
+              in, it is the account's own worlds - which is why an account
+              created on a browser full of anonymous worlds no longer opens
+              onto a gallery of somebody else's. The second sentence still says
+              "on this device", because that is still true until the server
+              serves the list (S8-IDENTITY-015 and 016). */}
           <p className="mt-2 text-on-surface-variant">
-            Worlds you created on this device. They live in your browser storage.
+            {isSignedIn
+              ? "Worlds saved to your account, from this device. They will follow your account to other devices soon."
+              : "Worlds you created on this device, without an account. They live in your browser storage."}
           </p>
         </div>
         <Link
@@ -42,11 +51,27 @@ export default function GalleryPage() {
         </Link>
       </div>
 
+      {/* The note that stops an empty shelf reading as a loss. A new account
+          on a browser with anonymous worlds sees nothing, which is correct and
+          alarming; saying where those worlds are costs one sentence. Claiming
+          them is S8-IDENTITY-011, and until it lands signing out is the way to
+          them. */}
+      {isSignedIn && otherOwnerWorldCount > 0 ? (
+        <div className="mb-6 rounded-xl border border-hairline bg-black/30 px-4 py-3 text-sm text-on-surface-variant">
+          {otherOwnerWorldCount === 1
+            ? "1 world on this device was created without an account, so it is not part of your account. "
+            : `${otherOwnerWorldCount} worlds on this device were created without an account, so they are not part of your account. `}
+          Sign out to see them. Moving them into your account is coming.
+        </div>
+      ) : null}
+
       {loadedWorldEntries.length === 0 ? (
         <div className="glass-panel grid place-items-center gap-4 rounded-2xl px-6 py-16 text-center">
           <p className="text-lg font-semibold text-on-surface">No saved worlds yet</p>
           <p className="max-w-md text-sm leading-6 text-on-surface-variant">
-            Create your first personal world and it will appear here automatically.
+            {isSignedIn
+              ? "Create a world while signed in and it will appear here automatically."
+              : "Create your first personal world and it will appear here automatically."}
           </p>
           <Link
             href="/"
