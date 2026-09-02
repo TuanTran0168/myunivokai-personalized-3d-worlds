@@ -82,13 +82,21 @@ func (store *MemoryStore) GetAccountByID(_ context.Context, accountID string) (A
 // (cursor.go) so tests exercise the same pagination behavior production
 // sees. Search mirrors PostgresStore's case-insensitive email-or-name
 // substring match.
-func (store *MemoryStore) ListAccounts(_ context.Context, cursor string, pageSize int, search string) ([]Account, string, error) {
+func (store *MemoryStore) ListAccounts(_ context.Context, cursor string, pageSize int, search string, kind contracts.AccountKind) ([]Account, string, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	needle := strings.ToLower(strings.TrimSpace(search))
 	all := make([]Account, 0, len(store.accountsByID))
 	for _, account := range store.accountsByID {
 		if needle != "" && !strings.Contains(strings.ToLower(account.Email), needle) && !strings.Contains(strings.ToLower(account.Name), needle) {
+			continue
+		}
+		// Mirrors PostgresStore's equality predicate, including that an empty
+		// kind means every kind. Applied BEFORE pagination, like the search
+		// above, because a filter applied after would page over the unfiltered
+		// set and return short pages - the exact defect that made this a
+		// server-side filter rather than a client-side one.
+		if kind != "" && account.Kind != kind {
 			continue
 		}
 		all = append(all, account)

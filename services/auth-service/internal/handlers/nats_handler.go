@@ -37,7 +37,7 @@ type AuthService interface {
 	InviteAccount(ctx context.Context, data contracts.InviteCreateData) (contracts.InviteCreateResponseData, error)
 	AcceptInvite(ctx context.Context, data contracts.InviteAcceptData) (contracts.LoginResponseData, error)
 	AccountPermissions(ctx context.Context, accountID string) (contracts.AccountPermissionsResponseData, error)
-	ListAccounts(ctx context.Context, cursor string, pageSize int, search string) (contracts.AccountListResponseData, error)
+	ListAccounts(ctx context.Context, cursor string, pageSize int, search string, kind contracts.AccountKind) (contracts.AccountListResponseData, error)
 	GetAccount(ctx context.Context, accountID string) (contracts.AccountSummary, error)
 	CreateAccount(ctx context.Context, data contracts.AccountCreateData) (contracts.AccountSummary, error)
 	UpdateAccount(ctx context.Context, data contracts.AccountUpdateData) (contracts.AccountSummary, error)
@@ -226,7 +226,7 @@ func (handler *NATSHandler) HandleAccountListQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.AccountListResponseData, error) {
-		return handler.authService.ListAccounts(ctx, envelope.Data.Cursor, envelope.Data.PageSize, envelope.Data.Search)
+		return handler.authService.ListAccounts(ctx, envelope.Data.Cursor, envelope.Data.PageSize, envelope.Data.Search, envelope.Data.Kind)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }

@@ -126,8 +126,10 @@ type Store interface {
 	GetAccountByEmail(ctx context.Context, email string) (Account, error)
 	GetAccountByID(ctx context.Context, accountID string) (Account, error)
 	// ListAccounts's search, when non-empty, matches email or name
-	// case-insensitively as a substring — see PostgresStore.ListAccounts.
-	ListAccounts(ctx context.Context, cursor string, pageSize int, search string) (accounts []Account, nextCursor string, err error)
+	// case-insensitively as a substring — see PostgresStore.ListAccounts. kind,
+	// when non-empty, restricts the page to that account kind; empty means
+	// every kind, so the filter is additive for callers that send nothing.
+	ListAccounts(ctx context.Context, cursor string, pageSize int, search string, kind contracts.AccountKind) (accounts []Account, nextCursor string, err error)
 	AccountRolesAndPermissions(ctx context.Context, accountID string) (roles []string, permissions []string, err error)
 	CountSuperAdmins(ctx context.Context) (int, error)
 

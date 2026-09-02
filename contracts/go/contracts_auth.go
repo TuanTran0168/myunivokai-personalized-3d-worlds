@@ -237,9 +237,17 @@ type AccountListResponseData struct {
 // AccountListQueryData embeds PageQueryData for the same reason
 // AuditListQueryData does. Search matches an account's email or name — see
 // Store.ListAccounts for the exact ILIKE columns.
+//
+// Kind filters by audience, and it is a SERVER-side filter rather than
+// something the admin app could do to the page it received. That distinction
+// is the whole reason the field exists: this list is cursor-paginated, so a
+// client-side "end users only" filter would filter one page and report "no
+// results" whenever the first twenty rows happened to be staff. An empty Kind
+// means every kind, so an existing caller that sends nothing is unaffected.
 type AccountListQueryData struct {
 	PageQueryData
-	Search string `json:"search,omitempty"`
+	Search string      `json:"search,omitempty"`
+	Kind   AccountKind `json:"kind,omitempty"`
 }
 
 type AccountGetQueryData struct {
