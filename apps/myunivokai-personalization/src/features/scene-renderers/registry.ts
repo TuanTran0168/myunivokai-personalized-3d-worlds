@@ -2,7 +2,19 @@
 
 import { lazy } from "react";
 import type { SceneConfig, WorldFamily } from "@/lib/types";
+import { configureLocalModelDecoders } from "./shared/modelDecoders";
 import type { SceneRendererComponent } from "./types";
+
+/**
+ * Run before any renderer chunk is even requested, let alone rendered.
+ *
+ * Most `.glb` models here are DRACO-compressed and drei's default decoder path
+ * is a Google host, which the Content-Security-Policy blocks. `useGLTF` is
+ * called during render inside the lazy chunks below, so this cannot be an
+ * effect anywhere — by the time any effect ran, the first model of the first
+ * scene would already have asked for a decoder. See ./shared/modelDecoders.ts.
+ */
+configureLocalModelDecoders();
 
 /**
  * Each family renderer is its own chunk, so a visitor who opens a forest never
