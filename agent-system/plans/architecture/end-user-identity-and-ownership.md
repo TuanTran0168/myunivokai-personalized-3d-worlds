@@ -1,6 +1,8 @@
 # End-user identity and world ownership
 
-> **Document status:** Proposed. **Nothing here is approved and no code exists.**
+> **Document status:** Proposed. **No code exists.** Six of its decisions were
+> taken by the owner on 2026-09-02 and are recorded in §16; the plan itself
+> still awaits approval before user stories and a sprint are written.
 > **Raised:** 2026-09-02 by the owner
 > **Last source review:** 2026-09-02
 > **Answers:** [`DEFERRED-AUTH-001`](../backlog/engineering-backlog.md#deferred-auth-001--define-identity-before-authentication),
@@ -32,8 +34,9 @@ of a person rather than a browser. Today "my worlds" is a list of UUIDs in
 
 The work is therefore smaller than it looks in the identity layer and larger
 than it looks everywhere else — the expensive parts are **email
-infrastructure**, **GDPR deletion across six services**, and **a session cookie
-that cannot work in production until the product has one registrable domain**.
+infrastructure**, **account deletion reaching six services**, and **a web app
+that has never had a session**. The session itself is deliberately *not* a
+cookie here, and §4.1 is the decision that says why.
 
 ---
 
@@ -96,9 +99,10 @@ wake family services today.
 
 `myunivokai-web` is hosted on **Vercel**; the gateway is a Render web service
 (`render.yaml:26-28`, and the commented-out block above it). Those are two
-different registrable domains, so a session cookie set by the gateway is a
-**third-party cookie** to the web app — blocked by default in Safari and Chrome.
-See §4.
+different registrable domains, so a session cookie set by the gateway would be
+a **third-party cookie** to the web app — blocked by default in Safari and
+Firefox, and increasingly in Chrome. This single fact is why the product
+session is a bearer token while the staff session is a cookie. §4.1.
 
 ---
 
@@ -218,56 +222,73 @@ during it.
 
 ## 4. Session architecture
 
-### 4.1 The production prerequisite: one registrable domain
+### 4.1 Decided 2026-09-02: the product session is a bearer token, not a cookie
 
-`SameSite=Lax` cookies are sent on same-**site** requests, where "site" is the
-registrable domain. So:
+**The owner's decision, and it is the right shape for this deployment.** The
+web app keeps calling the gateway directly and login is an ordinary API call:
+`POST /api/auth/login` returns the tokens in the response body, and the client
+sends `Authorization: Bearer <access>` on the calls that need a session. A
+login flow of its own for the product, disjoint from the admin one.
 
-| Web origin | API origin | Session cookie works? |
+This is not the same design as the staff session, and the reason is the
+deployment, not taste. Cookies were the right answer for admin and are the
+wrong answer here:
+
+| Web origin | API origin | Does a session **cookie** survive? |
 | --- | --- | --- |
-| `myunivokai.vercel.app` | `myunivokai-gateway.onrender.com` | **No.** Third-party cookie, blocked by default |
-| `myunivokai.com` | `api.myunivokai.com` | **Yes.** Same site, first-party, no CORS credential exemption needed |
-| `localhost:3000` | `localhost:41800` | **Yes.** Ports are not part of site — local dev is unaffected |
+| `myunivokai.vercel.app` | `myunivokai-gateway.onrender.com` | **No.** Two different sites, so it is a third-party cookie: it needs `SameSite=None`, which Safari has blocked since 2020 and Firefox blocks by default. It would work in local dev and in some Chrome installs, and **fail silently on iPhones** |
+| `myunivokai.com` + `api.myunivokai.com` | same site | Yes — but this requires buying and attaching a domain |
+| A Vercel rewrite proxying `/api/*` to the gateway | same origin | Yes, config-only — but every world payload then flows through Vercel's edge |
 
-**A custom domain is a hard prerequisite for shipping login to production**, and
-it is the single item on this plan with a lead time that is not engineering
-(DNS, and Render + Vercel domain attachment). It should be bought and attached
-in Phase A, before the code that depends on it exists.
+The gateway is **already shaped for this**: the product route group already
+admits the `Authorization` header
+([`router.go`](../../../services/api-gateway/internal/handlers/router.go)
+`AllowedHeaders`), so the bearer path needs **no CORS change, no cookie, no
+domain purchase, and no BFF**. It is the cheapest correct option available
+today.
 
-The alternative — a BFF relay in `myunivokai-web` mirroring
-`apps/myunivokai-admin/src/lib/auth-relay.ts` — works with no domain, but it
-puts every authenticated world call through a Vercel function and breaks the
-"the browser talks to exactly one API origin" invariant that
-[`frontend-gateway-consolidation.md`](frontend-gateway-consolidation.md)
-records as implemented and active. **Recommended: the domain, not the relay.**
-Keep the relay as the documented fallback.
+### 4.2 Where the tokens live, and the one risk this accepts
 
-### 4.2 Cookies
+| Token | Stored | Lifetime |
+| --- | --- | --- |
+| Access | **memory only** — a module variable, never persisted | 15 min |
+| Refresh | `localStorage` under `myunivokai.session` | 30 days, rotating |
+| `anonymousId` | `localStorage`, beside the existing `myunivokai.savedWorldIds` | 180 days (§7) |
 
-Mirroring the staff design exactly, with product-audience names:
+**The risk being accepted, stated plainly: an XSS in the web app can steal the
+refresh token, and therefore the session.** An httpOnly cookie is the only
+thing that removes that class of attack, and it is unavailable without a
+domain. What bounds the damage is already built:
 
-| Cookie | Path | Attributes | Lifetime |
-| --- | --- | --- | --- |
-| `myunivokai_web_access` | `/` | httpOnly · Secure · SameSite=Lax · host-only | access TTL |
-| `myunivokai_web_refresh` | `/api/auth` | httpOnly · Secure · SameSite=Lax · host-only | refresh TTL |
-| `myunivokai_anonymous` | `/api` | httpOnly · Secure · SameSite=Lax · host-only | 180 days (§7) |
+- **Refresh rotation with family-wide reuse detection.** A stolen refresh token
+  is single-use; the moment either the thief or the real visitor uses the
+  rotated token, `refresh_tokens.family_id` revokes the whole family.
+- **`tokenVersion` in Redis**, checked on every request, so revocation is
+  instant at any TTL.
+- **A 15-minute access token** held in memory, so a page reload does not leave
+  a long-lived credential on disk.
+- **A real CSP on the web app**, which does not exist today: the gateway sets
+  `default-src 'none'` for its own JSON responses
+  ([`security_headers.go`](../../../services/api-gateway/internal/middleware/security_headers.go)),
+  but `apps/myunivokai-web` sets no headers at all. Once the session lives in
+  `localStorage`, a CSP stops being hygiene and becomes a security control.
+  **It is a Phase A work item, not a nice-to-have.**
 
-**Host-only, never `Domain=.myunivokai.com`.** A domain-wide cookie is sent to
-every subdomain the product ever adds, and a single subdomain takeover then
-reads sessions. The cost of host-only is that a Next.js **server** component
-cannot read the session — which is acceptable because the authenticated area is
-client-rendered today and stays that way (§8). Public share pages, the only
-server-rendered fetches in the app, need no session.
+**The switch trigger.** If a custom domain is ever attached, move the session to
+httpOnly cookies — the gateway keeps accepting both, so the change is one
+release in the client and one in the gateway, and nothing about ownership,
+claim or the read path is affected. Record that as done when it happens; until
+then this section is the contract.
 
 ### 4.3 CSRF
 
-`SameSite=Lax` already blocks a cross-site `POST` from carrying the cookie,
-which removes the classic form-submission CSRF. That is necessary and not
-sufficient: add an **`Origin` header check on every state-changing product
-route** (reject a mismatch with 403), because `Lax` is a browser behaviour and
-the check is ours. No token ceremony, no hidden field — this is what the
-current guidance actually recommends for a cookie session behind a
-same-site API.
+A bearer token in a header is never attached automatically by the browser, so
+**this design has no CSRF surface at all** — no token ceremony, no double
+submit, no `Origin` check needed. That is a genuine advantage of §4.1 over the
+cookie design, and the reason it is not a compromise in every direction.
+
+CORS stays strict regardless (`API_ALLOWED_ORIGINS`, explicit origins, never a
+wildcard).
 
 ### 4.4 Token TTLs, per audience
 
@@ -482,14 +503,16 @@ Neon-specific coupling, for no additional guarantee.
 
 ```
 1. POST /api/{family}/worlds with no session
-   → gateway mints myunivokai_anonymous=<uuid> (httpOnly · Secure · Lax · 180d)
+   → gateway mints anonymousId=<uuid> and RETURNS IT IN THE 202 BODY
+     (the client stores it in localStorage beside myunivokai.savedWorldIds)
    → rides the generate command → profiles.anonymous_id → compose → worlds.anonymous_id
+   → a subsequent create sends X-Anonymous-Id and reuses the same one
 
-2. ... the visitor makes several worlds over several days, same cookie ...
+2. ... the visitor makes several worlds over several days, same anonymousId ...
 
 3. signup or login → product session
 
-4. POST /api/me/worlds/claim  (session cookie + anonymous cookie both present)
+4. POST /api/me/worlds/claim  (Authorization: Bearer + X-Anonymous-Id)
    → gateway publishes ONE commands.dna.world.claim.v1
    → dna-service, in one transaction:
         UPDATE profiles SET owner_account_id = $account, anonymous_id = NULL
@@ -501,7 +524,7 @@ Neon-specific coupling, for no additional guarantee.
                           revision = revision + 1
          WHERE anonymous_id = $anonymous AND owner_account_id IS NULL
         + one world.changed outbox row per updated world
-   → gateway clears the anonymous cookie
+   → the client drops its stored anonymousId
 ```
 
 Properties that matter:
@@ -511,14 +534,20 @@ Properties that matter:
   claimable exactly once, forever.
 - **No new event type.** `revision` + outbox + `world.changed` are all in
   production.
-- **The cookie is a bearer credential.** Whoever holds it owns those worlds.
-  httpOnly keeps it from XSS, Secure off plaintext, Lax off cross-site POSTs,
-  and 180 days bounds it.
-- **Unclaimed expiry is a PII obligation, not a tidy-up.** An anonymous world
-  holds raw personal input with no owner and therefore no one who can ever
-  request its erasure. Unclaimed worlds older than the cookie's own lifetime
-  should be purged by a scheduled job. This gap **exists in production today**
-  and this plan is the first thing that makes it fixable.
+- **The `anonymousId` is a bearer credential.** Whoever holds it owns those
+  worlds, and under §4.1 it sits in `localStorage`, so an XSS can take it. That
+  is the same exposure as the refresh token and the same mitigation applies —
+  the CSP. 180 days bounds it.
+- **It cannot be replaced by the world ids the client already stores.** A world
+  id is not a secret: `/worlds/{worldId}` is the URL a visitor sends to a
+  friend. "Claim these ids" would let the recipient of a shared link claim
+  someone else's world. The minted `anonymousId` is never in a URL, which is
+  the whole reason it exists.
+- **Unclaimed anonymous worlds have no one who can ever ask for their erasure.**
+  They hold raw personal input and no owner. Given the §10 decision that
+  nothing is physically purged, this stays an open gap rather than a solved
+  one — it is named here so it is a known state and not a discovery. It
+  **exists in production today**, unchanged by this plan.
 
 ---
 
@@ -555,7 +584,7 @@ not after it:
 
 | Identity | Worlds per day | Enforced |
 | --- | --- | --- |
-| Anonymous cookie | small (e.g. 3) | Redis counter at the gateway, **before** the generate command is published |
+| `anonymousId` | small (e.g. 3) | Redis counter at the gateway, **before** the generate command is published |
 | Verified account | larger (e.g. 20) | same |
 | Unverified account | anonymous tier | same |
 
@@ -571,20 +600,40 @@ The ownership column is what creates the legal obligation, so this ships with
 it and never "in a later sprint". First, where personal data actually is —
 this map is the deliverable, because deletion is only as good as it:
 
-| Service | Personal data | On erasure |
-| --- | --- | --- |
-| `auth-service` | `accounts.email`, password hash, `refresh_tokens`, audit rows | Delete the account; keep a minimal audit stub with no email |
-| `dna-service` | **`profiles.raw_input`** (the raw personal answers), `dna_versions.profile_dna`, `ai_generation_attempts.request_json/response_json` | Delete every row for the account's profiles |
-| `universe/nature/ocean` | `worlds.visual_intent`, **`worlds.dna_snapshot`**, `nickname`, `role`, `quote`, variants, shares | Delete the worlds (see below) |
-| `analytics-service` | admin projections, allow-listed | Must **never** receive `owner_account_id`. Aggregates survive; identifiers do not |
-| `telemetry-service` | route rollups, no PII | Untouched |
+| Service | Personal data | On account deletion (the decided behaviour) | On a real erasure request (the manual runbook) |
+| --- | --- | --- | --- |
+| `auth-service` | `accounts.email`, password hash, `refresh_tokens`, audit rows | Flag the account, revoke every refresh token, bump `tokenVersion` | Delete the account; keep an audit stub with no email |
+| `dna-service` | **`profiles.raw_input`** (the raw personal answers), `dna_versions.profile_dna`, `ai_generation_attempts.request_json/response_json` | Nothing removed. Rows stay, unreachable through any product route | Delete every row for the account's profiles |
+| `universe/nature/ocean` | `worlds.visual_intent`, **`worlds.dna_snapshot`**, `nickname`, `role`, `quote`, variants, shares | Flag the worlds; they leave every list and their shares stop resolving | Delete the worlds, variants and shares |
+| `analytics-service` | admin projections, allow-listed | Must **never** receive `owner_account_id`. Aggregates survive; identifiers do not | Unchanged - it holds no identifier to erase |
+| `telemetry-service` | route rollups, no PII | Untouched | Untouched |
 
-**Recommendation: erasure deletes the worlds, and published shares do not
-survive.** Anonymising is tempting and wrong here: the world *is* the personal
-input — `dna_snapshot` and `visual_intent` are the personal answers, restated.
-A "surviving, ownerless" world would keep exactly the data the request was
-about. Deletion is soft for **30 days** then purged, so a mistaken deletion is
-recoverable and the obligation is still met.
+**Decided 2026-09-02 by the owner: soft delete by flag, and no purge job.**
+`accounts` and `worlds` gain a deleted flag; a flagged account cannot log in,
+its worlds disappear from every list, and its published shares stop resolving.
+Nothing is physically removed, and the deletion is reversible for ever.
+
+What that buys: one column per table, no fan-out of destructive writes, no
+scheduled job, and a mis-click is always recoverable.
+
+**What it does not buy, recorded so it is a known position and not a
+discovery:** a flag is not erasure. `profiles.raw_input` and
+`worlds.dna_snapshot` — the person's own answers, restated — stay in the
+database after the person has asked to be gone. If a real erasure request
+arrives (GDPR if the product ever has an EU visitor; Vietnam's Decree 13/2023
+grants a comparable right), the flag does not discharge it.
+
+So the obligation is met by **procedure instead of by a job**: a runbook in
+[`agent-system/skills/`](../../skills/) that performs the physical deletion
+across `auth`, `dna` and the three family databases, by hand, when someone
+actually asks. That is a defensible position for a product of this size — a
+scheduled purge can be added later without changing anything else in this plan,
+because the flag and the event fan-out are the parts that are hard to retrofit
+and they ship in Phase B either way.
+
+Published shares do **not** survive the flag. A share renders a world derived
+from personal input, and leaving it live after a deletion request is the one
+outcome nobody would defend.
 
 `GET /api/me/export` returns worlds + profile DNA + account metadata as one JSON
 document. It is a second reason the read path exists.
@@ -609,11 +658,19 @@ where abandonment actually happens. Three facts decide the mitigation:
    only the *first* login after a quiet period is cold.
 3. That first login is also the least forgiving request in the product.
 
-**Recommendation: `auth-service` is the one domain service that must not sleep.**
-It is the cheapest paid instance in the fleet and it gates everything else. If
-that is refused, the fallback is honest UI — the login button says what is
-happening, the same way the create flow already handles a cold fleet — never a
-spinner that looks broken.
+**Decided 2026-09-02 by the owner: `auth-service` stays on the free tier, and
+the UI tells the truth.** The login and signup buttons say what is actually
+happening on a cold instance, the way the create flow already does through
+`SERVICE_WAKING` and the wake coordinator - never a spinner that looks broken.
+Fact 2 above is what makes this defensible: the cold path is the *first* login
+after a quiet period, not every login, because any active session keeps the
+instance warm for free.
+
+The work item this creates is therefore a **frontend** one, and it is not
+optional: a login form that appears to hang for 40 seconds is worse than one
+that says it is waking a sleeping server. Paying for a warm instance stays
+available as the one-line fix if the honest UI turns out not to be enough -
+nothing else in this plan changes if it is bought later.
 
 Wake budget:
 
@@ -657,21 +714,24 @@ Each phase is a shippable state, and each has a property that is true at the
 end of it. Sprints and stories come after approval; this is the ordering
 argument.
 
-**Phase A — an account exists.** Custom domain bought and attached. The `web`
-audience turned on in `auth-service` (signup, login, refresh, logout, per-audience
-TTLs). `internal/mail` + Resend + mock. Email verification and password reset.
-Gateway `/api/auth/*` with its own rate-limit bucket, cookies, and the Origin
-check. Account deletion (trivial now — nothing is owned yet). Web app: login,
-signup, verify, reset, account menu.
+**Phase A — an account exists.** The `web` audience turned on in `auth-service`
+(signup, login, refresh, logout, per-audience TTLs). `internal/mail` + Resend +
+mock. Email verification and password reset, with the breached-password check.
+Gateway `/api/auth/*` as a bearer-token flow with its own rate-limit bucket and
+per-email counters. Account deletion by flag (trivial now — nothing is owned
+yet). Web app: login, signup, verify, reset, account menu, the in-memory access
+token + rotating refresh in `localStorage`, **a real CSP** (§4.2), and a login
+button that tells the truth about a cold `auth-service` (§11).
 *Property: a person can hold an account. Nothing owns anything.*
 
 **Phase B — worlds are owned.** Ownership columns in three families and
 `dna-service`. Identity fields on the two commands. Write-path authorization +
-the delete endpoint. Anonymous cookie + claim (gateway → dna → families).
-Quotas. `auth-service` outbox + `account.deleted` + a handler in all four owning
-services + the PII map made real. The README correction from §3.4.
-*Property: a world has an owner, an owner can delete it, and an erasure request
-can be honoured.*
+the delete endpoint. `anonymousId` + claim (gateway → dna → only the families
+used). Quotas. `auth-service` outbox + `account.deleted` + a handler in all four
+owning services, so the flag propagates everywhere the data is. The README
+correction from §3.4, and the manual erasure runbook from §10.
+*Property: a world has an owner, an owner can delete it, and a deletion reaches
+every service that holds the data.*
 
 **Phase C — the gallery is real.** `queries.dna.library.list.v1`, `/api/me/worlds`,
 `/api/me/export`, and the web gallery reading the server list with `localStorage`
@@ -738,25 +798,29 @@ above are guesses at what was on it.
 
 ---
 
-## 16. Decisions the owner must make, not inherit
+## 16. Decisions
 
-Recommendations are given; these are the ones where the recommendation could
-reasonably be overruled and the plan would change shape.
+### Decided by the owner on 2026-09-02
 
-1. **Custom domain now?** (§4.1) — a hard prerequisite for production login.
-   If no, the BFF relay is the fallback and the FE work grows.
-2. **Does `auth-service` stop sleeping?** (§11) — a paid instance, or an honest
-   slow first login.
-3. **Erasure: delete the worlds, or anonymise them?** (§10) — recommended
-   delete, 30-day soft window. This one has legal weight.
-4. **Does a published share survive its owner's deletion?** — recommended no.
-5. **Anonymous creation stays?** — assumed **yes** throughout. If it goes, §7
-   collapses to nothing and the product loses its first impression.
-6. **The quota numbers** (§9) — 3/day anonymous, 20/day verified are
-   placeholders for a real decision about the provider bill.
-7. **Verification gate: publish, or create?** — recommended publish.
-8. **Google OAuth in the first release, or Phase D?** — recommended Phase D, so
-   that the password path is stable before a second credential type exists.
-9. **One profile per account (DNA evolution), or one per create as today?**
-   (§14) — the most product-shaping question on this list, and the one the
-   existing schema is already built for.
+| # | Decision | Consequence, recorded on purpose |
+| --- | --- | --- |
+| 1 | **Extend `auth-service` to serve the product too**, rather than build a separate `identity-service` | Keeps every hardened primitive (Argon2id, lockout, rotation, reuse detection, audit, revocation). Staff and end users share one `accounts` table, so the separation must be **structural**: `kind`, the audience claim, `end_user` holds no permission row, and a test in both directions (§12) |
+| 2 | **The product session is a bearer token in the `Authorization` header**, not a cookie. Login is an ordinary API call to the gateway and the browser keeps calling the gateway directly | No domain to buy, no BFF, no CORS change, and **no CSRF surface at all**. The cost is that an XSS can steal the refresh token from `localStorage`, which makes the web app's missing CSP a security control rather than hygiene (§4.2) |
+| 3 | **`auth-service` stays on the free tier; the UI tells the truth about a cold start** | The first login after a quiet period can take 20-60 s. Turns into a frontend work item that is not optional (§11). Buying a warm instance later changes nothing else |
+| 4 | **Account deletion is a soft flag with no purge job** | One column per table, reversible for ever, no destructive fan-out. Personal data stays in the database after a person asks to be gone, so erasure is discharged by a **manual runbook** instead of a scheduled job (§10) |
+| 5 | **Anonymous creation stays** | The whole of §7 depends on it. It is also the product's first impression, and removing it was never on the table |
+| 6 | **One profile per create, as today** | Recommended and taken: it keeps the claim a single idempotent column flip. "One profile per account, with an evolving DNA" becomes its own plan in Phase E, because it turns the claim into a *merge* of N anonymous profiles - exactly the complexity that should not share a sprint with the first login this product has ever had |
+
+### Still open, and each one changes a phase rather than the shape
+
+1. **The quota numbers** (§9). 3/day anonymous and 20/day verified are
+   placeholders standing in for a real decision about the provider bill. They
+   are the only defence that exists against a script spending the AI budget.
+2. **Verification gate: publish, or create?** Recommended **publish**, so
+   friction sits where abuse is rather than on the first impression.
+3. **Google OAuth in the first release, or Phase D?** Recommended **Phase D** —
+   let one credential type be stable before a second exists.
+4. **Passkeys at all?** Recommended yes, but only as an *additional* credential
+   and only after Phase D (§5.4).
+5. **Does the owner's own idea list change §14?** It was not in the message
+   that raised this plan. Paste it and it gets triaged on the same terms.
