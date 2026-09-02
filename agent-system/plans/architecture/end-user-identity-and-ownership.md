@@ -1,13 +1,14 @@
 # End-user identity and world ownership
 
 > **Document status:** Proposed. **No code exists.** Twenty numbered decisions
-> (24 rows, counting the four amendments `4b`, `17b`, `20b` and `20c`) were
-> taken on 2026-09-02 across **seven rounds** — most by the owner, five
+> (25 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
+> were taken on 2026-09-02 across **eight rounds** — most by the owner, five
 > delegated to me and argued in place — and all of them are recorded in §16,
-> where **nothing is left open**. Three of the last four rounds exist because
-> the owner read a decision back and found it wrong or too broad: `17b`, `20b`
-> and `20c` are corrections and narrowings, not additions, and they are marked
-> as such rather than quietly folded in. Several
+> where **nothing is left open**. Four of the last five rounds exist because
+> the owner read a decision back and found it wrong, too broad, or badly
+> named: `17b`, `20b`, `20c` and `20d` are corrections, narrowings and
+> renamings rather than additions, and they are marked as such rather than
+> quietly folded in. Several
 > decisions cut scope rather than adding it, so read §16 before any other
 > section: it supersedes parts of §3.4, §5, §9, §10, §11 and §17 in place.
 > **Scheduled:** [Sprint 08 — starts 2026-09-02](../sprints/sprint-08-2026-09-02/README.md),
@@ -1118,6 +1119,69 @@ argument — a half-exposed pair is worse than an unexposed one.
 | **`ADMIN_ROUTES_ENABLED`** | **The purest bootstrap paradox in the repo.** As a setting, turning it off removes the screen you would use to turn it back on |
 | `NATS_ACK_WAIT`, `NATS_MAX_DELIVER`, `NATS_FETCH_BATCH_SIZE`, `NATS_FETCH_MAX_WAIT`, `NATS_RETRY_DELAY` | **A trap.** These read like policy numbers, but they are **JetStream consumer state**, applied when the consumer is created. Changing the variable changes nothing until the consumer definition is updated on the server, so a setting here would silently do nothing |
 
+##### Key naming — decided 2026-09-02, after the owner rejected the first draft
+
+The owner read the batch table and caught a real defect: `auth_access_token_ttl`
+sat next to `auth_web_access_token_ttl`, so the first key **silently meant
+"admin"**. Naming one side by its audience and leaving the other implicit is
+exactly the shape of mistake that gets read wrong at 2 a.m. Their proposal was
+`auth_myunivokai_admin_access_token_ttl` and
+`auth_myunivokai_personalization_access_token_ttl`.
+
+**The intent is right and is adopted: every key states whose value it is, on
+both sides, with nothing implicit.** Two changes to the literal form, each with
+a checkable reason:
+
+1. **`myunivokai` comes out, because it is already there.** A setting's Redis
+   key is `<REDIS_KEY_PREFIX>:setting:<key>`, and `REDIS_KEY_PREFIX` defaults
+   to `myunivokai` ([`config.go:83`](../../../services/auth-service/internal/config/config.go)).
+   The literal form would produce
+   `myunivokai:setting:auth_myunivokai_admin_access_token_ttl`. There is also
+   no foreign namespace to disambiguate from: every row in `system_settings`
+   in `myunivokai_auth` is this product's.
+2. **The key says `web`, not `personalization` — and the *description* says
+   personalization.** This is the one place I argue against the owner's word,
+   and only here. `aud=web` is **frozen** by §17: it is written into
+   `contracts_auth.go`, into tokens already issued, and into
+   `CHECK (audience IN ('admin','web'))` on two tables. A key called
+   `…personalization…` that governs tokens whose claim reads `web` creates two
+   vocabularies for one concept, and §17's warning names this exact move —
+   *"this is exactly the kind of tidy-up a future reader will attempt"*.
+   The operator's need is met without the split, because §9.3's registry
+   already declares a human description that the admin screen renders:
+
+   > `auth.token.web.access_ttl` — *"Access token lifetime for the
+   > personalization web app (token audience `web`)."*
+
+   The person reading the screen sees "personalization"; the person reading a
+   token, a migration or a contract sees `web`; and they are provably the same
+   value. **If the owner still wants the literal word in the key, it is one
+   string change and nothing else in the plan depends on it** — the objection
+   is a naming cost, not a design one.
+
+**The scheme:** `<domain>.<group>.<subject>.<thing>`, lower snake within a
+segment, dots between. Constrained in the registry to
+`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$` and pinned by the registry test.
+
+Three properties earn the dots over flat snake_case:
+
+- **The admin screen groups by prefix**, so `auth.token.*` and `auth.lockout.*`
+  become sections with no separate category column and no frontend change when
+  a setting is added.
+- **A key is visibly not an environment variable.** `AUTH_ACCESS_TOKEN_TTL` and
+  `auth.token.admin.access_ttl` cannot be confused in a grep, which matters
+  because the env var **stays** as that setting's default.
+- **The varying part is the subject, so siblings sort together** — the admin
+  and web token lifetimes sit next to each other, which is how an operator
+  compares them.
+
+And one rule about the first segment: **`<domain>` names what the setting
+governs, not the service that stores it.** The quota limits are `quota.ai.*`
+even though the row lives in `myunivokai_auth`, because calling them `auth.*`
+would be a lie about what they control — `auth-service` is the control plane
+(§9.3, last subsection), not the owner of every meaning it stores.
+
+
 ##### Batch 1 — decided 2026-09-02: `auth-service` only, nine settings
 
 The owner narrowed the scope directly: *"list what can be configured in
@@ -1134,20 +1198,27 @@ on each failed login ([`auth_service.go:92`](../../../services/auth-service/inte
 So each is a **one-line swap** from a config field to a lookup — where the
 gateway's equivalents would each need their component restructured first.
 
-| Setting | Type | Default | Cost to make it live |
-| --- | --- | --- | --- |
-| `ai_generation_daily_limit_anonymous` | int | `5` (new constant) | **Born a setting.** No refactor at all |
-| `ai_generation_daily_limit_account` | int | `25` (new constant) | Same |
-| `auth_max_failed_attempts` | int | `5` | One line; already read per call |
-| `auth_lockout_duration` | duration | `15m` | One line, same call site |
-| `auth_refresh_token_ttl` | duration | `14d` (admin) | One line; already read per call |
-| `auth_invite_token_ttl` | duration | `7d` | One line; already read per call |
-| `auth_web_refresh_token_ttl` | duration | `3mo` (§4.4) | **New in this sprint.** Free |
-| `auth_web_access_token_ttl` | duration | `7d` (§4.4) | **New**, and see the note below |
-| `auth_access_token_ttl` | duration | `10m` (admin) | Comes along free with the one above |
+| Setting key | Type | Default | Replaces | Cost to make it live |
+| --- | --- | --- | --- | --- |
+| `quota.ai.daily_limit.anonymous` | int | `5` | — | **Born a setting.** No refactor at all |
+| `quota.ai.daily_limit.account` | int | `25` | — | Same |
+| `auth.token.admin.access_ttl` | duration | `10m` | `AUTH_ACCESS_TOKEN_TTL` | The only one not already per-call — see the note below, where it turns out to be free anyway |
+| `auth.token.admin.refresh_ttl` | duration | `14d` | `AUTH_REFRESH_TOKEN_TTL` | One line; already read per call |
+| `auth.token.web.access_ttl` | duration | `7d` (§4.4) | — | **New in this sprint**, and see the note below |
+| `auth.token.web.refresh_ttl` | duration | `3mo` (§4.4) | — | **New.** Free |
+| `auth.token.invite_ttl` | duration | `7d` | `AUTH_INVITE_TOKEN_TTL` | One line; already read per call |
+| `auth.lockout.max_failed_attempts` | int | `5` | `AUTH_MAX_FAILED_ATTEMPTS` | One line; already read per call |
+| `auth.lockout.duration` | duration | `15m` | `AUTH_LOCKOUT_DURATION` | One line, same call site |
 
-Two types, one service, and the two `int` values plus seven durations are
-enough to prove a registry — which one setting would not have been.
+The last two are **not** token lifetimes and must never be named as though they
+were: `auth.lockout.duration` is how long an account stays locked after
+`auth.lockout.max_failed_attempts` consecutive failed logins
+([`auth_service.go:92`](../../../services/auth-service/internal/services/auth_service.go)).
+They are grouped under `auth.lockout.*` for exactly that reason.
+
+Two types, one service: **three `int` values and six durations**, across three
+groups. That is enough to prove a registry and to prove the grouping, which a
+single setting would not have been.
 
 **The note, and it is a piece of luck.** `AccessTokenTTL` is the *only* auth
 value baked in at construction:
@@ -1155,9 +1226,10 @@ value baked in at construction:
 ([`main.go:95`](../../../services/auth-service/cmd/service/main.go)). But
 `S8-IDENTITY-001` **already has to restructure that**, because one issuer
 carrying one TTL cannot serve two audiences whose tokens live 10 minutes and 7
-days. Once the TTL moves to the call site, making it a setting costs nothing
-extra — which is why the admin value comes along rather than being left behind
-as the odd one out.
+days. Once the TTL moves to the call site, **both** `auth.token.admin.access_ttl`
+and `auth.token.web.access_ttl` are settings for free — which is why the admin
+value comes along rather than being left behind as the odd one out. It is also
+why this story is sequenced **after** `S8-IDENTITY-001` rather than beside it.
 
 **Removed from an earlier draft of this batch by the same decision:** the three
 gateway cache TTLs (`WORLD_`/`SHARE_`/`JOB_CACHE_TTL`). Each is gateway-read
@@ -1747,6 +1819,7 @@ the first version was wrong rather than hiding it behind a clean list.
 | 20 | **The quota limits are admin settings in `auth-service`, not environment variables** — and the mechanism is general, so later settings need no `.env` entry either (§9.3) | Taken because `.env` is already at 170 config reads over 64 distinct names, 105 example lines and 176 `render.yaml` keys. Costs one table, one admin screen, two permissions and a Redis mirror. **Its one real risk is a cold start on the create path**, which is why the gateway reads only Redis and falls back to a compiled-in default rather than asking `auth-service` — the deliberate inversion of `RevocationChecker`. Counting and enforcement are unaffected by provider (owner's instruction): the mock provider suppresses the *toast*, never the *counter* |
 | 20b | **All 64 variables were audited** (§9.3), and the rest are classified as never-a-setting or as costed batch-2 candidates | The owner asked for everything movable to be moved. Three facts found in the audit shrank that honestly rather than by preference: **five of the seven services have no Redis client**, so a setting read outside the gateway or `auth-service` is a project; **no value is read at the moment of use in the gateway** — every one is baked into a struct field at construction, so a registry row alone makes nothing live there; and **a value with a twin on the other side of a boundary must not be settable on one side only**. The audit also names four values that read as policy and are traps: the CORS origins, `TRUST_PROXY`, `REDIS_KEY_PREFIX`, and `ADMIN_ROUTES_ENABLED` — which as a setting would remove the screen used to turn it back on |
 | 20c | **Batch 1 is `auth-service`'s own values only — nine settings** (§9.3). The other services are out of scope | The owner narrowed it after reading 20b: *"list what can be configured in auth-service; the other services are too hard, skip them."* This makes the batch **better**, not just smaller, because `auth-service` is the mirror of the gateway — `service.cfg.MaximumFailedAttempts`, `LockoutDuration`, `RefreshTokenTTL` and `InviteTokenTTL` are **already read at the moment of use**, so each is a one-line swap. Cost of the narrowing: the three gateway cache TTLs drop to batch 2. Exception kept on purpose: the gateway still gains **one** reader for the two new quota limits, because it is the service that enforces the quota — one new reader for new values, not a migration |
+| 20d | **Setting keys are dotted and state their subject explicitly** — `auth.token.admin.access_ttl`, `auth.token.web.access_ttl`, `auth.lockout.duration`, `quota.ai.daily_limit.anonymous` (§9.3) | The owner caught the real defect: `auth_access_token_ttl` beside `auth_web_access_token_ttl` meant the first key **silently said "admin"**. Their form was `auth_myunivokai_<audience>_access_token_ttl`; two changes with checkable reasons. `myunivokai` comes out because the Redis key is already `<REDIS_KEY_PREFIX>:setting:<key>` and that prefix *is* `myunivokai`. And the key says `web` rather than `personalization` because §17 **freezes `aud=web`** in contracts, in issued tokens and in a `CHECK` on two tables — so the app name goes in the description the admin screen renders, not in the key, and one concept keeps one vocabulary. If the owner still prefers the literal word it is a one-string change that nothing depends on |
 
 ### Still open
 

@@ -576,24 +576,43 @@ Tasks:
       (`string` / `int` / `bool` / `duration` — the four the config loader
       already has), default, bounds and a description the admin screen renders.
       Pin it with a test, as `enforcedPermissions` is pinned.
+- [ ] Adopt the key scheme `<domain>.<group>.<subject>.<thing>`, validated in
+      the registry against `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$` and pinned by
+      the registry test. `<domain>` names **what the setting governs, not the
+      service that stores it** — which is why the quota keys are `quota.*`
+      while living in `myunivokai_auth`.
 - [ ] Declare **batch 1's nine settings — `auth-service`'s own, by the owner's
-      narrowing** (plan §9.3): the two AI generation limits and the two new web
-      token TTLs (all four **born as settings**), plus
-      `auth_max_failed_attempts`, `auth_lockout_duration`,
-      `auth_refresh_token_ttl`, `auth_invite_token_ttl` and
-      `auth_access_token_ttl`. The five migrated ones keep their environment
-      variable as the **default** — nothing is deleted from `.env`, because
-      removing the fallback breaks the empty-table invariant.
-- [ ] Swap four of those call sites from `service.cfg.X` to a lookup. Each is
-      **one line**, because in `auth-service` — unlike the gateway — these are
+      narrowing** (plan §9.3):
+
+      | Key | Type | Default | Replaces |
+      | --- | --- | --- | --- |
+      | `quota.ai.daily_limit.anonymous` | int | `5` | — |
+      | `quota.ai.daily_limit.account` | int | `25` | — |
+      | `auth.token.admin.access_ttl` | duration | `10m` | `AUTH_ACCESS_TOKEN_TTL` |
+      | `auth.token.admin.refresh_ttl` | duration | `14d` | `AUTH_REFRESH_TOKEN_TTL` |
+      | `auth.token.web.access_ttl` | duration | `7d` | — |
+      | `auth.token.web.refresh_ttl` | duration | `3mo` | — |
+      | `auth.token.invite_ttl` | duration | `7d` | `AUTH_INVITE_TOKEN_TTL` |
+      | `auth.lockout.max_failed_attempts` | int | `5` | `AUTH_MAX_FAILED_ATTEMPTS` |
+      | `auth.lockout.duration` | duration | `15m` | `AUTH_LOCKOUT_DURATION` |
+
+      The five with a `Replaces` value keep that environment variable as their
+      **default** — nothing is deleted from `.env`, because removing the
+      fallback breaks the empty-table invariant.
+- [ ] Give `auth.token.web.*` descriptions that say **"personalization web
+      app"** in words while the key says `web`, so the operator reads the app
+      name and the code keeps one vocabulary for `aud=web`, which §17 freezes.
+- [ ] Swap four call sites from `service.cfg.X` to a lookup. Each is **one
+      line**, because in `auth-service` — unlike the gateway — these are
       already read at the moment of use: `auth_service.go:92` for the two
       lockout values, `:238` for the refresh TTL,
       `role_management_service.go:68` for the invite TTL.
-- [ ] `auth_access_token_ttl` is the only auth value baked in at construction
-      (`NewTokenIssuer(key, cfg.AccessTokenTTL)`, `cmd/service/main.go:95`).
-      **`S8-IDENTITY-001` already has to restructure that**, because one issuer
-      with one TTL cannot serve a 10-minute admin token and a 7-day web token —
-      so sequence this after `001` and the setting costs nothing extra.
+- [ ] The two `access_ttl` keys are the only auth values baked in at
+      construction (`NewTokenIssuer(key, cfg.AccessTokenTTL)`,
+      `cmd/service/main.go:95`). **`S8-IDENTITY-001` already has to restructure
+      that**, because one issuer with one TTL cannot serve a 10-minute admin
+      token and a 7-day web token — so **sequence this story after `001`** and
+      both settings cost nothing extra.
 - [ ] Take **nothing** from the gateway's existing config. The gateway gains
       exactly one settings reader, for the two new quota limits, because it is
       the service that enforces the quota. Nothing it reads today changes.
