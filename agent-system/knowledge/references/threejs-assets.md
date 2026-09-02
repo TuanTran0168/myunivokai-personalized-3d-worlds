@@ -132,7 +132,7 @@ geometry — consistent with the Draco-decoder-self-hosting debt noted in
   all. That conclusion did not follow from the evidence, and its own bullet
   above already said a static account API token is accepted. The owner has since
   provisioned exactly such a token in
-  `apps/myunivokai-web/.env.local.secret` (gitignored, offline tooling only, no
+  `apps/myunivokai-personalization/.env.local.secret` (gitignored, offline tooling only, no
   `NEXT_PUBLIC_` prefix), and both endpoints were exercised with it:
   `GET /v3/search?type=models&downloadable=true&license=cc0` returns results, and
   `GET /v3/models/{uid}/download` returns **HTTP 200** with signed `glb`, `gltf`,

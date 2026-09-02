@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- Tab icon: the same mark as apps/myunivokai-web/src/app/icon.svg, reused
+  <!-- Tab icon: the same mark as apps/myunivokai-personalization/src/app/icon.svg, reused
        verbatim (down to the recut-for-16px stroke weight) rather than
        inventing a second symbol for this app — see brand-mark.tsx for why. -->
   <defs>

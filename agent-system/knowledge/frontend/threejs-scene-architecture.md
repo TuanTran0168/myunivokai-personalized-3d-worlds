@@ -90,7 +90,7 @@ universe is just the first renderer; City will be a new renderer, never a
 modification of the old one.
 
 ```txt
-apps/myunivokai-web/src/
+apps/myunivokai-personalization/src/
 ├── components/UniverseCanvas.tsx          <- shell: Canvas + camera + bloom + hover overlay
 └── features/scene-renderers/
     ├── types.ts                           <- SceneRendererProps: the contract every renderer implements
@@ -162,7 +162,7 @@ Every tunable is a named constant at the top of its file (per repo coding style)
 
 ### Swapping/adding planet textures
 
-Drop a file into `apps/myunivokai-web/public/textures/solar-system/` and add an
+Drop a file into `apps/myunivokai-personalization/public/textures/solar-system/` and add an
 entry to `planetTextureCatalog.ts` (with `axialTiltRadians`, plus
 `ringTextureUrl` for ringed planets). Textures come from Solar System Scope
 (CC BY 4.0) — keep the credit in `ATTRIBUTION.md`.

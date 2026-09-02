@@ -3,7 +3,7 @@
 > **Document status:** Active
 > **Last source review:** 2026-08-29
 
-**Scope:** `apps/myunivokai-web`, `apps/myunivokai-admin`, and everything they
+**Scope:** `apps/myunivokai-personalization`, `apps/myunivokai-admin`, and everything they
 render — three.js scenes, the audio graph, the create form, world and share
 routes.
 

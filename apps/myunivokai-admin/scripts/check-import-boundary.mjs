@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Enforces agent-system/plans/services/auth-and-admin-plan.md#the-admin-app's hard
-// constraint: this app shares no code with apps/myunivokai-web and never
+// constraint: this app shares no code with apps/myunivokai-personalization and never
 // imports three.js — the two are meant to have zero runtime dependency on
 // each other, and a stray import here is exactly how that would happen
 // silently. See sprint-04 user-stories.md's S4-AUTH-004 task list.
@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 const SOURCE_ROOT = join(import.meta.dirname, "..", "src");
 const FORBIDDEN_PATTERNS = [
-  { name: "apps/myunivokai-web", regex: /myunivokai-web/ },
+  { name: "apps/myunivokai-personalization", regex: /myunivokai-personalization/ },
   { name: "three.js", regex: /(?:^|["'\s])three(?:["'/]|$)/, importOnly: true },
   { name: "@react-three/*", regex: /@react-three\// }
 ];
@@ -51,11 +51,11 @@ function findViolations(filePath) {
 const violations = collectSourceFiles(SOURCE_ROOT).flatMap(findViolations);
 
 if (violations.length > 0) {
-  console.error("Import boundary violations (apps/myunivokai-admin must not depend on myunivokai-web or three.js):");
+  console.error("Import boundary violations (apps/myunivokai-admin must not depend on myunivokai-personalization or three.js):");
   for (const violation of violations) {
     console.error(`  ${violation.filePath}:${violation.line} imports "${violation.importSource}" (${violation.rule})`);
   }
   process.exit(1);
 }
 
-console.log("Import boundary check passed: no imports from myunivokai-web or three.js.");
+console.log("Import boundary check passed: no imports from myunivokai-personalization or three.js.");

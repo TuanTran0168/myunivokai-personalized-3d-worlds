@@ -381,7 +381,7 @@ make local-down
 ```txt
 .
 ├── apps/
-│   ├── myunivokai-web/               # Next.js 15 + React Three Fiber 3D client
+│   ├── myunivokai-personalization/   # Next.js 15 + React Three Fiber 3D client
 │   └── myunivokai-admin/             # Next.js 15 staff management console
 ├── services/
 │   ├── api-gateway/                  # Public Go edge gateway (routing, rate limiting, caching)

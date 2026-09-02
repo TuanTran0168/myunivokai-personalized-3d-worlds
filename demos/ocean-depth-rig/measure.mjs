@@ -47,7 +47,7 @@ const repoRoot = resolve(here, "../..");
 // importing file, not from the working directory. createRequire moves the
 // resolution base to the app instead of vendoring anything here.
 const appRequire = createRequire(
-  pathToFileURL(resolve(repoRoot, "apps/myunivokai-web/package.json"))
+  pathToFileURL(resolve(repoRoot, "apps/myunivokai-personalization/package.json"))
 );
 const { chromium } = appRequire("@playwright/test");
 

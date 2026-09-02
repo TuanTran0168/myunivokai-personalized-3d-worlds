@@ -69,7 +69,7 @@ go test ./...
 go vet ./...
 
 # Frontend
-cd apps/myunivokai-web
+cd apps/myunivokai-personalization
 npm run typecheck
 npm run lint
 npm run build

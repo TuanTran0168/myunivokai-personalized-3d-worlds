@@ -15,26 +15,26 @@ go.sum linguist-generated=true
 contracts/schemas/** linguist-detectable=false
 contracts/fixtures/** linguist-detectable=false
 contracts/openapi.yaml linguist-detectable=false
-apps/myunivokai-web/public/** linguist-vendored=true
+apps/myunivokai-personalization/public/** linguist-vendored=true
 
 # Mark TS config/tooling files as generated (not app source)
-apps/myunivokai-web/next-env.d.ts linguist-generated=true
-apps/myunivokai-web/tailwind.config.ts linguist-generated=true
-apps/myunivokai-web/vitest.config.ts linguist-generated=true
-apps/myunivokai-web/next.config.* linguist-generated=true
+apps/myunivokai-personalization/next-env.d.ts linguist-generated=true
+apps/myunivokai-personalization/tailwind.config.ts linguist-generated=true
+apps/myunivokai-personalization/vitest.config.ts linguist-generated=true
+apps/myunivokai-personalization/next.config.* linguist-generated=true
 
 # 3D scene renderers are Three.js/R3F engine-layer infrastructure (~493KB)
 # Marking as vendored so Go ranks #1 while app-layer TS stays visible
-apps/myunivokai-web/src/features/** linguist-vendored=true
+apps/myunivokai-personalization/src/features/** linguist-vendored=true
 
-# apps/myunivokai-admin: same Go-stays-#1 policy as myunivokai-web above
+# apps/myunivokai-admin: same Go-stays-#1 policy as myunivokai-personalization above
 apps/myunivokai-admin/public/** linguist-vendored=true
 apps/myunivokai-admin/next-env.d.ts linguist-generated=true
 apps/myunivokai-admin/next.config.* linguist-generated=true
 apps/myunivokai-admin/vitest.config.ts linguist-generated=true
 apps/myunivokai-admin/components.json linguist-generated=true
 # shadcn/ui-generated component library (~39KB) — copied boilerplate, not
-# hand-written app logic, same reasoning as the myunivokai-web line above.
+# hand-written app logic, same reasoning as the myunivokai-personalization line above.
 apps/myunivokai-admin/src/components/ui/** linguist-vendored=true
 apps/myunivokai-admin/src/hooks/use-mobile.ts linguist-vendored=true
 apps/myunivokai-admin/src/lib/utils.ts linguist-vendored=true

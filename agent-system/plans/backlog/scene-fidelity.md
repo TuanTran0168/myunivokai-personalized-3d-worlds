@@ -55,10 +55,10 @@ about 2% and cannot be rescued with a mirror.
 
 Source evidence:
 
-- `apps/myunivokai-web/src/features/scene-renderers/forest/forestMath.ts`
-- `apps/myunivokai-web/src/features/scene-renderers/forest/ForestPondWater.tsx`
-- `apps/myunivokai-web/src/features/scene-renderers/forest/ForestTerrain.tsx`
-- `apps/myunivokai-web/src/features/scene-renderers/forest/forestMath.test.ts`
+- `apps/myunivokai-personalization/src/features/scene-renderers/forest/forestMath.ts`
+- `apps/myunivokai-personalization/src/features/scene-renderers/forest/ForestPondWater.tsx`
+- `apps/myunivokai-personalization/src/features/scene-renderers/forest/ForestTerrain.tsx`
+- `apps/myunivokai-personalization/src/features/scene-renderers/forest/forestMath.test.ts`
 - `agent-system/plans/frontend/forest-realism-roadmap.md`
 
 Tasks:

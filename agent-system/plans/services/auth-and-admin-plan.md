@@ -252,7 +252,7 @@ admin browser
             -> nature.admin.*.v1            Core NATS  -> nature-service
             -> dna.admin.*.v1               Core NATS  -> dna-service
 
-myunivokai-web (3D)  ->  services/api-gateway  /api/{family}/*  ... unchanged
+myunivokai-personalization (3D)  ->  services/api-gateway  /api/{family}/*  ... unchanged
 ```
 
 ### Amended — one gateway, two route groups
@@ -597,7 +597,7 @@ Non-negotiable in this app:
 - Every route requires a session. Middleware denies by default; the login page
   is the single exception.
 - `noindex`, no sitemap, no share pages, no static generation of record data.
-- **Zero imports from `apps/myunivokai-web`**, and no three.js. The only shared
+- **Zero imports from `apps/myunivokai-personalization`**, and no three.js. The only shared
   code is `contracts/`. Add a CI check for this — separation that is not tested
   is separation until the first deadline.
 

@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* House palette, v3 — dark liquid glass, grounded in apps/myunivokai-web's
+/* House palette, v3 — dark liquid glass, grounded in apps/myunivokai-personalization's
    own tokens (globals.css "The Vitrine + Liquid Glass") rather than invented
    from scratch: same void/paper/brass triad, same brass-rgb, same hairline
    border. v2 was a neutral light dashboard (Linear/Vercel/Stripe) — reviewed
@@ -13,7 +13,7 @@
    every card to be glass, not just the nav layer — a deliberate departure
    from Apple's own "glass is nav-only" rule, chosen for this app on purpose.
    There is no light/dark toggle yet (ThemeProvider is wired for one later),
-   so only one set of values is defined — same as myunivokai-web, which ships
+   so only one set of values is defined — same as myunivokai-personalization, which ships
    a single dark theme with no toggle either. */
 @theme inline {
   --color-background: var(--background);
@@ -63,7 +63,7 @@
 :root {
   color-scheme: dark;
 
-  /* Same brass as apps/myunivokai-web and the shared BrandMark gradient's
+  /* Same brass as apps/myunivokai-personalization and the shared BrandMark gradient's
      middle stop (#C9A35B = rgb(201 163 91)) — one brand accent across both
      apps, not two similar-but-different metallic yellows. */
   --brass-rgb: 201 163 91;

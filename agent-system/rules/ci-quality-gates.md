@@ -73,7 +73,7 @@ go mod verify -> go vet ./... -> go test ./... -> go build ./...
 Two, one per app:
 
 ```txt
-# apps/myunivokai-web
+# apps/myunivokai-personalization
 npm ci -> npm run typecheck -> npm run lint -> npm run test -> npm run build
 
 # apps/myunivokai-admin
@@ -81,7 +81,7 @@ npm ci -> npm run typecheck -> npm run lint -> npm run check:boundary -> npm run
 ```
 
 `check:boundary` is the admin app's own gate and exists only there: it fails
-the build on any import of `apps/myunivokai-web` or three.js, which is the
+the build on any import of `apps/myunivokai-personalization` or three.js, which is the
 only mechanical way to keep "the two apps share no code" true over time.
 
 Go and npm dependency caches are enabled, and the concurrency group cancels a

@@ -32,7 +32,7 @@ go.work.sum
 !services/nature-service/.env.local
 !services/dna-service/.env.local
 !services/api-gateway/.env.local
-!apps/myunivokai-web/.env.local
+!apps/myunivokai-personalization/.env.local
 !apps/myunivokai-admin/.env.local
 !infra/.env.local
 !services/auth-service/.env.local
@@ -71,8 +71,8 @@ contracts/rust/Cargo.lock
 
 # Playwright's own run artefacts: traces, videos, retries, the HTML report.
 # Large, per-run, and reproducible by re-running the suite.
-apps/myunivokai-web/playwright-report/
-apps/myunivokai-web/test-results/
+apps/myunivokai-personalization/playwright-report/
+apps/myunivokai-personalization/test-results/
 
 # e2e/shots/ is deliberately NOT ignored.
 #

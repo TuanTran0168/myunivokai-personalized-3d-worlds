@@ -95,14 +95,14 @@ And the label still switches between the two states.
 
 Source evidence:
 
-- `apps/myunivokai-web/src/components/WorldChromeToggle.tsx` (shared hook + button)
-- `apps/myunivokai-web/src/lib/formRailCollapse.ts`
-- `apps/myunivokai-web/src/lib/formRailCollapse.test.ts`
-- `apps/myunivokai-web/src/app/page.tsx`
-- `apps/myunivokai-web/src/app/worlds/[worldId]/page.tsx`
-- `apps/myunivokai-web/src/features/share/ShareWorldView.tsx`
-- `apps/myunivokai-web/src/app/layout.tsx` (header/footer exits)
-- `apps/myunivokai-web/src/app/globals.css` (`.form-rail-collapse`, `.immersive-exit`)
+- `apps/myunivokai-personalization/src/components/WorldChromeToggle.tsx` (shared hook + button)
+- `apps/myunivokai-personalization/src/lib/formRailCollapse.ts`
+- `apps/myunivokai-personalization/src/lib/formRailCollapse.test.ts`
+- `apps/myunivokai-personalization/src/app/page.tsx`
+- `apps/myunivokai-personalization/src/app/worlds/[worldId]/page.tsx`
+- `apps/myunivokai-personalization/src/features/share/ShareWorldView.tsx`
+- `apps/myunivokai-personalization/src/app/layout.tsx` (header/footer exits)
+- `apps/myunivokai-personalization/src/app/globals.css` (`.form-rail-collapse`, `.immersive-exit`)
 
 Tasks:
 

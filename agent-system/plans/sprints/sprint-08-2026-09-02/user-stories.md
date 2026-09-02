@@ -214,7 +214,7 @@ CSP violation.
 Source evidence:
 - agent-system/plans/architecture/end-user-identity-and-ownership.md — §4.2, §4.5, §16 decisions 2 and 14
 - services/api-gateway/internal/middleware/security_headers.go — the gateway sets headers for its own JSON; the web app sets none, which is why the CSP is in this story
-- apps/myunivokai-web/src/lib/api.ts — the client that gains the header and the refresh-once behaviour
+- apps/myunivokai-personalization/src/lib/api.ts — the client that gains the header and the refresh-once behaviour
 
 Tasks:
 - [ ] `feat/fe/product-session-and-csp`: add a session module that writes, reads
@@ -770,9 +770,9 @@ provider name reaching it.
 Source evidence:
 - agent-system/plans/architecture/end-user-identity-and-ownership.md — §9.1 (including the failure the owner found), §15 (no silent downgrade, and no announced downgrade that did not happen), §16 decisions 17 and 17b
 - render.yaml — `AI_PROVIDER: mock` in production, which is what makes the quiet case the *current* case rather than a hypothetical
-- apps/myunivokai-web/package.json — `sonner@2.0.7` is already a dependency
-- apps/myunivokai-web/src/app/layout.tsx — the `<Toaster>` is already mounted app-wide and already cleared below the header
-- apps/myunivokai-web/src/app/globals.css — `.lg-toast` is already the Liquid-Glass material, including the inset specular top edge
+- apps/myunivokai-personalization/package.json — `sonner@2.0.7` is already a dependency
+- apps/myunivokai-personalization/src/app/layout.tsx — the `<Toaster>` is already mounted app-wide and already cleared below the header
+- apps/myunivokai-personalization/src/app/globals.css — `.lg-toast` is already the Liquid-Glass material, including the inset specular top edge
 
 Tasks:
 - [ ] `feat/fe/mock-tier-toast`: one `toast()` call on the existing stack,
@@ -843,8 +843,8 @@ And a signed-out visitor's gallery behaves exactly as it does today.
 
 Source evidence:
 - agent-system/plans/architecture/end-user-identity-and-ownership.md — §8, §14.1, §18 (this is the only real rework in the plan)
-- apps/myunivokai-web/src/lib/savedWorlds.ts — `SAVED_WORLD_IDENTIFIERS_STORAGE_KEY`, the entire current notion of ownership
-- apps/myunivokai-web/src/app/gallery/page.tsx — the page that changes source
+- apps/myunivokai-personalization/src/lib/savedWorlds.ts — `SAVED_WORLD_IDENTIFIERS_STORAGE_KEY`, the entire current notion of ownership
+- apps/myunivokai-personalization/src/app/gallery/page.tsx — the page that changes source
 
 Tasks:
 - [ ] `feat/fe/account-gallery`: read `/api/me/worlds` when signed in, and keep
@@ -862,7 +862,8 @@ Tasks:
 
 ### S8-IDENTITY-017 — `myunivokai-web` becomes `myunivokai-personalization`
 
-Status: Planned
+Status: Implemented — `feat/repo/rename-web-to-personalization` (landed before
+`S8-IDENTITY-001`, per this story's own sequencing rule)
 Priority: P1
 
 As the product owner,
@@ -890,10 +891,44 @@ Source evidence:
 - .github/workflows/ci.yml — the `paths:` filters that stop matching silently
 
 Tasks:
-- [ ] `feat/repo/rename-web-to-personalization`: move the folder and update
+- [x] `feat/repo/rename-web-to-personalization`: move the folder and update
       every reference, in one commit, with no behaviour change alongside it.
-- [ ] Verify the renamed CI job appears in the run, not merely that CI is
+- [x] Verify the renamed CI job appears in the run, not merely that CI is
       green.
-- [ ] Land this **before `S8-IDENTITY-001` or after `S8-IDENTITY-016`** —
+- [x] Land this **before `S8-IDENTITY-001` or after `S8-IDENTITY-016`** —
       never between, because it touches almost every path in CI and none of the
       logic, so beside a feature branch it buys nothing but merge conflicts.
+
+Corrected during execution, 2026-09-02 — three of this story's own claims
+about the repository were wrong, and the record is worth more than the tidy
+version:
+
+1. **There is no `paths:` filter anywhere in `.github/workflows/`.** Every job
+   runs on every push and pull request to `staging` and `main`. So the risk
+   this story built its hardest acceptance criterion around — *"a stale filter
+   fails by silently not running rather than by going red"* — **did not
+   exist**. The real coupling is `working-directory: apps/myunivokai-web` and
+   `cache-dependency-path:` in the two frontend jobs, and a wrong value there
+   fails **loudly**, which is the opposite failure mode. Both were updated.
+2. **`Makefile` and `run.sh` reference no app path at all.** Both files exist;
+   neither needed a single character changed. They were named in this story's
+   scenario without being checked.
+3. **`agent-system/` was not renamed wholesale**, which the scenario implies.
+   The split follows [`CLAUDE.md`](../../../../CLAUDE.md)'s own rule: paths
+   were rewritten in `knowledge/`, `rules/`, `agents/`, `skills/`, active
+   `plans/` and `project-context.json`, and left untouched in `evolution/`,
+   `memory/execution-records/`, `plans/architecture/v1-2026-07-22/` and the
+   sprint-01 / sprint-04 / sprint-07 folders — 16 documents in total. Those
+   record a moment that has passed, and the path they name was correct when
+   they were written; rewriting them would forge the record rather than fix
+   it. The consequence, accepted deliberately: those 16 documents contain
+   links that no longer resolve.
+
+One scope decision inside the rename, so it is not rediscovered later: the
+**Vercel deployment name stays `myunivokai-web`** per decision 13, so the
+commented `render.yaml` block keeps `name: myunivokai-web` while its
+`dockerfilePath` and `dockerContext` move. The distinction is now written into
+`render.yaml`, `deploy/single-container/Dockerfile` and
+`deploy/single-container/README.md` in words, because a reader who saw only
+the folder name would otherwise "fix" the deployment name and break every
+share URL already handed out.

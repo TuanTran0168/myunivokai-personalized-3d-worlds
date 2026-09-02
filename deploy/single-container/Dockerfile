@@ -5,9 +5,11 @@
 # for why (the 750-hour free-tier pool is shared account-wide, split eight
 # ways today) and why this stays on Render rather than a different platform.
 #
-# Scope, deliberately: the two Next.js frontends (myunivokai-web,
-# myunivokai-admin) are NOT part of this image. myunivokai-web already runs
-# on Vercel today (render.yaml says so at its own top), which has no
+# Scope, deliberately: the two Next.js frontends
+# (myunivokai-personalization, myunivokai-admin) are NOT part of this image.
+# The personalization app already runs on Vercel today, as the deployment
+# still named `myunivokai-web` (render.yaml says so at its own top; the
+# deployment name deliberately outlived the folder rename), which has no
 # per-service instance-hour budget to escape in the first place, and
 # reverse-proxying a second Next.js app behind a shared path prefix would
 # need every hardcoded cookie Path in apps/myunivokai-admin (see

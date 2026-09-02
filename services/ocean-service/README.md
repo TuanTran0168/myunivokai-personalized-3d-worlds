@@ -60,7 +60,7 @@ Three consequences are worth knowing before changing any of it:
   [agent-system/plans/services/ocean-service-plan.md](../../agent-system/plans/services/ocean-service-plan.md).
 
 The curve is implemented **twice**: here, and in
-`apps/myunivokai-web/src/lib/oceanDepthCurve.ts`, which the create form's live
+`apps/myunivokai-personalization/src/lib/oceanDepthCurve.ts`, which the create form's live
 preview needs. There is no compiler between them, so
 `oceanDepthCurve.test.ts` reads this service's own golden fixtures out of
 `internal/services/testdata/` and asserts the TypeScript reproduces every stored
@@ -108,7 +108,7 @@ when this one was written.
 
 There are none. The `ocean-1` catalogue resolves every model key to procedural
 geometry built in the browser
-(`apps/myunivokai-web/src/features/scene-renderers/ocean/oceanModels.ts`), and
+(`apps/myunivokai-personalization/src/features/scene-renderers/ocean/oceanModels.ts`), and
 the family uses no HDRI at all — there is no sky a thousand metres down. That
 was a decision, not a shortcut: no agent-downloadable CC0 anglerfish or giant
 squid exists, and the rare-feature species order is frozen the moment the first

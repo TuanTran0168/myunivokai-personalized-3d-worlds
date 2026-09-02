@@ -37,7 +37,7 @@ Three losses that exist right now, in the order they cost us
 
 1. **Every world is one cleared browser away from gone.** Ownership today is a
    `localStorage` key
-   ([`savedWorlds.ts:3`](../../../../apps/myunivokai-web/src/lib/savedWorlds.ts)),
+   ([`savedWorlds.ts:3`](../../../../apps/myunivokai-personalization/src/lib/savedWorlds.ts)),
    so a private window or a new phone destroys a visitor's collection while the
    rows sit intact in Postgres.
 2. **There is no ceiling behind the switch that turns the AI on.** Production

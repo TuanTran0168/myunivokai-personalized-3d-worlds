@@ -78,7 +78,7 @@ admin -> api-gateway /api/admin/* -> NATS -> auth-service      -> myunivokai_aut
 | [rust-adoption-research.md](../../evolution/rust-adoption-research.md) | **Research, not approved.** Which vehicle a first Rust project should use, measured against the working tree. Finds Track C's pick correct but **blocked** on B2's undecided landing place, since service-start telemetry already shipped inside `analytics-service`; scores an unblocked alternative against Track C's own four criteria and states plainly what it does not teach |
 | [telemetry-architecture-research.md](../../evolution/telemetry-architecture-research.md) | **Research, not approved.** Grounds Track B2 against how Uber's M3, Datadog's DogStatsD and the OpenTelemetry Collector actually aggregate metrics at scale, measures this system's real cardinality (~200 series) against Grafana Cloud's free-tier budget (10,000), and records a wide-events alternative the original research did not consider |
 | [telemetry-service-plan.md](../services/telemetry-service-plan.md) | **Approved design, not yet built.** Graduates Track B2 and Track C into one decided plan: `telemetry-service` in Rust, a `TelemetrySink` trait switching between its own Postgres storage and Grafana Cloud OTLP (mirroring the `ai.Provider`/`wake.Platform` adapter idiom), a hand-maintained `contracts/rust` crate tested against the same fixtures as the Go suite, and results rendered in `myunivokai-admin` |
-| [frontend-modernization-research.md](../../evolution/frontend-modernization-research.md) | **Route A built 2026-08-14; Route B, three.js 0.185 and WebGPU still research.** `myunivokai-web` is on Next 15.5.23 / React 19 / R3F v9, which closed all 21 `next` advisories without Next 16. Read §What executing it actually found first: five of the document's own claims were disproved in execution, including a "safe on 14" that is not — and the visual baseline it insisted on is what caught it |
+| [frontend-modernization-research.md](../../evolution/frontend-modernization-research.md) | **Route A built 2026-08-14; Route B, three.js 0.185 and WebGPU still research.** `myunivokai-personalization` is on Next 15.5.23 / React 19 / R3F v9, which closed all 21 `next` advisories without Next 16. Read §What executing it actually found first: five of the document's own claims were disproved in execution, including a "safe on 14" that is not — and the visual baseline it insisted on is what caught it |
 
 ## Product model
 
@@ -160,7 +160,7 @@ The dated execution plans live under [../sprints/](../sprints/README.md).
 | D17 | Use fresh databases `myunivokai_dna`, `myunivokai_universe`, and `myunivokai_nature`; no legacy-data migration is required. |
 | D18 | Sprint 1 must deliver the entire migration plus local and production deployment guides; partial scaffolding is not its exit. |
 | D19 | User auth remains out of scope; internal trust uses NATS credentials and subject permissions. |
-| D20 | Keep domain folder suffixes such as `universe-service`; rename only the frontend boundary to `apps/myunivokai-web`. |
+| D20 | Keep domain folder suffixes such as `universe-service`; rename only the frontend boundary to `apps/myunivokai-personalization`. |
 | D21 | Shared local dependencies live in `infra/docker-compose-local.yaml`; root and component `docker-compose-local.yaml` files compose the full/standalone workflows. |
 | D22 | Local runtime uses `.env.local` and `Dockerfile.local`; production uses explicit two-stage `Dockerfile.prod` images. |
 

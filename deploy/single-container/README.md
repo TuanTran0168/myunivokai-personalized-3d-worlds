@@ -91,9 +91,9 @@ free tier harder.
 
 ### Frontends are explicitly out of scope here
 
-`myunivokai-web` already runs on Vercel — `render.yaml`'s own top comment
-says so — which has no per-service instance-hour budget to escape in the
-first place. `myunivokai-admin` is a second Next.js app with its own
+`myunivokai-personalization` already runs on Vercel, as the deployment still
+named `myunivokai-web` — `render.yaml`'s own top comment says so — which has
+no per-service instance-hour budget to escape in the first place. `myunivokai-admin` is a second Next.js app with its own
 hardcoded cookie paths (`middleware.ts`, `auth-relay.ts`, `login/page.tsx`
 all set `Path=/api/admin/auth` or `Path=/`); reverse-proxying it under a
 shared path prefix on one port would need those paths rewritten to match,
