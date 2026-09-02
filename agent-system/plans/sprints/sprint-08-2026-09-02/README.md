@@ -87,11 +87,14 @@ nullable columns per family plus one new table in an existing database.
   gateway**, because that is the half that only fails in production.
 - The anonymous claim: gateway → `dna-service` → only the families that
   visitor actually used.
-- **A `system_settings` mechanism in `auth-service`**, with the two quota
-  numbers as its first settings, so a policy number is an audited admin change
-  rather than the 106th line of `.env`. Read on the hot path from Redis with a
-  compiled-in default on a miss — **never** by asking `auth-service`, which
-  sleeps.
+- **A `system_settings` mechanism in `auth-service`**, with **nine settings —
+  `auth-service`'s own values only** (the two quota limits, the two new web
+  token TTLs, the two lockout values, and three token TTLs), so a policy number
+  is an audited admin change rather than the 106th line of `.env`. The gateway
+  reads the two quota limits from Redis on the hot path with a compiled-in
+  default on a miss — **never** by asking `auth-service`, which sleeps. **No
+  other service's config moves**: the owner scoped the other six out, and
+  §9.3's audit records why that is the right call rather than a retreat.
 - The daily quota counter, and the **degrade-to-mock** path rather than a
   `429`, plus the one toast that says so — driven by a **reason code**, never
   by a provider name, because production already runs on the mock provider and

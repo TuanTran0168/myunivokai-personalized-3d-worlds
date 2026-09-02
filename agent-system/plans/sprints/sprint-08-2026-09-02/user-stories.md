@@ -576,16 +576,33 @@ Tasks:
       (`string` / `int` / `bool` / `duration` — the four the config loader
       already has), default, bounds and a description the admin screen renders.
       Pin it with a test, as `enforcedPermissions` is pinned.
-- [ ] Declare **batch 1's seven settings** (plan §9.3): the two AI generation
-      limits (born as settings), `world_cache_ttl`, `share_cache_ttl`,
-      `job_cache_ttl`, `auth_max_failed_attempts` and `auth_lockout_duration`.
-      The five migrated ones keep their environment variable as the **default**
-      — nothing is deleted from `.env`, because removing the fallback breaks the
-      empty-table invariant.
-- [ ] Change those five call sites from a captured struct field to a lookup.
-      **None of them is read at the moment of use today** — every value is
-      baked in when its component is built, so a registry row alone makes
-      nothing live. This is the actual work in this story.
+- [ ] Declare **batch 1's nine settings — `auth-service`'s own, by the owner's
+      narrowing** (plan §9.3): the two AI generation limits and the two new web
+      token TTLs (all four **born as settings**), plus
+      `auth_max_failed_attempts`, `auth_lockout_duration`,
+      `auth_refresh_token_ttl`, `auth_invite_token_ttl` and
+      `auth_access_token_ttl`. The five migrated ones keep their environment
+      variable as the **default** — nothing is deleted from `.env`, because
+      removing the fallback breaks the empty-table invariant.
+- [ ] Swap four of those call sites from `service.cfg.X` to a lookup. Each is
+      **one line**, because in `auth-service` — unlike the gateway — these are
+      already read at the moment of use: `auth_service.go:92` for the two
+      lockout values, `:238` for the refresh TTL,
+      `role_management_service.go:68` for the invite TTL.
+- [ ] `auth_access_token_ttl` is the only auth value baked in at construction
+      (`NewTokenIssuer(key, cfg.AccessTokenTTL)`, `cmd/service/main.go:95`).
+      **`S8-IDENTITY-001` already has to restructure that**, because one issuer
+      with one TTL cannot serve a 10-minute admin token and a 7-day web token —
+      so sequence this after `001` and the setting costs nothing extra.
+- [ ] Take **nothing** from the gateway's existing config. The gateway gains
+      exactly one settings reader, for the two new quota limits, because it is
+      the service that enforces the quota. Nothing it reads today changes.
+- [ ] Leave `AUTH_TOKEN_VERSION_CACHE_TTL` and `NATS_QUERY_TIMEOUT` in `.env`
+      even though both are auth-read and cheap. **Each has a twin in the
+      gateway** — `ADMIN_TOKEN_VERSION_CACHE_TTL` and `NATS_REQUEST_TIMEOUT` —
+      and making one side settable makes the effective revocation window, and
+      the responder-under-requester invariant, depend on which service wrote
+      last (plan §9.3, fact three). Both sides or neither.
 - [ ] Declare each setting's permitted range **in Go**, and reject out-of-range
       writes. Bounds are code, never data — that is what makes exposing a
       security-relevant number safe at all.

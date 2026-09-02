@@ -1,12 +1,13 @@
 # End-user identity and world ownership
 
 > **Document status:** Proposed. **No code exists.** Twenty numbered decisions
-> (23 rows, counting the three amendments `4b`, `17b` and `20b`) were taken on
-> 2026-09-02 across **six rounds** — most by the owner, five delegated to me
-> and argued in place — and all of them are recorded in §16, where **nothing is
-> left open**. Two of the last three rounds exist because the owner read a
-> decision back and found it wrong: `17b` and `20b` are corrections, not
-> additions, and they are marked as such rather than quietly folded in. Several
+> (24 rows, counting the four amendments `4b`, `17b`, `20b` and `20c`) were
+> taken on 2026-09-02 across **seven rounds** — most by the owner, five
+> delegated to me and argued in place — and all of them are recorded in §16,
+> where **nothing is left open**. Three of the last four rounds exist because
+> the owner read a decision back and found it wrong or too broad: `17b`, `20b`
+> and `20c` are corrections and narrowings, not additions, and they are marked
+> as such rather than quietly folded in. Several
 > decisions cut scope rather than adding it, so read §16 before any other
 > section: it supersedes parts of §3.4, §5, §9, §10, §11 and §17 in place.
 > **Scheduled:** [Sprint 08 — starts 2026-09-02](../sprints/sprint-08-2026-09-02/README.md),
@@ -1030,11 +1031,17 @@ strictly worse than the environment variable it replaced.
 #### The audit: all 64 environment variables, classified
 
 The owner asked on 2026-09-02 for every `.env` value to be examined and moved
-where it can be. **All 64 distinct names were read from the seven
-`internal/config/config.go` files**, not sampled. One rule does most of the
-sorting — **`.env` describes where and how a service runs; a setting describes
-how the product behaves** — but two facts found during the audit do the rest,
-and both of them shrink the answer.
+where it can be, and then — reading the result — narrowed it: **`auth-service`
+only; the other services are too hard, skip them.** Both instructions are
+honoured here. The full audit stands because it is what shows *why* the
+narrowing is right, and the batch that gets built is `auth-service`'s alone.
+
+**All 64 distinct names were read from the seven `internal/config/config.go`
+files**, not sampled. One rule does most of the sorting — **`.env` describes
+where and how a service runs; a setting describes how the product behaves** —
+and **three facts found during the audit do the rest.** All three shrink the
+answer, and the third one disqualifies two candidates that pass every other
+test.
 
 ##### Fact one: only two of the seven services can read a setting at all
 
@@ -1073,6 +1080,31 @@ costs a small refactor at its call site, from a captured value to a lookup.
 That is cheap for a handful and absurd for sixty-four, which is why this is a
 batch list and not a migration.
 
+##### Fact three: a value living on both sides of a boundary must not be configurable on only one side
+
+This is the sharpest thing the audit turned up, and it disqualifies two
+otherwise-perfect candidates.
+
+- **`AUTH_TOKEN_VERSION_CACHE_TTL` and `ADMIN_TOKEN_VERSION_CACHE_TTL` are one
+  concept in two services.** `auth-service` writes the Redis entry with its
+  TTL ([`auth_service.go:258`](../../../services/auth-service/internal/services/auth_service.go));
+  the gateway's `RevocationChecker` re-caches with *its own*
+  ([`admin_router.go:49`](../../../services/api-gateway/internal/handlers/admin_router.go)).
+  Make only one of them settable and the **effective revocation window becomes
+  whichever service wrote the entry last** — an unpredictable security
+  property, which is strictly worse than one that is merely inconvenient to
+  change.
+- **`NATS_QUERY_TIMEOUT` in `auth-service` pairs with the gateway's
+  `NATS_REQUEST_TIMEOUT`.** Auth's responder deadline
+  ([`runtime.go:54`](../../../services/auth-service/internal/messaging/runtime.go))
+  has to stay under the gateway's request deadline, or the gateway gives up
+  first and the work auth completes is thrown away. Half-configurable, that
+  invariant is one edit away from being violated silently.
+
+**So: both sides, or neither.** Both stay in `.env` until the gateway side is
+in scope, which the owner has deliberately excluded. This is not a difficulty
+argument — a half-exposed pair is worse than an unexposed one.
+
 ##### Never a setting — and the four that look like policy but are traps
 
 | Value(s) | Why never |
@@ -1086,28 +1118,85 @@ batch list and not a migration.
 | **`ADMIN_ROUTES_ENABLED`** | **The purest bootstrap paradox in the repo.** As a setting, turning it off removes the screen you would use to turn it back on |
 | `NATS_ACK_WAIT`, `NATS_MAX_DELIVER`, `NATS_FETCH_BATCH_SIZE`, `NATS_FETCH_MAX_WAIT`, `NATS_RETRY_DELAY` | **A trap.** These read like policy numbers, but they are **JetStream consumer state**, applied when the consumer is created. Changing the variable changes nothing until the consumer definition is updated on the server, so a setting here would silently do nothing |
 
-##### Batch 1 — built in this sprint, seven settings
+##### Batch 1 — decided 2026-09-02: `auth-service` only, nine settings
 
-Chosen because each is gateway-read or auth-read, each has a call site that is
-one or two lines, and each is a number an operator would genuinely reach for.
+The owner narrowed the scope directly: *"list what can be configured in
+auth-service; the other services are too hard, skip them."* That is the right
+call, and it makes the batch **better** rather than merely smaller, because of
+a fact that is the exact mirror of fact two:
 
-| Setting | Type | Default from | Why it earns a place |
+**In `auth-service`, these values are already read at the moment of use.**
+`service.cfg.MaximumFailedAttempts` and `service.cfg.LockoutDuration` are read
+on each failed login ([`auth_service.go:92`](../../../services/auth-service/internal/services/auth_service.go)),
+`service.cfg.RefreshTokenTTL` on each token issue (line 238), and
+`service.cfg.InviteTokenTTL` on each invite
+([`role_management_service.go:68`](../../../services/auth-service/internal/services/role_management_service.go)).
+So each is a **one-line swap** from a config field to a lookup — where the
+gateway's equivalents would each need their component restructured first.
+
+| Setting | Type | Default | Cost to make it live |
 | --- | --- | --- | --- |
-| `ai_generation_daily_limit_anonymous` | int | new constant, `5` | **Born a setting** — no refactor at all |
-| `ai_generation_daily_limit_account` | int | new constant, `25` | Same |
-| `world_cache_ttl` | duration | `WORLD_CACHE_TTL` | These three decide **how stale a deleted world's share can be** if §10's invalidation ever fails, so tuning them is real operational work, not tidiness |
-| `share_cache_ttl` | duration | `SHARE_CACHE_TTL` | Same, and the sharpest of the three |
-| `job_cache_ttl` | duration | `JOB_CACHE_TTL` | Same |
-| `auth_max_failed_attempts` | int | `AUTH_MAX_FAILED_ATTEMPTS` | Pure security policy an operator tunes **while under attack**, when a redeploy is the last thing wanted. Read by `auth-service` from its own table — no Redis hop, no cold start |
-| `auth_lockout_duration` | duration | `AUTH_LOCKOUT_DURATION` | Same |
+| `ai_generation_daily_limit_anonymous` | int | `5` (new constant) | **Born a setting.** No refactor at all |
+| `ai_generation_daily_limit_account` | int | `25` (new constant) | Same |
+| `auth_max_failed_attempts` | int | `5` | One line; already read per call |
+| `auth_lockout_duration` | duration | `15m` | One line, same call site |
+| `auth_refresh_token_ttl` | duration | `14d` (admin) | One line; already read per call |
+| `auth_invite_token_ttl` | duration | `7d` | One line; already read per call |
+| `auth_web_refresh_token_ttl` | duration | `3mo` (§4.4) | **New in this sprint.** Free |
+| `auth_web_access_token_ttl` | duration | `7d` (§4.4) | **New**, and see the note below |
+| `auth_access_token_ttl` | duration | `10m` (admin) | Comes along free with the one above |
 
-Seven settings, two types (`int` and `duration`), two services — both of which
-already have Redis. That is enough to prove the registry, which one setting
-would not have, without turning a sprint into a config migration.
+Two types, one service, and the two `int` values plus seven durations are
+enough to prove a registry — which one setting would not have been.
+
+**The note, and it is a piece of luck.** `AccessTokenTTL` is the *only* auth
+value baked in at construction:
+`security.NewTokenIssuer(key, serviceConfig.AccessTokenTTL)`
+([`main.go:95`](../../../services/auth-service/cmd/service/main.go)). But
+`S8-IDENTITY-001` **already has to restructure that**, because one issuer
+carrying one TTL cannot serve two audiences whose tokens live 10 minutes and 7
+days. Once the TTL moves to the call site, making it a setting costs nothing
+extra — which is why the admin value comes along rather than being left behind
+as the odd one out.
+
+**Removed from an earlier draft of this batch by the same decision:** the three
+gateway cache TTLs (`WORLD_`/`SHARE_`/`JOB_CACHE_TTL`). Each is gateway-read
+and captured into a handler field, so each needs a real change rather than a
+one-line swap. They move to batch 2.
+
+**The gateway still gains one settings reader**, for the two quota limits —
+it is the service that enforces the quota, so there is no alternative. That is
+**one new reader for two new values**, not a migration of anything the gateway
+already reads. Nothing the gateway reads today changes.
 
 **The environment variables stay as the defaults**, read at boot into the named
-constants the registry declares. Nothing is deleted from `.env` by this sprint:
-a setting overrides, and removing the fallback would break the invariant above.
+constants the registry declares. Nothing is deleted from `.env`: a setting
+overrides, and removing the fallback would break the invariant above.
+
+##### What stays in `.env` in `auth-service`, and why — all 21 of its reads
+
+The owner asked for this list specifically, so here it is in full rather than
+by category. `auth-service` makes 21 config reads; nine of them become settings
+above, and these twelve do not.
+
+| Value | Why it stays |
+| --- | --- |
+| `AUTH_ACCESS_PRIVATE_KEY` | The Ed25519 signing key. A secret, and `system_settings` is readable by anyone holding `settings:read` |
+| `DATABASE_URL`, `DATABASE_DIRECT_URL` | Secrets, **and** the bootstrap paradox — this is the connection to the table the settings live in |
+| `REDIS_URL` | Secret, and needed before the Redis mirror can be written |
+| `NATS_USERNAME`, `NATS_PASSWORD`, `NATS_CREDENTIALS` | Secrets |
+| `APP_ENV` | Decides how strictly config is validated. A setting cannot decide whether settings are validated |
+| `NATS_URL`, `NATS_CONNECT_TIMEOUT`, `NATS_RECONNECT_WAIT` | Used to establish the connection, before any setting can be read |
+| `DATABASE_MAX_CONNS` | The pool is built once at startup; changing it live changes nothing until a restart, so a setting here would silently mislead |
+| `SERVICE_SHUTDOWN_TIMEOUT` | Read at boot, used while shutting down — when Redis and the database may already be going away |
+| `REDIS_KEY_PREFIX` | The identity of the keyspace, not a tunable. Changing it live orphans every existing key at once — including the `tokenVersion` cache this service writes |
+| `AUTH_TOKEN_VERSION_CACHE_TTL` | **Fact three.** Its twin lives in the gateway |
+| `NATS_QUERY_TIMEOUT` | **Fact three.** Its pair is the gateway's request deadline |
+
+The last two are the only entries in this table that are excluded by *scope*
+rather than by nature: both become good candidates the moment the gateway side
+is in scope, and neither may move before it is.
+
 
 ##### Batch 2 — named, costed, not built
 
@@ -1118,7 +1207,8 @@ a setting overrides, and removing the fallback would break the invariant above.
 | `AI_PROMPT_VERSION`, `GEMINI_MODEL`, `OPENAI_MODEL` | Same, and each needs an **enum constraint** validated against what the code actually registers, not free text |
 | `RATE_LIMIT_REQUESTS_PER_SECOND`/`BURST`, `ADMIN_RATE_LIMIT_*` | Gateway-read, so cheap — but they are **security controls**, so they need a floor and a ceiling in code before they are exposed, and the rate-limit middleware currently takes them at construction |
 | `SERVICE_WAKE_TIMEOUT`, `SERVICE_WAKE_RETRY_AFTER`, `SERVICE_WAKE_LOCK_TTL` | Genuinely wanted live, and gateway-read — but `ServiceWakeTimeout` is baked into an `http.Client`, so making it live means rebuilding that client per call or holding a settable transport |
-| `AUTH_ACCESS_TOKEN_TTL`, `AUTH_REFRESH_TOKEN_TTL`, `AUTH_INVITE_TOKEN_TTL`, `AUTH_TOKEN_VERSION_CACHE_TTL`, `ADMIN_TOKEN_VERSION_CACHE_TTL` | Auth-read and cheap, but **security-critical**: `AUTH_TOKEN_VERSION_CACHE_TTL` *is* the window in which a revoked token still works, so a careless edit makes every revocation take a day. Wanted eventually, and only behind a **hard maximum in code** — see the note below |
+| `WORLD_CACHE_TTL`, `SHARE_CACHE_TTL`, `JOB_CACHE_TTL` | **Moved here from batch 1** by the owner's narrowing. Real value — they decide how stale a deleted world's share can be if §10's invalidation ever fails — but each is gateway-read and captured into a handler field, so each needs its component changed rather than a one-line swap |
+| `AUTH_TOKEN_VERSION_CACHE_TTL` **with** `ADMIN_TOKEN_VERSION_CACHE_TTL` | Auth-read and cheap, and **security-critical** — `AUTH_TOKEN_VERSION_CACHE_TTL` *is* the window in which a revoked token still works. Excluded by **fact three**, not by cost: its twin lives in the gateway, so the pair moves together or not at all, behind a hard maximum in code |
 | `SHARE_SLUG_LENGTH` | Low value and a subtle trap: shortening it raises collision probability against slugs already issued, and it changes nothing about existing ones |
 | `OUTBOX_POLL_INTERVAL`, `OUTBOX_BATCH_SIZE`, `NATS_PUBLISH_TIMEOUT`/`REQUEST_TIMEOUT`/`QUERY_TIMEOUT`, `TELEMETRY_FLUSH_INTERVAL` | Throughput tuning, mostly in services without Redis. `NATS_QUERY_TIMEOUT` carries its own warning: `analytics-service`'s keyset indexes exist to stay inside its 2500 ms, so raising it hides a slow query rather than fixing one |
 
@@ -1655,7 +1745,8 @@ the first version was wrong rather than hiding it behind a clean list.
 | 18 | *(delegated)* **No passkeys in this plan at all.** §5.4 becomes a Phase E candidate, not a phase | Closes open item 3. Decision 12 put email and OAuth at the end; a credential type that lands *after* the end is not a plan item, it is a wish. Nothing in §5 forecloses it — the credential model stays additive |
 | 19 | *(delegated)* **§14.5's triage stands as the baseline** | Closes open item 4. The owner's list never arrived across four rounds; treating the triage as provisional for ever would block the sprint. Any idea added later is triaged on the same terms, which is a normal backlog change, not a plan revision |
 | 20 | **The quota limits are admin settings in `auth-service`, not environment variables** — and the mechanism is general, so later settings need no `.env` entry either (§9.3) | Taken because `.env` is already at 170 config reads over 64 distinct names, 105 example lines and 176 `render.yaml` keys. Costs one table, one admin screen, two permissions and a Redis mirror. **Its one real risk is a cold start on the create path**, which is why the gateway reads only Redis and falls back to a compiled-in default rather than asking `auth-service` — the deliberate inversion of `RevocationChecker`. Counting and enforcement are unaffected by provider (owner's instruction): the mock provider suppresses the *toast*, never the *counter* |
-| 20b | **All 64 variables were audited; seven become settings now** (§9.3), and the rest are classified as never-a-setting or as costed batch-2 candidates | The owner asked for everything movable to be moved. Two facts found in the audit shrank that honestly rather than by preference: **five of the seven services have no Redis client**, so a setting read outside the gateway or `auth-service` is a project; and **no value is read at the moment of use today** — every one is baked into a struct field at construction, so a registry row alone makes nothing live. The audit also names four values that read as policy and are traps: the CORS origins, `TRUST_PROXY`, `REDIS_KEY_PREFIX`, and `ADMIN_ROUTES_ENABLED` — which as a setting would remove the screen used to turn it back on |
+| 20b | **All 64 variables were audited** (§9.3), and the rest are classified as never-a-setting or as costed batch-2 candidates | The owner asked for everything movable to be moved. Three facts found in the audit shrank that honestly rather than by preference: **five of the seven services have no Redis client**, so a setting read outside the gateway or `auth-service` is a project; **no value is read at the moment of use in the gateway** — every one is baked into a struct field at construction, so a registry row alone makes nothing live there; and **a value with a twin on the other side of a boundary must not be settable on one side only**. The audit also names four values that read as policy and are traps: the CORS origins, `TRUST_PROXY`, `REDIS_KEY_PREFIX`, and `ADMIN_ROUTES_ENABLED` — which as a setting would remove the screen used to turn it back on |
+| 20c | **Batch 1 is `auth-service`'s own values only — nine settings** (§9.3). The other services are out of scope | The owner narrowed it after reading 20b: *"list what can be configured in auth-service; the other services are too hard, skip them."* This makes the batch **better**, not just smaller, because `auth-service` is the mirror of the gateway — `service.cfg.MaximumFailedAttempts`, `LockoutDuration`, `RefreshTokenTTL` and `InviteTokenTTL` are **already read at the moment of use**, so each is a one-line swap. Cost of the narrowing: the three gateway cache TTLs drop to batch 2. Exception kept on purpose: the gateway still gains **one** reader for the two new quota limits, because it is the service that enforces the quota — one new reader for new values, not a migration |
 
 ### Still open
 
