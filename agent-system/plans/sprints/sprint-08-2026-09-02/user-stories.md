@@ -84,9 +84,12 @@ Tasks:
       handlers for `audience = "web"`, reusing the existing Argon2id hasher,
       refresh rotation, family reuse detection and lockout paths without
       copying them.
-- [ ] Add `AUTH_WEB_ACCESS_TOKEN_TTL` (7d) and `AUTH_WEB_REFRESH_TOKEN_TTL`
-      (3mo) as named config values beside the existing admin pair — never as
-      literals.
+- [ ] Add the two web token lifetimes as **named Go constants only — no `.env`
+      entry, no `render.yaml` key**. They are born as settings in
+      `S8-IDENTITY-012` (`auth.token.web.access_ttl` = 7d,
+      `auth.token.web.refresh_ttl` = 3mo), and a value that starts life as a
+      setting needs a code default rather than an environment variable. Never
+      literals either way.
 - [ ] Add the minimum-length rule and the Have I Been Pwned range check
       (k-anonymity: first 5 SHA-1 hex characters out, suffix matched locally)
       as a signup/change-password validator, with a test that no password
@@ -584,7 +587,7 @@ Tasks:
 - [ ] Declare **batch 1's nine settings — `auth-service`'s own, by the owner's
       narrowing** (plan §9.3):
 
-      | Key | Type | Default | Replaces |
+      | Setting key (database row) | Type | Default | Default read from `.env` — unchanged |
       | --- | --- | --- | --- |
       | `quota.ai.daily_limit.anonymous` | int | `5` | — |
       | `quota.ai.daily_limit.account` | int | `25` | — |

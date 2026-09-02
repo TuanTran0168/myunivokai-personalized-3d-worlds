@@ -90,7 +90,12 @@ nullable columns per family plus one new table in an existing database.
 - **A `system_settings` mechanism in `auth-service`**, with **nine settings —
   `auth-service`'s own values only** (the two quota limits, the two new web
   token TTLs, the two lockout values, and three token TTLs), so a policy number
-  is an audited admin change rather than the 106th line of `.env`. The gateway
+  is an audited admin change rather than the 106th line of `.env`. **The
+  setting keys are dotted database rows** (`auth.token.web.access_ttl`) and
+  `.env` keeps `UPPER_SNAKE_CASE` untouched — a dot is not a legal shell
+  identifier, so the two namespaces cannot be confused. `.env` neither grows
+  nor shrinks: the four new values get Go-constant defaults and no env var, the
+  five migrated ones keep theirs as their default. The gateway
   reads the two quota limits from Redis on the hot path with a compiled-in
   default on a miss — **never** by asking `auth-service`, which sleeps. **No
   other service's config moves**: the owner scoped the other six out, and

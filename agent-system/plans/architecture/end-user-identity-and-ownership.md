@@ -1168,9 +1168,25 @@ Three properties earn the dots over flat snake_case:
 - **The admin screen groups by prefix**, so `auth.token.*` and `auth.lockout.*`
   become sections with no separate category column and no frontend change when
   a setting is added.
-- **A key is visibly not an environment variable.** `AUTH_ACCESS_TOKEN_TTL` and
-  `auth.token.admin.access_ttl` cannot be confused in a grep, which matters
-  because the env var **stays** as that setting's default.
+- **A key is visibly not an environment variable, and cannot become one by
+  accident.** This is the strongest of the three, and it is worth being exact
+  about because the two namespaces sit side by side for every migrated value:
+
+  > **`.env` keeps `UPPER_SNAKE_CASE` and is not touched by this scheme.**
+  > A dot is not a legal character in a shell identifier —
+  > `export AUTH.TOKEN=1` answers *"not a valid identifier"*, and
+  > `AUTH.TOKEN=1` is parsed as a command name, not an assignment. Docker
+  > Compose's `environment:` and Render's env keys inherit the same
+  > restriction. So a dotted key **can only ever be a database row**, and an
+  > `UPPER_SNAKE` name can only ever be an environment variable.
+
+  That is a guarantee rather than a convention: the two namespaces cannot
+  collide, cannot be swapped by a typo, and a grep for either one returns
+  exactly one kind of thing. It matters here specifically because for the five
+  migrated settings **both exist at once, on purpose** — the environment
+  variable remains that setting's default (the invariant above), so a reader
+  will see `AUTH_LOCKOUT_DURATION` in `.env` and `auth.lockout.duration` in the
+  admin screen and needs to know instantly which is which.
 - **The varying part is the subject, so siblings sort together** — the admin
   and web token lifetimes sit next to each other, which is how an operator
   compares them.
@@ -1198,7 +1214,7 @@ on each failed login ([`auth_service.go:92`](../../../services/auth-service/inte
 So each is a **one-line swap** from a config field to a lookup — where the
 gateway's equivalents would each need their component restructured first.
 
-| Setting key | Type | Default | Replaces | Cost to make it live |
+| Setting key (database row) | Type | Default | Default read from `.env` — **unchanged, not renamed** | Cost to make it live |
 | --- | --- | --- | --- | --- |
 | `quota.ai.daily_limit.anonymous` | int | `5` | — | **Born a setting.** No refactor at all |
 | `quota.ai.daily_limit.account` | int | `25` | — | Same |
@@ -1241,9 +1257,28 @@ it is the service that enforces the quota, so there is no alternative. That is
 **one new reader for two new values**, not a migration of anything the gateway
 already reads. Nothing the gateway reads today changes.
 
-**The environment variables stay as the defaults**, read at boot into the named
-constants the registry declares. Nothing is deleted from `.env`: a setting
-overrides, and removing the fallback would break the invariant above.
+##### What this does to `.env`'s size — nothing, and that is the point
+
+The two namespaces behave differently on purpose, and the arithmetic is worth
+stating because "reduce `.env`" was the owner's motive:
+
+- **The four born-as-settings** (`quota.ai.*`, `auth.token.web.*`) get a named
+  **Go constant** as their default and **no environment variable at all** — no
+  `.env` line, no `render.yaml` key. A value that starts life as a setting has
+  no reason to be an env var first.
+- **The five migrated ones** keep their environment variable **as the
+  default**. Nothing is deleted, because removing the fallback would break the
+  empty-table invariant above.
+
+So `.env` **neither grows nor shrinks**, and the platform gains nine values an
+operator can change without a deploy. That is the honest form of the win: this
+mechanism does not clean up the 64 variables that exist, it **stops the list
+from growing** every time a policy number is added — which is what the owner's
+"`.env` is already too crowded" was really about.
+
+The one thing it would be wrong to do next is delete the five environment
+variables to make the list shorter. That trades a crowded file for a platform
+that cannot boot into correct behaviour from a clean database.
 
 ##### What stays in `.env` in `auth-service`, and why — all 21 of its reads
 
@@ -1819,7 +1854,7 @@ the first version was wrong rather than hiding it behind a clean list.
 | 20 | **The quota limits are admin settings in `auth-service`, not environment variables** — and the mechanism is general, so later settings need no `.env` entry either (§9.3) | Taken because `.env` is already at 170 config reads over 64 distinct names, 105 example lines and 176 `render.yaml` keys. Costs one table, one admin screen, two permissions and a Redis mirror. **Its one real risk is a cold start on the create path**, which is why the gateway reads only Redis and falls back to a compiled-in default rather than asking `auth-service` — the deliberate inversion of `RevocationChecker`. Counting and enforcement are unaffected by provider (owner's instruction): the mock provider suppresses the *toast*, never the *counter* |
 | 20b | **All 64 variables were audited** (§9.3), and the rest are classified as never-a-setting or as costed batch-2 candidates | The owner asked for everything movable to be moved. Three facts found in the audit shrank that honestly rather than by preference: **five of the seven services have no Redis client**, so a setting read outside the gateway or `auth-service` is a project; **no value is read at the moment of use in the gateway** — every one is baked into a struct field at construction, so a registry row alone makes nothing live there; and **a value with a twin on the other side of a boundary must not be settable on one side only**. The audit also names four values that read as policy and are traps: the CORS origins, `TRUST_PROXY`, `REDIS_KEY_PREFIX`, and `ADMIN_ROUTES_ENABLED` — which as a setting would remove the screen used to turn it back on |
 | 20c | **Batch 1 is `auth-service`'s own values only — nine settings** (§9.3). The other services are out of scope | The owner narrowed it after reading 20b: *"list what can be configured in auth-service; the other services are too hard, skip them."* This makes the batch **better**, not just smaller, because `auth-service` is the mirror of the gateway — `service.cfg.MaximumFailedAttempts`, `LockoutDuration`, `RefreshTokenTTL` and `InviteTokenTTL` are **already read at the moment of use**, so each is a one-line swap. Cost of the narrowing: the three gateway cache TTLs drop to batch 2. Exception kept on purpose: the gateway still gains **one** reader for the two new quota limits, because it is the service that enforces the quota — one new reader for new values, not a migration |
-| 20d | **Setting keys are dotted and state their subject explicitly** — `auth.token.admin.access_ttl`, `auth.token.web.access_ttl`, `auth.lockout.duration`, `quota.ai.daily_limit.anonymous` (§9.3) | The owner caught the real defect: `auth_access_token_ttl` beside `auth_web_access_token_ttl` meant the first key **silently said "admin"**. Their form was `auth_myunivokai_<audience>_access_token_ttl`; two changes with checkable reasons. `myunivokai` comes out because the Redis key is already `<REDIS_KEY_PREFIX>:setting:<key>` and that prefix *is* `myunivokai`. And the key says `web` rather than `personalization` because §17 **freezes `aud=web`** in contracts, in issued tokens and in a `CHECK` on two tables — so the app name goes in the description the admin screen renders, not in the key, and one concept keeps one vocabulary. If the owner still prefers the literal word it is a one-string change that nothing depends on |
+| 20d | **Setting keys are dotted database rows** — `auth.token.admin.access_ttl`, `auth.token.web.access_ttl`, `auth.lockout.duration`, `quota.ai.daily_limit.anonymous` — and **`.env` keeps `UPPER_SNAKE_CASE`, untouched** (§9.3) | The owner asked whether `.env` can use dots. It cannot: `export AUTH.TOKEN=1` answers *"not a valid identifier"*, and Docker Compose and Render inherit that restriction — so a dotted key can only ever be a database row and an `UPPER_SNAKE` name can only ever be an env var. That is a guarantee, not a convention, which is what makes running both namespaces side by side safe. Behind it, the owner caught the real defect: `auth_access_token_ttl` beside `auth_web_access_token_ttl` meant the first key **silently said "admin"**. Their form was `auth_myunivokai_<audience>_access_token_ttl`; two changes with checkable reasons. `myunivokai` comes out because the Redis key is already `<REDIS_KEY_PREFIX>:setting:<key>` and that prefix *is* `myunivokai`. And the key says `web` rather than `personalization` because §17 **freezes `aud=web`** in contracts, in issued tokens and in a `CHECK` on two tables — so the app name goes in the description the admin screen renders, not in the key, and one concept keeps one vocabulary. If the owner still prefers the literal word it is a one-string change that nothing depends on |
 
 ### Still open
 
