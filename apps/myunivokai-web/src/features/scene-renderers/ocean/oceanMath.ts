@@ -739,3 +739,34 @@ export function oceanCameraCeilingMetres(
   }
   return viewerDepthMetres - oceanSurfaceClearanceMetres(windSpeedMetresPerSecond);
 }
+
+/**
+ * The height the lens may not fall below, or null when there is nothing under
+ * it to fall into.
+ *
+ * The mirror of `oceanCameraCeilingMetres`, and it closes the other half of the
+ * same bug. An above-water world's rig is built for AIR — `createOceanRig`
+ * takes the `above` branch once and roughly fifteen decisions hang off it: the
+ * sea is drawn as a `SeaTop` seen from the sky rather than as the from-below
+ * sheet, there is no seabed, no god rays, no water fog, no biolume layer, and
+ * the roster is the surface one. An orbit that dives under that sea does not
+ * arrive underwater; it arrives at a scene with no water in it at all, looking
+ * up at the back of a wave mesh.
+ *
+ * Where the surface IS in scene coordinates is the one asymmetry worth stating.
+ * The camera sits at height zero in both cases, and `viewerDepthMetres` is
+ * signed: submerged it is how far the surface is ABOVE the lens, so the sheet
+ * sits at `+viewerDepthMetres` and the ceiling is that minus the clearance;
+ * above water it is negative, `createOceanRig` puts `seaTop.mesh.position.y` at
+ * that same signed number, and the floor is that PLUS the clearance. One
+ * clearance, one waterline, two signs.
+ */
+export function oceanCameraFloorMetres(
+  viewerDepthMetres: number,
+  windSpeedMetresPerSecond: number,
+): number | null {
+  if (viewerDepthMetres >= 0) {
+    return null;
+  }
+  return viewerDepthMetres + oceanSurfaceClearanceMetres(windSpeedMetresPerSecond);
+}

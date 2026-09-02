@@ -63,6 +63,17 @@ import {
  * with 0.000 m of headroom, which is the clamp from work item 1 doing its job
  * where a screenshot could only show more water.
  *
+ * AND THE SAME PROBE CLOSED THE MIRROR. `Glass Shallows` is the create page's
+ * above-water mood — `createOceanRig`'s `above` branch, so no seabed, no water
+ * fog, no god rays, the sea drawn as a sheet seen from the sky — and it reported
+ * no ceiling at all, because there is nothing over that lens. What it had
+ * instead was nothing under it either: the orbit could dive straight through
+ * its own sea into a scene with no water in it. It now carries a FLOOR, the
+ * ceiling's reflection about the waterline (`oceanCameraFloorMetres`,
+ * `maximumPolarAngleOverFloor`), and the drag stops dead on it — measured
+ * -13.92245 m against a floor of -13.92245 m, with the polar angle held at
+ * 2.047 rad instead of running to PI.
+ *
  * The geometric invariant is still pinned in `oceanMath.test.ts` as well, where
  * it is checked across every world the generator can make, at every radius in
  * the envelope, without a GPU. This file is the end-to-end half: it proves the
@@ -87,6 +98,19 @@ const ZOOM_OUT_WHEEL_PIXELS = 240;
 // threshold's precision. The luma ceiling is the other half of the same claim.
 const MINIMUM_FRAME_SATURATION = 0.18;
 const MAXIMUM_FRAME_LUMA = 0.45;
+/**
+ * The one world that needs its own, because it is legitimately the brightest
+ * frame here: the clamp parks the lens ON the ceiling with the surface directly
+ * overhead, in clear mesophotic water, looking up. Two runs measured 0.437 and
+ * 0.454 — the scene is not deterministic frame to frame (the fauna move, the
+ * sea moves), so 0.45 sits inside the spread and flakes.
+ *
+ * 0.52 is above the spread and still well under every reading the real fault
+ * produced: the unfogged backdrop dome measured 0.55 at 0.07 saturation, and
+ * the point-blank pale object measured 0.647. A threshold that cannot separate
+ * those from a bright frame would be worth removing; this one still can.
+ */
+const MESOPHOTIC_MAXIMUM_FRAME_LUMA = 0.52;
 
 // Proof the wheel landed, not a measure of how far it should go. The smallest
 // gain measured across the four moods was 4.17 m (Reef Crest, 21.10 → 26.0), so
@@ -97,11 +121,11 @@ const MINIMUM_ZOOM_OUT_METRES = 1;
 // to the pole), and 0.1 rad is 5.7 degrees: far more than damping settles out,
 // far less than any real gesture.
 const MINIMUM_POLAR_CHANGE_RADIANS = 0.1;
-// The clamp lands the lens exactly ON the ceiling (measured: 15.1589381768
+// The clamp lands the lens exactly ON the bound (measured: 15.1589381768
 // against a ceiling of 15.1589381768), so this covers float noise and nothing
 // else. A breach is metres, not centimetres — the reverted-fix control put the
 // lens six metres out.
-const CEILING_TOLERANCE_METRES = 0.01;
+const WATERLINE_TOLERANCE_METRES = 0.01;
 // How many frames the rig must have published before the pose is read as
 // settled. The scene's own first frame is not enough: the opening settle is
 // still running, and under software GL the whole preview draws at about two
@@ -273,7 +297,13 @@ test.describe("turning the camera in an ocean world", () => {
   const ORBIT_THAT_RAISES_THE_LENS = { name: "one way", sign: 1 as const };
   const ORBIT_THAT_LOWERS_IT = { name: "the other", sign: -1 as const };
   for (const world of [
-    { name: "Reef Crest", moodLabel: /reef crest/i, orbits: [ORBIT_THAT_RAISES_THE_LENS, ORBIT_THAT_LOWERS_IT] },
+    {
+      name: "Reef Crest",
+      moodLabel: /reef crest/i,
+      orbits: [ORBIT_THAT_RAISES_THE_LENS, ORBIT_THAT_LOWERS_IT],
+      bound: "ceiling" as const,
+      measuresTheMedium: true
+    },
     // Raised only. Measured 2026-09-02: dragging this world's orbit DOWN walks
     // the lens onto the seabed and then ratchets the radius in from 26 m to
     // 4.3 m — the terrain clamp lifts camera and target together, the idle lerp
@@ -283,12 +313,42 @@ test.describe("turning the camera in an ocean world", () => {
     // creature, not of the medium. The radius ratchet is a real fault and it is
     // recorded in the roadmap; asserting the medium's colour through it would
     // only make this file fail for the wrong reason.
+    //
     // Raised, this is also the brightest frame the file measures — 0.437 luma
     // against the 0.45 ceiling, because the lens ends up ON the clamp with the
     // surface right above it. That margin is thin on purpose: it is the frame a
     // brightness regression would blow first.
-    { name: "Mesophotic Current", moodLabel: /mesophotic current/i, orbits: [ORBIT_THAT_RAISES_THE_LENS] },
-    { name: "The Abyss", moodLabel: /the abyss/i, orbits: [ORBIT_THAT_RAISES_THE_LENS, ORBIT_THAT_LOWERS_IT] }
+    {
+      name: "Mesophotic Current",
+      moodLabel: /mesophotic current/i,
+      orbits: [ORBIT_THAT_RAISES_THE_LENS],
+      bound: "ceiling" as const,
+      measuresTheMedium: true,
+      maximumFrameLuma: MESOPHOTIC_MAXIMUM_FRAME_LUMA
+    },
+    {
+      name: "The Abyss",
+      moodLabel: /the abyss/i,
+      orbits: [ORBIT_THAT_RAISES_THE_LENS, ORBIT_THAT_LOWERS_IT],
+      bound: "ceiling" as const,
+      measuresTheMedium: true
+    },
+    // The mirror, and the reason this file no longer only tests one side of the
+    // waterline. `Glass Shallows` is the create page's above-water mood: its rig
+    // takes `createOceanRig`'s `above` branch, which means no seabed, no water
+    // fog, no god rays and the sea drawn as a sheet seen from the sky. An orbit
+    // that dives under THAT does not arrive underwater, it arrives in a scene
+    // with no water in it, looking up at the back of a wave mesh. Lowered only,
+    // because that is the only direction with anything to hit, and its frame is
+    // sky and sea rather than a medium — the seawater thresholds below would be
+    // measuring daylight.
+    {
+      name: "Glass Shallows",
+      moodLabel: /glass shallows/i,
+      orbits: [ORBIT_THAT_LOWERS_IT],
+      bound: "floor" as const,
+      measuresTheMedium: false
+    }
   ]) {
     for (const orbit of world.orbits) {
       test(`${world.name}, orbiting ${orbit.name}: shows seawater, not a wall of light`, async ({ page }) => {
@@ -325,23 +385,40 @@ test.describe("turning the camera in an ocean world", () => {
           "the drag did not reach the controls: the orbit is at the same pitch it started at"
         ).toBeGreaterThan(MINIMUM_POLAR_CHANGE_RADIANS);
 
-        // And it landed inside the water. The ceiling is read from the rig
-        // rather than solved here on purpose: the invariant worth asserting is
-        // that the lens stayed under the ceiling THIS RIG WAS GIVEN, and a test
-        // that computes its own is testing its own arithmetic.
-        expect(
-          draggedPose.ceilingMetres,
-          "this world used to be submerged and now reports no ceiling — the fixture changed, not the camera"
-        ).not.toBeNull();
-        expect(
-          draggedPose.positionY,
-          "the lens finished above the surface, where the rig is still built for water"
-        ).toBeLessThanOrEqual((draggedPose.ceilingMetres ?? 0) + CEILING_TOLERANCE_METRES);
+        // And it landed on the right side of the waterline. The bound is read
+        // from the rig rather than solved here on purpose: the invariant worth
+        // asserting is that the lens stayed inside the envelope THIS RIG WAS
+        // GIVEN, and a test that computes its own is testing its own
+        // arithmetic.
+        if (world.bound === "ceiling") {
+          expect(
+            draggedPose.ceilingMetres,
+            "this world used to be submerged and now reports no ceiling — the fixture changed, not the camera"
+          ).not.toBeNull();
+          expect(
+            draggedPose.positionY,
+            "the lens finished above the surface, where the rig is still built for water"
+          ).toBeLessThanOrEqual((draggedPose.ceilingMetres ?? 0) + WATERLINE_TOLERANCE_METRES);
+        } else {
+          expect(
+            draggedPose.floorMetres,
+            "this world used to be above water and now reports no floor — the fixture changed, not the camera"
+          ).not.toBeNull();
+          expect(
+            draggedPose.positionY,
+            "the lens finished under the surface, where the rig is still built for air"
+          ).toBeGreaterThanOrEqual((draggedPose.floorMetres ?? 0) - WATERLINE_TOLERANCE_METRES);
+        }
 
+        if (!world.measuresTheMedium) {
+          return;
+        }
         expect(frame.meanSaturation, "the frame has lost its colour to a pale layer").toBeGreaterThan(
           MINIMUM_FRAME_SATURATION
         );
-        expect(frame.meanLuma, "the frame is a wall of light").toBeLessThan(MAXIMUM_FRAME_LUMA);
+        expect(frame.meanLuma, "the frame is a wall of light").toBeLessThan(
+          world.maximumFrameLuma ?? MAXIMUM_FRAME_LUMA
+        );
       });
     }
   }

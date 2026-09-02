@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildPreviewOceanSceneConfig } from "@/lib/oceanScene";
 import type { PreviewSceneInput } from "@/lib/scene";
-import { minimumPolarAngleUnderCeiling } from "../shared/cameraIntro";
+import { maximumPolarAngleOverFloor, minimumPolarAngleUnderCeiling } from "../shared/cameraIntro";
 import {
   HIGH_SUN_ELEVATION_THRESHOLD_RADIANS,
   lowestSeafloorUnderFootprint,
   oceanCameraCeilingMetres,
+  oceanCameraFloorMetres,
   oceanCameraFraming,
   oceanSurfaceClearanceMetres
 } from "./oceanMath";
@@ -236,6 +237,129 @@ describe("the ocean camera envelope, across worlds the generator can make", () =
       const floor = -(seafloorMetres - depthMetres) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES;
       expect(ceiling - floor).toBeGreaterThan(MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES);
     }
+  });
+});
+
+describe("oceanCameraFloorMetres", () => {
+  it("has no floor for a world seen from under the waterline", () => {
+    // A submerged world's problem is the sheet overhead, not the one below.
+    expect(oceanCameraFloorMetres(18, WINDIEST_METRES_PER_SECOND)).toBeNull();
+    expect(oceanCameraFloorMetres(0, WINDIEST_METRES_PER_SECOND)).toBeNull();
+  });
+
+  it("sits above the waterline by the whole clearance", () => {
+    // The surface of an above-water world is drawn at the signed depth itself
+    // (`seaTop.mesh.position.y = viewerDepthMetres`), so the floor is that
+    // plane lifted clear of its own crests.
+    const floor = oceanCameraFloorMetres(-6, 9);
+    expect(floor).not.toBeNull();
+    expect(floor as number).toBeCloseTo(-6 + oceanSurfaceClearanceMetres(9), 10);
+  });
+
+  it("is the ceiling's mirror about the waterline", () => {
+    // One clearance, one waterline, two signs. Stated as an equality so a
+    // change to either function has to be made to both.
+    const submergedHeadroom = 12 - (oceanCameraCeilingMetres(12, 8) as number);
+    const airborneHeadroom = (oceanCameraFloorMetres(-12, 8) as number) - -12;
+    expect(airborneHeadroom).toBeCloseTo(submergedHeadroom, 12);
+  });
+});
+
+describe("the above-water camera envelope, across worlds the generator can make", () => {
+  // Measured 2026-09-02: 24 of the 120 worlds this sweep builds come out above
+  // the waterline, all of them the `focused` mood, 4.05 m to 23.61 m over their
+  // own sea. Asserted below so a generator change that stops making them turns
+  // this suite red rather than quietly reducing it to nothing.
+  function aboveWaterPreviews() {
+    return previewsAcrossMoodsAndNicknames(30).filter((scene) => (scene.depth?.metres ?? 0) < 0);
+  }
+
+  it("is exercising worlds that actually exist", () => {
+    expect(aboveWaterPreviews().length).toBeGreaterThan(0);
+  });
+
+  it("opens every above-water shot clear of its own sea", () => {
+    // The lens rests at height zero. A floor at or above zero would mean the
+    // world is lower over its water than that water's own crests are tall —
+    // the shot would open inside the sea it is a shot of.
+    for (const scene of aboveWaterPreviews()) {
+      const floor = oceanCameraFloorMetres(
+        scene.depth?.metres ?? 0,
+        scene.water?.windSpeedMetresPerSecond ?? WINDIEST_METRES_PER_SECOND
+      );
+      expect(floor).not.toBeNull();
+      expect(floor as number).toBeLessThan(0);
+    }
+  });
+
+  it("holds the lens above the surface at every zoom, in every above-water world", () => {
+    for (const scene of aboveWaterPreviews()) {
+      const depthMetres = scene.depth?.metres ?? 0;
+      const floor = oceanCameraFloorMetres(
+        depthMetres,
+        scene.water?.windSpeedMetresPerSecond ?? WINDIEST_METRES_PER_SECOND
+      ) as number;
+      const framing = oceanCameraFraming(
+        scene.camera?.distance ?? 20,
+        depthMetres,
+        scene.water?.visibilityMetres ?? 30,
+        scene.lighting?.surfaceAzimuthRadians,
+        scene.depth?.seafloorMetres
+      );
+      for (let radius = ORBIT_MINIMUM_DISTANCE; radius <= ORBIT_MAXIMUM_DISTANCE; radius += 0.5) {
+        const polar = maximumPolarAngleOverFloor(floor, framing.target.y, radius);
+        const lowestCamera = framing.target.y + radius * Math.cos(polar);
+        expect(lowestCamera).toBeGreaterThanOrEqual(floor - 1e-9);
+      }
+    }
+  });
+
+  it("does not disturb a single above-water shot the family composed", () => {
+    for (const scene of aboveWaterPreviews()) {
+      const depthMetres = scene.depth?.metres ?? 0;
+      const floor = oceanCameraFloorMetres(
+        depthMetres,
+        scene.water?.windSpeedMetresPerSecond ?? WINDIEST_METRES_PER_SECOND
+      ) as number;
+      const framing = oceanCameraFraming(
+        scene.camera?.distance ?? 20,
+        depthMetres,
+        scene.water?.visibilityMetres ?? 30,
+        scene.lighting?.surfaceAzimuthRadians,
+        scene.depth?.seafloorMetres
+      );
+      const restingRadius = Math.hypot(
+        framing.x - framing.target.x,
+        framing.y - framing.target.y,
+        framing.z - framing.target.z
+      );
+      const restingPolar = Math.acos((framing.y - framing.target.y) / restingRadius);
+      expect(restingPolar).toBeLessThan(
+        maximumPolarAngleOverFloor(floor, framing.target.y, restingRadius)
+      );
+    }
+  });
+
+  it("is doing work — unclamped, the wide end of the zoom dives under the sea", () => {
+    // The mirror of the ceiling suite's own "is doing work" case, and the
+    // reason this bound is not decoration: at the widest orbit, straight down
+    // from the aim point is metres under the water in these worlds.
+    const submerged = aboveWaterPreviews().filter((scene) => {
+      const depthMetres = scene.depth?.metres ?? 0;
+      const floor = oceanCameraFloorMetres(
+        depthMetres,
+        scene.water?.windSpeedMetresPerSecond ?? WINDIEST_METRES_PER_SECOND
+      ) as number;
+      const framing = oceanCameraFraming(
+        scene.camera?.distance ?? 20,
+        depthMetres,
+        scene.water?.visibilityMetres ?? 30,
+        scene.lighting?.surfaceAzimuthRadians,
+        scene.depth?.seafloorMetres
+      );
+      return framing.target.y - ORBIT_MAXIMUM_DISTANCE < floor;
+    });
+    expect(submerged.length).toBeGreaterThan(0);
   });
 });
 

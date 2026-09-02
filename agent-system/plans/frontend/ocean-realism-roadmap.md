@@ -892,14 +892,13 @@ The dependencies are real; this order is not arbitrary.
 2. ~~**Make `ocean-look-down.spec.ts` drive the camera**~~ — **done**, and the
    belief it was built on was wrong for the third time. It always drove the
    camera; what it could not do was SEE it. See below for the measurement.
-3. **The above-water mirror.** Work item 1 closed the ceiling and left the
-   floor: an above-water world's camera can still dive under its own sea, where
-   the same rig is built for air. Same shape of bug, opposite sign, and the
-   three surface fixtures are the worlds it shows in. **The create page's
-   `Glass Shallows` preview is a fourth, and a live one**: measured 2026-09-02
-   it reports no camera ceiling at all (`ceilingMetres: null`, which is
-   `oceanCameraCeilingMetres` refusing a negative depth), and the drag takes its
-   lens to 24 m with nothing stopping it going the other way.
+3. ~~**The above-water mirror**~~ — **done**. `oceanCameraFloorMetres` is the
+   ceiling reflected about the waterline, `maximumPolarAngleOverFloor` is
+   `minimumPolarAngleUnderCeiling` from the other end, and `CameraRig` narrows
+   `maxPolarAngle` with it every frame against the live radius. Proven on the
+   create page's `Glass Shallows` preview, which is an above-water world:
+   the drag now stops at -13.92245 m against a floor of -13.92245 m, polar held
+   at 2.047 rad instead of running to PI.
 4. **The orbit radius ratchet.** Measured 2026-09-02: dragging the orbit DOWN
    walks the lens onto the seabed and pulls the radius in from 26 m to 4.3 m,
    because the terrain clamp lifts camera and target together while the idle
