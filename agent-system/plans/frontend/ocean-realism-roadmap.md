@@ -889,21 +889,34 @@ The dependencies are real; this order is not arbitrary.
    number; it never blocked work item 1, which is solved from whatever `T_y`
    the framing produced, but the two — now three — call sites could disagree
    about whether a surface was even drawn.
-2. **Make `ocean-look-down.spec.ts` drive the camera.** It does not, measured;
-   see below. Until then the family has no end-to-end coverage of its own camera
-   at all, and this is the second time a wrong belief about that file has cost a
-   round of work.
+2. ~~**Make `ocean-look-down.spec.ts` drive the camera**~~ — **done**, and the
+   belief it was built on was wrong for the third time. It always drove the
+   camera; what it could not do was SEE it. See below for the measurement.
 3. **The above-water mirror.** Work item 1 closed the ceiling and left the
    floor: an above-water world's camera can still dive under its own sea, where
    the same rig is built for air. Same shape of bug, opposite sign, and the
-   three surface fixtures are the worlds it shows in.
-4. **Work item 2b** (adopt cross-fade) — independent, small, high visible value.
-5. **Work item 5** items 2–4 — shader/constant restorations, measurable.
-6. **Work item 4c** (unify caustics) — the largest single refactor here.
-7. **Work item 2c** (swim-out behaviour).
-8. **Work item 3c** — the `twilightReach` floor, if wanted.
-9. **Work item 6** — the shipwreck model, last, because it is the only item that
-   adds bytes.
+   three surface fixtures are the worlds it shows in. **The create page's
+   `Glass Shallows` preview is a fourth, and a live one**: measured 2026-09-02
+   it reports no camera ceiling at all (`ceilingMetres: null`, which is
+   `oceanCameraCeilingMetres` refusing a negative depth), and the drag takes its
+   lens to 24 m with nothing stopping it going the other way.
+4. **The orbit radius ratchet.** Measured 2026-09-02: dragging the orbit DOWN
+   walks the lens onto the seabed and pulls the radius in from 26 m to 4.3 m,
+   because the terrain clamp lifts camera and target together while the idle
+   lerp puts the target back on the framing. The visitor's zoom disappears
+   without them touching the wheel. Next to item 3 because it is the same
+   `CameraRig` frame loop.
+5. **The point-blank pale object.** The frame at the end of that ratchet
+   measured 0.647 luma — a flat-white creature filling the viewport with no
+   water in front of it. Likely the same cause as the god-ray clip: nothing
+   attenuates a lit surface at arm's length.
+6. **Work item 2b** (adopt cross-fade) — independent, small, high visible value.
+7. **Work item 5** items 2–4 — shader/constant restorations, measurable.
+8. **Work item 4c** (unify caustics) — the largest single refactor here.
+9. **Work item 2c** (swim-out behaviour).
+10. **Work item 3c** — the `twilightReach` floor, if wanted.
+11. **Work item 6** — the shipwreck model, last, because it is the only item that
+    adds bytes.
 
 ### Blast radius
 
@@ -951,20 +964,73 @@ The geometric assertion this section asked for went into `oceanMath.test.ts`
 instead of here, and is stronger there: it checks every world the generator can
 make, at every radius in the envelope, without a GPU or a seeded coin flip.
 
-**And a fourth thing is wrong with this file, found by trying to use it as
+**And a fourth thing was wrong with this file, found by trying to use it as
 proof.** The fix was disabled and the spec re-run as a control. It passed, with
 numbers within noise of the fixed build — reef `0.285 / 0.632` unfixed against
-`0.299 / 0.621` fixed. The screenshot from the unfixed run says why: it is the
-untouched **resting framing**, level and at the resting distance, after a 900 px
-drag and twelve wheel notches. The world it drives (`energetic`, 18.65 m deep,
-surface in sight and drawn) would have the lens at 24.4 m — six metres into the
-air — if that drag had landed. **The input never reaches `OrbitControls`.**
+`0.299 / 0.621` fixed. That was read as meaning the gesture never reached
+`OrbitControls`, on the strength of the screenshot from the unfixed run looking
+like the untouched resting framing and of the arithmetic for the world it drives
+(`energetic`, 18.65 m deep) putting the lens at 24.4 m if the drag had landed.
 
-So this spec has never exercised the camera, which is exactly why it stayed
-green through the life of the bug it is named after, and why the earlier rounds
-had no test pulling them toward the real cause. A frame-statistics threshold
-cannot distinguish "the camera did not breach" from "the camera did not move" —
-only an assertion on the camera's own height can. Fixing the input path and
-instrumenting the height is its own task, listed in the ordering above; the
-spec now carries this measurement at the top of the file so the next reader does
-not mistake a pass for evidence.
+### The input was landing all along — DONE. Shipped.
+
+**Measured 2026-09-02, on the production build, with the camera's own pose
+published from inside the rig** (`shared/cameraPoseProbe.ts`, one pre-allocated
+record mutated per frame onto `window`). The wheel reaches the distance limit
+and the drag reaches the polar limit in every ocean mood the create page can
+make:
+
+| preview world | resting radius → dragged | dragged polar | lens height | ceiling |
+|---|---|---|---|---|
+| Glass Shallows | 19.74 → 26.0 | 1.449 → ~0 | 24.00 | none — above water |
+| Mesophotic Current | 21.83 → 26.0 | 1.607 → 1.143 | 15.159 | **15.159** |
+| Reef Crest | 21.10 → 26.0 | 1.241 → ~0 | 21.635 | 24.737 |
+| The Abyss | 18.57 → 26.0 | 1.217 → ~0 | 21.635 | 1773.27 |
+
+Two of the old note's supporting facts fell with it. The page carries **exactly
+one canvas**, at the full viewport, so `page.locator("canvas").first()` was
+never reading the wrong one. And the 18.65 m reef is gone: 3b sank the shallows,
+so the reef's ceiling now sits at **24.74 m** and a drag to the pole stops three
+metres under it — the drag that was supposed to prove the input had landed could
+no longer breach that world even if it landed perfectly, which is why the frame
+looked untouched.
+
+So the gap was never the input path. It was that a threshold on pixels is the
+wrong instrument for a claim about a camera, and the wrong instrument produced a
+confident wrong answer twice. The spec now reads the pose out of the running rig
+and asserts what a screenshot cannot carry:
+
+- the wheel widened the orbit (against the resting radius, not a hardcoded 26);
+- the drag turned it by more than 0.1 rad — **the assertion that turns a green
+  run into evidence**, because it is the one that fails when the camera does not
+  move;
+- the lens finished at or under the ceiling *that rig was given*, read from the
+  probe rather than re-solved in the test.
+
+`Mesophotic Current` is the world where the last one bites, and it is now in the
+spec for that reason: its drag stops dead **on** the clamp, 15.1589381768 m
+against a ceiling of 15.1589381768 m, 0.000 m of headroom. That is work item 1's
+clamp doing its job, end to end, through the real input path — the thing this
+file could not show before.
+
+**Two faults the same measurement turned up, neither of them the camera
+breaching:**
+
+- **Dragging DOWN ratchets the orbit radius in, 26 m → 4.3 m.** The terrain
+  clamp lifts camera and target together (which preserves the offset, by
+  design), and the idle lerp then puts the target back on the family's framing —
+  so every frame shortens the offset a little, and the lens ends up 4.3 m under
+  its own target sitting on the seabed. Reproduced in Reef Crest (4.30 m) and
+  The Abyss (3.98 m). The zoom the visitor set silently disappears.
+- **The frame at the end of that is a pale object at arm's length.** Mesophotic
+  Current measured **0.647 luma** there — over the file's 0.45 ceiling — and the
+  screenshot is a single flat-white creature filling the viewport with no water
+  in front of it. Probably the same family as the god-ray clip: a lit surface at
+  point blank has no medium left to attenuate it. Because that is a measurement
+  of a creature and not of the medium, the spec runs Mesophotic in the raising
+  direction only, and says so.
+
+One threshold is now thin on purpose and worth knowing about: Mesophotic raised
+measures **0.437 luma against the 0.45 ceiling**, because the lens ends on the
+clamp with the surface directly overhead. It is the frame a brightness
+regression blows first.
