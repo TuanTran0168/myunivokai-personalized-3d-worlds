@@ -5,8 +5,11 @@
 > delegated to me and argued in place — and all of them are recorded in §16,
 > where **nothing is left open**. Several cut scope rather than adding it, so
 > read §16 before any other section: it supersedes parts of §3.4, §5, §9, §10,
-> §11 and §17 in place. The plan itself still awaits approval before user
-> stories and a sprint are written.
+> §11 and §17 in place.
+> **Scheduled:** [Sprint 08 — starts 2026-09-02](../sprints/sprint-08-2026-09-02/README.md),
+> as [`EPIC-S8-IDENTITY-001`](../backlog/engineering-backlog.md#epic-s8-identity-001--end-user-identity-and-world-ownership).
+> The sprint covers Phases A-C; Phase D and Phase E are explicitly out of its
+> scope.
 > **Raised:** 2026-09-02 by the owner
 > **Last source review:** 2026-09-02
 > **Answers:** [`DEFERRED-AUTH-001`](../backlog/engineering-backlog.md#deferred-auth-001--define-identity-before-authentication),
