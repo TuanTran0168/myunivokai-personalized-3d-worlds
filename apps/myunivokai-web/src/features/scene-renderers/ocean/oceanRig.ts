@@ -141,6 +141,27 @@ export type OceanRigOptions = {
    * somebody has to remember.
    */
   godRayStrength?: number;
+  /**
+   * How bright the seabed's caustics are allowed to get, from
+   * `lighting.causticStrength` — the same stored value the landmarks use
+   * directly (`createCausticsUniforms` in OceanRenderer.tsx). Reaches zero at
+   * the sunlight floor, same as `godRayStrength`.
+   *
+   * Multiplied against a SEPARATE local factor, not replaced by it: the local
+   * term models how much floor lies within a few attenuation lengths of the
+   * viewer, past which a caustic pattern blurs into incoherence regardless of
+   * how much light survives at that depth. Depth decides how much light there
+   * is; clarity decides how far a sharp pattern of it can still be seen. Before
+   * this field existed the seabed had only the second term and never asked the
+   * first — a coral head and the sand under it disagreed by the factor between
+   * them, not because two effects were reconciled but because one of them was
+   * missing on one side.
+   *
+   * Defaults to 1 (no additional dampening) for a caller — a demo, a test —
+   * that has no stored value to pass, so the local coherence term alone still
+   * behaves exactly as it always did.
+   */
+  causticStrength?: number;
   /** Fewer instances and a smaller shadow map on a phone. */
   quality?: "high" | "low";
 };
@@ -198,6 +219,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     sunElevationDegrees = 46,
     sunAzimuthRadians = OCEAN_SUN_AZIMUTH_RADIANS,
     godRayStrength,
+    causticStrength = 1,
     cameraDistanceMetres = 20,
     quality = "high",
   } = options;
@@ -713,10 +735,17 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       seabed,
       fogColor,
       brightness,
-      // Caustics need the surface pattern to still be coherent, which is a
-      // scattering question: a few attenuation lengths of blur and it is gone.
-      Math.pow(Math.min(1, Math.max(0, 1 - viewerDepthMetres / (2.4 * range))), 1.4),
+      // Two effects, multiplied rather than either one standing in for the
+      // other: how much LIGHT survives to this depth (causticStrength, the
+      // stored depth-curve value the landmarks also use) and how much of the
+      // floor still lies within a coherent pattern's reach (a scattering
+      // question — a few attenuation lengths of blur and the pattern is gone,
+      // regardless of how bright the light still is).
+      Math.pow(Math.min(1, Math.max(0, 1 - viewerDepthMetres / (2.4 * range))), 1.4) * causticStrength,
       keyColor,
+      // Same quantity the landmarks standing on this same floor use for their
+      // own uCausticDepth — see createCausticsUniforms in oceanCaustics.ts.
+      seafloorDepthMetres,
     );
     group.add(seabed.group);
   }

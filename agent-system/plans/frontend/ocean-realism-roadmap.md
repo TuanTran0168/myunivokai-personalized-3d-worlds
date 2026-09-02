@@ -637,18 +637,46 @@ Pinned by `TestLandmarkRingNeverReachesPastTheWatersOwnSightingRange`
 world whose water leaves the ring unconstrained and one that pins it to the
 inner edge, so neither branch can silently stop being exercised.
 
-### 4c. Two seams worth closing while in this file
+### 4c. Two seams worth closing while in this file — DONE. Shipped.
 
-- **Two different caustics implementations run side by side.** The seabed,
-  boulders and sponges use a ridged-sine `causticVeins` copied from the
-  prototype (`oceanRigTerrain.ts:75-101`); only landmarks use the physically
-  derived differential-area form in `oceanCaustics.ts`. They compute different
-  fields at strengths ~5.4× apart, so a coral head and the sand it stands on are
-  lit by different patterns. `OceanRenderer.tsx:180-181` claims they stay in
-  step; only the clock does. **Move everything onto `oceanCaustics.ts`.**
-- **The seabed's caustic strength is recomputed locally** rather than read from
-  `lighting.causticStrength`, which the landmarks do use — the same class of
-  defect the rig already fixed once for `godRayStrength`.
+- **Two different caustics implementations ran side by side.** The seabed,
+  boulders and sponges used a ridged-sine `causticVeins` copied from the
+  prototype; only landmarks used the physically derived differential-area form
+  in `oceanCaustics.ts`. They computed different fields at strengths ~5.4×
+  apart (`causticStrength * 0.185` on the terrain side, the raw value on the
+  landmark side — `1 / 0.185 ≈ 5.4`), so a coral head and the sand it stood on
+  were lit by different patterns. `oceanRigTerrain.ts`'s own `applyCaustics`,
+  `createCausticUniforms` and the whole `GLSL_CAUSTICS` chunk are gone; the
+  seabed, its boulders (`oceanRigTerrain.ts`) and its sponges
+  (`oceanRigFlora.ts`) now call `oceanCaustics.ts`'s `applyCaustics` directly,
+  with no local gain. One bonus this unification pays for on its own: the
+  differential-area form's `uCausticDepth` — veins widen and soften with how
+  far light travels from surface to floor — now reaches the seabed too, wired
+  from `seafloorDepthMetres`, the exact quantity the landmarks already used for
+  the same uniform.
+- **The seabed's caustic strength was recomputed locally** rather than read
+  from `lighting.causticStrength`, which the landmarks used directly — the
+  same class of defect the rig already fixed once for `godRayStrength`.
+  `OceanRigOptions` gained a `causticStrength?: number` field, mirroring
+  `godRayStrength?: number` exactly, defaulting to `1` (no dampening) for a
+  caller with no stored value to pass. It is **multiplied** against the
+  existing local term, not swapped in for it: the two model different physics.
+  `causticStrength` (the depth curve's own value) is how much LIGHT survives
+  to this depth, reaching zero at the sunlight floor; the local coherence term
+  is how much of the floor still lies within a few attenuation lengths of the
+  viewer, past which even surviving light draws an incoherent blur rather than
+  a pattern. Before this, the seabed had only the second term and the
+  landmarks had only the first — not two effects reconciled, but one missing
+  from each side.
+
+Pinned by `oceanRigTerrain.test.ts`: `tintSeabed` passes `causticStrength`
+straight through to the shared uniform with no separate gain, and sets
+`uCausticDepth` from the surface-to-floor distance it is given, floored at
+0.5 m. The multiplication itself lives in `createOceanRig`, which needs a real
+`WebGLRenderer` and canvas to build (sand textures, sky, surface) and so sits
+outside what this test environment (Node, no DOM) can exercise directly —
+the same boundary every other part of the full rig's construction already
+sits behind.
 
 ### 4d. Making the sand itself read as real
 

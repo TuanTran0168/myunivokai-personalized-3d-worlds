@@ -238,6 +238,7 @@ export function OceanRenderer({
       // decide where to stand.
       sunAzimuthRadians: lighting?.surfaceAzimuthRadians,
       godRayStrength: lighting?.godRayStrength,
+      causticStrength: lighting?.causticStrength,
       cameraDistanceMetres,
       quality: isMobile ? "low" : "high",
     });
@@ -302,6 +303,7 @@ export function OceanRenderer({
     lighting?.surfaceElevationRadians,
     lighting?.surfaceAzimuthRadians,
     lighting?.godRayStrength,
+    lighting?.causticStrength,
     cameraDistanceMetres,
     isMobile,
   ]);

@@ -36,6 +36,7 @@ import {
   type WebGLRenderer,
 } from "three";
 import { randomFromSeed } from "@/lib/scene";
+import { applyCaustics, createCausticsUniforms, type CausticsUniforms } from "./oceanCaustics";
 
 /**
  * How much clear water the viewer keeps around itself. Six metres is enough that
@@ -62,93 +63,6 @@ export const GLSL_TERRAIN_NOISE = /* glsl */ `
                mix(sHash(i + vec2(0,1)), sHash(i + vec2(1,1)), u.x), u.y);
   }
 `;
-
-/**
- * Ridged caustic veins.
- *
- * Two things are required and both were learned the hard way: ripple-scale
- * frequencies, and a DOMAIN WARP — because a plain sum of plane waves is always
- * quasi-periodic and lays a visible lattice across the floor. The grazing-face
- * gate matters too: light arrives from above, and the pattern's derivative is
- * meaningless on a near-vertical surface.
- */
-export const GLSL_CAUSTICS = /* glsl */ `
-  float causticVeins(vec2 p, float t){
-    vec2 w = p + vec2(
-      sin(p.y * 0.31 + t * 0.13) + 0.45 * sin(p.x * 0.71 - t * 0.19),
-      cos(p.x * 0.27 - t * 0.11) + 0.45 * cos(p.y * 0.63 + t * 0.17)) * 1.6;
-    float v = 0.0;
-    v += 0.34 * sin(dot(w, vec2( 0.986,  0.164)) * 2.4 + t * 0.9);
-    v += 0.26 * sin(dot(w, vec2( 0.383,  0.924)) * 1.7 - t * 0.7);
-    v += 0.20 * sin(dot(w, vec2(-0.707,  0.707)) * 3.9 + t * 1.3);
-    v += 0.14 * sin(dot(w, vec2( 0.643, -0.766)) * 5.1 - t * 1.1);
-    v += 0.10 * sin(dot(w, vec2(-0.259, -0.966)) * 7.3 + t * 1.7);
-    return pow(max(0.0, 1.0 - abs(v) * 1.35), 5.0);
-  }
-`;
-
-export type CausticUniforms = {
-  uCausticTime: { value: number };
-  uCausticStrength: { value: number };
-  uCausticColor: { value: Color };
-  uCausticScale: { value: number };
-};
-
-export function createCausticUniforms(): CausticUniforms {
-  return {
-    uCausticTime: { value: 0 },
-    uCausticStrength: { value: 0 },
-    uCausticColor: { value: new Color("#CFF6FF") },
-    uCausticScale: { value: 0.9 },
-  };
-}
-
-/**
- * Splice caustics into any standard material.
- *
- * Injected before `<tonemapping_fragment>`, which in three's fragment order is
- * still ahead of `<fog_fragment>` — so the pattern is tone-mapped and then
- * fogged, exactly like the surface it sits on.
- */
-export function applyCaustics(material: MeshStandardMaterial, uniforms: CausticUniforms): void {
-  material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vCW;\nvarying float vCUp;")
-      .replace(
-        "#include <worldpos_vertex>",
-        `#include <worldpos_vertex>
-          vec4 cp = vec4(transformed, 1.0);
-          mat3 cr = mat3(modelMatrix);
-          #ifdef USE_INSTANCING
-            cp = instanceMatrix * cp;
-            cr = cr * mat3(instanceMatrix);
-          #endif
-          vCW = (modelMatrix * cp).xyz;
-          vCUp = normalize(cr * objectNormal).y;`,
-      );
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "#include <common>",
-        `#include <common>
-          varying vec3 vCW;
-          varying float vCUp;
-          uniform float uCausticTime;
-          uniform float uCausticStrength;
-          uniform vec3 uCausticColor;
-          uniform float uCausticScale;
-          ${GLSL_CAUSTICS}`,
-      )
-      .replace(
-        "#include <tonemapping_fragment>",
-        `float cs = causticVeins(vCW.xz * uCausticScale, uCausticTime);
-          cs *= smoothstep(0.0, 0.35, vCUp);
-          gl_FragColor.rgb += uCausticColor * cs * uCausticStrength;
-          #include <tonemapping_fragment>`,
-      );
-  };
-  material.needsUpdate = true;
-}
 
 export type SandTextures = { map: Texture; normalMap: Texture };
 
@@ -312,7 +226,7 @@ export type Seabed = {
   group: Group;
   floorMaterial: MeshStandardMaterial;
   rockMaterials: MeshStandardMaterial[];
-  causticUniforms: CausticUniforms;
+  causticUniforms: CausticsUniforms;
   heightAt: (x: number, z: number) => number;
   /**
    * How far apart the floor mesh's vertices are, in metres.
@@ -331,7 +245,11 @@ export type Seabed = {
 export function createSeabed(options: SeabedOptions): Seabed {
   const { extent, segments, windDirectionRadians, seed, renderer, cameraDistanceMetres } = options;
   const group = new Group();
-  const causticUniforms = createCausticUniforms();
+  // Real values (strength, depth, colour) arrive later from tintSeabed, once
+  // the water and lighting for this world are known — same two-phase build as
+  // every other seabed material here (colour is likewise a placeholder until
+  // tintSeabed runs).
+  const causticUniforms = createCausticsUniforms(0, 1, "#CFF6FF");
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
   const sand = createSandTextures(512, windDirectionRadians, anisotropy);
   sand.map.repeat.set(extent / 6, extent / 6);
@@ -472,6 +390,7 @@ export function tintSeabed(
   brightness: number,
   causticStrength: number,
   keyColor: Color,
+  surfaceHeightAboveFloor: number,
 ): void {
   seabed.floorMaterial.color
     .copy(SAND_ALBEDO)
@@ -483,6 +402,11 @@ export function tintSeabed(
       .lerp(fog, 0.34 + (1 - brightness) * 0.4)
       .multiplyScalar(0.62 + brightness * 0.22);
   }
-  seabed.causticUniforms.uCausticStrength.value = causticStrength * 0.185;
+  // No local gain here any more. This used to be `causticStrength * 0.185`,
+  // an unexplained factor that made the seabed's own caustics five times
+  // dimmer than the landmarks standing on it, lit by the same sun through the
+  // same water — see oceanCaustics.ts, which both now share.
+  seabed.causticUniforms.uCausticStrength.value = causticStrength;
   seabed.causticUniforms.uCausticColor.value.copy(keyColor).lerp(new Color("#CFF6FF"), 0.5);
+  seabed.causticUniforms.uCausticDepth.value = Math.max(0.5, surfaceHeightAboveFloor);
 }
