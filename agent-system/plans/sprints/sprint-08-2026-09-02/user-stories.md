@@ -1,8 +1,11 @@
 # Sprint 08 user stories — end-user identity and world ownership
 
-> **Document status:** Planned
+> **Document status:** Phase A implemented; Phases B and C planned
 > **Sprint starts:** 2026-09-02
 > **Last source review:** 2026-09-02
+> **Read the Phase A corrections section before Phase A's own stories** — five
+> of its claims turned out to be wrong, including one requirement that is not
+> achievable before email exists.
 
 One epic, three phases, seventeen branch-sized stories. The phases are ordered
 by dependency and each ends in a shippable state:
@@ -41,7 +44,7 @@ Backlog epic:
 
 ### S8-IDENTITY-001 — Turn on the `web` audience in auth-service
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a visitor,
@@ -80,30 +83,30 @@ Source evidence:
 - contracts/go/contracts_auth.go — `AccountAudienceWeb`
 
 Tasks:
-- [ ] `feat/be/web-audience-auth`: add the product signup/login/refresh/logout
+- [x] `feat/be/web-audience-auth`: add the product signup/login/refresh/logout
       handlers for `audience = "web"`, reusing the existing Argon2id hasher,
       refresh rotation, family reuse detection and lockout paths without
       copying them.
-- [ ] Add the two web token lifetimes as **named Go constants only — no `.env`
+- [x] Add the two web token lifetimes as **named Go constants only — no `.env`
       entry, no `render.yaml` key**. They are born as settings in
       `S8-IDENTITY-012` (`auth.token.web.access_ttl` = 7d,
       `auth.token.web.refresh_ttl` = 3mo), and a value that starts life as a
       setting needs a code default rather than an environment variable. Never
       literals either way.
-- [ ] Add the minimum-length rule and the Have I Been Pwned range check
+- [x] Add the minimum-length rule and the Have I Been Pwned range check
       (k-anonymity: first 5 SHA-1 hex characters out, suffix matched locally)
       as a signup/change-password validator, with a test that no password
       leaves the process.
-- [ ] Add a `register` action to the audit constants, which is the whole of the
+- [x] Add a `register` action to the audit constants, which is the whole of the
       registration metric (plan §14.2).
-- [ ] Add a test that a product signup can never produce an account holding a
+- [x] Add a test that a product signup can never produce an account holding a
       permission row.
-- [ ] Confirm in a test that **no migration** is needed: `kind`, `audience` and
+- [x] Confirm in a test that **no migration** is needed: `kind`, `audience` and
       `token_version` are asserted present against the existing schema.
 
 ### S8-IDENTITY-002 — The gateway's product auth edge
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a visitor,
@@ -133,20 +136,20 @@ Source evidence:
 - services/api-gateway/internal/handlers/admin_router.go — the route-group shape to follow
 
 Tasks:
-- [ ] `feat/be/product-auth-edge`: add `middleware.RequireProductAccessToken`,
+- [x] `feat/be/product-auth-edge`: add `middleware.RequireProductAccessToken`,
       mirroring `admin_auth.go` — local Ed25519 verification, then the Redis
       `tokenVersion` check, then the audience check against
       `AccountAudienceWeb`.
-- [ ] Add the `/api/auth` and `/api/me` route groups with a third
+- [x] Add the `/api/auth` and `/api/me` route groups with a third
       `authRateLimitRouteKey = "auth"` bucket and its own named limits.
-- [ ] Add per-email Redis failure counters for login, keyed separately from the
+- [x] Add per-email Redis failure counters for login, keyed separately from the
       per-IP bucket.
-- [ ] Extend `contracts/openapi.yaml` with the auth and `/api/me` route
+- [x] Extend `contracts/openapi.yaml` with the auth and `/api/me` route
       surface, and keep the admin surface out of it.
 
 ### S8-IDENTITY-003 — Prove the two audiences cannot cross, in both directions
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a service developer,
@@ -171,19 +174,19 @@ Source evidence:
 - services/api-gateway/internal/handlers/admin_router_test.go — the enumerating pattern to copy
 
 Tasks:
-- [ ] `feat/be/identity-separation-guardrails`: add
+- [x] `feat/be/identity-separation-guardrails`: add
       `product_router_test.go`, enumerating every `/api/me` and `/api/auth`
       route and asserting its middleware.
-- [ ] Add the missing direction: an `admin`-audience token rejected by the
+- [x] Add the missing direction: an `admin`-audience token rejected by the
       product edge.
-- [ ] Add the repository-level invariant test that an `end_user` account holds
+- [x] Add the repository-level invariant test that an `end_user` account holds
       no permission row.
-- [ ] Add the bootstrap-command test asserting it still cannot create an
+- [x] Add the bootstrap-command test asserting it still cannot create an
       `end_user`.
 
 ### S8-IDENTITY-004 — The web app's session, and its first CSP
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a visitor,
@@ -217,23 +220,23 @@ Source evidence:
 - apps/myunivokai-personalization/src/lib/api.ts — the client that gains the header and the refresh-once behaviour
 
 Tasks:
-- [ ] `feat/fe/product-session-and-csp`: add a session module that writes, reads
+- [x] `feat/fe/product-session-and-csp`: add a session module that writes, reads
       and clears the three cookies, with every name, path and lifetime a named
       constant.
-- [ ] Add signup, login and account-menu screens using the app's existing glass
+- [x] Add signup, login and account-menu screens using the app's existing glass
       surfaces rather than a new visual language.
-- [ ] Add single-flight transparent refresh to the API client so N concurrent
+- [x] Add single-flight transparent refresh to the API client so N concurrent
       401s cause one refresh, not N.
-- [ ] Add the Content-Security-Policy in `next.config`/middleware and verify
+- [x] Add the Content-Security-Policy in `next.config`/middleware and verify
       all three renderers against it.
-- [ ] Record in the code, next to the cookie writer, that a JS-written cookie
+- [x] Record in the code, next to the cookie writer, that a JS-written cookie
       **cannot** be `httpOnly`, so the exposure equals `localStorage` and the
       CSP is the control — otherwise a later reader will assume protection that
       is not there.
 
 ### S8-IDENTITY-005 — Tell the truth about a cold sign-in
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a visitor,
@@ -256,17 +259,17 @@ Source evidence:
 - agent-system/plans/architecture/service-wake-mechanism.md — the `503 SERVICE_WAKING` contract and the frontend wait both frontends already implement
 
 Tasks:
-- [ ] `feat/fe/auth-cold-start-honesty`: reuse the existing
+- [x] `feat/fe/auth-cold-start-honesty`: reuse the existing
       `SERVICE_WAKING` wait behaviour on the auth calls rather than writing a
       second one.
-- [ ] Distinguish a wake wait from a credential rejection in the UI, with a
+- [x] Distinguish a wake wait from a credential rejection in the UI, with a
       test for each.
-- [ ] Add `auth-service` to the wake platform adapters if it is absent, so the
+- [x] Add `auth-service` to the wake platform adapters if it is absent, so the
       gateway can actually start it.
 
 ### S8-IDENTITY-006 — Staff can see and disable an end-user account
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P1
 
 As a staff member,
@@ -290,10 +293,118 @@ Source evidence:
 - apps/myunivokai-admin/src/lib/session.ts — `AccountKind = "staff" | "end_user"` is already in the frontend types
 
 Tasks:
-- [ ] `feat/fe/admin-end-user-accounts`: show `kind` in the account list and
+- [x] `feat/fe/admin-end-user-accounts`: show `kind` in the account list and
       allow filtering by it.
-- [ ] Ensure the role-assignment UI is unreachable for an `end_user` row,
+- [x] Ensure the role-assignment UI is unreachable for an `end_user` row,
       matching the server-side invariant from `S8-IDENTITY-003`.
+
+---
+
+## Phase A — corrected during execution, 2026-09-02
+
+Written after the work, and read before the sections above. Five of Phase A's
+own claims about the repository or about what was achievable turned out to be
+wrong, and the record is worth more than the tidy version.
+
+### 1. `S8-IDENTITY-001` asks for a uniform signup response, and that is not achievable before email exists
+
+The story's scenario says "a signup for an email that already exists is
+indistinguishable in the response from one that does not". Every arrangement
+was checked and none of them delivers it:
+
+- **Return a session on a collision.** That requires verifying the submitted
+  password against the existing account, so a wrong password answers
+  differently from a brand-new address — the address is disclosed anyway, now
+  with a password oracle attached to the disclosure.
+- **Return success with no session**, the way a product with mail does ("check
+  your inbox"). That needs an inbox. Decision 12 puts mail in Phase D.
+- **Return the same error for both.** Then a new address cannot register.
+
+Uniform signup responses require email verification; there is no arrangement of
+a create-and-sign-in endpoint that hides the collision. `EMAIL_UNAVAILABLE` is
+returned, the disclosure is accepted, and the argument is written into
+`SignUpEndUser`'s doc comment rather than papered over. What bounds it: the
+dedicated `auth` rate-limit bucket, the per-email counter, and an audit row per
+attempt.
+
+**LOGIN is uniform and stays uniform** — the decoy-hash path, plus the new
+wrong-kind branch that pays the same Argon2id cost. That is the half of §5.1's
+requirement that is both achievable and load-bearing, because login is what an
+attacker probes to find live accounts.
+
+### 2. The gateway's access-token public key was validated only when the admin surface was on
+
+`ADMIN_ACCESS_PUBLIC_KEYS` was checked inside `if AdminRoutesEnabled`, whose
+shipped default is `false`. The product edge is not gated by that flag, so a
+deployment with admin routes off and no key would have mounted `/api/me`,
+rejected every valid session with a 401, and said nothing about why. It is now
+required unconditionally, with an error naming the variable at boot.
+
+Not a new burden on local development: `.env.example` ships
+`ADMIN_ROUTES_ENABLED=true`, so the admin block already demanded it. Two Go
+fields lost their `Admin` prefix as a consequence (`AccessTokenPublicKeys`,
+`TokenVersionCacheTTL`) while the environment variables kept their names — they
+are live secrets in a Render environment group.
+
+### 3. The web app already depended on a Google host at runtime, and `S8-IDENTITY-004` would have broken the forest
+
+Most of this app's `.glb` models carry `KHR_draco_mesh_compression`, and
+`@react-three/drei` points its DRACO decoder at
+`https://www.gstatic.com/draco/` by default. So a CSP that blocks third-party
+script — which is what the story asks for — would have stopped the nature
+family rendering trees, animals and ground decor, silently.
+
+The decoder is now committed under
+`apps/myunivokai-personalization/public/vendor/draco/` from three 0.171.0, and
+`useGLTF.setDecoderPath` points at it, so `script-src` names no third-party
+origin at all. This was not scope creep: it is what the story's own acceptance
+criterion required.
+
+### 4. The CSP had a hole no check in this repo could see, and a browser found it
+
+`tsc`, `next lint`, `next build` and all 700 unit tests passed against a policy
+that produced **fourteen `connect-src blocked blob` violations per scene**:
+`GLTFLoader` turns a model's embedded buffers and textures into Blob URLs and
+reads them back through an ordinary fetch, which `connect-src` governs and not
+`img-src`.
+
+`e2e/content-security-policy.spec.ts` (`npm run check:csp`) is the instrument —
+the one assertion suite in that folder rather than an artefact to eye, because
+a `securitypolicyviolation` event names the directive it refused. It is not run
+in CI, for the reason the Playwright config already gives about that folder.
+After the fix: 6/6, with all three renderers mounting at zero violations and
+the decoder fetched from `/vendor/draco/`.
+
+### 5. Two task lines described work that did not exist, and one described a frontend change that was a backend one
+
+- **`S8-IDENTITY-005`'s "add `auth-service` to the wake platform adapters if it
+  is absent" was already done.** `wake.ServiceForSubject` cuts a subject at its
+  first segment, so `myunivokai.queries.auth.web.login.v1` already resolves to
+  `auth`, and `ServiceAuth` was already in the gateway's wake URL map. Verified
+  rather than assumed, since the story listed it as work.
+- **`S8-IDENTITY-006`'s kind filter is a backend change**, not a frontend one.
+  The account list is cursor-paginated, so a client-side filter would filter
+  the page it received and report "there are no end users" whenever the newest
+  twenty accounts were staff. `kind` now travels `AccountListQueryData` →
+  `Store.ListAccounts` → an equality predicate applied before pagination in
+  both stores. The story sits in Phase A's frontend half and its task list did
+  not anticipate touching `contracts/`.
+
+### What Phase A deliberately did NOT do, so it is not mistaken for an omission
+
+- **No migration.** `internal/db/web_audience_schema_test.go` reads the
+  committed SQL and asserts the four facts the "zero migrations" claim rests
+  on, and a second test fails if a fourth migration file appears — so
+  `S8-IDENTITY-012`'s `system_settings` table has to raise a constant in the
+  same commit that adds it.
+- **The four existing `auth.*` subjects were not renamed** to say `admin`,
+  even though they now silently mean it. A rename costs a coordinated
+  two-service deploy plus a NATS ACL change to buy what a comment buys for
+  nothing — the same call §17 made about `aud=web`.
+- **`contracts/openapi-admin.yaml` is unchanged.** It documents the auth and
+  analytics-read surface; the account-management routes were never in it, so
+  the new `?kind=` parameter has nothing to be added to. Documenting that
+  surface is its own change.
 
 ---
 
