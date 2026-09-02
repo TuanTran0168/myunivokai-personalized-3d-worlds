@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +31,11 @@ type AuthService interface {
 	SignUpEndUser(ctx context.Context, data contracts.WebSignupData) (contracts.LoginResponseData, error)
 	LoginEndUser(ctx context.Context, data contracts.LoginData, sourceAddress string) (contracts.LoginResponseData, error)
 	RefreshEndUserSession(ctx context.Context, rawRefreshToken, sourceAddress string) (contracts.LoginResponseData, error)
+	// The account's own page. The account id on both is set by the gateway
+	// from the access token, never read from the request body - see
+	// contracts.AccountProfileGetData.
+	AccountProfile(ctx context.Context, accountID string) (contracts.AccountProfileData, error)
+	SaveAccountProfile(ctx context.Context, data contracts.AccountProfileUpdateData) (contracts.AccountProfileData, error)
 	TokenVersion(ctx context.Context, accountID string) (int, error)
 	DisableAccount(ctx context.Context, accountID, actorAccountID, sourceAddress string) error
 	EnableAccount(ctx context.Context, accountID, actorAccountID, sourceAddress string) error
@@ -151,6 +157,33 @@ func (handler *NATSHandler) HandleWebLogoutQuery(message *nats.Msg) {
 		return struct{}{}, handler.authService.Logout(ctx, envelope.Data.RefreshToken, envelope.Data.SourceAddress)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusNoContent, struct{}{}, err)
+}
+
+// HandleWebProfileGetQuery and HandleWebProfileUpdateQuery answer the
+// account's own page. Neither reads an account id from anywhere but
+// envelope.Data.AccountID, which the gateway sets from the access token's
+// subject: an id a caller could name is an id a caller could name somebody
+// else's.
+func (handler *NATSHandler) HandleWebProfileGetQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.AccountProfileGetData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.AccountProfileData, error) {
+		return handler.authService.AccountProfile(ctx, envelope.Data.AccountID)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
+func (handler *NATSHandler) HandleWebProfileUpdateQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.AccountProfileUpdateData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.AccountProfileData, error) {
+		return handler.authService.SaveAccountProfile(ctx, envelope.Data)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
 
 func (handler *NATSHandler) HandleTokenVersionQuery(message *nats.Msg) {
@@ -415,6 +448,12 @@ func (handler *NATSHandler) respondWithResult(message *nats.Msg, jobID string, s
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "PASSWORD_BREACHED", "This password has appeared in a public data breach. Please choose a different one."))
 	case errors.Is(err, services.ErrEmailRequired):
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "VALIDATION_ERROR", "An email address is required."))
+	case errors.Is(err, services.ErrProfileInvalid):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "VALIDATION_ERROR", "Please check the highlighted fields."))
+	case errors.Is(err, services.ErrProfileNotForStaff):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "PROFILE_NOT_AVAILABLE", "This account has no product profile."))
+	case errors.Is(err, services.ErrDisplayNameTooLong):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "VALIDATION_ERROR", fmt.Sprintf("A display name can be at most %d characters.", contracts.MaximumAccountDisplayNameLength)))
 	case errors.Is(err, services.ErrEmailUnavailable):
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusConflict, "EMAIL_UNAVAILABLE", "That email address cannot be used. If you already have an account, sign in instead."))
 	case errors.Is(err, services.ErrSystemRoleImmutable):

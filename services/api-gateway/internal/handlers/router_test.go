@@ -22,6 +22,10 @@ type fakeBroker struct {
 	publishedEnvelope contracts.Envelope[contracts.GenerateDNAData]
 	requestedSubject  string
 	requestedSubjects []string
+	// requestedPayloadsBySubject keeps what was SENT, not only which subject
+	// was asked. A test that the account id comes from the access token rather
+	// than from the request body cannot be written without it.
+	requestedPayloadsBySubject map[string]any
 	response          contracts.Envelope[contracts.RPCResponseData]
 	// responsesBySubject lets a test answer two different NATS subjects
 	// differently in one request (e.g. RequireAdminPermission's
@@ -41,11 +45,15 @@ func (brokerClient *fakeBroker) PublishGeneration(_ context.Context, envelope co
 	return brokerClient.publishError
 }
 
-func (brokerClient *fakeBroker) Request(_ context.Context, subject string, _ any) (contracts.Envelope[contracts.RPCResponseData], error) {
+func (brokerClient *fakeBroker) Request(_ context.Context, subject string, payload any) (contracts.Envelope[contracts.RPCResponseData], error) {
 	brokerClient.mutex.Lock()
 	defer brokerClient.mutex.Unlock()
 	brokerClient.requestedSubject = subject
 	brokerClient.requestedSubjects = append(brokerClient.requestedSubjects, subject)
+	if brokerClient.requestedPayloadsBySubject == nil {
+		brokerClient.requestedPayloadsBySubject = map[string]any{}
+	}
+	brokerClient.requestedPayloadsBySubject[subject] = payload
 	if response, found := brokerClient.responsesBySubject[subject]; found {
 		return response, brokerClient.requestError
 	}

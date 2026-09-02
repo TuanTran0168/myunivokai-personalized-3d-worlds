@@ -20,6 +20,11 @@ import (
 const (
 	productAuthRoutePrefix = "/api/auth"
 	productMeRoutePrefix   = "/api/me"
+	// The account's own page. A static segment under /api/me, which chi
+	// resolves ahead of any parameter segment - the same reason /api/me itself
+	// is not swallowed by /api/{family}, asserted in
+	// product_auth_router_test.go.
+	productProfileRoutePath = productMeRoutePrefix + "/profile"
 )
 
 // productCORSOptions is the product surface's CORS policy, shared by the
@@ -32,7 +37,13 @@ const (
 func productCORSOptions(serviceConfig config.Config) cors.Options {
 	return cors.Options{
 		AllowedOrigins: serviceConfig.AllowedOrigins,
-		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		// PATCH is here for the account page's save, and for nothing else on
+		// this surface yet. It is the verb the admin router already uses for
+		// "change this resource", so the product edge does not introduce a
+		// second convention for the same act. Widening the method list creates
+		// no route: chi answers 405 for a PATCH at any path that has not
+		// declared one.
+		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodOptions},
 		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
 		ExposedHeaders: []string{"Cache-Control", "Retry-After", "X-Cache", "X-Request-Id"},
 		MaxAge:         corsMaximumAgeSeconds,
@@ -69,5 +80,7 @@ func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, b
 	router.Group(func(sessionRouter chi.Router) {
 		sessionRouter.Use(requireProductAccessToken)
 		sessionRouter.Get(productMeRoutePrefix, authHandler.Me)
+		sessionRouter.Get(productProfileRoutePath, authHandler.Profile)
+		sessionRouter.Patch(productProfileRoutePath, authHandler.UpdateProfile)
 	})
 }

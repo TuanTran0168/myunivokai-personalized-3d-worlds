@@ -22,6 +22,17 @@ var (
 	// the caller to report it to; this is the invariant that stops an empty
 	// string becoming an account no matter who publishes the query.
 	ErrEmailRequired = errors.New("an email address is required")
+
+	// ErrDisplayNameTooLong rejects a display name past
+	// contracts.MaximumAccountDisplayNameLength. Enforced here as well as at
+	// the gateway for the same reason ErrEmailRequired is: the gateway's check
+	// serves the caller a readable message, and this one holds the invariant
+	// whoever publishes the query.
+	//
+	// It rejects rather than truncating. A name silently cut to 32 characters
+	// is a person's own name shown back to them wrong, on the one screen that
+	// greets them by it, with nothing saying why.
+	ErrDisplayNameTooLong = errors.New("that display name is too long")
 )
 
 // auditResultEmailUnavailable records a signup that collided with an existing
@@ -69,10 +80,27 @@ const auditResultEmailUnavailable = "email_unavailable"
 // LOGIN is uniform, and stays uniform - see login's decoy hash. That is the
 // half of the plan's section 5.1 requirement that is both achievable and
 // load-bearing, since it is login an attacker probes to find live accounts.
+//
+// # The display name
+//
+// data.Name is optional and is stored as given, trimmed. It is display data:
+// nothing reads it to decide anything, it is deliberately NOT unique, and an
+// empty one is a valid account whose menu falls back to the email address.
+// Uniqueness would be the wrong promise for a name people choose to be
+// greeted by, and it would turn "that name is taken" into a second signup
+// failure mode on a form that already has one.
 func (service *AuthService) SignUpEndUser(ctx context.Context, data contracts.WebSignupData) (contracts.LoginResponseData, error) {
 	email := normalizeEmail(data.Email)
 	if strings.TrimSpace(email) == "" {
 		return contracts.LoginResponseData{}, ErrEmailRequired
+	}
+	displayName := strings.TrimSpace(data.Name)
+	// Counted in runes, not bytes. `len` would let a 32-character name in one
+	// alphabet through and refuse the same 32 characters in another - and
+	// Vietnamese, which this product is used in, spends up to three bytes on
+	// a single letter.
+	if len([]rune(displayName)) > contracts.MaximumAccountDisplayNameLength {
+		return contracts.LoginResponseData{}, ErrDisplayNameTooLong
 	}
 	// The password policy runs before the hash, so a rejected password is
 	// never put through Argon2id - and before the account is created, so a
@@ -85,7 +113,7 @@ func (service *AuthService) SignUpEndUser(ctx context.Context, data contracts.We
 		return contracts.LoginResponseData{}, err
 	}
 	account, err := service.store.CreateAccount(ctx, repositories.CreateAccountParams{
-		Email: email, PasswordHash: passwordHash, Kind: contracts.AccountKindEndUser,
+		Email: email, Name: displayName, PasswordHash: passwordHash, Kind: contracts.AccountKindEndUser,
 	})
 	if errors.Is(err, repositories.ErrConflict) {
 		service.audit(ctx, nil, auditActionRegister, email, auditResultEmailUnavailable, data.SourceAddress)

@@ -51,7 +51,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/Credentials" }
+            schema: { $ref: "#/components/schemas/SignUpRequest" }
       responses:
         "201":
           description: The account was created and signed in
@@ -159,6 +159,67 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ProductAccount" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/me/profile:
+    get:
+      summary: Get the signed-in account's profile
+      operationId: getAccountProfile
+      description: >-
+        The account's own page: who they are, and the defaults the
+        create-world form is filled from. Reads the account named by the
+        token's subject; there is no account id in the route or in the body, so
+        a caller cannot ask about any other account.
+
+        An account that has never saved a profile gets an EMPTY one and not a
+        404. The page's job is to be opened before it has ever been saved, and
+        a 404 would make every client treat "not filled in yet" as a failure.
+      security:
+        - productAccessToken: []
+      responses:
+        "200":
+          description: The profile, saved or empty
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProfile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileNotAvailable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    patch:
+      summary: Replace the signed-in account's profile
+      operationId: updateAccountProfile
+      description: >-
+        Replaces the profile WHOLE. Every field the page renders is sent on
+        every save, because a merge would make a field somebody cleared
+        indistinguishable from one the request did not mention — on a form of
+        optional text fields, the difference between "delete my goal" and
+        "leave my goal alone".
+
+        `creationDefaults` is validated as a DRAFT and never as a submission:
+        every ceiling and every vocabulary applies, and not one minimum does. A
+        half-filled profile is a legitimate thing to save; demanding a complete
+        world before somebody can record their own name would make this page
+        unusable the first time it is opened.
+
+        `displayName` writes the account's name, which is the SAME value
+        returned in `creationDefaults.nickname`. There is one name.
+      security:
+        - productAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountProfile" }
+      responses:
+        "200":
+          description: The saved profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProfile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/ProfileNotAvailable" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /api/jobs/{jobId}:
@@ -434,11 +495,105 @@ components:
             At least 12 characters, with no composition rules — current NIST
             guidance. Rejected on signup if it appears in the Have I Been Pwned
             corpus, and never rejected for that reason on login.
+    SignUpRequest:
+      type: object
+      required: [email, password]
+      description: >-
+        Credentials plus the name the person wants to be called. A separate
+        schema from Credentials rather than a `name` added to it, so LOGIN's
+        accepted body is unchanged — the gateway decodes the two shapes
+        separately, and a login that quietly accepted a name would be a field
+        with no meaning on the one request where somebody might expect it to
+        identify them.
+      allOf:
+        - $ref: "#/components/schemas/Credentials"
+        - type: object
+          properties:
+            name:
+              type: string
+              maxLength: 32
+              description: >-
+                Optional, and not unique. It is what the header greets the
+                account by and what the create-world form's Nickname field is
+                filled with, which is why the ceiling is the same 32 characters
+                that field allows. An account with no display name is valid and
+                its menu falls back to the email address.
     RefreshRequest:
       type: object
       required: [refreshToken]
       properties:
         refreshToken: { type: string }
+    WorldCreationDefaults:
+      type: object
+      description: >-
+        The create-world form's own fields. Identical in shape to the generate
+        call's input, deliberately: a profile that could not express the form it
+        fills would drift from it the first time the form gained a field.
+
+        Held as a DRAFT — every field is optional here, unlike the generate
+        call, where nickname, interests, traits, goal, mood, colours and style
+        are all required with minimums.
+      properties:
+        nickname:
+          type: string
+          maxLength: 32
+          description: >-
+            Read-only in practice: it is the account's display name, projected.
+            Set it through `displayName` — there is one name, stored once.
+        role: { type: string, maxLength: 80 }
+        goal: { type: string, maxLength: 220 }
+        challenge: { type: string, maxLength: 220 }
+        interests: { type: array, maxItems: 8, items: { type: string, maxLength: 32 } }
+        traits: { type: array, maxItems: 6, items: { type: string, maxLength: 32 } }
+        mood: { type: string }
+        favoriteColors:
+          type: array
+          maxItems: 4
+          items: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+        preferredWorldStyle:
+          type: string
+          description: >-
+            Belongs to exactly one world family. Sending one with no
+            `preferredWorldFamily` is a 400: a style saved for the wrong family
+            would be refused later, at generate time, on a different screen.
+    AccountProfile:
+      type: object
+      description: >-
+        The same shape travels both ways: what GET returns is what PATCH
+        accepts, so the page can load, edit and save without translating
+        between two models.
+      properties:
+        displayName:
+          type: string
+          maxLength: 32
+          description: >-
+            The account's one name. Greets them in the header, and fills the
+            create form's Nickname field whether or not `autofillCreateForm` is
+            set — a name is not a preference to opt into being called by.
+        fullName: { type: string, maxLength: 120 }
+        gender:
+          type: string
+          enum: ["", female, male, non_binary, other, prefer_not_to_say]
+          description: >-
+            A closed set so the displayed words can be chosen and translated
+            separately from the stored value. `""` means unanswered;
+            `prefer_not_to_say` is an ANSWER, and the two are deliberately
+            different. Nothing reads this to decide anything, and it is never
+            inferred.
+        preferredWorldFamily:
+          type: string
+          enum: ["", universe, nature, ocean]
+          description: '`""` means no preference, which is a valid saved state.'
+        creationDefaults: { $ref: "#/components/schemas/WorldCreationDefaults" }
+        autofillCreateForm:
+          type: boolean
+          description: >-
+            Whether the create-world form is pre-filled from this profile.
+            Stored on the account rather than in one browser so it follows the
+            person to their next device. Defaults to true: somebody who fills
+            their profile in should see it used without finding a second
+            switch. It governs the world-preference fields only.
+        updatedAt: { type: string, format: date-time }
     ProductAccount:
       type: object
       required: [accountId, email, createdAt]
@@ -495,6 +650,14 @@ components:
         The credential was correct and the account cannot be used:
         ACCOUNT_DISABLED (a staff member marked it inactive) or ACCOUNT_LOCKED
         (too many failed attempts, temporary).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    ProfileNotAvailable:
+      description: >-
+        This account has no product profile. Only an end-user account has one:
+        a staff account holds an `admin` token, which the product edge refuses
+        outright, so this is reachable only if something upstream is wrong.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }

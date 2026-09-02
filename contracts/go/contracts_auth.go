@@ -49,6 +49,16 @@ const (
 	AuthWebRefreshQuerySubject = "myunivokai.queries.auth.web.refresh.v1"
 	AuthWebLogoutQuerySubject  = "myunivokai.queries.auth.web.logout.v1"
 
+	// The account's own page. Product audience only, like the four above: a
+	// staff account has no creation defaults to hold, and the admin surface
+	// reads an account through AuthAccountGetQuerySubject.
+	//
+	// The account id on both requests is set by the gateway from the access
+	// token's subject and is NEVER read from the request body — see
+	// AccountProfileGetData. That is what makes "my profile" mean mine.
+	AuthWebProfileGetQuerySubject    = "myunivokai.queries.auth.web.profile.get.v1"
+	AuthWebProfileUpdateQuerySubject = "myunivokai.queries.auth.web.profile.update.v1"
+
 	AccountAudienceAdmin AccountAudience = "admin"
 	AccountAudienceWeb   AccountAudience = "web"
 
@@ -68,7 +78,123 @@ const (
 	PermissionAuditRead      PermissionCode = "audit:read"
 	PermissionRoleRead       PermissionCode = "role:read"
 	PermissionRoleManage     PermissionCode = "role:manage"
+
+	// MaximumAccountDisplayNameLength bounds WebSignupData.Name, and therefore
+	// accounts.name for a self-registered account.
+	//
+	// It is DEFINED AS the create-world form's Nickname cap rather than as its
+	// own 32, because the display name is what that field is auto-filled with
+	// for a signed-in visitor. Two independent numbers that happen to agree
+	// would let an account carry a name the create form then silently
+	// truncates; this way they cannot disagree.
+	//
+	// It lives in contracts rather than in auth-service because the gateway
+	// validates against it at the edge and cannot import another service's
+	// internal package. Counted in RUNES wherever it is enforced: a byte
+	// ceiling would admit 32 characters in one alphabet and refuse 32 in
+	// another, and Vietnamese spends up to three bytes on one letter.
+	MaximumAccountDisplayNameLength = maximumNicknameCharacters
+
+	// MaximumFullNameLength bounds AccountProfileData.FullName. Longer than
+	// the display name because it holds a full name rather than a handle, and
+	// plenty of real names in full — with diacritics, particles and more than
+	// two given names — pass 32 characters.
+	MaximumFullNameLength = 120
+
+	// The gender vocabulary AccountProfileData.Gender admits. A closed set
+	// rather than free text, so the value can be rendered in the visitor's own
+	// language on the client instead of being stored in whichever one they
+	// typed — and GenderUnspecified is the default, which is why an unanswered
+	// profile is a complete one.
+	//
+	// GenderPreferNotToSay is deliberately distinct from GenderUnspecified: one
+	// is an answer and the other is the absence of one, and collapsing them
+	// would make "I would rather not say" indistinguishable from "I have not
+	// opened this page yet".
+	GenderUnspecified    AccountGender = ""
+	GenderFemale         AccountGender = "female"
+	GenderMale           AccountGender = "male"
+	GenderNonBinary      AccountGender = "non_binary"
+	GenderOther          AccountGender = "other"
+	GenderPreferNotToSay AccountGender = "prefer_not_to_say"
 )
+
+// AccountGender is display data an account holder sets about themselves.
+// Nothing reads it to decide anything, and it is never inferred: an
+// unanswered profile stores GenderUnspecified and stays that way.
+type AccountGender string
+
+func (gender AccountGender) Valid() bool {
+	switch gender {
+	case GenderUnspecified, GenderFemale, GenderMale, GenderNonBinary, GenderOther, GenderPreferNotToSay:
+		return true
+	default:
+		return false
+	}
+}
+
+// AccountProfileData is the account's own page: who they are, and the
+// defaults the create-world form is filled from.
+//
+// CreationDefaults is a WorldInput — the very type the generate command
+// carries — rather than a parallel struct listing the same nine fields. That
+// is the point: a profile that could not express the form it fills would drift
+// from it the first time the form gained a field.
+//
+// It is a DRAFT of a WorldInput, though, and never validated as a submission.
+// See WorldInput.ValidateAsCreationDefaults for why the difference matters:
+// a half-filled profile is a legitimate thing to save, and a complete world is
+// not a legitimate thing to demand before somebody can record their own name.
+//
+// CreationDefaults.Nickname is not stored in account_profiles at all: it is
+// projected from accounts.name on read and written back to accounts.name on
+// update, so an account has exactly ONE name — the one in the header menu is
+// the one the create form is filled with.
+type AccountProfileData struct {
+	FullName             string        `json:"fullName,omitempty"`
+	Gender               AccountGender `json:"gender,omitempty"`
+	PreferredWorldFamily WorldFamily   `json:"preferredWorldFamily,omitempty"`
+	CreationDefaults     WorldInput    `json:"creationDefaults"`
+
+	// AutofillCreateForm is the create page's toggle, stored on the account so
+	// it follows the person to their next device rather than living in one
+	// browser. It governs the world-preference fields only; the display name
+	// fills the Nickname field either way, because a name is not a preference
+	// somebody has to opt into being called by.
+	AutofillCreateForm bool `json:"autofillCreateForm"`
+
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+}
+
+// AccountProfileGetData carries only the account id, and the gateway sets it
+// from the access token's subject. There is deliberately no other field: an
+// account id a caller could name is an account id a caller could name
+// somebody else's.
+type AccountProfileGetData struct {
+	AccountID string `json:"accountId"`
+}
+
+// AccountProfileUpdateData replaces the account's profile wholesale — the
+// page sends every field it renders, so a partial merge would make an
+// emptied field indistinguishable from an omitted one.
+//
+// AccountID is set by the gateway from the token, exactly as in
+// AccountProfileGetData. SourceAddress is carried for the audit row, the same
+// way every other mutation in this file carries it.
+type AccountProfileUpdateData struct {
+	AccountID     string        `json:"accountId"`
+	FullName      string        `json:"fullName,omitempty"`
+	Gender        AccountGender `json:"gender,omitempty"`
+	// DisplayName writes accounts.name. Named for what it is rather than
+	// `name`, because AccountProfileData projects it into
+	// CreationDefaults.Nickname and a reader of this struct needs to know
+	// which of the two they are setting: there is only one.
+	DisplayName          string      `json:"displayName,omitempty"`
+	PreferredWorldFamily WorldFamily `json:"preferredWorldFamily,omitempty"`
+	CreationDefaults     WorldInput  `json:"creationDefaults"`
+	AutofillCreateForm   bool        `json:"autofillCreateForm"`
+	SourceAddress        string      `json:"sourceAddress"`
+}
 
 // AccountAudience matches the audience claim on an access token. A role or
 // permission scoped to one audience can never be granted on a token minted
@@ -174,8 +300,15 @@ type AuditEventSummary struct {
 // with AccountKindEndUser by the handler, and AudienceForAccountKind then
 // decides the audience from it. A caller that could name either would be able
 // to ask for staff.
+//
+// Name is the display name the person chose for themselves, and it is
+// display data only: nothing authorizes on it, it is not unique, and it is
+// not verified. It reaches accounts.name, which migration
+// 000003_account_name.sql already added for staff accounts — so an end user
+// having one costs no schema change.
 type WebSignupData struct {
 	Email         string `json:"email"`
+	Name          string `json:"name,omitempty"`
 	Password      string `json:"password"`
 	SourceAddress string `json:"sourceAddress"`
 }

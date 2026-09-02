@@ -22,8 +22,9 @@ universe-service, nature-service and dna-service already use elsewhere in
 this repo, rather than a separate repository type per aggregate
 (`AccountRepository`, `RoleRepository`, ...). What's split **within** each
 implementation is the *file*, not the *type*: `postgres_accounts.go`,
-`postgres_refresh_tokens.go`, `postgres_roles_permissions.go` and
-`postgres_audit.go` (mirrored by `memory_*.go`) all define methods on the
+`postgres_account_profiles.go`, `postgres_refresh_tokens.go`,
+`postgres_roles_permissions.go` and `postgres_audit.go` (mirrored by
+`memory_*.go`) all define methods on the
 same `*PostgresStore` / `*MemoryStore` receiver — Go has no rule that a
 type's methods live in one file, so this is purely a readability split, not
 an architectural one.
@@ -34,6 +35,37 @@ this repo, and would cost real wiring (multiple constructor arguments, a
 composed interface, more mocks in tests) for an auth database with five
 tables. Reconsider if a table set here ever grows enough that one file per
 concern stops being enough on its own — that has not happened yet.
+
+`internal/services` follows the same rule for the same reason:
+`role_management_service.go` and `account_profile_service.go` define methods
+on `*AuthService` rather than introducing service structs that would each need
+their own path through `NewRuntime` and `NewNATSHandler`.
+
+## The account's own page (S8-IDENTITY-019)
+
+`account_profiles` (`migrations/000004_account_profiles.sql`) holds what an
+end-user account recorded about itself and the defaults its create-world form
+is filled from. Two things about it are load-bearing:
+
+- **It has no nickname column.** The nickname IS `accounts.name` — one name,
+  stored once, projected into `AccountProfileData.CreationDefaults.Nickname` on
+  read and written back on update, so the product's header menu and its create
+  form cannot greet the same person differently. A test in `internal/db`
+  refuses the column if anybody adds one.
+- **The world fields are validated as a DRAFT.**
+  `contracts.WorldInput.ValidateAsCreationDefaults` applies every ceiling and
+  every vocabulary and not one minimum, unlike the `Validate` the generate path
+  uses. A profile with one interest is a legitimate thing to save; a world with
+  one is not.
+
+A staff account has no row here and cannot get one — `ErrProfileNotForStaff`.
+The two subjects are product-audience only, so reaching that error means
+something upstream is wrong rather than that a feature is missing.
+
+This is also the migration that raised
+`TestAuthServiceGainsNoUnplannedMigration`'s constant from 3 to 4. That test is
+a ratchet, not a description: raising it is the commit where somebody chose to
+pay for a table.
 
 ## Invite flow (S4-AUTH-005)
 

@@ -358,3 +358,60 @@ func TestMeRejectsARevokedSessionEvenThoughTheTokenHasNotExpired(t *testing.T) {
 		t.Fatalf("body = %s, want SESSION_REVOKED so the client signs out rather than retrying", response.Body.String())
 	}
 }
+
+// The display name travels with the signup, and LOGIN's body shape is
+// unchanged by its arrival: the two are decoded into separate structs so a
+// login that quietly accepted a name would be a field with no meaning on the
+// one request where somebody might expect it to identify them.
+func TestSignUpCarriesTheDisplayNameAndLoginStillRefusesOne(t *testing.T) {
+	brokerClient := &fakeBroker{responsesBySubject: map[string]contracts.Envelope[contracts.RPCResponseData]{
+		contracts.AuthWebSignupQuerySubject: productSessionEnvelope(t),
+		contracts.AuthWebLoginQuerySubject:  productSessionEnvelope(t),
+	}}
+	router := NewRouter(testGatewayConfig(), brokerClient, newFakeEdgeStore(), nil, nil)
+
+	signUpResponse := postJSON(t, router, "/api/auth/signup",
+		`{"email":"`+testEndUserEmail+`","password":"`+testEndUserPassword+`","name":"  Neo  "}`)
+	if signUpResponse.Code != http.StatusCreated {
+		t.Fatalf("signup status = %d, body = %s", signUpResponse.Code, signUpResponse.Body.String())
+	}
+	envelope, ok := brokerClient.requestedPayloadsBySubject[contracts.AuthWebSignupQuerySubject].(contracts.Envelope[any])
+	if !ok {
+		t.Fatalf("signup payload = %T, want an envelope", brokerClient.requestedPayloadsBySubject[contracts.AuthWebSignupQuerySubject])
+	}
+	signup, ok := envelope.Data.(contracts.WebSignupData)
+	if !ok {
+		t.Fatalf("envelope data = %T, want contracts.WebSignupData", envelope.Data)
+	}
+	// Trimmed at the edge, so auth-service never stores the spaces and the
+	// header never renders them.
+	if signup.Name != "Neo" {
+		t.Errorf("name = %q, want it trimmed to Neo", signup.Name)
+	}
+
+	loginResponse := postJSON(t, router, "/api/auth/login",
+		`{"email":"`+testEndUserEmail+`","password":"`+testEndUserPassword+`","name":"Neo"}`)
+	if loginResponse.Code != http.StatusBadRequest {
+		t.Fatalf("login with a name: status = %d, want 400 - login's body shape must not have grown a name", loginResponse.Code)
+	}
+}
+
+// The ceiling is enforced at the edge so the message can name the limit, and
+// a cold auth-service is not woken to refuse a name nobody can save.
+func TestSignUpRefusesADisplayNamePastTheCeiling(t *testing.T) {
+	brokerClient := &fakeBroker{response: productSessionEnvelope(t)}
+	router := NewRouter(testGatewayConfig(), brokerClient, newFakeEdgeStore(), nil, nil)
+
+	response := postJSON(t, router, "/api/auth/signup",
+		`{"email":"`+testEndUserEmail+`","password":"`+testEndUserPassword+`","name":"`+strings.Repeat("n", contracts.MaximumAccountDisplayNameLength+1)+`"}`)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", response.Code, response.Body.String())
+	}
+	if len(brokerClient.requestedSubjects) != 0 {
+		t.Errorf("an over-long name reached %v", brokerClient.requestedSubjects)
+	}
+	if !strings.Contains(response.Body.String(), strconv.Itoa(contracts.MaximumAccountDisplayNameLength)) {
+		t.Errorf("the message does not name the limit; body = %s", response.Body.String())
+	}
+}

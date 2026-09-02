@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -35,6 +36,17 @@ type IdentityFailureCounter interface {
 type productCredentialsRequestBody struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+// productSignUpRequestBody is the credentials plus the display name the person
+// chose. A separate type from productCredentialsRequestBody rather than a
+// `name` added to it, so LOGIN's accepted body shape is unchanged: a login
+// that quietly accepted a name would be a field with no meaning on the one
+// request where somebody might expect it to identify them.
+type productSignUpRequestBody struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Name     string `json:"name"`
 }
 
 type productRefreshRequestBody struct {
@@ -92,8 +104,20 @@ func NewProductAuthHandler(serviceConfig config.Config, transport *RPCTransport,
 }
 
 func (handler *ProductAuthHandler) SignUp(responseWriter http.ResponseWriter, request *http.Request) {
-	body, ok := handler.decodeCredentials(responseWriter, request)
-	if !ok {
+	var body productSignUpRequestBody
+	if !decodeJSONBody(responseWriter, request, &body) {
+		return
+	}
+	body.Email = strings.TrimSpace(body.Email)
+	if !handler.credentialsAreUsable(responseWriter, request, body.Email, body.Password) {
+		return
+	}
+	displayName := strings.TrimSpace(body.Name)
+	// Runes, not bytes, and the same count auth-service enforces — see
+	// contracts.MaximumAccountDisplayNameLength. The edge check exists to give
+	// the caller a message naming the limit; auth-service's is the invariant.
+	if len([]rune(displayName)) > contracts.MaximumAccountDisplayNameLength {
+		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "VALIDATION_ERROR", fmt.Sprintf("A display name can be at most %d characters.", contracts.MaximumAccountDisplayNameLength))
 		return
 	}
 	// Signup is not throttled per email, and that is not an oversight: the
@@ -102,7 +126,7 @@ func (handler *ProductAuthHandler) SignUp(responseWriter http.ResponseWriter, re
 	// would only let someone stop a stranger from ever registering an address
 	// by attempting it themselves.
 	handler.completeSession(responseWriter, request, http.StatusCreated, contracts.AuthWebSignupQuerySubject, contracts.WebSignupData{
-		Email: body.Email, Password: body.Password, SourceAddress: httpx.ClientIP(request.Context()),
+		Email: body.Email, Name: displayName, Password: body.Password, SourceAddress: httpx.ClientIP(request.Context()),
 	})
 }
 
@@ -224,15 +248,26 @@ func (handler *ProductAuthHandler) decodeCredentials(responseWriter http.Respons
 		return body, false
 	}
 	body.Email = strings.TrimSpace(body.Email)
-	if body.Email == "" || body.Password == "" {
-		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "VALIDATION_ERROR", "Email and password are required.")
-		return body, false
-	}
-	if !isPlausibleEmailAddress(body.Email) {
-		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "VALIDATION_ERROR", "That does not look like an email address.")
+	if !handler.credentialsAreUsable(responseWriter, request, body.Email, body.Password) {
 		return body, false
 	}
 	return body, true
+}
+
+// credentialsAreUsable holds the email and password rules shared by sign-up
+// and sign-in, and writes the rejection itself so the two paths cannot answer
+// the same bad input differently. Signup has its own decode because its body
+// carries a display name; the rules below are the part that must not fork.
+func (handler *ProductAuthHandler) credentialsAreUsable(responseWriter http.ResponseWriter, request *http.Request, emailAddress, password string) bool {
+	if emailAddress == "" || password == "" {
+		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "VALIDATION_ERROR", "Email and password are required.")
+		return false
+	}
+	if !isPlausibleEmailAddress(emailAddress) {
+		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "VALIDATION_ERROR", "That does not look like an email address.")
+		return false
+	}
+	return true
 }
 
 func (handler *ProductAuthHandler) identityIsThrottled(ctx context.Context, identityKey string) bool {

@@ -67,6 +67,8 @@ func (runtime *Runtime) Run(_ context.Context) error {
 		{subject: contracts.AuthWebLoginQuerySubject, handler: runtime.natsHandler.HandleWebLoginQuery},
 		{subject: contracts.AuthWebRefreshQuerySubject, handler: runtime.natsHandler.HandleWebRefreshQuery},
 		{subject: contracts.AuthWebLogoutQuerySubject, handler: runtime.natsHandler.HandleWebLogoutQuery},
+		{subject: contracts.AuthWebProfileGetQuerySubject, handler: runtime.natsHandler.HandleWebProfileGetQuery},
+		{subject: contracts.AuthWebProfileUpdateQuerySubject, handler: runtime.natsHandler.HandleWebProfileUpdateQuery},
 		{subject: contracts.AuthTokenVersionQuerySubject, handler: runtime.natsHandler.HandleTokenVersionQuery},
 		{subject: contracts.AuthAccountDisableQuerySubject, handler: runtime.natsHandler.HandleAccountDisableQuery},
 		{subject: contracts.AuthAccountEnableQuerySubject, handler: runtime.natsHandler.HandleAccountEnableQuery},

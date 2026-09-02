@@ -59,11 +59,17 @@ func TestTheWebAudienceNeedsNoMigration(t *testing.T) {
 }
 
 // The counterpart assertion, and the one that would catch the opposite
-// mistake: a migration added to this service during Phase A. The sprint scopes
-// `system_settings` to Phase B, and identity itself to zero schema change, so
-// a fourth migration file appearing here means the scope moved.
-func TestPhaseAAddsNoMigrationToAuthService(t *testing.T) {
-	const migrationFileCountAtPhaseAStart = 3
+// mistake: a migration this service gained without anybody deciding to give it
+// one. Identity itself cost zero schema change, and the count below is
+// therefore a deliberate ratchet rather than a description - raising it is the
+// commit where somebody chose to pay for a table.
+//
+// It has been raised once. 000004_account_profiles.sql is the account's own
+// page (owner request, 2026-09-02), and the raise happened in the commit that
+// added it, which is exactly the protocol this test asks for. `system_settings`
+// is still ahead in S8-IDENTITY-012 and will raise it to 5 the same way.
+func TestAuthServiceGainsNoUnplannedMigration(t *testing.T) {
+	const expectedMigrationFileCount = 4
 
 	entries, err := os.ReadDir(migrationsDirectory)
 	if err != nil {
@@ -75,9 +81,59 @@ func TestPhaseAAddsNoMigrationToAuthService(t *testing.T) {
 			sqlFileCount++
 		}
 	}
-	if sqlFileCount != migrationFileCountAtPhaseAStart {
-		t.Fatalf("auth-service has %d migrations, expected %d at the end of Phase A - if this is S8-IDENTITY-012's system_settings table, raise the constant in the same commit",
-			sqlFileCount, migrationFileCountAtPhaseAStart)
+	if sqlFileCount != expectedMigrationFileCount {
+		t.Fatalf("auth-service has %d migrations, expected %d - if the new one is deliberate, raise the constant in the same commit and say in this comment what it bought",
+			sqlFileCount, expectedMigrationFileCount)
+	}
+}
+
+// The account's own page rests on schema facts the same way the web audience
+// does, and the same argument applies to asserting them here: a comment
+// claiming the profile table cascades would rot the first time somebody
+// rewrote the migration.
+//
+// The nickname absence is the one worth pinning. accounts.name is the single
+// name an account has - projected into CreationDefaults.Nickname on read and
+// written back on update - and a nickname column appearing in this table would
+// silently give the header menu and the create form two different names to
+// disagree with each other.
+func TestTheAccountProfileTableHoldsItsInvariants(t *testing.T) {
+	schema := readAllMigrations(t)
+
+	profileTablePattern := regexp.MustCompile(`(?s)CREATE TABLE account_profiles\s*\((.*?)\n\);`)
+	tableBody := profileTablePattern.FindStringSubmatch(schema)
+	if tableBody == nil {
+		t.Fatal("account_profiles is not in the committed migrations; the account page has no table to read")
+	}
+	definition := tableBody[1]
+
+	requiredPatterns := []struct {
+		description string
+		pattern     string
+	}{
+		{
+			description: "the profile is keyed on the account and cascades with it, so no profile can outlive the account it describes",
+			pattern:     `account_id\s+UUID\s+PRIMARY KEY\s+REFERENCES\s+accounts\(id\)\s+ON DELETE CASCADE`,
+		},
+		{
+			description: "gender is constrained to the contracts vocabulary, including the empty default that means unanswered",
+			pattern:     `gender\s+TEXT\s+NOT NULL\s+DEFAULT\s+''\s+CHECK\s*\(\s*gender\s+IN\s*\(\s*''[^)]*'prefer_not_to_say'\s*\)\s*\)`,
+		},
+		{
+			description: "the create-form toggle defaults to on, so a profile somebody filled in is used without a second action",
+			pattern:     `autofill_create_form\s+BOOLEAN\s+NOT NULL\s+DEFAULT\s+TRUE`,
+		},
+	}
+	for _, required := range requiredPatterns {
+		matcher := regexp.MustCompile(required.pattern)
+		if !matcher.MatchString(definition) {
+			t.Errorf("account_profiles no longer satisfies: %s\n(no match for /%s/)", required.description, required.pattern)
+		}
+	}
+
+	// Every OTHER column may come and go. This one may not appear.
+	if regexp.MustCompile(`(?m)^\s*nickname\s`).MatchString(definition) {
+		t.Error("account_profiles has grown a nickname column. The nickname is accounts.name, projected into CreationDefaults on read - two columns means the header menu and the create form can greet the same person differently")
 	}
 }
 
