@@ -45,11 +45,17 @@ func (store *MemoryStore) EnsureSystemRole(_ context.Context, name, description 
 // AssignRoleByName is a test/bootstrap convenience for seeding a role
 // assignment by name; production code always has a roleID (from ListRoles
 // or CreateRole) and uses AssignRole below instead.
+// AssignRoleByName is a seeding helper for tests, and it carries the same
+// kind check as AssignRole for one reason: without it, a test could seed
+// exactly the state the invariant forbids and then assert against it.
 func (store *MemoryStore) AssignRoleByName(accountID, roleName string) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	roleID, found := store.roleIDByName[roleName]
 	if !found {
+		return
+	}
+	if account, accountFound := store.accountsByID[accountID]; !accountFound || account.Kind != contracts.AccountKindStaff {
 		return
 	}
 	if store.accountRoleIDs[accountID] == nil {
@@ -152,11 +158,21 @@ func (store *MemoryStore) CountAccountsWithRole(_ context.Context, roleID string
 	return count, nil
 }
 
+// AssignRole mirrors PostgresStore's kind check, including its error. The
+// mirroring is the point: a memory store that allowed what Postgres refuses
+// would let every unit test in this repo pass while the invariant was broken.
 func (store *MemoryStore) AssignRole(_ context.Context, accountID, roleID string) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if _, found := store.roles[roleID]; !found {
 		return ErrNotFound
+	}
+	account, accountFound := store.accountsByID[accountID]
+	if !accountFound {
+		return ErrNotFound
+	}
+	if account.Kind != contracts.AccountKindStaff {
+		return ErrRoleNotGrantableToAccountKind
 	}
 	if store.accountRoleIDs[accountID] == nil {
 		store.accountRoleIDs[accountID] = map[string]struct{}{}

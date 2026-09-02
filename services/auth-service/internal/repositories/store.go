@@ -11,6 +11,19 @@ import (
 var (
 	ErrNotFound = errors.New("not found")
 	ErrConflict = errors.New("conflict")
+	// ErrRoleNotGrantableToAccountKind refuses a role assignment to an account
+	// that is not staff.
+	//
+	// This is the structural half of decision 1, enforced at the only layer
+	// that can enforce it: one `accounts` table serves both audiences, so
+	// "an end_user account holds no permission row" cannot be a convention
+	// somebody remembers. Store is documented as the sole path to
+	// myunivokai_auth and nothing outside this package touches SQL, which is
+	// what makes a check here a boundary rather than a suggestion.
+	//
+	// The failure it prevents is specific and severe: an end-user account with
+	// a role is staff access reachable through the product's own signup form.
+	ErrRoleNotGrantableToAccountKind = errors.New("a role can only be granted to a staff account")
 )
 
 type Account struct {
@@ -146,6 +159,8 @@ type Store interface {
 	UpdateRole(ctx context.Context, roleID, description string, permissionCodenames []string) (Role, error)
 	DeleteRole(ctx context.Context, roleID string) error
 	CountAccountsWithRole(ctx context.Context, roleID string) (int, error)
+	// AssignRole returns ErrRoleNotGrantableToAccountKind for any account
+	// whose kind is not staff - see that error for why the check lives here.
 	AssignRole(ctx context.Context, accountID, roleID string) error
 	RevokeRole(ctx context.Context, accountID, roleID string) error
 	// AccountPermissionsExcludingRole computes what an account's permission

@@ -409,6 +409,8 @@ func (handler *NATSHandler) respondWithResult(message *nats.Msg, jobID string, s
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusUnauthorized, "INVALID_INVITE_TOKEN", "This invite link is invalid or has expired."))
 	case errors.Is(err, services.ErrPasswordTooShort):
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "PASSWORD_TOO_SHORT", "The password must be at least 12 characters."))
+	case errors.Is(err, repositories.ErrRoleNotGrantableToAccountKind):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "ROLE_NOT_GRANTABLE", "A role can only be granted to a staff account."))
 	case errors.Is(err, services.ErrPasswordBreached):
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "PASSWORD_BREACHED", "This password has appeared in a public data breach. Please choose a different one."))
 	case errors.Is(err, services.ErrEmailRequired):
