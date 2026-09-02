@@ -865,7 +865,7 @@ compact reference implementation of differential-area caustics;
 
 ## Work item 6 — assets
 
-`apps/myunivokai-web/public/assets/ocean/models/` holds **15 GLBs, 8.9 MB, all
+`apps/myunivokai-personalization/public/assets/ocean/models/` holds **15 GLBs, 8.9 MB, all
 fauna**. Nothing on the seabed is a loaded model; every prop is procedural.
 
 The repo already has a verified source catalogue at
@@ -878,7 +878,7 @@ better fit than Sketchfab.
 require a human login and that "agents/CI cannot pull Sketchfab files". Its own
 text notes the Download API accepts *"OAuth2 Bearer **or** a static account API
 token"*, and the owner has now provisioned exactly such a token in
-`apps/myunivokai-web/.env.local.secret` (gitignored; offline tooling only, no
+`apps/myunivokai-personalization/.env.local.secret` (gitignored; offline tooling only, no
 `NEXT_PUBLIC_` prefix). Under the folder rule in `CLAUDE.md`, `knowledge/`
 describes reality, so **reality is right and the document must be corrected** —
 Sketchfab is now conditionally agent-downloadable for this project.
@@ -1099,7 +1099,7 @@ capability, which is an unused capability rather than a fault.
   plane.
 - **Any change to `depthBandByZone` / `floorClearanceBandByZone`** must be
   mirrored byte-for-byte between `ocean_scene_profile.go` and
-  `apps/myunivokai-web/src/lib/oceanScene.ts`, needs a `schemaVersion` bump, and
+  `apps/myunivokai-personalization/src/lib/oceanScene.ts`, needs a `schemaVersion` bump, and
   re-rolls all six goldens (`UPDATE_GOLDEN=1 go test ./...` in
   `services/ocean-service`). The working copy is already mid-flight on exactly
   that pair of edits at schemaVersion 1.5.

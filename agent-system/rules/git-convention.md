@@ -13,7 +13,7 @@ fix/<scope>/<kebab-case-topic>
 refactor/<scope>/<kebab-case-topic>
 ```
 
-- `<scope>`: `fe` (frontend, apps/myunivokai-web), `be` (backend services), `docs`, `ci`, or `repo` (repo-wide changes).
+- `<scope>`: `fe` (frontend, apps/myunivokai-personalization), `be` (backend services), `docs`, `ci`, or `repo` (repo-wide changes).
 - Branch from `staging`, merge back into `staging` via Pull Request.
 - `main` is the release branch and only receives merges from `staging`.
 

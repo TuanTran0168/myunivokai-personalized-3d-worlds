@@ -42,11 +42,11 @@ the notes had to come from a composer instead of a random number generator.
 
 | File | Purity | Job |
 | --- | --- | --- |
-| [`lib/ambientSoundscape.ts`](../../../apps/myunivokai-web/src/lib/ambientSoundscape.ts) | Pure | The arranger. Rolls a performance from the seed and the scene config. Unit-testable in node. |
-| [`features/audio/arrangements.ts`](../../../apps/myunivokai-web/src/features/audio/arrangements.ts) | I/O | The scores: types, fetch, validation, role filter. |
-| [`features/audio/instrumentSamples.ts`](../../../apps/myunivokai-web/src/features/audio/instrumentSamples.ts) | I/O | Sample catalog, fetch, decode, nearest-note lookup. |
-| [`features/audio/ambientSoundscapeGraph.ts`](../../../apps/myunivokai-web/src/features/audio/ambientSoundscapeGraph.ts) | Impure | The performer. Recipe + score + buffers into Web Audio nodes. Performs **no I/O**, which is what lets the offline renderer feed it from disk. |
-| [`features/audio/useAmbientSoundscape.ts`](../../../apps/myunivokai-web/src/features/audio/useAmbientSoundscape.ts) | Impure | AudioContext lifecycle, gesture gate, asset loading, crossfade on scene change. |
+| [`lib/ambientSoundscape.ts`](../../../apps/myunivokai-personalization/src/lib/ambientSoundscape.ts) | Pure | The arranger. Rolls a performance from the seed and the scene config. Unit-testable in node. |
+| [`features/audio/arrangements.ts`](../../../apps/myunivokai-personalization/src/features/audio/arrangements.ts) | I/O | The scores: types, fetch, validation, role filter. |
+| [`features/audio/instrumentSamples.ts`](../../../apps/myunivokai-personalization/src/features/audio/instrumentSamples.ts) | I/O | Sample catalog, fetch, decode, nearest-note lookup. |
+| [`features/audio/ambientSoundscapeGraph.ts`](../../../apps/myunivokai-personalization/src/features/audio/ambientSoundscapeGraph.ts) | Impure | The performer. Recipe + score + buffers into Web Audio nodes. Performs **no I/O**, which is what lets the offline renderer feed it from disk. |
+| [`features/audio/useAmbientSoundscape.ts`](../../../apps/myunivokai-personalization/src/features/audio/useAmbientSoundscape.ts) | Impure | AudioContext lifecycle, gesture gate, asset loading, crossfade on scene change. |
 
 ## What is playing
 
@@ -61,8 +61,8 @@ the notes had to come from a composer instead of a random number generator.
 
 Sixteen public-domain pieces (Satie ×3, Bach ×2, Debussy ×2, Chopin ×3,
 Schumann ×2, Scriabin, Tchaikovsky ×2, Fauré) and eight instruments. See
-[arrangements/ATTRIBUTION.md](../../../apps/myunivokai-web/public/assets/audio/arrangements/ATTRIBUTION.md)
-and [audio/ATTRIBUTION.md](../../../apps/myunivokai-web/public/assets/audio/ATTRIBUTION.md).
+[arrangements/ATTRIBUTION.md](../../../apps/myunivokai-personalization/public/assets/audio/arrangements/ATTRIBUTION.md)
+and [audio/ATTRIBUTION.md](../../../apps/myunivokai-personalization/public/assets/audio/ATTRIBUTION.md).
 
 It was six, then twelve, and now sixteen. Six could not cover thirteen slots —
 Bach's C major prelude was answering for four of them. Twelve covered them, but
@@ -84,9 +84,9 @@ overrides the current with Fauré's *Après un rêve*. Depth is the ocean's one
 axis no other family has, and it was the only one not choosing music.
 
 **The MIDI converter is now in the repository** at
-[tools/midi-to-arrangement.mjs](../../../apps/myunivokai-web/tools/midi-to-arrangement.mjs),
+[tools/midi-to-arrangement.mjs](../../../apps/myunivokai-personalization/tools/midi-to-arrangement.mjs),
 and the audition harness at
-[src/lib/ambientAudition.audition.ts](../../../apps/myunivokai-web/src/lib/ambientAudition.audition.ts).
+[src/lib/ambientAudition.audition.ts](../../../apps/myunivokai-personalization/src/lib/ambientAudition.audition.ts).
 Both were previously treated as throwaway. Rebuilding them to add six pieces was
 most of a day, and three of the converter's rules had to be recovered by trial
 against the shipped output — see ATTRIBUTION.md for what they are. Verified: the
@@ -185,7 +185,7 @@ Topology tests prove the graph is wired correctly. They cannot tell you it is
 music; three versions shipped verified-and-wrong. Render it and listen:
 
 ```powershell
-cd apps/myunivokai-web
+cd apps/myunivokai-personalization
 npm install --no-save node-web-audio-api
 npx vitest run --config vitest.audition.config.ts --disable-console-intercept
 ```
@@ -204,7 +204,7 @@ Web Audio. Three things make it work:
 - `currentTime` is shadowed with an own property on the context instance. A
   `Proxy` breaks the library's private class fields.
 - ESM resolves against the **script's** location, not the working directory, so the
-  script has to sit inside `apps/myunivokai-web` to find its dev dependency.
+  script has to sit inside `apps/myunivokai-personalization` to find its dev dependency.
 
 `node-web-audio-api` is installed `--no-save` on purpose: a development aid, not
 a runtime or CI dependency. Installing one `--no-save` package prunes a

@@ -36,7 +36,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // Node resolves a bare specifier from the importing file, not from the working
 // directory, and this demo has no node_modules of its own. createRequire moves
 // the resolution base to the web app, which owns the Playwright dependency.
-const appRequire = createRequire(resolve(here, "../../apps/myunivokai-web/package.json"));
+const appRequire = createRequire(resolve(here, "../../apps/myunivokai-personalization/package.json"));
 const { chromium } = appRequire("playwright");
 
 const PAGE_URL = pathToFileURL(resolve(here, "between-worlds.html")).href;

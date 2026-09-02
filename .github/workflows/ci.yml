@@ -251,7 +251,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/myunivokai-web
+        working-directory: apps/myunivokai-personalization
     env:
       NEXT_TELEMETRY_DISABLED: 1
     steps:
@@ -260,7 +260,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: apps/myunivokai-web/package-lock.json
+          cache-dependency-path: apps/myunivokai-personalization/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Typecheck
@@ -293,7 +293,7 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
-      - name: Check import boundary (no myunivokai-web, no three.js)
+      - name: Check import boundary (no myunivokai-personalization, no three.js)
         run: npm run check:boundary
       - name: Test
         run: npm run test

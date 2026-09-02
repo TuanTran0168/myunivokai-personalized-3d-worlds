@@ -109,7 +109,7 @@ Tasks:
       two-stage `Dockerfile.prod`.
 - [ ] Add PostgreSQL database/role initialization, NATS ACL/bootstrap, Redis,
       named volumes, health checks, reset instructions and one smoke command.
-- [ ] Rename the frontend to `apps/myunivokai-web` and update all path consumers.
+- [ ] Rename the frontend to `apps/myunivokai-personalization` and update all path consumers.
 
 ### S1-EDGE-001 — Convert Gateway to NATS and Redis
 

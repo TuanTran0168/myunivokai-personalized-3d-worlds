@@ -23,14 +23,17 @@
 # NATS_USERNAME/NATS_PASSWORD by hand.
 services:
 # =============================================================================
-# Note: The web frontend (myunivokai-web) is hosted on Vercel.
-# Render does not need to deploy or manage this service.
+# Note: The personalization frontend (apps/myunivokai-personalization) is
+# hosted on Vercel. Render does not need to deploy or manage this service.
+# The Vercel deployment below is still named `myunivokai-web` on purpose: share
+# URLs already handed out resolve through that name, so the folder rename does
+# not move it. See the identity plan's section 17.
 # =============================================================================
 #  - type: web
 #    name: myunivokai-web
 #    runtime: docker
-#    dockerfilePath: ./apps/myunivokai-web/Dockerfile.prod
-#    dockerContext: ./apps/myunivokai-web
+#    dockerfilePath: ./apps/myunivokai-personalization/Dockerfile.prod
+#    dockerContext: ./apps/myunivokai-personalization
 #    plan: free
 #    autoDeployTrigger: checksPass
 #    healthCheckPath: /

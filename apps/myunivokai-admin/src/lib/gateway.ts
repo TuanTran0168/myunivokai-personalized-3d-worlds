@@ -1,4 +1,4 @@
-// Server-only: unlike apps/myunivokai-web's lib/gateway.ts, this app's
+// Server-only: unlike apps/myunivokai-personalization's lib/gateway.ts, this app's
 // browser never talks to the gateway directly (see the BFF note in
 // src/app/api/admin/auth/*/route.ts) — only this app's own server does, so
 // the base URL is a plain server env var, never a NEXT_PUBLIC_ one.
@@ -6,7 +6,7 @@ const DEFAULT_GATEWAY_BASE_URL = "http://localhost:41800";
 const GATEWAY_ENVIRONMENT_VARIABLE_NAME = "ADMIN_GATEWAY_BASE_URL";
 const SUPPORTED_GATEWAY_PROTOCOLS = new Set(["http:", "https:"]);
 
-// Ported from apps/myunivokai-web/src/lib/gateway.ts's normalizeGatewayBaseUrl —
+// Ported from apps/myunivokai-personalization/src/lib/gateway.ts's normalizeGatewayBaseUrl —
 // same validation, same reasoning (bare origin only, no credentials/path/query/fragment).
 export function normalizeGatewayBaseUrl(value: string): string {
   let parsedGatewayUrl: URL;

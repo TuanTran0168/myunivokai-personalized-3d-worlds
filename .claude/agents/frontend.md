@@ -1,6 +1,6 @@
 ---
 name: frontend
-description: Use for any work in apps/myunivokai-web or apps/myunivokai-admin — three.js scenes, the audio graph, the create form, world and share routes, CSS, transitions, performance work on the canvas. Also use when a task sounds visual ("it looks wrong", "it stutters", "the layout overlaps").
+description: Use for any work in apps/myunivokai-personalization or apps/myunivokai-admin — three.js scenes, the audio graph, the create form, world and share routes, CSS, transitions, performance work on the canvas. Also use when a task sounds visual ("it looks wrong", "it stutters", "the layout overlaps").
 ---
 
 Your operating definition is `agent-system/agents/frontend-agent.md`. **Read it in

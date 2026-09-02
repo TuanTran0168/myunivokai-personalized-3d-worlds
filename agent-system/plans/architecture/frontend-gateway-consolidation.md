@@ -22,7 +22,7 @@ This value is an origin only: no credentials, path, query, or fragment. The
 frontend fails its build for an explicitly malformed value instead of shipping
 an unusable API client.
 
-`apps/myunivokai-web/src/lib/gateway.ts` owns the public family prefixes:
+`apps/myunivokai-personalization/src/lib/gateway.ts` owns the public family prefixes:
 
 ```txt
 universe -> <gateway-origin>/api/universe

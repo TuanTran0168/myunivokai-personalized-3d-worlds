@@ -27,7 +27,7 @@ include:
     env_file: ./.env.local
   - path: ./services/telemetry-service/docker-compose-local.yaml
     env_file: ./.env.local
-  - path: ./apps/myunivokai-web/docker-compose-local.yaml
+  - path: ./apps/myunivokai-personalization/docker-compose-local.yaml
     env_file: ./.env.local
   - path: ./apps/myunivokai-admin/docker-compose-local.yaml
     env_file: ./.env.local

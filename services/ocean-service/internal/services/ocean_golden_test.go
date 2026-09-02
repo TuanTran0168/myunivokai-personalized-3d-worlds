@@ -18,7 +18,7 @@ import (
 //	UPDATE_GOLDEN=1 go test ./internal/services -run TestGoldenFixtures
 //
 // These same four files pin the FRONTEND preview builder
-// (apps/myunivokai-web/src/lib/oceanScene.ts). The depth curve is implemented
+// (apps/myunivokai-personalization/src/lib/oceanScene.ts). The depth curve is implemented
 // twice — once in Go and once in TypeScript — and a shared fixture is the only
 // thing that stops the two drifting.
 var goldenCases = []struct {

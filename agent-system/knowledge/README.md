@@ -14,7 +14,7 @@ carrying the date on which that reading happened.
 
 | Document | Read before |
 | --- | --- |
-| [source-overview.md](frontend/source-overview.md) | Any task in `apps/myunivokai-web`: the async job flow, routes, the family picker |
+| [source-overview.md](frontend/source-overview.md) | Any task in `apps/myunivokai-personalization`: the async job flow, routes, the family picker |
 | [threejs-scene-architecture.md](frontend/threejs-scene-architecture.md) | Touching any 3D code — the sceneType-first renderer registry and how to add a family |
 | [universe-render-mechanism.md](frontend/universe-render-mechanism.md) | Adding a universe asset: the four model layers, the texture and GLB pipelines, determinism |
 | [forest-render-mechanism.md](frontend/forest-render-mechanism.md) | Adding a forest asset — including the Sketchfab licence constraint that has cost this project a round already |

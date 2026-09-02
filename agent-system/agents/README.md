@@ -16,7 +16,7 @@ knows — this one.
 
 | Definition | Subagent | Take it when the work touches |
 | --- | --- | --- |
-| [frontend-agent.md](frontend-agent.md) | `frontend` | `apps/myunivokai-web`, `apps/myunivokai-admin`, any three.js, audio or UI work |
+| [frontend-agent.md](frontend-agent.md) | `frontend` | `apps/myunivokai-personalization`, `apps/myunivokai-admin`, any three.js, audio or UI work |
 | [backend-agent.md](backend-agent.md) | `backend` | `services/*`, `contracts/*`, NATS subjects, Postgres migrations, Redis keys |
 | [operations-agent.md](operations-agent.md) | `operations` | Deploying, env groups, key rotation, incident response |
 | [research-agent.md](research-agent.md) | `research` | A question with no decision behind it yet — a new family, a new dependency, a direction change |

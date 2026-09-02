@@ -78,7 +78,7 @@ Sketchfab.** Đây là trần chất lượng hiện tại và lý do:
 - **Cách đưa đúng model Sketchfab vào (owner làm 1 lần, agent ghép):**
   1. Đăng nhập Sketchfab → mở model → **Download 3D Model** → chọn định dạng
      **glTF (.glb)**.
-  2. Bỏ file vào `apps/myunivokai-web/public/assets/nature/models/`, đặt tên gợi
+  2. Bỏ file vào `apps/myunivokai-personalization/public/assets/nature/models/`, đặt tên gợi
      nhớ (vd `tree-quasarus-oak.glb`).
   3. Báo tên file + nó là loại gì. Agent sẽ nén Draco + chuẩn hoá scale rồi cắm
      vào catalog trong `forest/forestModels.ts` (`TREE_MODEL_CATALOG` /
@@ -89,7 +89,7 @@ Sketchfab.** Đây là trần chất lượng hiện tại và lý do:
      bao giờ** commit token vào repo.
 
 - **Kho hiện dùng:** 33 GLB + 3 HDRI (~6.5 MB GLB tổng, sau nén), tự host dưới
-  `apps/myunivokai-web/public/assets/nature/`. Model chủ yếu từ **Quaternius**
+  `apps/myunivokai-personalization/public/assets/nature/`. Model chủ yếu từ **Quaternius**
   (CC0, style low-poly đồng bộ) trên poly.pizza; vài file CC-BY (vd chim hawk)
   có ghi công. HDRI từ **Poly Haven** (CC0). Mọi nguồn + giấy phép nằm ở
   `public/assets/nature/ATTRIBUTION.md` — cập nhật file đó mỗi khi thêm asset.

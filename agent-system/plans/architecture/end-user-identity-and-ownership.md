@@ -84,7 +84,7 @@ There is none. There is a capability URL and a browser-local list:
 - The gallery is hydrated by `GET /api/{family}/worlds?ids=a,b,c`, capped at
   **50** ids per call ([`world_handler.go:24`](../../../services/api-gateway/internal/handlers/world_handler.go)).
 - The id list lives in `localStorage` under `myunivokai.savedWorldIds`
-  ([`savedWorlds.ts:3`](../../../apps/myunivokai-web/src/lib/savedWorlds.ts)).
+  ([`savedWorlds.ts:3`](../../../apps/myunivokai-personalization/src/lib/savedWorlds.ts)).
 - Therefore **anyone holding a world UUID can read that world**, and a visitor
   who clears their browser loses every world they made. Both are facts about
   the product today, and the second is the strongest product argument for this
@@ -816,10 +816,10 @@ finding here. There is nothing to evaluate and no dependency to add:
 
 | What | Where | State |
 | --- | --- | --- |
-| `sonner@2.0.7` | [`apps/myunivokai-web/package.json`](../../../apps/myunivokai-web/package.json) | already a dependency |
-| `<Toaster position="top-center" theme="dark" duration={2600} offset="72px">` | [`src/app/layout.tsx:118`](../../../apps/myunivokai-web/src/app/layout.tsx) | already mounted app-wide, already cleared below the 57 px header |
-| `.lg-toast` | [`src/app/globals.css:265`](../../../apps/myunivokai-web/src/app/globals.css) | already the Liquid-Glass material |
-| `toast("Share link ready.")` | [`src/app/worlds/[worldId]/page.tsx:295`](../../../apps/myunivokai-web/src/app/worlds/%5BworldId%5D/page.tsx) | the existing call site to copy |
+| `sonner@2.0.7` | [`apps/myunivokai-personalization/package.json`](../../../apps/myunivokai-personalization/package.json) | already a dependency |
+| `<Toaster position="top-center" theme="dark" duration={2600} offset="72px">` | [`src/app/layout.tsx:118`](../../../apps/myunivokai-personalization/src/app/layout.tsx) | already mounted app-wide, already cleared below the 57 px header |
+| `.lg-toast` | [`src/app/globals.css:265`](../../../apps/myunivokai-personalization/src/app/globals.css) | already the Liquid-Glass material |
+| `toast("Share link ready.")` | [`src/app/worlds/[worldId]/page.tsx:295`](../../../apps/myunivokai-personalization/src/app/worlds/%5BworldId%5D/page.tsx) | the existing call site to copy |
 
 And `.lg-toast` is genuinely the Apple material rather than a blur and a
 prayer — it is a `--glass-tint` fill over a `--glass-blur` backdrop filter, a
@@ -1642,7 +1642,7 @@ present, describable loss.
 
 1. **Every world is one cleared browser away from gone.** Ownership today is
    `SAVED_WORLD_IDENTIFIERS_STORAGE_KEY` in `localStorage`
-   ([`savedWorlds.ts:3`](../../../apps/myunivokai-web/src/lib/savedWorlds.ts)) —
+   ([`savedWorlds.ts:3`](../../../apps/myunivokai-personalization/src/lib/savedWorlds.ts)) —
    so a private window, a new phone, a cleared cache, or Safari's own storage
    eviction destroys the visitor's entire collection while the rows sit intact
    in Postgres. The product's whole proposition is *"a portrait of you"*, and a

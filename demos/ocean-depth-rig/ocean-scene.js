@@ -2270,7 +2270,7 @@
 
   /* =======================================================================
      12b. REAL MODELS
-     The twelve CC0 GLBs in apps/myunivokai-web/public/assets/ocean/models are
+     The twelve CC0 GLBs in apps/myunivokai-personalization/public/assets/ocean/models are
      what the renderer will actually ship, and until now this study proved
      nothing about them. Four are wired in here -- the four animals big enough
      in frame to be looked at -- and the schools stay procedural on purpose: a

@@ -17,7 +17,7 @@ import (
 // This file replays the same draws over the seeds of real generated worlds, so
 // the admin app can report the observed rate beside the configured one and
 // show the worlds behind it. The source of truth is
-// apps/myunivokai-web/src/lib/rarity.ts; this is the mirror. Neither compiler
+// apps/myunivokai-personalization/src/lib/rarity.ts; this is the mirror. Neither compiler
 // can see the other, so contracts/fixtures/rarity/rare-feature-rolls.v1.json
 // pins them together and both suites assert against it.
 
@@ -234,7 +234,7 @@ func RarityRollFor(feature RarityFeature, variantSeed string) RarityRoll {
 	return roll
 }
 
-// rarityPRNG is a port of randomFromSeed in apps/myunivokai-web/src/lib/scene.ts:
+// rarityPRNG is a port of randomFromSeed in apps/myunivokai-personalization/src/lib/scene.ts:
 // FNV-1a over the seed, then xorshift32, then a value in [0,1) quantised to
 // ten-thousandths.
 //

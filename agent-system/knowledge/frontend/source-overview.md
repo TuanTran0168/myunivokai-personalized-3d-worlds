@@ -1,4 +1,4 @@
-# FE Source Overview — apps/myunivokai-web
+# FE Source Overview — apps/myunivokai-personalization
 
 > **Document status:** Active
 > **Last source review:** 2026-08-14
@@ -123,7 +123,7 @@ See `agent-system/plans/backlog/engineering-backlog.md` for Given/When/Then acce
 ## Required checks before committing
 
 ```bash
-cd apps/myunivokai-web
+cd apps/myunivokai-personalization
 npm run typecheck
 npm run lint
 npm run test
@@ -140,7 +140,7 @@ eye against `e2e/reference/<stack>/` — the only instrument in this repo that
 can see the canvas. Run it either side of a dependency change, never as a gate:
 WebGL output moves with GPU and driver, so a pixel assertion in CI would report
 "different machine" far more often than "broken scene". See
-`apps/myunivokai-web/e2e/reference/README.md`.
+`apps/myunivokai-personalization/e2e/reference/README.md`.
 
 For integrated local development, root `docker-compose-local.yaml` builds this
 client with `NEXT_PUBLIC_GATEWAY_BASE_URL=http://localhost:41800`. The production
