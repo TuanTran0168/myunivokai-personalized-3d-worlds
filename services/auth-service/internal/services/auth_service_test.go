@@ -9,6 +9,7 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/breach/checkers"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/config"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/security"
@@ -46,14 +47,21 @@ func testConfig() config.Config {
 	}
 }
 
+// testPasswordPolicy uses the mock breach corpus, per AGENTS.md's rule that
+// tests use the mock provider. testBreachedPassword is the one password every
+// test in this package can rely on being rejected.
+func testPasswordPolicy() PasswordPolicy {
+	return NewPasswordPolicy(checkers.NewMockChecker(testBreachedPassword))
+}
+
 func newTestAuthService(t *testing.T) (*AuthService, *repositories.MemoryStore, *fakeTokenVersionCache) {
 	t.Helper()
 	store := repositories.NewMemoryStore()
 	cfg := testConfig()
 	passwordHasher := security.NewPasswordHasher(64*1024, 1, 1, 16, 32)
-	tokenIssuer := security.NewTokenIssuer(cfg.AccessTokenPrivateKey, cfg.AccessTokenTTL)
+	tokenIssuer := security.NewTokenIssuer(cfg.AccessTokenPrivateKey, cfg.AccessTokenTTL, config.WebAccessTokenTTL)
 	cache := newFakeTokenVersionCache()
-	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, cache, cfg)
+	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, cache, testPasswordPolicy(), cfg)
 	if err != nil {
 		t.Fatalf("construct auth service: %v", err)
 	}

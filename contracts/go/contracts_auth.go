@@ -30,6 +30,25 @@ const (
 	// exists for. See services/api-gateway/internal/middleware/admin_permission.go.
 	AuthAccountPermissionsQuerySubject = "myunivokai.queries.auth.account.permissions.get.v1"
 
+	// The four product-audience subjects. They are separate from the four
+	// unprefixed ones above rather than carrying an audience field in the
+	// request, because decision 1 of
+	// agent-system/plans/architecture/end-user-identity-and-ownership.md requires the
+	// staff/end-user separation to be structural: a subject a caller cannot
+	// publish is a stronger boundary than a field a caller could set, and the
+	// NATS ACL can police it per subject.
+	//
+	// The four above therefore mean the ADMIN flow, and their names do not say
+	// so. Renaming them to `auth.admin.*` would be correct and is deliberately
+	// not done: they are deployed subjects with a live publisher and a live
+	// subscriber, so the rename costs a coordinated two-service deploy plus a
+	// NATS ACL change to buy clarity that this comment buys for nothing. Same
+	// call, and same reason, as §17's decision not to rename `aud=web`.
+	AuthWebSignupQuerySubject  = "myunivokai.queries.auth.web.signup.v1"
+	AuthWebLoginQuerySubject   = "myunivokai.queries.auth.web.login.v1"
+	AuthWebRefreshQuerySubject = "myunivokai.queries.auth.web.refresh.v1"
+	AuthWebLogoutQuerySubject  = "myunivokai.queries.auth.web.logout.v1"
+
 	AccountAudienceAdmin AccountAudience = "admin"
 	AccountAudienceWeb   AccountAudience = "web"
 
@@ -65,6 +84,29 @@ func (audience AccountAudience) Valid() bool {
 // the schema does not need to change when end-user accounts are approved —
 // see agent-system/plans/services/auth-and-admin-plan.md#why-this-does-not-violate-deferred-auth-001.
 type AccountKind string
+
+// AudienceForAccountKind is the only rule that decides which audience an
+// access token is minted for, and it reads the account's own column rather
+// than the endpoint the caller reached or a field in the request.
+//
+// That is the point. One `accounts` table serves both audiences (decision 1),
+// so the separation has to be structural, and an audience derived from stored
+// state cannot be asked for: a `staff` account can never obtain a `web` token
+// and an `end_user` account can never obtain an `admin` one, whichever login
+// flow, subject or refresh path it arrives through. The alternative — letting
+// the caller name the audience — would mean a single spoofable field standing
+// between an end-user account and the admin edge.
+//
+// The consequence, stated because it is a real one: a staff member cannot use
+// their staff account in the product app, and needs a separate end-user
+// account to do so. That is the correct posture for two audiences sharing a
+// table, not a limitation to work around.
+func AudienceForAccountKind(kind AccountKind) AccountAudience {
+	if kind == AccountKindEndUser {
+		return AccountAudienceWeb
+	}
+	return AccountAudienceAdmin
+}
 
 // PermissionCode is declared in Go and synced into the permissions table at
 // migration/startup; staff read these, they never invent them. Roles are the
@@ -120,6 +162,22 @@ type AuditEventSummary struct {
 	Result         string    `json:"result"`
 	SourceAddress  string    `json:"sourceAddress"`
 	OccurredAt     time.Time `json:"occurredAt"`
+}
+
+// WebSignupData registers an end-user account: an email address stored
+// unverified, and a password. Nothing is mailed, so nothing waits on mail
+// infrastructure — see the plan's §5 and decision 11, and the two costs that
+// decision accepts (no password reset, and no trust may attach to the
+// address).
+//
+// There is no Kind field, and there must never be one: the account is created
+// with AccountKindEndUser by the handler, and AudienceForAccountKind then
+// decides the audience from it. A caller that could name either would be able
+// to ask for staff.
+type WebSignupData struct {
+	Email         string `json:"email"`
+	Password      string `json:"password"`
+	SourceAddress string `json:"sourceAddress"`
 }
 
 // LoginData carries the credential pair auth-service verifies with Argon2id.

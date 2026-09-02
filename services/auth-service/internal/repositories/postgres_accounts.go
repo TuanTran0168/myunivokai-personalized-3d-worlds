@@ -147,6 +147,12 @@ func (store *PostgresStore) CreateInvite(ctx context.Context, params InviteAccou
 	defer transaction.Rollback(ctx)
 
 	var account Account
+	// Set from the literal the INSERT below writes, because that INSERT does
+	// not return it. Without this the returned Account carries an empty Kind,
+	// and an empty Kind is exactly the value contracts.AudienceForAccountKind
+	// resolves to the admin audience by fallback - correct here by luck, and a
+	// trap for the next caller that reads Kind off this result.
+	account.Kind = contracts.AccountKindStaff
 	err = transaction.QueryRow(ctx, `INSERT INTO accounts (email, kind, invited_at, invite_token_hash, invite_expires_at)
 			VALUES ($1, 'staff', NOW(), $2, $3)
 		RETURNING id::text, disabled, token_version, failed_attempts, force_password_change, invited_at, invite_expires_at, created_at, updated_at`,

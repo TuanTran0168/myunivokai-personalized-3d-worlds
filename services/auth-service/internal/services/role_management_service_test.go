@@ -7,6 +7,7 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/config"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/security"
 )
@@ -132,8 +133,8 @@ func TestAuthService_AcceptInvite_RejectsAnExpiredToken(t *testing.T) {
 	cfg := testConfig()
 	cfg.InviteTokenTTL = -time.Hour // already expired the instant it's created
 	passwordHasher := security.NewPasswordHasher(64*1024, 1, 1, 16, 32)
-	tokenIssuer := security.NewTokenIssuer(cfg.AccessTokenPrivateKey, cfg.AccessTokenTTL)
-	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, newFakeTokenVersionCache(), cfg)
+	tokenIssuer := security.NewTokenIssuer(cfg.AccessTokenPrivateKey, cfg.AccessTokenTTL, config.WebAccessTokenTTL)
+	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, newFakeTokenVersionCache(), testPasswordPolicy(), cfg)
 	if err != nil {
 		t.Fatalf("construct auth service: %v", err)
 	}

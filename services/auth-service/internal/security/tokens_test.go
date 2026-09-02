@@ -8,12 +8,17 @@ import (
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
 )
 
+// testWebAccessTTL is deliberately unlike the admin lifetime used beside it,
+// so a test that mints a web token and gets the admin lifetime fails on the
+// number rather than passing because both happened to be ten minutes.
+const testWebAccessTTL = 7 * 24 * time.Hour
+
 func TestTokenIssuer_IssueAndVerifyAccessToken_RoundTrips(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	issuer := NewTokenIssuer(privateKey, 10*time.Minute)
+	issuer := NewTokenIssuer(privateKey, 10*time.Minute, testWebAccessTTL)
 	signed, expiresAt, err := issuer.IssueAccessToken("account-1", []string{"basic_user"}, contracts.AccountAudienceAdmin, 3)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
@@ -47,8 +52,8 @@ func TestTokenIssuer_VerifyAccessToken_RejectsWrongSigningKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	issuedByA := NewTokenIssuer(privateKeyA, 10*time.Minute)
-	verifiedByB := NewTokenIssuer(privateKeyB, 10*time.Minute)
+	issuedByA := NewTokenIssuer(privateKeyA, 10*time.Minute, testWebAccessTTL)
+	verifiedByB := NewTokenIssuer(privateKeyB, 10*time.Minute, testWebAccessTTL)
 	signed, _, err := issuedByA.IssueAccessToken("account-1", nil, contracts.AccountAudienceAdmin, 1)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
@@ -63,7 +68,7 @@ func TestTokenIssuer_VerifyAccessToken_RejectsExpiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	issuer := NewTokenIssuer(privateKey, -time.Minute) // already expired at mint time
+	issuer := NewTokenIssuer(privateKey, -time.Minute, -time.Minute) // already expired at mint time
 	signed, _, err := issuer.IssueAccessToken("account-1", nil, contracts.AccountAudienceAdmin, 1)
 	if err != nil {
 		t.Fatalf("issue: %v", err)

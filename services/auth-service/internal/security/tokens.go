@@ -28,19 +28,43 @@ type accessTokenClaims struct {
 // edge verifies locally with the public key, so no network hop is required
 // per request, and login still works when auth-service is cold - see
 // agent-system/plans/services/auth-and-admin-plan.md#tokens.
+//
+// It holds one access lifetime per audience because the two are genuinely
+// different policies rather than one tunable: staff keep 10 minutes, and the
+// product audience gets 7 days (plan §4.4). Choosing the lifetime here, from
+// the audience already being stamped into the claims, keeps the pair with the
+// code that mints the token instead of asking every caller to remember which
+// number belongs to which audience.
 type TokenIssuer struct {
-	privateKey ed25519.PrivateKey
-	publicKey  ed25519.PublicKey
-	accessTTL  time.Duration
+	privateKey     ed25519.PrivateKey
+	publicKey      ed25519.PublicKey
+	adminAccessTTL time.Duration
+	webAccessTTL   time.Duration
 }
 
-func NewTokenIssuer(privateKey ed25519.PrivateKey, accessTTL time.Duration) TokenIssuer {
-	return TokenIssuer{privateKey: privateKey, publicKey: privateKey.Public().(ed25519.PublicKey), accessTTL: accessTTL}
+func NewTokenIssuer(privateKey ed25519.PrivateKey, adminAccessTTL, webAccessTTL time.Duration) TokenIssuer {
+	return TokenIssuer{
+		privateKey:     privateKey,
+		publicKey:      privateKey.Public().(ed25519.PublicKey),
+		adminAccessTTL: adminAccessTTL,
+		webAccessTTL:   webAccessTTL,
+	}
+}
+
+// accessTokenTTL falls back to the ADMIN lifetime for an audience it does not
+// recognise, which is the shorter of the two and therefore the safe default: an
+// audience value this code has never seen produces a token that expires soon
+// rather than one that lives for a week.
+func (issuer TokenIssuer) accessTokenTTL(audience contracts.AccountAudience) time.Duration {
+	if audience == contracts.AccountAudienceWeb {
+		return issuer.webAccessTTL
+	}
+	return issuer.adminAccessTTL
 }
 
 func (issuer TokenIssuer) IssueAccessToken(accountID string, roles []string, audience contracts.AccountAudience, tokenVersion int) (string, time.Time, error) {
 	issuedAt := time.Now().UTC()
-	expiresAt := issuedAt.Add(issuer.accessTTL)
+	expiresAt := issuedAt.Add(issuer.accessTokenTTL(audience))
 	claims := accessTokenClaims{
 		Roles:        roles,
 		Audience:     audience,

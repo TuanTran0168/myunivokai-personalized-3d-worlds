@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/myunivokai/myunivokai/services/auth-service/internal/breach/checkers"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/config"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/db"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/messaging"
@@ -92,8 +93,11 @@ func main() {
 		serviceConfig.Argon2MemoryKiB, serviceConfig.Argon2Iterations, serviceConfig.Argon2Parallelism,
 		serviceConfig.Argon2SaltLength, serviceConfig.Argon2KeyLength,
 	)
-	tokenIssuer := security.NewTokenIssuer(serviceConfig.AccessTokenPrivateKey, serviceConfig.AccessTokenTTL)
-	authService, err := services.NewAuthService(store, passwordHasher, tokenIssuer, redisClient, serviceConfig)
+	tokenIssuer := security.NewTokenIssuer(serviceConfig.AccessTokenPrivateKey, serviceConfig.AccessTokenTTL, config.WebAccessTokenTTL)
+	// The real breached-password corpus, wired only here. Every test builds
+	// the service with checkers.NewMockChecker instead, per AGENTS.md.
+	passwordPolicy := services.NewPasswordPolicy(checkers.NewPwnedRangeChecker())
+	authService, err := services.NewAuthService(store, passwordHasher, tokenIssuer, redisClient, passwordPolicy, serviceConfig)
 	if err != nil {
 		log.Fatal().Err(err).Msg("construct auth service")
 	}
