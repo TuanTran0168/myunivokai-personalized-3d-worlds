@@ -17,7 +17,7 @@
       "name": "The Lantern Trench",
       "seed": "OCN-GOLDEN-SURFACE-17",
       "config": {
-        "schemaVersion": "1.6",
+        "schemaVersion": "1.7",
         "sceneType": "ocean",
         "sceneName": "The Lantern Trench",
         "archetype": "Tidekeeper",
@@ -146,7 +146,7 @@
             "meaning": "A meaningful place in the sea.",
             "kind": "kelpCathedral",
             "angleRadians": -0.08,
-            "radiusFromCenter": 48.27,
+            "radiusFromCenter": 30.65,
             "heightAboveFloor": -0.23,
             "accentColor": "#06B6D4",
             "energy": 60
@@ -157,7 +157,7 @@
             "meaning": "A meaningful place in the sea.",
             "kind": "abyssalTrench",
             "angleRadians": 1.43,
-            "radiusFromCenter": 50.36,
+            "radiusFromCenter": 30.65,
             "heightAboveFloor": -0.41,
             "accentColor": "#FACC15",
             "energy": 65
@@ -168,7 +168,7 @@
             "meaning": "A meaningful place in the sea.",
             "kind": "whaleFall",
             "angleRadians": 3.27,
-            "radiusFromCenter": 32.04,
+            "radiusFromCenter": 30.65,
             "heightAboveFloor": -0.64,
             "accentColor": "#8B5CF6",
             "energy": 70
@@ -179,7 +179,7 @@
             "meaning": "A meaningful place in the sea.",
             "kind": "sunkenRelic",
             "angleRadians": 4.95,
-            "radiusFromCenter": 46.14,
+            "radiusFromCenter": 30.65,
             "heightAboveFloor": -0.57,
             "accentColor": "#06B6D4",
             "energy": 75

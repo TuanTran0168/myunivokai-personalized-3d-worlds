@@ -141,6 +141,27 @@ export type OceanRigOptions = {
    * somebody has to remember.
    */
   godRayStrength?: number;
+  /**
+   * How bright the seabed's caustics are allowed to get, from
+   * `lighting.causticStrength` — the same stored value the landmarks use
+   * directly (`createCausticsUniforms` in OceanRenderer.tsx). Reaches zero at
+   * the sunlight floor, same as `godRayStrength`.
+   *
+   * Multiplied against a SEPARATE local factor, not replaced by it: the local
+   * term models how much floor lies within a few attenuation lengths of the
+   * viewer, past which a caustic pattern blurs into incoherence regardless of
+   * how much light survives at that depth. Depth decides how much light there
+   * is; clarity decides how far a sharp pattern of it can still be seen. Before
+   * this field existed the seabed had only the second term and never asked the
+   * first — a coral head and the sand under it disagreed by the factor between
+   * them, not because two effects were reconciled but because one of them was
+   * missing on one side.
+   *
+   * Defaults to 1 (no additional dampening) for a caller — a demo, a test —
+   * that has no stored value to pass, so the local coherence term alone still
+   * behaves exactly as it always did.
+   */
+  causticStrength?: number;
   /** Fewer instances and a smaller shadow map on a phone. */
   quality?: "high" | "low";
 };
@@ -198,6 +219,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     sunElevationDegrees = 46,
     sunAzimuthRadians = OCEAN_SUN_AZIMUTH_RADIANS,
     godRayStrength,
+    causticStrength = 1,
     cameraDistanceMetres = 20,
     quality = "high",
   } = options;
@@ -527,8 +549,14 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
         // Beyond sin(theta) = 1/1.333 nothing can refract in, so the surface
         // goes total-internal-reflection: a mirror, not a window.
         float window = 1.0 - smoothstep(0.70, 0.775, sinTheta);
+        // How far out across the cone we are: 0 at the zenith, 1 at the
+        // critical angle. The sky's own gradient, compressed.
+        float coneT = clamp(sinTheta / 0.75, 0.0, 1.0);
         vec3 sky = skyThroughSnellsWindow(view, sinTheta) * uSkyGain;
-        sky += uSunColor * pow(max(0.0, n.y), 6.0) * 0.06 * window;
+        // Ripple sparkle, strongest where refraction magnifies the slope,
+        // fading radially toward the window's rim instead of holding flat
+        // then cutting off with the window's own hard edge.
+        sky += uSunColor * pow(max(0.0, n.y), 6.0) * 0.06 * (1.0 - coneT);
 
         vec3 mirror = mix(uDeepColor, uWaterColor, pow(upness, 0.7)) + uWaterColor * 0.85;
         float fresnel = 0.02 + 0.98 * pow(1.0 - upness, 5.0);
@@ -629,17 +657,38 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
         vec3 dir = normalize(vW - cameraPosition);
         float accumulated = 0.0;
         const int STEPS = 24;
+        float stepSize = 1.0 / float(STEPS);
+        // Jittered per fragment rather than sampled at fixed offsets: 24
+        // steps at a FIXED phase band exactly where a coarse march always
+        // does, and the jitter spreads that banding into noise instead,
+        // which the eye reads as water rather than as a rendering artifact.
+        float jitter = hash(gl_FragCoord.xy) * stepSize;
         for (int i = 0; i < STEPS; i++){
-          float t = (float(i) + 0.5) / float(STEPS);
+          float t = jitter + float(i) * stepSize;
           vec3 p = cameraPosition + dir * t * uMarchDistance;
           if (p.y > uSurfaceY) continue;
           // Sampled in the plane across the beam, which is what turns a cloud
-          // into a ribbon.
+          // into a ribbon. ANISOTROPIC 4:1 — narrow along the beam's own axis
+          // (A), wide across it (B) — is what turns that ribbon into a
+          // shaft instead of a blob: an isotropic scale gives a beam the same
+          // width as its length, and every shaft reads as a cotton ball.
           vec2 beamPlane = vec2(dot(p, uAxisA), dot(p, uAxisB));
-          float density = fbm(beamPlane * 0.09 + vec2(uTime * 0.02, 0.0));
+          vec2 uv = beamPlane * vec2(0.30, 0.075) + vec2(uTime * 0.02, 0.0);
+          float density = fbm(uv);
           // Threshold ABOVE the mean, or the whole volume glows.
           density = smoothstep(0.52, 0.86, density);
-          accumulated += density * exp(-t * uMarchDistance * uExtinction);
+          // A second octave, sampled at its own finer scale rather than
+          // folded into fbm's own series — a shaft with one smooth field and
+          // nothing riding on top of it reads as a gradient, not as light
+          // moving through real water.
+          float grain = 0.62 + 0.38 * noise(uv * 3.7 + vec2(uTime * 0.05, 0.0));
+          // Depth fade: independent of how far the CAMERA is from this point,
+          // this is how far the point itself sits below the surface — its
+          // own extinction path through the water column above it, which
+          // uExtinction (scaled by march distance FROM THE CAMERA) does not
+          // capture on its own.
+          float fade = exp(-max(0.0, uSurfaceY - p.y) * 0.02);
+          accumulated += density * grain * fade * exp(-t * uMarchDistance * uExtinction);
         }
         float mean = accumulated / float(STEPS);
         // Hard ceiling. This is additive and depth-tested off, so an unbounded
@@ -713,10 +762,17 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       seabed,
       fogColor,
       brightness,
-      // Caustics need the surface pattern to still be coherent, which is a
-      // scattering question: a few attenuation lengths of blur and it is gone.
-      Math.pow(Math.min(1, Math.max(0, 1 - viewerDepthMetres / (2.4 * range))), 1.4),
+      // Two effects, multiplied rather than either one standing in for the
+      // other: how much LIGHT survives to this depth (causticStrength, the
+      // stored depth-curve value the landmarks also use) and how much of the
+      // floor still lies within a coherent pattern's reach (a scattering
+      // question — a few attenuation lengths of blur and the pattern is gone,
+      // regardless of how bright the light still is).
+      Math.pow(Math.min(1, Math.max(0, 1 - viewerDepthMetres / (2.4 * range))), 1.4) * causticStrength,
       keyColor,
+      // Same quantity the landmarks standing on this same floor use for their
+      // own uCausticDepth — see createCausticsUniforms in oceanCaustics.ts.
+      seafloorDepthMetres,
     );
     group.add(seabed.group);
   }

@@ -37,7 +37,7 @@ import {
   Vector3,
 } from "three";
 import { randomFromSeed } from "@/lib/scene";
-import { applyCaustics, type CausticUniforms } from "./oceanRigTerrain";
+import { applyCaustics, type CausticsUniforms } from "./oceanCaustics";
 
 export type SwayUniforms = {
   uSwayTime: { value: number };
@@ -231,7 +231,7 @@ type SpongeOptions = {
   radiusOuter: number;
   radiusInner: number;
   heightAt: (x: number, z: number) => number;
-  caustics: CausticUniforms;
+  caustics: CausticsUniforms;
   castShadow: boolean;
 };
 
@@ -307,7 +307,7 @@ export type FloraOptions = {
   onePercentBlueDepthMetres: number;
   /** The rig's own floor sampler. Anything else hovers. */
   heightAt: (x: number, z: number) => number;
-  caustics: CausticUniforms;
+  caustics: CausticsUniforms;
   currentStrength: number;
   quality: "high" | "low";
 };
