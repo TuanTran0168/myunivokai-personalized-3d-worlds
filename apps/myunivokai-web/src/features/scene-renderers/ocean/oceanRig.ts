@@ -651,17 +651,38 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
         vec3 dir = normalize(vW - cameraPosition);
         float accumulated = 0.0;
         const int STEPS = 24;
+        float stepSize = 1.0 / float(STEPS);
+        // Jittered per fragment rather than sampled at fixed offsets: 24
+        // steps at a FIXED phase band exactly where a coarse march always
+        // does, and the jitter spreads that banding into noise instead,
+        // which the eye reads as water rather than as a rendering artifact.
+        float jitter = hash(gl_FragCoord.xy) * stepSize;
         for (int i = 0; i < STEPS; i++){
-          float t = (float(i) + 0.5) / float(STEPS);
+          float t = jitter + float(i) * stepSize;
           vec3 p = cameraPosition + dir * t * uMarchDistance;
           if (p.y > uSurfaceY) continue;
           // Sampled in the plane across the beam, which is what turns a cloud
-          // into a ribbon.
+          // into a ribbon. ANISOTROPIC 4:1 — narrow along the beam's own axis
+          // (A), wide across it (B) — is what turns that ribbon into a
+          // shaft instead of a blob: an isotropic scale gives a beam the same
+          // width as its length, and every shaft reads as a cotton ball.
           vec2 beamPlane = vec2(dot(p, uAxisA), dot(p, uAxisB));
-          float density = fbm(beamPlane * 0.09 + vec2(uTime * 0.02, 0.0));
+          vec2 uv = beamPlane * vec2(0.30, 0.075) + vec2(uTime * 0.02, 0.0);
+          float density = fbm(uv);
           // Threshold ABOVE the mean, or the whole volume glows.
           density = smoothstep(0.52, 0.86, density);
-          accumulated += density * exp(-t * uMarchDistance * uExtinction);
+          // A second octave, sampled at its own finer scale rather than
+          // folded into fbm's own series — a shaft with one smooth field and
+          // nothing riding on top of it reads as a gradient, not as light
+          // moving through real water.
+          float grain = 0.62 + 0.38 * noise(uv * 3.7 + vec2(uTime * 0.05, 0.0));
+          // Depth fade: independent of how far the CAMERA is from this point,
+          // this is how far the point itself sits below the surface — its
+          // own extinction path through the water column above it, which
+          // uExtinction (scaled by march distance FROM THE CAMERA) does not
+          // capture on its own.
+          float fade = exp(-max(0.0, uSurfaceY - p.y) * 0.02);
+          accumulated += density * grain * fade * exp(-t * uMarchDistance * uExtinction);
         }
         float mean = accumulated / float(STEPS);
         // Hard ceiling. This is additive and depth-tested off, so an unbounded

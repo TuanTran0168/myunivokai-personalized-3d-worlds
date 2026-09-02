@@ -1,6 +1,7 @@
 import { randomFromSeed } from "@/lib/scene";
 import type { OceanSeafloorConfig } from "@/lib/types";
 import { significantWaveHeightMetres } from "./oceanSeaState";
+import { BLUE_SEA_YAW_OFFSET_RADIANS } from "./oceanSky";
 
 /**
  * Deterministic maths for the ocean renderer.
@@ -483,6 +484,16 @@ export const OCEAN_SUN_AZIMUTH_RADIANS = 0.5;
 const BOUNDARY_SIGHT_MULTIPLIER = 1.5;
 
 /**
+ * The sun elevation above which an above-water world stops being golden hour.
+ *
+ * The family's above-water band runs 0.06-0.70 rad (3.4-40 degrees); its two
+ * archetypes sit at the ends of it — "Glass Shallows" golden hour rolls around
+ * 0.08 rad, "Surface Daylight" around 0.65 — so 0.3 rad (17 degrees) splits
+ * them with wide margin on both sides rather than sitting near either one.
+ */
+export const HIGH_SUN_ELEVATION_THRESHOLD_RADIANS = 0.3;
+
+/**
  * THE ORBIT RADIUS IS THE CONFIG'S, AND IT MUST STAY INSIDE THE LANDMARK RING.
  *
  * Pushing it out to the prototype's 30 m was tried and it was a clear
@@ -584,6 +595,21 @@ export type OceanCameraFraming = {
  * azimuth + π, because the shared rig always looks back at the origin. Its
  * forward direction is then the sun's bearing.
  *
+ * # Except above water, under a high sun
+ *
+ * That forward direction shoots straight at the sun, and above the surface —
+ * where the subject is the sky and the sea's own colour rather than a
+ * refracted window — that is the one composition every guide to photographing
+ * water warns against. Measured in the prototype: facing the sun gives an
+ * above-water frame at saturation 0.12, facing `BLUE_SEA_YAW_OFFSET_RADIANS`
+ * (118 degrees) away gives 0.17 overall and 0.31 in the near field, same
+ * shaders, same exposure. Applied only above water (underwater the god rays
+ * and Snell's window still need the sun's own bearing to have anything to
+ * show) and only past `HIGH_SUN_ELEVATION_THRESHOLD_RADIANS` — a low, golden-
+ * hour sun is the one case where shooting straight at it is the shot itself,
+ * which is why the prototype's own golden-hour preset ships yaw 0 rather than
+ * the offset.
+ *
  * When neither boundary is in reach there is no privileged direction, and the
  * bearing is left as it was.
  */
@@ -593,6 +619,11 @@ export function oceanCameraFraming(
   visibilityMetres: number,
   sunAzimuthRadians: number = OCEAN_SUN_AZIMUTH_RADIANS,
   seafloorDepthMetres: number = Number.POSITIVE_INFINITY,
+  // At the threshold itself rather than above or below it: a caller with no
+  // real elevation to pass (every existing test, before this parameter
+  // existed) gets the offset OFF, exactly the behaviour this parameter did
+  // not yet change.
+  sunElevationRadians: number = HIGH_SUN_ELEVATION_THRESHOLD_RADIANS,
 ): OceanCameraFraming {
   const above = viewerDepthMetres < 0;
   const reach = visibilityMetres * BOUNDARY_SIGHT_MULTIPLIER;
@@ -612,8 +643,11 @@ export function oceanCameraFraming(
   };
 
   // Yaw back across the basin, so the frame looks at content rather than
-  // outward into empty water — and, whenever the sun matters, along its bearing.
-  const yaw = bearing + Math.PI;
+  // outward into empty water — and, whenever the sun matters, along its
+  // bearing. Above water under a high sun, turned away from it instead — see
+  // BLUE_SEA_YAW_OFFSET_RADIANS.
+  const highSunAboveWater = above && sunElevationRadians > HIGH_SUN_ELEVATION_THRESHOLD_RADIANS;
+  const yaw = bearing + Math.PI + (highSunAboveWater ? BLUE_SEA_YAW_OFFSET_RADIANS : 0);
   const pitch = oceanCameraPitch(above, surfaceInReach, floorInReach);
   const horizontal = Math.cos(pitch) * OCEAN_AIM_DISTANCE_METRES;
   return {

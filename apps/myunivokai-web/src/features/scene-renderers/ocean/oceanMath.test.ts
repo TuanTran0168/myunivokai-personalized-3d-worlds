@@ -3,11 +3,13 @@ import { buildPreviewOceanSceneConfig } from "@/lib/oceanScene";
 import type { PreviewSceneInput } from "@/lib/scene";
 import { minimumPolarAngleUnderCeiling } from "../shared/cameraIntro";
 import {
+  HIGH_SUN_ELEVATION_THRESHOLD_RADIANS,
   lowestSeafloorUnderFootprint,
   oceanCameraCeilingMetres,
   oceanCameraFraming,
   oceanSurfaceClearanceMetres
 } from "./oceanMath";
+import { BLUE_SEA_YAW_OFFSET_RADIANS } from "./oceanSky";
 import { LANDMARK_HEIGHT_METRES, LANDMARK_KINDS } from "./oceanLandmarkGeometry";
 
 /**
@@ -251,6 +253,55 @@ describe("the ocean camera envelope, across worlds the generator can make", () =
  *     the centre, so a shape several metres across on a dune slope had its
  *     downhill edge in the water however correct its y was.
  */
+describe("oceanCameraFraming's above-water sun bearing", () => {
+  function yawOf(framing: ReturnType<typeof oceanCameraFraming>): number {
+    return Math.atan2(framing.target.z - framing.z, framing.target.x - framing.x);
+  }
+  function normalizeAngle(angle: number): number {
+    return ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  }
+
+  it("looks straight at the sun above water under a low, golden-hour sun", () => {
+    const sunAzimuth = 1.1;
+    const framing = oceanCameraFraming(20, -10, 30, sunAzimuth, 40, HIGH_SUN_ELEVATION_THRESHOLD_RADIANS);
+    expect(normalizeAngle(yawOf(framing))).toBeCloseTo(normalizeAngle(sunAzimuth), 5);
+  });
+
+  it("turns BLUE_SEA_YAW_OFFSET_RADIANS away from the sun above water under a high sun", () => {
+    const sunAzimuth = 1.1;
+    const framing = oceanCameraFraming(
+      20,
+      -10,
+      30,
+      sunAzimuth,
+      40,
+      HIGH_SUN_ELEVATION_THRESHOLD_RADIANS + 0.1
+    );
+    expect(normalizeAngle(yawOf(framing))).toBeCloseTo(normalizeAngle(sunAzimuth + BLUE_SEA_YAW_OFFSET_RADIANS), 5);
+  });
+
+  it("never applies the offset underwater, where the sun's own bearing is the subject", () => {
+    // Snell's window and the god rays need the sun's bearing to have anything
+    // to show; turning away from it there would compose toward empty water.
+    const sunAzimuth = 1.1;
+    const framing = oceanCameraFraming(
+      20,
+      5,
+      30,
+      sunAzimuth,
+      40,
+      HIGH_SUN_ELEVATION_THRESHOLD_RADIANS + 0.1
+    );
+    expect(normalizeAngle(yawOf(framing))).toBeCloseTo(normalizeAngle(sunAzimuth), 5);
+  });
+
+  it("defaults to no offset for a caller with no sun elevation to pass", () => {
+    const sunAzimuth = 1.1;
+    const framing = oceanCameraFraming(20, -10, 30, sunAzimuth, 40);
+    expect(normalizeAngle(yawOf(framing))).toBeCloseTo(normalizeAngle(sunAzimuth), 5);
+  });
+});
+
 describe("lowestSeafloorUnderFootprint", () => {
   // A slope with nothing else on it: height falls away with x.
   const SLOPE_FALL_PER_METRE = 0.4;

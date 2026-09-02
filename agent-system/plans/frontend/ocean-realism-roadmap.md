@@ -692,12 +692,57 @@ one-line experiment worth measuring.
 Restorations from our own prototype come first: the code is in the repo, it was
 reviewed and liked, and it is cheap.
 
-| # | Change | Gain / cost | Files |
-|---|---|---|---|
-| 1 | **Unify caustics** on the differential-area form (4c) | high / medium | `oceanRigTerrain.ts`, `oceanRigFlora.ts`, `oceanRig.ts` |
-| 2 | **Restore anisotropic god-ray sampling.** Prototype samples the beam cross-section at `section * vec2(0.30, 0.075)`; production uses isotropic `beamPlane * 0.09`. The 4:1 anisotropy is what makes a shaft a *curtain* instead of a blob. Also restore the `grain` octave, the depth `fade`, and the per-fragment march jitter that hides 24-step banding | high / small | `oceanRig.ts` |
-| 3 | **Wire up `BLUE_SEA_YAW_OFFSET_RADIANS`** (118°, `oceanSky.ts:117-128`) — it is written, documented, and imported by nothing. Above-water worlds currently always shoot *into* the sun. Prototype measurements: facing the sun gives saturation 0.12, facing 118° away gives 0.17 overall and 0.31 in the near field, same shaders. Apply only for a high sun; keep yaw 0 for golden hour | high / small | `oceanMath.ts` |
-| 4 | **Window-centred sparkle falloff** — restore `* (1.0 - coneT)` in place of `* window`, so Snell's window has a radial gradient rather than a flat disc with a hard rim | low / trivial | `oceanRig.ts` |
+| # | Change | Gain / cost | Files | Status |
+|---|---|---|---|---|
+| 1 | **Unify caustics** on the differential-area form (4c) | high / medium | `oceanRigTerrain.ts`, `oceanRigFlora.ts`, `oceanRig.ts` | DONE |
+| 2 | **Restore anisotropic god-ray sampling.** Prototype samples the beam cross-section at `section * vec2(0.30, 0.075)`; production uses isotropic `beamPlane * 0.09`. The 4:1 anisotropy is what makes a shaft a *curtain* instead of a blob. Also restore the `grain` octave, the depth `fade`, and the per-fragment march jitter that hides 24-step banding | high / small | `oceanRig.ts` | DONE |
+| 3 | **Wire up `BLUE_SEA_YAW_OFFSET_RADIANS`** (118°, `oceanSky.ts:117-128`) — it is written, documented, and imported by nothing. Above-water worlds currently always shoot *into* the sun. Prototype measurements: facing the sun gives saturation 0.12, facing 118° away gives 0.17 overall and 0.31 in the near field, same shaders. Apply only for a high sun; keep yaw 0 for golden hour | high / small | `oceanMath.ts` | DONE |
+| 4 | **Window-centred sparkle falloff** — restore `* (1.0 - coneT)` in place of `* window`, so Snell's window has a radial gradient rather than a flat disc with a hard rim | low / trivial | `oceanRig.ts` | not started |
+
+### Item 2 — DONE. Shipped.
+
+`oceanRig.ts`'s god-ray fragment shader gained the four things the prototype had
+and production had quietly dropped: the beam plane is now sampled at
+`vec2(0.30, 0.075)` instead of an isotropic `0.09` — narrow along the beam's
+own axis, wide across it, which is the 4:1 ratio that reads as a *shaft*
+rather than a blob; a second, finer-scale `noise` octave (`grain`, 0.62-1.0)
+rides on top of the thresholded `fbm` so an edge is not one smooth gradient;
+a `fade = exp(-max(0, uSurfaceY - p.y) * 0.02)` term dims a sample the
+FARTHER below the surface it sits, independent of how far the camera is from
+it — the march's own `uExtinction` term only ever measured the camera's own
+viewing distance, never how much water lies straight above a given point; and
+the march offset is now `jitter + i * stepSize` with `jitter` a per-fragment
+hash of `gl_FragCoord`, rather than the fixed `(i + 0.5) / STEPS` phase every
+fragment shared, which is what turns 24-step banding into noise instead.
+Pinned by the existing `oceanShaderSource.test.ts` GLSL lint, which nothing
+about this change was expected to trip — only new arithmetic, no new
+reserved words or shadowed built-ins.
+
+### Item 3 — DONE. Shipped.
+
+`oceanCameraFraming` (`oceanMath.ts`) gained a sixth, optional
+`sunElevationRadians` parameter, defaulting to
+`HIGH_SUN_ELEVATION_THRESHOLD_RADIANS` itself — so a caller with nothing to
+pass (every call site before this change) gets the offset OFF, exactly the
+behaviour that existed before this parameter did. `UniverseCanvas.tsx` now
+passes `scene?.lighting?.surfaceAzimuthRadians`'s sibling field,
+`surfaceElevationRadians`, through to it.
+
+`HIGH_SUN_ELEVATION_THRESHOLD_RADIANS = 0.3` splits the above-water band
+(0.06-0.70 rad) between the family's two archetypes — golden hour rolls
+around 0.08, daylight around 0.65 — with wide margin on both sides. The
+offset applies only `above && sunElevationRadians > threshold`: above water
+only, because underwater the god rays and Snell's window still need the
+camera looking along the sun's actual bearing to have anything to show, and
+only past the threshold, because a low golden-hour sun is the one case where
+shooting straight at it is the composition itself — which is why the
+prototype's own golden-hour preset ships yaw 0 rather than the offset.
+
+Pinned by four new tests in `oceanMath.test.ts`: yaw equals the sun's own
+bearing above water under a low sun, turns exactly
+`BLUE_SEA_YAW_OFFSET_RADIANS` away from it under a high one, never applies
+underwater even under a high sun, and defaults to no offset for a caller that
+passes no elevation at all.
 
 ### From the open web
 
