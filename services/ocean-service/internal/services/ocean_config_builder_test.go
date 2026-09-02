@@ -666,6 +666,46 @@ func TestTheBoundaryRuleKeepsTheDepthRange(t *testing.T) {
 	}
 }
 
+// TestTheTwilightReachAlwaysShowsOneBoundary pins what the boundary rule is
+// FOR, and it exists because the plan proposed undoing it.
+//
+// The twilight reach is open water: against a mean ocean depth of 3682 m, a
+// world at 143 m has kilometres of nothing under it, and floorClearanceBand
+// ByZone says so with a 1900-3900 m band. The failure that came out of that was
+// a flat blue rectangle with some fish in it, for a third of all worlds, and
+// the roadmap's answer to it (reading A, section 3c) was to give the whole zone
+// a floor inside the sighting reach — turning open midwater into a shelf.
+//
+// The boundary rule got there first and got there better: a twilight world that
+// can see neither boundary is either lifted to the shallow end of its OWN band,
+// where the surface is in reach, or given a seamount under it. Measured over
+// 600 seeds x 4 moods, 2026-09-02: 654 twilight worlds, 418 with the surface in
+// sight, 236 with a floor in sight, ZERO with neither. So the zone is not empty
+// and does not need a floor bolted on; it needs this guarantee not to regress.
+func TestTheTwilightReachAlwaysShowsOneBoundary(t *testing.T) {
+	builder := NewOceanConfigBuilder()
+	twilightWorlds := 0
+	for sample := 0; sample < 600; sample++ {
+		for _, mood := range []string{"focused", "dreamy", "energetic", "reflective"} {
+			config := builder.Build(buildTestInput(fmt.Sprintf("OCN-TWI-%d", sample), mood, 4))
+			if config.Depth.Zone != ZoneTwilightReach || config.Depth.Metres < 0 {
+				continue
+			}
+			twilightWorlds++
+			reach := SightingRangeForWaterType(MurkiestWaterTypeForZone(config.Depth.Zone)) * boundarySightMultiplier
+			surfaceInSight := config.Depth.Metres <= reach
+			floorInSight := config.Depth.SeafloorMetres-config.Depth.Metres <= reach
+			if !surfaceInSight && !floorInSight {
+				t.Fatalf("a twilight world at %.2f m with its seabed at %.2f m can see neither boundary in %.2f m of reach: that frame is a flat blue rectangle",
+					config.Depth.Metres, config.Depth.SeafloorMetres, reach)
+			}
+		}
+	}
+	if twilightWorlds == 0 {
+		t.Fatal("no twilight world was built in 2400 samples, so this test proved nothing")
+	}
+}
+
 // The boundary rule must never change what zone a world is in. Its first
 // version lifted twilight viewers to nine metres, which reclassified them as
 // shallows — destroying the mood's depth lean, and then letting them draw

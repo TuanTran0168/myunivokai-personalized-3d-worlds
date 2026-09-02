@@ -770,3 +770,59 @@ export function oceanCameraFloorMetres(
   }
   return viewerDepthMetres + oceanSurfaceClearanceMetres(windSpeedMetresPerSecond);
 }
+
+/**
+ * A hydrothermal vent's blue-white flicker, as a 0..1 intensity over time.
+ *
+ * Almost nothing on a real seabed glows. A black smoker does, and it does it in
+ * two quite different ways, which is why this returns a separate value from the
+ * mouth's steady thermal glow:
+ *
+ *   - the vent FLUID leaves the chimney at 300-400 C and radiates as a dull
+ *     red-orange. That is thermal, continuous, and needs no function.
+ *   - the PRECIPITATION FRONT, where that fluid hits 2 C seawater, throws brief
+ *     blue-white flashes — crystalloluminescence as sulphides crystallise out,
+ *     and sonoluminescence from bubbles collapsing. Measured at real vents.
+ *     They are stochastic, short, and much brighter than the thermal glow.
+ *
+ * Written as a pure function of time so it can be tested without a GPU, and so
+ * two vents in the same field flicker independently from the same clock — pass
+ * each one its own `phaseSeed`.
+ */
+const FLICKER_WINDOW_SECONDS = 0.9;
+const FLICKER_DURATION_SECONDS = 0.13;
+/** Roughly two flashes every three seconds, per vent. */
+const FLICKER_PROBABILITY = 0.6;
+/** The rise is a crystal forming; the fall is it cooling. They are not the same. */
+const FLICKER_ATTACK_FRACTION = 0.18;
+const FLICKER_DECAY_RATE = 4.5;
+
+/** A stable 0..1 from two integers. The same window always rolls the same flash. */
+function flickerRoll(windowIndex: number, phaseSeed: number): number {
+  const mixed = Math.sin(windowIndex * 127.1 + phaseSeed * 311.7) * 43758.5453123;
+  return mixed - Math.floor(mixed);
+}
+
+export function hydrothermalFlickerIntensity(elapsedSeconds: number, phaseSeed: number): number {
+  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) {
+    return 0;
+  }
+  const windowIndex = Math.floor(elapsedSeconds / FLICKER_WINDOW_SECONDS);
+  const roll = flickerRoll(windowIndex, phaseSeed);
+  if (roll > FLICKER_PROBABILITY) {
+    return 0;
+  }
+  // Where in the window this flash starts, spread across the whole window so
+  // the flashes do not land on a metronome.
+  const startSeconds =
+    (roll / FLICKER_PROBABILITY) * (FLICKER_WINDOW_SECONDS - FLICKER_DURATION_SECONDS);
+  const sinceStart = elapsedSeconds - windowIndex * FLICKER_WINDOW_SECONDS - startSeconds;
+  if (sinceStart < 0 || sinceStart > FLICKER_DURATION_SECONDS) {
+    return 0;
+  }
+  const through = sinceStart / FLICKER_DURATION_SECONDS;
+  if (through < FLICKER_ATTACK_FRACTION) {
+    return through / FLICKER_ATTACK_FRACTION;
+  }
+  return Math.exp(-(through - FLICKER_ATTACK_FRACTION) * FLICKER_DECAY_RATE);
+}

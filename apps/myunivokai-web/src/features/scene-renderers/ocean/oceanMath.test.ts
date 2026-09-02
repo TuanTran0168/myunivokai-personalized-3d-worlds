@@ -5,6 +5,7 @@ import { maximumPolarAngleOverFloor, minimumPolarAngleUnderCeiling } from "../sh
 import {
   HIGH_SUN_ELEVATION_THRESHOLD_RADIANS,
   lowestSeafloorUnderFootprint,
+  hydrothermalFlickerIntensity,
   oceanCameraCeilingMetres,
   oceanCameraFloorMetres,
   oceanCameraFraming,
@@ -546,5 +547,70 @@ describe("where the service puts a landmark, across worlds the generator can mak
         expect(-(landmark.heightAboveFloor ?? 0)).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+/**
+ * The black smoker's flicker. Measured behaviour rather than a look: a vent
+ * flashes blue-white at its precipitation front a couple of times every few
+ * seconds, each flash about a tenth of a second, and two vents in the same
+ * field do not flash together.
+ */
+describe("hydrothermalFlickerIntensity", () => {
+  const SAMPLE_SECONDS = 120;
+  const SAMPLE_STEP_SECONDS = 1 / 90;
+
+  function samples(phaseSeed: number): number[] {
+    const values: number[] = [];
+    for (let time = 0; time < SAMPLE_SECONDS; time += SAMPLE_STEP_SECONDS) {
+      values.push(hydrothermalFlickerIntensity(time, phaseSeed));
+    }
+    return values;
+  }
+
+  it("stays inside 0..1, so it can drive an opacity directly", () => {
+    for (const value of samples(3)) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("is dark most of the time — a vent that glows continuously is a lamp", () => {
+    const lit = samples(3).filter((value) => value > 0).length;
+    expect(lit / samples(3).length).toBeLessThan(0.15);
+  });
+
+  it("actually flashes, several times a minute", () => {
+    // Counted as rising edges rather than lit frames, so a long dim stretch
+    // cannot pass for a burst.
+    const values = samples(3);
+    let flashes = 0;
+    for (let index = 1; index < values.length; index += 1) {
+      if (values[index] > 0 && values[index - 1] === 0) {
+        flashes += 1;
+      }
+    }
+    expect(flashes).toBeGreaterThan(SAMPLE_SECONDS / 4);
+  });
+
+  it("reaches full brightness, so a flash reads as a flash", () => {
+    expect(Math.max(...samples(3))).toBeGreaterThan(0.9);
+  });
+
+  it("gives two vents in one field their own clock", () => {
+    const first = samples(3);
+    const second = samples(11);
+    const together = first.filter((value, index) => value > 0 && second[index] > 0).length;
+    const eitherLit = first.filter((value, index) => value > 0 || second[index] > 0).length;
+    expect(together / eitherLit).toBeLessThan(0.2);
+  });
+
+  it("is deterministic — the same vent at the same second looks the same", () => {
+    expect(hydrothermalFlickerIntensity(41.37, 7)).toBe(hydrothermalFlickerIntensity(41.37, 7));
+  });
+
+  it("is dark for a clock that has not started, or has gone backwards", () => {
+    expect(hydrothermalFlickerIntensity(Number.NaN, 3)).toBe(0);
+    expect(hydrothermalFlickerIntensity(-2, 3)).toBe(0);
   });
 });

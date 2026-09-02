@@ -54,6 +54,109 @@ const SAND_ALBEDO = new Color("#D8BE93");
  */
 const ROCK_ALBEDO = new Color("#6E6A62");
 
+/**
+ * Where sand stops staying put.
+ *
+ * A seabed is not one material. Sand is a sediment: it collects in the flats
+ * and slides off anything steep, and what it slides off is the rock underneath
+ * — which is why a real dune field reads as pale crests with darker faces, and
+ * why this one read as a single beige sheet with a normal map on it.
+ *
+ * Measured against the relief this file actually builds. `heightAt` sums a
+ * 90 m-wavelength swell of +/-5.5 m, an 18 m dune of +/-1.2 m and a 11 m ripple
+ * of +/-0.16 m, so the steepest face it can make is around 14 degrees and the
+ * flats are under 3. The onset is the sine of 5.7 degrees and full rock the
+ * sine of 15, which puts the whole transition inside the range the terrain
+ * occupies — a threshold set for a mountain would never fire here at all.
+ */
+/**
+ * The darkest a steep face may get relative to the flat around it.
+ *
+ * Rock is about half the albedo of coral sand, and the two water terms in
+ * `tintSeabed` do not scale them by the same amount, so the raw ratio can go
+ * lower than either material really is. A floor that goes to a third of its own
+ * brightness on every dune face reads as holes in the seabed rather than as a
+ * change of material.
+ */
+const DARKEST_SLOPE_ROCK_SHIFT = 0.55;
+
+/**
+ * A tinted sand channel this dark carries no usable ratio: dividing by it turns
+ * rounding noise into a colour. Below it the channel is left alone.
+ */
+const FAINTEST_USABLE_SAND_CHANNEL = 0.004;
+
+/**
+ * One channel of the sand-to-rock multiplier the steep faces are shaded with.
+ *
+ * Never above 1. Rock is the darker material, and if a world's water terms ever
+ * inverted that, brightening the steep faces would read as light coming OUT of
+ * them — which is not a material difference, it is a bug with a mood.
+ */
+export function slopeRockChannelShift(tintedRockChannel: number, tintedSandChannel: number): number {
+  if (!(tintedSandChannel > FAINTEST_USABLE_SAND_CHANNEL)) {
+    return 1;
+  }
+  const ratio = tintedRockChannel / tintedSandChannel;
+  return Math.min(1, Math.max(DARKEST_SLOPE_ROCK_SHIFT, ratio));
+}
+
+const SLOPE_ROCK_ONSET_SINE = 0.1;
+const SLOPE_ROCK_FULL_SINE = 0.26;
+
+/** Declared in both stages, so the slope the vertex measured survives to the fragment. */
+const SEABED_SLOPE_VERTEX_DECLARATIONS = /* glsl */ `
+  varying float vSeabedUpness;
+`;
+const SEABED_SLOPE_FRAGMENT_DECLARATIONS = /* glsl */ `
+  varying float vSeabedUpness;
+  uniform vec3 uSlopeRockShift;
+`;
+
+/**
+ * The floor's albedo, shifted toward rock on the steep faces.
+ *
+ * Written as a multiplier rather than a second colour because the sand it
+ * modifies has already been through `tintSeabed`'s two water terms — a mix and
+ * a scale, both of which depend on the world's brightness and fog. Blending to
+ * an untinted rock colour here would put un-fogged basalt on a seabed
+ * everything else on the frame is looking at through forty metres of water.
+ * The ratio between the two TINTED colours carries the material difference and
+ * nothing else, so the water's own grade survives it.
+ *
+ * Chains onto whatever is already on the material — `applyCaustics` uses the
+ * same hook and the same convention.
+ */
+function applySlopeRock(material: MeshStandardMaterial, slopeRockShift: { value: Color }): void {
+  const previous = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    previous?.(shader, renderer);
+    shader.uniforms.uSlopeRockShift = slopeRockShift;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>" + SEABED_SLOPE_VERTEX_DECLARATIONS)
+      .replace(
+        "#include <worldpos_vertex>",
+        `#include <worldpos_vertex>
+  vSeabedUpness = normalize(mat3(modelMatrix) * objectNormal).y;`
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>" + SEABED_SLOPE_FRAGMENT_DECLARATIONS
+      )
+      // After the texture, before the light: this changes what the surface IS
+      // made of, so it has to be in the albedo the lighting then reads.
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+  float seabedSlopeSine = sqrt(max(0.0, 1.0 - vSeabedUpness * vSeabedUpness));
+  float seabedRockAmount = smoothstep(${SLOPE_ROCK_ONSET_SINE}, ${SLOPE_ROCK_FULL_SINE}, seabedSlopeSine);
+  diffuseColor.rgb *= mix(vec3(1.0), uSlopeRockShift, seabedRockAmount);`
+      );
+  };
+  material.needsUpdate = true;
+}
+
 export const GLSL_TERRAIN_NOISE = /* glsl */ `
   float sHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
   float sNoise(vec2 p){
@@ -226,6 +329,12 @@ export type Seabed = {
   group: Group;
   floorMaterial: MeshStandardMaterial;
   rockMaterials: MeshStandardMaterial[];
+  /**
+   * How much darker the steep faces of the floor are than its flats, as a
+   * per-channel multiplier. Resolved by `tintSeabed`, which is the only place
+   * that knows what colour either material ended up.
+   */
+  slopeRockShift: { value: Color };
   causticUniforms: CausticsUniforms;
   heightAt: (x: number, z: number) => number;
   /**
@@ -287,6 +396,8 @@ export function createSeabed(options: SeabedOptions): Seabed {
     roughness: 1,
     metalness: 0,
   });
+  const slopeRockShift = { value: new Color(1, 1, 1) };
+  applySlopeRock(floorMaterial, slopeRockShift);
   applyCaustics(floorMaterial, causticUniforms);
 
   const floorGeometry = new PlaneGeometry(extent, extent, segments, segments);
@@ -368,6 +479,7 @@ export function createSeabed(options: SeabedOptions): Seabed {
     group,
     floorMaterial,
     rockMaterials,
+    slopeRockShift,
     causticUniforms,
     heightAt,
     cellSizeMetres: extent / segments,
@@ -396,12 +508,24 @@ export function tintSeabed(
     .copy(SAND_ALBEDO)
     .lerp(fog, 0.4 + (1 - brightness) * 0.45)
     .multiplyScalar(0.72 + brightness * 0.2);
+  const tintedRock = new Color();
   for (const material of seabed.rockMaterials) {
     material.color
       .copy(ROCK_ALBEDO)
       .lerp(fog, 0.34 + (1 - brightness) * 0.4)
       .multiplyScalar(0.62 + brightness * 0.22);
   }
+  // The rock's tint, computed whether or not any boulder band was built — a
+  // world with no boulders still has slopes.
+  tintedRock
+    .copy(ROCK_ALBEDO)
+    .lerp(fog, 0.34 + (1 - brightness) * 0.4)
+    .multiplyScalar(0.62 + brightness * 0.22);
+  seabed.slopeRockShift.value.setRGB(
+    slopeRockChannelShift(tintedRock.r, seabed.floorMaterial.color.r),
+    slopeRockChannelShift(tintedRock.g, seabed.floorMaterial.color.g),
+    slopeRockChannelShift(tintedRock.b, seabed.floorMaterial.color.b),
+  );
   // No local gain here any more. This used to be `causticStrength * 0.185`,
   // an unexplained factor that made the seabed's own caustics five times
   // dimmer than the landmarks standing on it, lit by the same sun through the

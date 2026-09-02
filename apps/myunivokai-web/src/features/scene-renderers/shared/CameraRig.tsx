@@ -312,17 +312,55 @@ export function CameraRig({
     );
   }
 
-  // The floor, in the same language and applied at the same three moments. It
-  // narrows `maxPolarAngle` rather than replacing it, so a family that already
-  // has a tilt limit of its own keeps whichever of the two is stricter.
+  /**
+   * The height the lens may not fall below THIS FRAME, or null where nothing is
+   * under it. Two sources, and the higher of them binds: the family's own floor
+   * (an above-water world's sea) and the ground the terrain sampler reports
+   * beneath the camera's current position.
+   *
+   * Capped by the ceiling for the same reason `clampCameraAboveTerrain` caps
+   * its own: where the corridor is too thin to hold both, the ceiling wins. A
+   * lens in the sand is a dark frame, a lens through the surface is a white one
+   * with the whole world hidden behind it — and a floor above the ceiling would
+   * cross the two polar bounds and hand `OrbitControls` an empty range.
+   */
+  function cameraFloorHeightMetres(): number | null {
+    const sampleTerrainHeight = terrainHeightSampler.current;
+    const seabedFloor = sampleTerrainHeight
+      ? sampleTerrainHeight(camera.position.x, camera.position.z) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES
+      : null;
+    if (minimumCameraHeightMetres === undefined && seabedFloor === null) {
+      return null;
+    }
+    const floor = Math.max(minimumCameraHeightMetres ?? -Infinity, seabedFloor ?? -Infinity);
+    return maximumCameraHeightMetres === undefined ? floor : Math.min(floor, maximumCameraHeightMetres);
+  }
+
+  /**
+   * The floor, in the same language as the ceiling and applied at the same
+   * three moments. It narrows `maxPolarAngle` rather than replacing it, so a
+   * family that already has a tilt limit of its own keeps whichever of the two
+   * is stricter.
+   *
+   * THE SEABED HALF OF THIS IS A FIX, NOT A TIDY-UP. `clampCameraAboveTerrain`
+   * corrects the camera AFTER the controls have moved it, by lifting camera and
+   * target together — which preserves the offset, as intended. But the idle
+   * re-centre then puts the target back on the family's framing, and
+   * `OrbitControls.update()` re-derives the radius from wherever the target now
+   * is. Lift, restore, re-derive: each frame shortens the orbit a little, and
+   * dragging to the seabed measured the radius ratcheting from 26 m to 4.3 m
+   * with the visitor's own zoom silently gone. Expressed as a polar bound, the
+   * drag simply STOPS at the sand at the radius it already had.
+   */
   function applyCameraFloor(orbitControls: OrbitControlsImplementation, orbitRadius?: number) {
-    if (minimumCameraHeightMetres === undefined) {
+    const floorHeight = cameraFloorHeightMetres();
+    if (floorHeight === null) {
       return;
     }
     orbitControls.maxPolarAngle = Math.min(
       maximumPolarAngleRadians,
       maximumPolarAngleOverFloor(
-        minimumCameraHeightMetres,
+        floorHeight,
         orbitControls.target.y,
         orbitRadius ?? camera.position.distanceTo(orbitControls.target)
       )
