@@ -1073,6 +1073,11 @@ water, with animals in it at animal distances. What remains is a visitor
 deliberately wheeling in to the 2.5 m minimum against a large animal, and that
 is a close pass rather than a fault.
 
+**Where this plan was wrong is recorded separately**, in
+[`memory/execution-records/ocean-realism-roadmap.md`](../../memory/execution-records/ocean-realism-roadmap.md)
+— four contradictions between what this document predicted and what was
+measured, kept because each one cost a round to find.
+
 **Every numbered item on this list is now closed.** Seven were done, two were
 closed by measurement rather than by code (3c's premise had stopped being true;
 the pale object was a symptom of the ratchet), and the four that follow work
