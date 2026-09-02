@@ -25,7 +25,11 @@ deployment — read it before any backend, messaging, data or deployment work.
 
 [service-wake-mechanism.md](architecture/service-wake-mechanism.md) and
 [frontend-gateway-consolidation.md](architecture/frontend-gateway-consolidation.md)
-are cross-cutting mechanisms with the same standing. The first is the one to
+are cross-cutting mechanisms with the same standing.
+[end-user-identity-and-ownership.md](architecture/end-user-identity-and-ownership.md)
+is the third — **proposed 2026-09-02, not approved, no code** — and it is the one
+to read before touching `accounts`, the token audience, any world's owner, or
+the web app's session. The first is the one to
 read before touching gateway error handling, `/healthz`, the wake platform
 adapters or `/api/admin/wake-stats`.
 

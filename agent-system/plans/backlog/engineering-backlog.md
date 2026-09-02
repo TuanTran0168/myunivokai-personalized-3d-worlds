@@ -613,7 +613,13 @@ decision is recorded in [frontend-plan.md](../frontend/frontend-plan.md) gap #4.
 
 Status: Deferred by owner decision on 2026-07-22. **Unaffected by Sprint 4** —
 staff identity in `EPIC-S4-AUTH-001` never adds ownership; see that epic's
-first scenario.
+first scenario. **Answered, pending owner approval, on 2026-09-02** by
+[end-user-identity-and-ownership.md](../architecture/end-user-identity-and-ownership.md),
+which takes every clause of this story's `Then` — issuer, account mapping,
+object ownership, anonymous claim/migration, public share, deletion/export and
+service authorization — as a numbered decision with a recommendation. This
+story stays `Deferred` until that plan is approved; approval is what turns it
+into an epic.
 Priority: Discovery
 
 As a future account holder,
