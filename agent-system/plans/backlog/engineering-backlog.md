@@ -609,11 +609,95 @@ on the same basis as [scene-fidelity.md](scene-fidelity.md) and
 [world-chrome.md](world-chrome.md). The adaptive-tier story's own sequencing
 decision is recorded in [frontend-plan.md](../frontend/frontend-plan.md) gap #4.
 
+## EPIC-S8-IDENTITY-001 — End-user identity and world ownership
+
+Status: Ready
+Priority: P0
+Sprint: [Sprint 8 — starts 2026-09-02](../sprints/sprint-08-2026-09-02/README.md)
+
+This epic is what [`DEFERRED-AUTH-001`](#deferred-auth-001--define-identity-before-authentication)
+becomes. It answers that story's every clause and closes it.
+
+As a visitor,
+I want an account that owns the worlds I make,
+so that my collection survives a cleared browser, a new phone and a browser
+that evicts storage on its own — and so that the AI bill behind those worlds
+has a ceiling.
+
+Scenario: A durable identity, and one that does not gate the first world
+
+Given anonymous creation stays, because the first world is the product's pitch
+When a visitor creates worlds anonymously and later signs up
+Then the worlds carrying their minted anonymous id become owned by the new
+account, exactly once and idempotently
+And ownership is enforced in the same transaction as each mutation, never
+against a read model
+And the visitor's own worlds are listed from the server, not from
+`localStorage`.
+
+Scenario: Two audiences, one accounts table, kept structurally apart
+
+Given Sprint 4 built staff identity as one half of a deliberately two-audience
+design
+When the `web` audience is turned on
+Then an `end_user` account holds no role and no permission row
+And a `web` token is rejected by the admin edge and an `admin` token by the
+product edge, both proven by test
+And `owner_account_id` never reaches `myunivokai_analytics`.
+
+Scenario: The spend gains a ceiling without the visitor losing a world
+
+Given no per-caller quota exists anywhere in the platform today, which is why
+`AI_PROVIDER` is still `mock` in production
+When a caller passes the daily AI limit on a deployment where the AI tier is
+actually on
+Then the world is still created, from the mock provider, and the visitor is
+told once
+And no create request is refused
+And on a deployment still configured as `mock`, the visitor is told **nothing**
+— the reason code is `mock_configured`, not `quota_exhausted`, because no AI
+generation was withheld.
+
+Epic exit:
+
+- [ ] Every Sprint 8 `S8-IDENTITY-*` story is Verified.
+- [ ] The audience separation is proven in **both** directions, not one.
+- [ ] A deleted world's share URL stops resolving **through the gateway**
+      immediately, proven by a test that goes through the gateway.
+- [ ] A replayed claim and a second device's claim each update zero rows.
+- [ ] A visitor sees their worlds on a device that has never seen them.
+- [ ] A quota limit is changed from the admin app, audited, with no service
+      restart — and the platform still behaves correctly with an empty
+      `system_settings` table, every setting resolving to its named default.
+- [ ] A world creation never contacts `auth-service` to learn a quota number.
+- [ ] No new service, no new database and no new third-party account was added.
+
+Sprint stories: [S8-IDENTITY-001 through S8-IDENTITY-017](../sprints/sprint-08-2026-09-02/user-stories.md#epic-s8-identity-001--end-user-identity-and-world-ownership)
+
+Source: [end-user-identity-and-ownership.md](../architecture/end-user-identity-and-ownership.md)
+— **read its §16 first.** Twenty decisions taken on 2026-09-02 supersede
+parts of §3.4, §5, §9, §10, §11 and §17 in place, and most of them cut scope:
+there is no account-deletion feature, no mail provider, no password reset, no
+passkeys and no `library-service` in this epic.
+
 ## DEFERRED-AUTH-001 — Define identity before authentication
 
-Status: Deferred by owner decision on 2026-07-22. **Unaffected by Sprint 4** —
-staff identity in `EPIC-S4-AUTH-001` never adds ownership; see that epic's
-first scenario.
+Status: **Closed on 2026-09-02 — superseded by
+[`EPIC-S8-IDENTITY-001`](#epic-s8-identity-001--end-user-identity-and-world-ownership)
+and scheduled as [Sprint 8](../sprints/sprint-08-2026-09-02/README.md).**
+Deferred by owner decision on 2026-07-22 and unaffected by Sprint 4 — staff
+identity in `EPIC-S4-AUTH-001` never added ownership; see that epic's first
+scenario. Answered on 2026-09-02 by
+[end-user-identity-and-ownership.md](../architecture/end-user-identity-and-ownership.md),
+which takes every clause of this story's `Then` — issuer, account mapping,
+object ownership, anonymous claim/migration, public share, deletion/export and
+service authorization — as a numbered decision. Twenty of those decisions
+were taken across four rounds on 2026-09-02, and **one clause is deliberately
+answered "not built": deletion/export.** The owner decided there is no
+user-facing account deletion and no purge, so data erasure is discharged by a
+manual runbook rather than by a feature — recorded in the plan's §10 and §16
+decision 9, and carried as accepted risk 2 in the sprint. That is an answer,
+not an omission, which is why this story closes rather than staying open on it.
 Priority: Discovery
 
 As a future account holder,

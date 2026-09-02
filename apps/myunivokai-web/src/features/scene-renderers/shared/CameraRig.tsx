@@ -8,6 +8,7 @@ import type { OrbitControls as OrbitControlsImplementation } from "three-stdlib"
 import { REDUCED_MOTION_MEDIA_QUERY } from "@/lib/formRailCollapse";
 import { usePlanetPositionTracker } from "./PlanetPositionTracker";
 import { useTerrainHeightSampler } from "./TerrainHeightSampler";
+import { clearCameraPose, publishCameraPose } from "./cameraPoseProbe";
 import {
   CAMERA_INTRO_START_POSE,
   cameraIntroFrameSeconds,
@@ -15,6 +16,7 @@ import {
   cameraIntroProgress,
   cameraIntroStartOffset,
   cameraIntroPoseForDuration,
+  maximumPolarAngleOverFloor,
   minimumPolarAngleUnderCeiling,
   NO_POLAR_FLOOR,
   pickCameraIntroPose,
@@ -78,6 +80,18 @@ type CameraRigProps = {
    * puts the lens through the surface.
    */
   maximumCameraHeightMetres?: number;
+  /**
+   * The height the lens may not fall below, for a family whose camera is
+   * OUTSIDE something it must not get into.
+   *
+   * The mirror of `maximumCameraHeightMetres`, and only the ocean sets it, only
+   * above water: those worlds' rigs are built for air — no seabed, no water
+   * fog, no god rays, the surface drawn as a sheet seen from the sky — so an
+   * orbit that dives under their sea arrives in a scene with no water in it,
+   * looking up at the back of a wave mesh. Same enforcement as the ceiling, on
+   * the other end of the polar range and against the same live radius.
+   */
+  minimumCameraHeightMetres?: number;
   /** Decorative canvases (gallery backdrop) opt out of keyboard movement. */
   keyboardMoveEnabled?: boolean;
   /**
@@ -131,6 +145,7 @@ export function CameraRig({
   maximumDistance = ORBIT_CONTROLS_MAXIMUM_DISTANCE,
   maximumPolarAngleRadians = ORBIT_CONTROLS_MAXIMUM_POLAR_ANGLE,
   maximumCameraHeightMetres,
+  minimumCameraHeightMetres,
   keyboardMoveEnabled = true,
   restingTarget,
   introDurationSeconds = 0,
@@ -232,6 +247,12 @@ export function CameraRig({
   // white rock face. The offset has to be right from the first update instead.
   const appliedRestingTargetRef = useRef<string | null>(null);
 
+  // The pose probe's own scratch pair, separate from the opening move's: the
+  // two run in the same frame and sharing one Spherical would have the probe
+  // reporting whatever pose the move was mid-way through computing.
+  const probeSpherical = useMemo(() => new Spherical(), []);
+  const scratchProbeOffset = useMemo(() => new Vector3(), []);
+
   const scratchForward = useMemo(() => new Vector3(), []);
   const scratchRight = useMemo(() => new Vector3(), []);
   const scratchMove = useMemo(() => new Vector3(), []);
@@ -291,6 +312,61 @@ export function CameraRig({
     );
   }
 
+  /**
+   * The height the lens may not fall below THIS FRAME, or null where nothing is
+   * under it. Two sources, and the higher of them binds: the family's own floor
+   * (an above-water world's sea) and the ground the terrain sampler reports
+   * beneath the camera's current position.
+   *
+   * Capped by the ceiling for the same reason `clampCameraAboveTerrain` caps
+   * its own: where the corridor is too thin to hold both, the ceiling wins. A
+   * lens in the sand is a dark frame, a lens through the surface is a white one
+   * with the whole world hidden behind it — and a floor above the ceiling would
+   * cross the two polar bounds and hand `OrbitControls` an empty range.
+   */
+  function cameraFloorHeightMetres(): number | null {
+    const sampleTerrainHeight = terrainHeightSampler.current;
+    const seabedFloor = sampleTerrainHeight
+      ? sampleTerrainHeight(camera.position.x, camera.position.z) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES
+      : null;
+    if (minimumCameraHeightMetres === undefined && seabedFloor === null) {
+      return null;
+    }
+    const floor = Math.max(minimumCameraHeightMetres ?? -Infinity, seabedFloor ?? -Infinity);
+    return maximumCameraHeightMetres === undefined ? floor : Math.min(floor, maximumCameraHeightMetres);
+  }
+
+  /**
+   * The floor, in the same language as the ceiling and applied at the same
+   * three moments. It narrows `maxPolarAngle` rather than replacing it, so a
+   * family that already has a tilt limit of its own keeps whichever of the two
+   * is stricter.
+   *
+   * THE SEABED HALF OF THIS IS A FIX, NOT A TIDY-UP. `clampCameraAboveTerrain`
+   * corrects the camera AFTER the controls have moved it, by lifting camera and
+   * target together — which preserves the offset, as intended. But the idle
+   * re-centre then puts the target back on the family's framing, and
+   * `OrbitControls.update()` re-derives the radius from wherever the target now
+   * is. Lift, restore, re-derive: each frame shortens the orbit a little, and
+   * dragging to the seabed measured the radius ratcheting from 26 m to 4.3 m
+   * with the visitor's own zoom silently gone. Expressed as a polar bound, the
+   * drag simply STOPS at the sand at the radius it already had.
+   */
+  function applyCameraFloor(orbitControls: OrbitControlsImplementation, orbitRadius?: number) {
+    const floorHeight = cameraFloorHeightMetres();
+    if (floorHeight === null) {
+      return;
+    }
+    orbitControls.maxPolarAngle = Math.min(
+      maximumPolarAngleRadians,
+      maximumPolarAngleOverFloor(
+        floorHeight,
+        orbitControls.target.y,
+        orbitRadius ?? camera.position.distanceTo(orbitControls.target)
+      )
+    );
+  }
+
   useFrame((_, deltaTimeSeconds) => {
     const orbitControls = orbitControlsReference.current;
     if (!orbitControls) {
@@ -312,6 +388,7 @@ export function CameraRig({
     // and the first frame moves that height from the scene centre to wherever
     // the family aimed it.
     applyCameraCeiling(orbitControls);
+    applyCameraFloor(orbitControls);
 
     // Opening move, ahead of everything else and returning while it runs: a
     // focus glide or a WASD glide fighting the entrance for the same camera
@@ -366,6 +443,7 @@ export function CameraRig({
         // Against the radius THIS frame of the move is posing at, not the one
         // the frame began with: the move travels along the radius axis too.
         applyCameraCeiling(orbitControls, offset.radius);
+        applyCameraFloor(orbitControls, offset.radius);
         orbitControls.update();
         if (progress >= 1) {
           isIntroSpentReference.current = true;
@@ -442,12 +520,45 @@ export function CameraRig({
     // frame of white water, so it is re-solved and re-enforced here rather than
     // left to the next tick.
     applyCameraCeiling(orbitControls);
+    applyCameraFloor(orbitControls);
     orbitControls.update();
 
     // Terrain clamp, last, so it corrects whatever this frame's zoom/orbit/pan
     // just produced rather than something a later step could still undo.
     clampCameraAboveTerrain(orbitControls);
   });
+
+  // The pose, published after the frame above has had its say. Its own callback
+  // rather than a line at the end of that one, because that one returns early
+  // in two of the states most worth watching — mid opening move, and mid focus
+  // glide — and a probe that goes quiet during exactly those is worse than
+  // none. r3f runs same-priority callbacks in registration order, so this one
+  // runs second; a non-zero priority would not order it, it would switch off
+  // automatic rendering altogether.
+  useFrame(() => {
+    const orbitControls = orbitControlsReference.current;
+    if (!orbitControls) {
+      return;
+    }
+    probeSpherical.setFromVector3(scratchProbeOffset.copy(camera.position).sub(orbitControls.target));
+    publishCameraPose(window, {
+      positionX: camera.position.x,
+      positionY: camera.position.y,
+      positionZ: camera.position.z,
+      targetX: orbitControls.target.x,
+      targetY: orbitControls.target.y,
+      targetZ: orbitControls.target.z,
+      orbitRadiusMetres: probeSpherical.radius,
+      polarAngleRadians: probeSpherical.phi,
+      azimuthAngleRadians: probeSpherical.theta,
+      ceilingMetres: maximumCameraHeightMetres ?? null,
+      floorMetres: minimumCameraHeightMetres ?? null
+    });
+  });
+
+  // A scene swap remounts the whole canvas, and a pose left behind by the
+  // outgoing world would be read as the incoming one's first frame.
+  useEffect(() => () => clearCameraPose(window), []);
 
   return (
     <OrbitControls

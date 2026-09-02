@@ -739,3 +739,90 @@ export function oceanCameraCeilingMetres(
   }
   return viewerDepthMetres - oceanSurfaceClearanceMetres(windSpeedMetresPerSecond);
 }
+
+/**
+ * The height the lens may not fall below, or null when there is nothing under
+ * it to fall into.
+ *
+ * The mirror of `oceanCameraCeilingMetres`, and it closes the other half of the
+ * same bug. An above-water world's rig is built for AIR — `createOceanRig`
+ * takes the `above` branch once and roughly fifteen decisions hang off it: the
+ * sea is drawn as a `SeaTop` seen from the sky rather than as the from-below
+ * sheet, there is no seabed, no god rays, no water fog, no biolume layer, and
+ * the roster is the surface one. An orbit that dives under that sea does not
+ * arrive underwater; it arrives at a scene with no water in it at all, looking
+ * up at the back of a wave mesh.
+ *
+ * Where the surface IS in scene coordinates is the one asymmetry worth stating.
+ * The camera sits at height zero in both cases, and `viewerDepthMetres` is
+ * signed: submerged it is how far the surface is ABOVE the lens, so the sheet
+ * sits at `+viewerDepthMetres` and the ceiling is that minus the clearance;
+ * above water it is negative, `createOceanRig` puts `seaTop.mesh.position.y` at
+ * that same signed number, and the floor is that PLUS the clearance. One
+ * clearance, one waterline, two signs.
+ */
+export function oceanCameraFloorMetres(
+  viewerDepthMetres: number,
+  windSpeedMetresPerSecond: number,
+): number | null {
+  if (viewerDepthMetres >= 0) {
+    return null;
+  }
+  return viewerDepthMetres + oceanSurfaceClearanceMetres(windSpeedMetresPerSecond);
+}
+
+/**
+ * A hydrothermal vent's blue-white flicker, as a 0..1 intensity over time.
+ *
+ * Almost nothing on a real seabed glows. A black smoker does, and it does it in
+ * two quite different ways, which is why this returns a separate value from the
+ * mouth's steady thermal glow:
+ *
+ *   - the vent FLUID leaves the chimney at 300-400 C and radiates as a dull
+ *     red-orange. That is thermal, continuous, and needs no function.
+ *   - the PRECIPITATION FRONT, where that fluid hits 2 C seawater, throws brief
+ *     blue-white flashes — crystalloluminescence as sulphides crystallise out,
+ *     and sonoluminescence from bubbles collapsing. Measured at real vents.
+ *     They are stochastic, short, and much brighter than the thermal glow.
+ *
+ * Written as a pure function of time so it can be tested without a GPU, and so
+ * two vents in the same field flicker independently from the same clock — pass
+ * each one its own `phaseSeed`.
+ */
+const FLICKER_WINDOW_SECONDS = 0.9;
+const FLICKER_DURATION_SECONDS = 0.13;
+/** Roughly two flashes every three seconds, per vent. */
+const FLICKER_PROBABILITY = 0.6;
+/** The rise is a crystal forming; the fall is it cooling. They are not the same. */
+const FLICKER_ATTACK_FRACTION = 0.18;
+const FLICKER_DECAY_RATE = 4.5;
+
+/** A stable 0..1 from two integers. The same window always rolls the same flash. */
+function flickerRoll(windowIndex: number, phaseSeed: number): number {
+  const mixed = Math.sin(windowIndex * 127.1 + phaseSeed * 311.7) * 43758.5453123;
+  return mixed - Math.floor(mixed);
+}
+
+export function hydrothermalFlickerIntensity(elapsedSeconds: number, phaseSeed: number): number {
+  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) {
+    return 0;
+  }
+  const windowIndex = Math.floor(elapsedSeconds / FLICKER_WINDOW_SECONDS);
+  const roll = flickerRoll(windowIndex, phaseSeed);
+  if (roll > FLICKER_PROBABILITY) {
+    return 0;
+  }
+  // Where in the window this flash starts, spread across the whole window so
+  // the flashes do not land on a metronome.
+  const startSeconds =
+    (roll / FLICKER_PROBABILITY) * (FLICKER_WINDOW_SECONDS - FLICKER_DURATION_SECONDS);
+  const sinceStart = elapsedSeconds - windowIndex * FLICKER_WINDOW_SECONDS - startSeconds;
+  if (sinceStart < 0 || sinceStart > FLICKER_DURATION_SECONDS) {
+    return 0;
+  }
+  const through = sinceStart / FLICKER_DURATION_SECONDS;
+  if (through < FLICKER_ATTACK_FRACTION) {
+    return through / FLICKER_ATTACK_FRACTION;
+  }
+  return Math.exp(-(through - FLICKER_ATTACK_FRACTION) * FLICKER_DECAY_RATE);
+}

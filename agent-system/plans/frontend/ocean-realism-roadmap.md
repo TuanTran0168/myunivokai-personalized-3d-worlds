@@ -249,16 +249,41 @@ zoom-out away, and the landmark-ring argument for capping it is a composition
 argument that belongs with work item 4 and should be measured there, not
 smuggled in under a bug fix.
 
-### Still open: the two sighting ranges disagree
+### The two sighting ranges disagree — DONE. Shipped.
 
 `UniverseCanvas.tsx:314-322` passes `scene.water.visibilityMetres` (the
 **light**-limited minimum, `ocean_config_builder.go:270`) into
-`oceanCameraFraming`, while `oceanRig.ts:227` uses `sightingRangeMetres(attenuation)`
-(the **clarity** limit alone). They can disagree about `surfaceInSight`, which
-changes the chosen pitch — and therefore `T_y` — by up to 17.6 m. The ceiling
-work is not blocked by it: the clamp is solved from whatever `T_y` the framing
-actually produced, so it is correct either way. What is still wrong is that the
-two can disagree about whether a surface is drawn at all.
+`oceanCameraFraming`, while `oceanRig.ts:227` used `sightingRangeMetres(attenuation)`
+(the **clarity** limit alone) — and `OceanRenderer.tsx`'s own `sightLimit`
+(gating whether landmarks stand on anything at all) re-derived that same
+clarity-only figure a second time, independently. Three call sites, two
+different formulas, disagreeing by up to 17.6 m on whether a surface,
+seafloor, or landmark should even be drawn.
+
+Fixed by making `visibilityMetres` a stored config field on `OceanRigOptions`,
+following the exact shape `godRayStrength`/`causticStrength` already use: a
+caller with a real backend value passes it and it wins outright; a caller
+with none — a demo, a test, a world saved before this field existed — falls
+back to the old clarity-only estimate, unchanged. `OceanRenderer.tsx` now
+passes `water?.visibilityMetres` into `createOceanRig`, and its own local
+`sightLimit` reads the same field before falling back, so all three
+computations that used to disagree now read one number when the backend has
+supplied one. The backend's own value is already the correct one to defer
+to — `buildWaterConfig` (`ocean_config_builder.go:270`) computes it as
+`min(depthResponse.VisibilityMetres, SightingRangeForWaterType(waterType))`,
+the light and clarity limits together, which is exactly the quantity "how
+far can you actually see" means.
+
+Not independently unit-tested: `createOceanRig` and `OceanRenderer` both need
+a real WebGL context/DOM this repo's Node test environment doesn't have (the
+same boundary `causticStrength`'s wiring hit). Pinned by `tsc`, the full 628-
+test vitest run, and the GLSL lint — not by a render. `oceanFrameBudget.test.ts`
+cannot catch this either: it reads committed screenshots, not a live render,
+so a fixture whose world happens to have light- and clarity-limits that
+already agreed would show no diff regardless. Any world where they diverge
+will now render its surface/seafloor/landmarks/god-rays at a different reach
+than before this fix — an intentional correction, not a regression, but a
+real behaviour change with no automated visual proof.
 ## Work item 2 — the fish
 
 The owner reported two things, and they are two different bugs. Do not conflate
@@ -441,18 +466,42 @@ that clamp engages sooner and lifts the target further, and the breach ceiling i
 `target.y + R_max`. This does not argue against B — it raises the priority of
 1a and 1b.
 
-### 3c. The other reading, still open
+### 3c. The other reading — CLOSED, and not by doing it
 
 The request also admitted a second reading, **A — swap which zones are
 on-bottom**: "the two nearest layers" as the two *shallowest*, so
 `sunlitShallows` + `twilightReach` show a floor and the abyss becomes open blue
-water. It was not chosen, and half of it is still worth doing:
+water. It was not chosen, and this plan then kept half of it open:
 
-- **Worth doing later** — give `twilightReach` a floor by cutting
-  `floorClearanceBandByZone[twilightReach]` from 1900–3900 m down inside the
-  sighting reach. It is the zone most likely to read as empty today, and
-  `TestTheTwilightReachHasNoFloorInSight` would have to be inverted with it.
-- **Not worth doing** — removing the abyss floor. It would delete the
+> **Worth doing later** — give `twilightReach` a floor by cutting
+> `floorClearanceBandByZone[twilightReach]` from 1900–3900 m down inside the
+> sighting reach. It is the zone most likely to read as empty today.
+
+**That premise is no longer true, measured 2026-09-02.** The boundary rule in
+`buildDepthConfig` already got there, and got there better. A twilight world
+that can see neither boundary is either lifted to the shallow end of its OWN
+band, where the surface is in reach, or given a **seamount** under it
+(`seafloorMetres = metres + minimumRiseClearanceMetres + roll * riseClearance
+RangeMetres`). Over 600 seeds × 4 moods:
+
+| twilight worlds | surface in sight | floor in sight | neither |
+|---|---|---|---|
+| 654 | 418 (64 %) | 236 (36 %) | **0** |
+
+So a third of twilight worlds already have a floor, and none of them is the flat
+blue rectangle reading A was proposed to fix. Cutting the band would replace *an
+occasional seamount* with *a permanent shelf* in every one of them, which is the
+open-water identity this same document argues for at length two sections up, and
+it would cost a `schemaVersion` bump and a re-roll of all six goldens to do it.
+
+**Closed, and pinned instead.** `TestTheTwilightReachAlwaysShowsOneBoundary`
+(`ocean_config_builder_test.go`) asserts the guarantee that made the item
+obsolete, so the zone cannot quietly go back to being empty and the item cannot
+be re-proposed from a stale premise. `TestTheTwilightReachHasNoFloorInSight`
+stays exactly as it is — the *band* is still kilometres down; it is the boundary
+rule that reaches in, per world.
+
+- **Still not worth doing** — removing the abyss floor. It would delete the
   hydrothermal vents, whale falls and tubeworm fields, which are the abyss's
   entire identity, and `oceanRig.ts` would draw a black screen.
 
@@ -678,14 +727,40 @@ outside what this test environment (Node, no DOM) can exercise directly —
 the same boundary every other part of the full rig's construction already
 sits behind.
 
-### 4d. Making the sand itself read as real
+### 4d. Making the sand itself read as real — DONE, and two of the four were already done
 
-Cheapest wins, in order: slope-based blending between `SAND_ALBEDO` and
-`ROCK_ALBEDO`, ripple-mark normal detail (procedural, integer frequencies so it
-tiles — the technique `forest-realism-roadmap.md` already documents for the
-river), and contact darkening under every prop. N8AO is already in
-`shared/PostEffects.tsx`, forest-gated; extending the gate to ocean is a
-one-line experiment worth measuring.
+The list this section shipped with was: slope-based blending between
+`SAND_ALBEDO` and `ROCK_ALBEDO`, ripple-mark normal detail, contact darkening
+under every prop, and extending `PostEffects`' N8AO gate to the ocean. Checked
+one at a time against the code, 2026-09-02:
+
+- **Slope-based sand/rock blending — DONE, shipped now.** `applySlopeRock` in
+  `oceanRigTerrain.ts` shifts the floor's albedo toward the rock's on the steep
+  faces, as a per-channel multiplier derived from the two colours AFTER
+  `tintSeabed`'s water terms — blending to an untinted basalt would have put dry
+  rock on a seabed seen through forty metres of water. The thresholds are the
+  sine of 5.7 degrees to the sine of 15, set against the relief `heightAt`
+  actually builds (a 90 m swell of ±5.5 m, an 18 m dune of ±1.2 m, an 11 m
+  ripple of ±0.16 m, so the steepest face it can make is about 14 degrees). A
+  threshold picked for a mountain would never have fired at all.
+  `slopeRockChannelShift` is pure and tested, including the two guards that
+  matter: it never brightens a slope, and it never takes one to black.
+- **Ripple-mark normal detail — already done.** `createSandTextures` bakes a
+  domain-warped ripple at integer wave numbers (so it tiles in both axes) with
+  the grain outweighing it 0.55 to 0.45, and a normal map at 3.4x relief.
+- **Contact darkening under every prop — already done, by real shadows.** The
+  ocean was missing from `UniverseCanvas`' `shadows` list for its whole life,
+  which made every `castShadow` in the rig inert; that is fixed, and the floor,
+  the boulders, the flora and the landmarks all cast and receive. There is no
+  contact darkening on the low-quality path, where `keyLight.castShadow` is
+  false — that is the quality ladder working as designed, not a missing feature.
+- **N8AO for the ocean — CLOSED, it cannot be done and should not be.** The
+  ocean renders STRAIGHT TO THE CANVAS with no `EffectComposer`, and that is a
+  correctness decision, not a tuning one: the composer sets
+  `gl.toneMapping = NoToneMapping` and expects a `<ToneMapping>` effect the
+  chain never had, so for the family's whole life its tone curve was a
+  passthrough and every linear value above 1 clipped flat to white. Re-adding
+  the composer to get one AO pass would give the washed-out frame back.
 
 ## Work item 5 — water realism, ranked
 
@@ -848,6 +923,67 @@ mouth, and *stochastic blue-white flickers* at the precipitation front from
 crystalloluminescence and collapsing bubbles. Measured at real vents, and
 nothing in this repo does anything like it.
 
+### Work item 6 — DONE. The experiment ran, and both halves shipped.
+
+**The wreck. The decimation experiment the research said had to happen first
+happened, and the read survives.** Pipeline, measured 2026-09-02 and committed
+as `scripts/fetch-ocean-wreck.mjs` so it can be re-derived:
+
+| step | size | triangles |
+|---|---|---|
+| raw GLB | 14.54 MB | 250 k |
+| `simplify --ratio 0.02` | 3.43 MB | 11 k |
+| `resize 512` | 1.39 MB | |
+| `prune --keep-attributes false` | 1.39 MB | (drops the unused second UV) |
+| `quantize` | 1.01 MB | |
+| `jpeg`, `normalTexture` only | **608.66 KB** | |
+
+The last step is the biggest single win and the least obvious: the base colour
+arrived as a 60 KB JPEG and the normal map as a **493 KB PNG**, so nine tenths of
+what was left after quantizing was one lossless normal map for a prop seen at
+2.6 m through seawater. `--ratio 0.02` rather than the research's estimated 0.01
+because at 11 k the plate seams and the broken edge still read, and the 150 KB
+that buys is spent in a small fraction of worlds.
+
+**Looked at, not assumed.** Rendered at the landmark's own 2.6 m height in the
+reef fixture: it reads as a hull — gunwale, plating, a stern settled into the
+sand. In the abyss fixture it is invisible, which is the abyss's own light
+budget rather than the model's fault (visibility ~12 m, brightness ~0), and is
+an argument for the vent's glow rather than against the wreck.
+
+Wired exactly as the research recommended: **only when the rarity lottery hits**
+(`rarityFeature("ocean-sunken-relic")`, p = 0.2), because the backend emits
+`sunkenRelic` as an ordinary non-hero kind and gating on the KIND would have put
+609 KB into a large share of worlds. `buildSunkenRelic` stays as the ordinary
+case and is also the loaded model's Suspense fallback, so a download in flight
+is a procedural wreck rather than a hole in the seabed. `OceanSunkenRelicModel`
+scales the scan to the procedural relic's height, grounds its foot at y = 0 for
+`lowestSeafloorUnderFootprint`, and clones its materials before patching them —
+the loader caches the GLTF, so patching in place would put one world's caustics
+and fog on every world that ever loads it.
+
+**The vent. Built, not sourced, and now it glows.** No CC0 hydrothermal vent
+exists, and the geometry was never the problem: `buildHydrothermalVent` already
+grows a proper black smoker (stacked leaning chimneys, sulphide crust toward the
+top, a talus of collapsed chimney at the foot). What it lacked was the two
+things a real vent is recognised by, and they are two different phenomena:
+
+- **the mouth** radiates a dull red-orange continuously, because the fluid
+  leaving it is 300–400 °C. It breathes with the turbulence; it does not flash.
+- **the precipitation front**, about a metre higher, throws brief blue-white
+  flashes as sulphides crystallise out and bubbles collapse —
+  crystalloluminescence and sonoluminescence, stochastic, sub-second, never
+  periodic. `hydrothermalFlickerIntensity` in `oceanMath.ts` is that behaviour,
+  as a pure function of time and a per-vent phase, tested for all six properties
+  that make it read as a vent rather than a lamp: bounded 0..1, dark more than
+  85 % of the time, several flashes a minute, reaching full brightness,
+  independent between two vents in one field, and deterministic.
+
+Both are additive sprites, not real lights. A point light per vent would light
+the chimney properly and cost a forward-rendered light per fragment in the
+family's most expensive frame. Confirmed in the abyss fixture: the chimney is a
+silhouette with a dull orange point at its mouth, which is the whole read.
+
 ## Ordering, and what breaks
 
 The dependencies are real; this order is not arbitrary.
@@ -859,26 +995,96 @@ The dependencies are real; this order is not arbitrary.
   polar clamp rather than the fixed clamp plus distance cap this plan first
   called for; work item 1 says why, and the owner's zoom-in/zoom-out
   observation is the reason.
-1. **Reconcile the two sighting ranges** — everything downstream reads `T_y`,
-   and 3b made the disagreement between them the load-bearing number. No longer
-   blocking work item 1, which is solved from whatever `T_y` the framing
-   produced; still wrong that the two can disagree about whether a surface is
-   drawn at all.
-2. **Make `ocean-look-down.spec.ts` drive the camera.** It does not, measured;
-   see below. Until then the family has no end-to-end coverage of its own camera
-   at all, and this is the second time a wrong belief about that file has cost a
-   round of work.
-3. **The above-water mirror.** Work item 1 closed the ceiling and left the
-   floor: an above-water world's camera can still dive under its own sea, where
-   the same rig is built for air. Same shape of bug, opposite sign, and the
-   three surface fixtures are the worlds it shows in.
-4. **Work item 2b** (adopt cross-fade) — independent, small, high visible value.
-5. **Work item 5** items 2–4 — shader/constant restorations, measurable.
-6. **Work item 4c** (unify caustics) — the largest single refactor here.
-7. **Work item 2c** (swim-out behaviour).
-8. **Work item 3c** — the `twilightReach` floor, if wanted.
-9. **Work item 6** — the shipwreck model, last, because it is the only item that
-   adds bytes.
+1. ~~**Reconcile the two sighting ranges**~~ — **done**. Everything downstream
+   reads `T_y`, and 3b made the disagreement between them the load-bearing
+   number; it never blocked work item 1, which is solved from whatever `T_y`
+   the framing produced, but the two — now three — call sites could disagree
+   about whether a surface was even drawn.
+2. ~~**Make `ocean-look-down.spec.ts` drive the camera**~~ — **done**, and the
+   belief it was built on was wrong for the third time. It always drove the
+   camera; what it could not do was SEE it. See below for the measurement.
+3. ~~**The above-water mirror**~~ — **done**. `oceanCameraFloorMetres` is the
+   ceiling reflected about the waterline, `maximumPolarAngleOverFloor` is
+   `minimumPolarAngleUnderCeiling` from the other end, and `CameraRig` narrows
+   `maxPolarAngle` with it every frame against the live radius. Proven on the
+   create page's `Glass Shallows` preview, which is an above-water world:
+   the drag now stops at -13.92245 m against a floor of -13.92245 m, polar held
+   at 2.047 rad instead of running to PI.
+4. ~~**The orbit radius ratchet**~~ — **done**. The seabed is now a polar bound
+   like the surface already was, so the drag STOPS at the sand instead of
+   pushing through it and being corrected. Measured after: reef `26.000` and
+   abyss `26.000`, against `4.30` and `3.98` before — the visitor's zoom
+   survives the gesture.
+5. ~~**The point-blank pale object**~~ — **closed, it was a symptom of 4**. The
+   0.647 luma frame was a creature at 4.3 m, which is where the ratchet had
+   parked the lens; with the radius held at 26 m the same drag measures 0.330
+   luma at 0.646 saturation — water. A deliberate zoom to the 2.5 m minimum onto
+   a large animal is still a bright frame, and that is a close pass rather than
+   a wall of light.
+6. ~~**Work item 2b** (adopt cross-fade)~~ — **done**, and the ordering was
+   stale about it: the fade is depth-aware and the section has said "Shipped"
+   since the round that closed it.
+7. ~~**Work item 5** items 2–4~~ — **done**, all three. The god-ray anisotropy,
+   `BLUE_SEA_YAW_OFFSET_RADIANS`, and the window-centred sparkle falloff each
+   have their own "DONE. Shipped." section.
+8. ~~**Work item 4c** (unify caustics)~~ — **done**. One differential-area
+   implementation, shared by the seabed, the flora and the landmarks.
+9. ~~**Work item 2c** (swim-out behaviour)~~ — **done**.
+10. ~~**Work item 3c** — the `twilightReach` floor~~ — **closed, not done**.
+    Measured: the boundary rule already puts a boundary in every twilight
+    world's frame (418 surface / 236 seamount / 0 neither, in 654), so the item
+    rested on a premise that stopped being true. Pinned by a test instead.
+11. ~~**Work item 6** — the shipwreck model~~ — **done**. 609 KB, CC0,
+    lottery-gated, and the vent was built rather than sourced. The pipeline is
+    committed next to the asset.
+
+### The orbit radius ratchet — DONE. Shipped.
+
+Found by the pose probe while proving item 2, and it had been there all along:
+dragging the orbit DOWN pulled the radius in from **26 m to 4.3 m**, silently
+throwing away the zoom the visitor had set.
+
+The mechanism is three correct things composing into a wrong one.
+`clampCameraAboveTerrain` lifts camera **and** target by the same delta, which
+preserves the offset by design. The idle re-centre then lerps the target back
+onto the family's framing. And `OrbitControls.update()` re-derives the radius
+from `position - target` every frame, clamped to `[minDistance, maxDistance]`.
+Lift, restore, re-derive: with the lens pinned on the sand and the target being
+pulled back to where the family wants it, each frame shortens the offset a
+little. It ends with the camera 4.3 m below its own target, which is the
+vertical gap between the clamped lens height and the resting aim point.
+
+Fixed the way work item 1 fixed the ceiling: **express the seabed as a polar
+bound** (`applyCameraFloor` now takes the higher of the family's own floor and
+the sampled terrain height plus `MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES`, capped by
+the ceiling so the two bounds can never cross). The drag then simply stops at
+the sand at the radius it already had, and `clampCameraAboveTerrain` stays as
+the correction of last resort rather than the mechanism.
+
+| case | radius before | radius after | polar after |
+|---|---|---|---|
+| Reef Crest, dragged down | 4.30 | **26.000** | 1.701 |
+| The Abyss, dragged down | 3.98 | **26.000** | 1.727 |
+
+**And it closed the pale-object item with it.** The 0.647 luma frame was a
+creature filling the viewport at 4.3 m — which is exactly where the ratchet had
+parked the lens. The same drag now measures **0.330 luma at 0.646 saturation**:
+water, with animals in it at animal distances. What remains is a visitor
+deliberately wheeling in to the 2.5 m minimum against a large animal, and that
+is a close pass rather than a fault.
+
+**Where this plan was wrong is recorded separately**, in
+[`memory/execution-records/ocean-realism-roadmap.md`](../../memory/execution-records/ocean-realism-roadmap.md)
+— four contradictions between what this document predicted and what was
+measured, kept because each one cost a round to find.
+
+**Every numbered item on this list is now closed.** Seven were done, two were
+closed by measurement rather than by code (3c's premise had stopped being true;
+the pale object was a symptom of the ratchet), and the four that follow work
+item 6 were already shipped and only the ordering list had not been told. What
+is left in this plan is the open web's FFT-ocean note, which recommends against
+itself until the project moves to WebGPU, and 2d's unused `setSurfacing`
+capability, which is an unused capability rather than a fault.
 
 ### Blast radius
 
@@ -926,20 +1132,73 @@ The geometric assertion this section asked for went into `oceanMath.test.ts`
 instead of here, and is stronger there: it checks every world the generator can
 make, at every radius in the envelope, without a GPU or a seeded coin flip.
 
-**And a fourth thing is wrong with this file, found by trying to use it as
+**And a fourth thing was wrong with this file, found by trying to use it as
 proof.** The fix was disabled and the spec re-run as a control. It passed, with
 numbers within noise of the fixed build — reef `0.285 / 0.632` unfixed against
-`0.299 / 0.621` fixed. The screenshot from the unfixed run says why: it is the
-untouched **resting framing**, level and at the resting distance, after a 900 px
-drag and twelve wheel notches. The world it drives (`energetic`, 18.65 m deep,
-surface in sight and drawn) would have the lens at 24.4 m — six metres into the
-air — if that drag had landed. **The input never reaches `OrbitControls`.**
+`0.299 / 0.621` fixed. That was read as meaning the gesture never reached
+`OrbitControls`, on the strength of the screenshot from the unfixed run looking
+like the untouched resting framing and of the arithmetic for the world it drives
+(`energetic`, 18.65 m deep) putting the lens at 24.4 m if the drag had landed.
 
-So this spec has never exercised the camera, which is exactly why it stayed
-green through the life of the bug it is named after, and why the earlier rounds
-had no test pulling them toward the real cause. A frame-statistics threshold
-cannot distinguish "the camera did not breach" from "the camera did not move" —
-only an assertion on the camera's own height can. Fixing the input path and
-instrumenting the height is its own task, listed in the ordering above; the
-spec now carries this measurement at the top of the file so the next reader does
-not mistake a pass for evidence.
+### The input was landing all along — DONE. Shipped.
+
+**Measured 2026-09-02, on the production build, with the camera's own pose
+published from inside the rig** (`shared/cameraPoseProbe.ts`, one pre-allocated
+record mutated per frame onto `window`). The wheel reaches the distance limit
+and the drag reaches the polar limit in every ocean mood the create page can
+make:
+
+| preview world | resting radius → dragged | dragged polar | lens height | ceiling |
+|---|---|---|---|---|
+| Glass Shallows | 19.74 → 26.0 | 1.449 → ~0 | 24.00 | none — above water |
+| Mesophotic Current | 21.83 → 26.0 | 1.607 → 1.143 | 15.159 | **15.159** |
+| Reef Crest | 21.10 → 26.0 | 1.241 → ~0 | 21.635 | 24.737 |
+| The Abyss | 18.57 → 26.0 | 1.217 → ~0 | 21.635 | 1773.27 |
+
+Two of the old note's supporting facts fell with it. The page carries **exactly
+one canvas**, at the full viewport, so `page.locator("canvas").first()` was
+never reading the wrong one. And the 18.65 m reef is gone: 3b sank the shallows,
+so the reef's ceiling now sits at **24.74 m** and a drag to the pole stops three
+metres under it — the drag that was supposed to prove the input had landed could
+no longer breach that world even if it landed perfectly, which is why the frame
+looked untouched.
+
+So the gap was never the input path. It was that a threshold on pixels is the
+wrong instrument for a claim about a camera, and the wrong instrument produced a
+confident wrong answer twice. The spec now reads the pose out of the running rig
+and asserts what a screenshot cannot carry:
+
+- the wheel widened the orbit (against the resting radius, not a hardcoded 26);
+- the drag turned it by more than 0.1 rad — **the assertion that turns a green
+  run into evidence**, because it is the one that fails when the camera does not
+  move;
+- the lens finished at or under the ceiling *that rig was given*, read from the
+  probe rather than re-solved in the test.
+
+`Mesophotic Current` is the world where the last one bites, and it is now in the
+spec for that reason: its drag stops dead **on** the clamp, 15.1589381768 m
+against a ceiling of 15.1589381768 m, 0.000 m of headroom. That is work item 1's
+clamp doing its job, end to end, through the real input path — the thing this
+file could not show before.
+
+**Two faults the same measurement turned up, neither of them the camera
+breaching:**
+
+- **Dragging DOWN ratchets the orbit radius in, 26 m → 4.3 m.** The terrain
+  clamp lifts camera and target together (which preserves the offset, by
+  design), and the idle lerp then puts the target back on the family's framing —
+  so every frame shortens the offset a little, and the lens ends up 4.3 m under
+  its own target sitting on the seabed. Reproduced in Reef Crest (4.30 m) and
+  The Abyss (3.98 m). The zoom the visitor set silently disappears.
+- **The frame at the end of that is a pale object at arm's length.** Mesophotic
+  Current measured **0.647 luma** there — over the file's 0.45 ceiling — and the
+  screenshot is a single flat-white creature filling the viewport with no water
+  in front of it. Probably the same family as the god-ray clip: a lit surface at
+  point blank has no medium left to attenuate it. Because that is a measurement
+  of a creature and not of the medium, the spec runs Mesophotic in the raising
+  direction only, and says so.
+
+One threshold is now thin on purpose and worth knowing about: Mesophotic raised
+measures **0.437 luma against the 0.45 ceiling**, because the lens ends on the
+clamp with the surface directly overhead. It is the frame a brightness
+regression blows first.

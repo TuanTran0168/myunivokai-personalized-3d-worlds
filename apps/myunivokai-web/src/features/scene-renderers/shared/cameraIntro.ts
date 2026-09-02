@@ -272,6 +272,33 @@ export function minimumPolarAngleUnderCeiling(
 }
 
 /**
+ * The steepest dive that still keeps the lens above a horizontal floor.
+ *
+ * The mirror of `minimumPolarAngleUnderCeiling`, for the family that has water
+ * UNDER its camera rather than over it: an above-water ocean world is built for
+ * air, and an orbit that swings below its sea arrives in a scene with no water
+ * in it. Same derivation, other end — the camera's height is
+ * `targetHeight + orbitRadius * cos(polar)`, so inverting it for the height the
+ * lens may not fall below gives the angle it may not go past.
+ *
+ * Returns PI — no restriction — when the floor is further below the target than
+ * the radius can reach, which is every scene that has no floor at all. Note the
+ * asymmetry with the ceiling's zero: PI is the unrestricted value here because
+ * polar is measured DOWN from +Y, so a bigger angle is a lower camera.
+ */
+export function maximumPolarAngleOverFloor(
+  floorHeight: number,
+  targetHeight: number,
+  orbitRadius: number
+): number {
+  if (!(orbitRadius > 0)) {
+    return Math.PI;
+  }
+  const lowestSafeCosine = (floorHeight - targetHeight) / orbitRadius;
+  return Math.acos(Math.min(1, Math.max(-1, lowestSafeCosine)));
+}
+
+/**
  * Where the move actually starts from, INSIDE the same envelope OrbitControls
  * will enforce on its next update.
  *
