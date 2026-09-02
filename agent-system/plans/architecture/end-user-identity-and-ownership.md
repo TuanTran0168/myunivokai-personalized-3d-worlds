@@ -1,11 +1,14 @@
 # End-user identity and world ownership
 
-> **Document status:** Proposed. **No code exists.** Twenty decisions were
-> taken on 2026-09-02 across four rounds — sixteen by the owner, three
-> delegated to me and argued in place — and all of them are recorded in §16,
-> where **nothing is left open**. Several cut scope rather than adding it, so
-> read §16 before any other section: it supersedes parts of §3.4, §5, §9, §10,
-> §11 and §17 in place.
+> **Document status:** Proposed. **No code exists.** Twenty numbered decisions
+> (23 rows, counting the three amendments `4b`, `17b` and `20b`) were taken on
+> 2026-09-02 across **six rounds** — most by the owner, five delegated to me
+> and argued in place — and all of them are recorded in §16, where **nothing is
+> left open**. Two of the last three rounds exist because the owner read a
+> decision back and found it wrong: `17b` and `20b` are corrections, not
+> additions, and they are marked as such rather than quietly folded in. Several
+> decisions cut scope rather than adding it, so read §16 before any other
+> section: it supersedes parts of §3.4, §5, §9, §10, §11 and §17 in place.
 > **Scheduled:** [Sprint 08 — starts 2026-09-02](../sprints/sprint-08-2026-09-02/README.md),
 > as [`EPIC-S8-IDENTITY-001`](../backlog/engineering-backlog.md#epic-s8-identity-001--end-user-identity-and-world-ownership).
 > The sprint covers Phases A-C; Phase D and Phase E are explicitly out of its
@@ -772,168 +775,18 @@ that is how the whole test suite runs.
   so, and `dna-service` serves that one job from the mock provider. The flag is
   set by the gateway only, protected by the same ACL that protects
   `ownerAccountId` (§6.4), so a client cannot ask for the real provider;
-- the response says which tier produced the world, and the UI says so once —
-  see §9.1, which decides *how*. **A silent quality downgrade is the one way
-  this design goes wrong.**
+- the response says **why** this world was produced the way it was — a reason
+  code, **not** a provider or tier name (§9.1's amendment, decision 17b) — and
+  the UI speaks once, for exactly one of the four reasons. **A silent quality
+  downgrade is one way this design goes wrong; announcing a downgrade that
+  never happened is the other.**
 
-Every number is a named config constant, never a literal — `coding-style.md`
-§1. The daily window resets at UTC midnight and the Redis key expires with it,
-so there is no cleanup job. **Where those numbers are stored is §9.3**, and the
-owner decided on 2026-09-02 that it is not `.env`.
-
-### 9.3 Decided 2026-09-02: the limits are admin settings, not environment variables
-
-The owner's instruction: keep counting and keep enforcing regardless of
-provider, suppress the toast when the provider is mock (§9.1 already), and make
-**the limits configurable from an admin settings surface in `auth-service`** —
-built as a general mechanism, because `.env` is already too crowded to keep
-absorbing product policy.
-
-**The crowding is measurable**, which is what makes this the right call rather
-than a preference:
-
-| | Count |
-| --- | --- |
-| Config reads across the 7 services (`get`/`getInt`/`getBool`/`getDuration`) | **170** |
-| Lines in [`.env.example`](../../../.env.example) | **105** |
-| `- key:` entries in [`render.yaml`](../../../render.yaml) | **176** |
-
-Two more variables in that is not a config change, it is a hiding place.
-
-#### The trap, and the one place this must diverge from an existing pattern
-
-**The gateway enforces the quota, and `auth-service` sleeps.** If the gateway
-reads the limit by asking `auth-service`, then every world creation after a
-quiet period waits 20-60 s for a free-tier cold start — on **the one path the
-entire product exists for**. That would be a far worse regression than the
-problem it solves.
-
-The existing pattern to copy is `tokenVersion`: authoritative row in Postgres,
-mirrored in Redis, read by the gateway on every request
-([`revocation.go`](../../../services/api-gateway/internal/admin/auth/revocation.go)).
-**But one behaviour must be inverted, deliberately:**
-
-| | `RevocationChecker` (exists) | Settings (this plan) |
-| --- | --- | --- |
-| Redis hit | use it | use it |
-| **Redis miss** | **request `auth-service` over NATS**, then cache | **use the compiled-in default constant. Never ask `auth-service`** |
-
-The reason for the difference is the reason for each value's existence. A
-revocation check that guesses is a security hole, so it is worth waking a
-service for. A quota that guesses is off by a few generations for one visitor,
-and waking a service for it costs 20-60 s on the create path. **Write this
-divergence down in the code**, because a later reader will otherwise "fix" it
-into consistency with `RevocationChecker` and reintroduce the cold start.
-
-Writes go the other way and never touch the hot path:
-
-```txt
-admin app → gateway /api/admin/settings → auth-service
-   → validate against the declared type and bounds
-   → UPDATE system_settings  (authoritative)
-   → SET the Redis mirror     (no TTL)
-   → audit_events row: setting_update, "<key>: <old> -> <new>"
-
-auth-service startup → re-mirror every setting into Redis
-   (so a flushed Redis self-heals on the next boot, and the gateway's
-    default-constant fallback covers the window in between)
-```
-
-#### The invariant that stops a settings table becoming the new hiding place
-
-**Every setting has a named default constant in code, and the platform must
-boot and behave correctly with an empty `system_settings` table and an empty
-Redis.** A setting is an *override*, never the only copy of a value.
-
-This is not bureaucracy — it is what keeps `coding-style.md` §1 satisfied (the
-default is still a named constant) and it is what stops a fresh environment
-from being broken by absent state. A settings row that has no default in code
-is a required piece of database content with nothing declaring it, which is
-strictly worse than the environment variable it replaced.
-
-#### Which values may leave `.env`, and which may never
-
-One rule answers the future cases: **`.env` describes where and how a service
-runs; a setting describes how the product behaves.**
-
-| Never a setting | Why |
-| --- | --- |
-| Secrets — `DATABASE_URL`, `GEMINI_API_KEY`, the signing keys | Obvious, and a settings table is readable by anyone holding `settings:read` |
-| Anything needed to boot | The bootstrap paradox: the connection string for the database holding the settings cannot itself be a setting |
-| Per-environment values — ports, CORS origins, the NATS and Redis URLs | These describe the deployment, and they differ per environment by design |
-
-| Good candidates, in order | Note |
-| --- | --- |
-| **The two daily AI generation limits** | This sprint's first and only settings |
-| The `/api/me/worlds` page size, the `?ids=` batch cap | Pure policy, currently `maximumBatchWorldIdentifiers = 50` and friends |
-| The wake give-up threshold | Operational tuning an operator would genuinely want to change live |
-| Rate-limit requests-per-second and burst | Policy — but note it is a **security** control, so restrict it to `settings:manage` and audit it, which the mechanism already does |
-| **`AI_PROVIDER`** | The most valuable and the most expensive; see below |
-
-`AI_PROVIDER` as a setting would let the owner **switch the AI tier on from the
-admin app without a redeploy** — which, given §9.2's argument that the quota
-exists precisely to make that switch safe, is the natural pairing. It is
-deliberately **not** in this sprint, for two costs that are real:
-
-1. `aifactory` builds the provider **once at startup**
-   ([`factory.go`](../../../services/dna-service/internal/aifactory/factory.go)),
-   so a runtime setting turns provider selection from per-process into
-   per-request. That is a change to the orchestrator, not a config move.
-2. The setting must be **validated against which API keys are actually
-   present**. Selecting `gemini` with no `GEMINI_API_KEY` configured breaks
-   generation for everyone, from a dropdown, in one click.
-
-#### Shape, and the scar it copies from `permission_sync.go`
-
-One table in `myunivokai_auth`:
-
-```sql
-CREATE TABLE system_settings (
-  setting_key TEXT PRIMARY KEY,
-  setting_value TEXT NOT NULL,
-  updated_by_account_id UUID REFERENCES accounts(id) ON DELETE SET NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-`setting_value` is `TEXT` and the **type is declared in code**, deliberately
-mirroring the four types the config loader already has — `string`, `int`,
-`bool`, `duration`. That reuses a parsing model and a mental model already in
-every service rather than introducing a JSON schema for four scalar kinds.
-
-The registry is code-declared, in the shape
-[`permission_sync.go`](../../../services/auth-service/internal/services/permission_sync.go)
-already established — a `declaredSettings` slice with key, type, default,
-bounds and a description the admin screen renders — and pinned by a test, for
-the same reason `enforcedPermissions` is.
-
-**And it copies that file's scar rather than its mechanism.**
-`SyncPermissions` ends in `DELETE FROM permissions WHERE NOT (codename = ANY($1))`,
-so a codename removed from the list is removed from production and from every
-role holding it on the next boot, silently — its own comment says so. Settings
-must **not** do that: a key that leaves the registry leaves an orphan row, and
-the admin screen shows it as unknown so that discarding an operator's value is
-a deliberate act rather than a side effect of a deploy.
-
-Two permissions, added to `enforcedPermissions` rather than to
-`reservedPermissions` because their routes ship in the same story:
-`settings:read` and `settings:manage`. Note the same `DELETE` behaviour applies
-to permission codenames, so these two names are chosen once and not renamed.
-
-#### Why identity owns this, and the boundary that keeps it coherent
-
-A fair objection: why does the *identity* service hold system configuration?
-Because `auth-service` is not the identity service — it is **the staff-facing
-control plane**. It already owns accounts, roles, permissions and the audit
-log, all of which are operator-controlled state changed through the admin app
-and requiring a permission and an audit trail. System settings are the same
-kind of thing, and every alternative is worse: a settings service is an 8th
-service for one table, the gateway has no database, and `analytics-service` may
-only be written by its own event consumer.
-
-The boundary, so it does not become a dumping ground: **settings are operator
-policy, never domain data.** No world, family, DNA or profile state moves into
-`system_settings`, ever.
+Every number is a named constant, never a literal — `coding-style.md` §1 — and
+for the two limits that constant is the **default** behind a setting rather
+than the only copy of the value: **where those numbers are stored is §9.3**,
+and the owner decided on 2026-09-02 that it is not `.env`. The daily window
+resets at UTC midnight and the Redis key expires with it, so there is no
+cleanup job.
 
 ### 9.1 Decided 2026-09-02: one toast, no permanent marker — and the library already exists
 
@@ -1026,6 +879,17 @@ mock and the caller is also over the limit, the reason is `mock_configured` and
 there is no toast — because nothing was withheld. Ordering it the other way
 reintroduces exactly the false message the owner caught.
 
+**And one of the four is currently unreachable, which is worth knowing before
+someone tries to test it against production.** `ai_failed_fallback` requires a
+fallback provider that is *distinct from* the primary — `aifactory` only
+constructs one when `AIEnableFallback && AIFallbackProvider != AIProvider`
+([`factory.go:19`](../../../services/dna-service/internal/aifactory/factory.go)).
+Production sets both to `mock`, so today there is **no fallback provider at
+all**, and a primary failure ends as a **failed job**, not as a mock world.
+That is the correct behaviour and it is not one of the four reasons: a job that
+failed has no world to carry a reason. So the reason code describes *how a
+world was produced*, never *why one was not*.
+
 Two consequences worth stating:
 
 - **The frontend must never key the toast on a provider name**, even one that
@@ -1092,6 +956,233 @@ bill already bleeding. That is an argument for building it *now*, while it
 costs nothing to get wrong, rather than after the flip — and it is a reason the
 guardrail test in §12 matters more than usual, because until the flip there is
 no production signal that the quota works at all.
+
+### 9.3 Decided 2026-09-02: the limits are admin settings, not environment variables
+
+The owner's instruction: keep counting and keep enforcing regardless of
+provider, suppress the toast when the provider is mock (§9.1 already), and make
+**the limits configurable from an admin settings surface in `auth-service`** —
+built as a general mechanism, because `.env` is already too crowded to keep
+absorbing product policy.
+
+**The crowding is measurable**, which is what makes this the right call rather
+than a preference:
+
+| | Count |
+| --- | --- |
+| Config reads across the 7 services (`get`/`getInt`/`getBool`/`getDuration`) | **170**, across **64** distinct names |
+| Lines in [`.env.example`](../../../.env.example) | **105** |
+| `- key:` entries in [`render.yaml`](../../../render.yaml) | **176** |
+
+Two more variables in that is not a config change, it is a hiding place.
+
+#### The trap, and the one place this must diverge from an existing pattern
+
+**The gateway enforces the quota, and `auth-service` sleeps.** If the gateway
+reads the limit by asking `auth-service`, then every world creation after a
+quiet period waits 20-60 s for a free-tier cold start — on **the one path the
+entire product exists for**. That would be a far worse regression than the
+problem it solves.
+
+The existing pattern to copy is `tokenVersion`: authoritative row in Postgres,
+mirrored in Redis, read by the gateway on every request
+([`revocation.go`](../../../services/api-gateway/internal/admin/auth/revocation.go)).
+**But one behaviour must be inverted, deliberately:**
+
+| | `RevocationChecker` (exists) | Settings (this plan) |
+| --- | --- | --- |
+| Redis hit | use it | use it |
+| **Redis miss** | **request `auth-service` over NATS**, then cache | **use the compiled-in default constant. Never ask `auth-service`** |
+
+The reason for the difference is the reason for each value's existence. A
+revocation check that guesses is a security hole, so it is worth waking a
+service for. A quota that guesses is off by a few generations for one visitor,
+and waking a service for it costs 20-60 s on the create path. **Write this
+divergence down in the code**, because a later reader will otherwise "fix" it
+into consistency with `RevocationChecker` and reintroduce the cold start.
+
+Writes go the other way and never touch the hot path:
+
+```txt
+admin app → gateway /api/admin/settings → auth-service
+   → validate against the declared type and bounds
+   → UPDATE system_settings  (authoritative)
+   → SET the Redis mirror     (no TTL)
+   → audit_events row: setting_update, "<key>: <old> -> <new>"
+
+auth-service startup → re-mirror every setting into Redis
+   (so a flushed Redis self-heals on the next boot, and the gateway's
+    default-constant fallback covers the window in between)
+```
+
+#### The invariant that stops a settings table becoming the new hiding place
+
+**Every setting has a named default constant in code, and the platform must
+boot and behave correctly with an empty `system_settings` table and an empty
+Redis.** A setting is an *override*, never the only copy of a value.
+
+This is not bureaucracy — it is what keeps `coding-style.md` §1 satisfied (the
+default is still a named constant) and it is what stops a fresh environment
+from being broken by absent state. A settings row that has no default in code
+is a required piece of database content with nothing declaring it, which is
+strictly worse than the environment variable it replaced.
+
+#### The audit: all 64 environment variables, classified
+
+The owner asked on 2026-09-02 for every `.env` value to be examined and moved
+where it can be. **All 64 distinct names were read from the seven
+`internal/config/config.go` files**, not sampled. One rule does most of the
+sorting — **`.env` describes where and how a service runs; a setting describes
+how the product behaves** — but two facts found during the audit do the rest,
+and both of them shrink the answer.
+
+##### Fact one: only two of the seven services can read a setting at all
+
+| Service | Redis client |
+| --- | --- |
+| `api-gateway` | **yes** |
+| `auth-service` | **yes** (and it owns the table, so it needs no Redis hop for its own values) |
+| `dna-service`, `universe`, `nature`, `ocean`, `analytics` | **none** |
+
+Five of seven services have no Redis client and no `REDIS_URL`. So a setting
+consumed by `dna-service` or a family service cannot use the Redis mirror. Its
+options are all worse: give that service a Redis dependency it deliberately
+does not have, ride the value on the NATS command from the gateway (which works
+for per-generation policy and is exactly how §9's tier flag travels, but
+couples the gateway to another service's internals), or request it from
+`auth-service` and pay a cold start.
+
+**So the cheap settings are gateway-read and auth-read. Everything else is a
+project.** That single fact, not the policy/deployment rule, is what decides
+this sprint's batch.
+
+##### Fact two: today, nothing is read at the moment of use
+
+Every one of these values is captured into a struct field when the component is
+built — `DNAJobHandler{completedCacheTimeToLive: serviceConfig.JobCacheTimeToLive}`
+([`dna_job_handler.go:23`](../../../services/api-gateway/internal/handlers/dna_job_handler.go)),
+`worldHandler{worldCacheTimeToLive: …}`
+([`world_handler.go:61`](../../../services/api-gateway/internal/handlers/world_handler.go)),
+`middleware.RateLimit(store, key, rps, burst)`
+([`router.go:86`](../../../services/api-gateway/internal/handlers/router.go)),
+and `ServiceWakeTimeout` is baked into an `http.Client{Timeout:}`
+([`wake/factory/factory.go:67`](../../../services/api-gateway/internal/wake/factory/factory.go)).
+
+So **no value becomes live merely by adding a registry row.** Each one also
+costs a small refactor at its call site, from a captured value to a lookup.
+That is cheap for a handful and absurd for sixty-four, which is why this is a
+batch list and not a migration.
+
+##### Never a setting — and the four that look like policy but are traps
+
+| Value(s) | Why never |
+| --- | --- |
+| `DATABASE_URL`, `DATABASE_DIRECT_URL`, `REDIS_URL`, `NATS_USERNAME`/`PASSWORD`/`CREDENTIALS`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `AUTH_ACCESS_PRIVATE_KEY`, `ADMIN_ACCESS_PUBLIC_KEYS` | Secrets, and `system_settings` is readable by anyone holding `settings:read` |
+| `APP_ENV`, `NATS_URL`, `DATABASE_MAX_CONNS`, `NATS_CONNECT_TIMEOUT`, `NATS_RECONNECT_WAIT`, `SERVICE_SHUTDOWN_TIMEOUT` | Needed to boot, or used while shutting down. The bootstrap paradox: the connection that carries a setting cannot itself be one |
+| `API_HOST`, `APP_NAME`, `PUBLIC_WEB_URL`, `SERVICE_WAKE_PLATFORM`, `TELEMETRY_ENABLED` | Deployment topology. They differ per environment by design, and two of them decide what gets *constructed* at startup |
+| **`API_ALLOWED_ORIGINS`, `ADMIN_ALLOWED_ORIGIN`** | **A trap.** They look like configuration and they are the CORS boundary. One careless edit by anyone holding `settings:manage` opens the API to any origin, from a web form |
+| **`TRUST_PROXY`** | **A trap.** Wrong value means every rate limit and every audit row records a spoofable address. Security posture, not policy |
+| **`REDIS_KEY_PREFIX`** | **A trap.** Changing it live orphans every existing key at once — the quota counters, the `tokenVersion` cache, every cached world. It is the identity of the keyspace, not a tunable |
+| **`ADMIN_ROUTES_ENABLED`** | **The purest bootstrap paradox in the repo.** As a setting, turning it off removes the screen you would use to turn it back on |
+| `NATS_ACK_WAIT`, `NATS_MAX_DELIVER`, `NATS_FETCH_BATCH_SIZE`, `NATS_FETCH_MAX_WAIT`, `NATS_RETRY_DELAY` | **A trap.** These read like policy numbers, but they are **JetStream consumer state**, applied when the consumer is created. Changing the variable changes nothing until the consumer definition is updated on the server, so a setting here would silently do nothing |
+
+##### Batch 1 — built in this sprint, seven settings
+
+Chosen because each is gateway-read or auth-read, each has a call site that is
+one or two lines, and each is a number an operator would genuinely reach for.
+
+| Setting | Type | Default from | Why it earns a place |
+| --- | --- | --- | --- |
+| `ai_generation_daily_limit_anonymous` | int | new constant, `5` | **Born a setting** — no refactor at all |
+| `ai_generation_daily_limit_account` | int | new constant, `25` | Same |
+| `world_cache_ttl` | duration | `WORLD_CACHE_TTL` | These three decide **how stale a deleted world's share can be** if §10's invalidation ever fails, so tuning them is real operational work, not tidiness |
+| `share_cache_ttl` | duration | `SHARE_CACHE_TTL` | Same, and the sharpest of the three |
+| `job_cache_ttl` | duration | `JOB_CACHE_TTL` | Same |
+| `auth_max_failed_attempts` | int | `AUTH_MAX_FAILED_ATTEMPTS` | Pure security policy an operator tunes **while under attack**, when a redeploy is the last thing wanted. Read by `auth-service` from its own table — no Redis hop, no cold start |
+| `auth_lockout_duration` | duration | `AUTH_LOCKOUT_DURATION` | Same |
+
+Seven settings, two types (`int` and `duration`), two services — both of which
+already have Redis. That is enough to prove the registry, which one setting
+would not have, without turning a sprint into a config migration.
+
+**The environment variables stay as the defaults**, read at boot into the named
+constants the registry declares. Nothing is deleted from `.env` by this sprint:
+a setting overrides, and removing the fallback would break the invariant above.
+
+##### Batch 2 — named, costed, not built
+
+| Value(s) | Cost that keeps it out |
+| --- | --- |
+| **`AI_PROVIDER`** — the prize, because it would switch the AI tier on **without a redeploy**, which §9.2 argues the quota exists to make safe | Two real costs. `aifactory` builds the provider **once at startup** ([`factory.go`](../../../services/dna-service/internal/aifactory/factory.go)), so this turns provider selection from per-process into per-request — an orchestrator change, not a config move. And it must be **validated against which API keys are present**: selecting `gemini` with no `GEMINI_API_KEY` breaks generation for everyone, from a dropdown, in one click. Plus fact one — `dna-service` has no Redis |
+| `AI_MAX_RETRIES`, `AI_TIMEOUT`, `AI_TOTAL_BUDGET` | High value, because `AI_MAX_RETRIES` is the **multiplier on the cost ceiling** (§9.2: one create can bill up to ~4 calls). Blocked only by fact one: `dna-service` has no Redis client |
+| `AI_PROMPT_VERSION`, `GEMINI_MODEL`, `OPENAI_MODEL` | Same, and each needs an **enum constraint** validated against what the code actually registers, not free text |
+| `RATE_LIMIT_REQUESTS_PER_SECOND`/`BURST`, `ADMIN_RATE_LIMIT_*` | Gateway-read, so cheap — but they are **security controls**, so they need a floor and a ceiling in code before they are exposed, and the rate-limit middleware currently takes them at construction |
+| `SERVICE_WAKE_TIMEOUT`, `SERVICE_WAKE_RETRY_AFTER`, `SERVICE_WAKE_LOCK_TTL` | Genuinely wanted live, and gateway-read — but `ServiceWakeTimeout` is baked into an `http.Client`, so making it live means rebuilding that client per call or holding a settable transport |
+| `AUTH_ACCESS_TOKEN_TTL`, `AUTH_REFRESH_TOKEN_TTL`, `AUTH_INVITE_TOKEN_TTL`, `AUTH_TOKEN_VERSION_CACHE_TTL`, `ADMIN_TOKEN_VERSION_CACHE_TTL` | Auth-read and cheap, but **security-critical**: `AUTH_TOKEN_VERSION_CACHE_TTL` *is* the window in which a revoked token still works, so a careless edit makes every revocation take a day. Wanted eventually, and only behind a **hard maximum in code** — see the note below |
+| `SHARE_SLUG_LENGTH` | Low value and a subtle trap: shortening it raises collision probability against slugs already issued, and it changes nothing about existing ones |
+| `OUTBOX_POLL_INTERVAL`, `OUTBOX_BATCH_SIZE`, `NATS_PUBLISH_TIMEOUT`/`REQUEST_TIMEOUT`/`QUERY_TIMEOUT`, `TELEMETRY_FLUSH_INTERVAL` | Throughput tuning, mostly in services without Redis. `NATS_QUERY_TIMEOUT` carries its own warning: `analytics-service`'s keyset indexes exist to stay inside its 2500 ms, so raising it hides a slow query rather than fixing one |
+
+##### Bounds are code, never data
+
+For every setting, the permitted range is declared in the registry **in Go**,
+and the write path rejects anything outside it. This is what makes it safe to
+expose security-relevant numbers at all: an operator can tighten a lockout or
+loosen a cache, but cannot type a revocation window of 24 hours or a rate limit
+of zero, because the code refuses the value before the row is written. A
+settings mechanism whose bounds live in the database is a settings mechanism
+with no bounds.
+
+#### Shape, and the scar it copies from `permission_sync.go`
+
+One table in `myunivokai_auth`:
+
+```sql
+CREATE TABLE system_settings (
+  setting_key TEXT PRIMARY KEY,
+  setting_value TEXT NOT NULL,
+  updated_by_account_id UUID REFERENCES accounts(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+`setting_value` is `TEXT` and the **type is declared in code**, deliberately
+mirroring the four types the config loader already has — `string`, `int`,
+`bool`, `duration`. That reuses a parsing model and a mental model already in
+every service rather than introducing a JSON schema for four scalar kinds.
+
+The registry is code-declared, in the shape
+[`permission_sync.go`](../../../services/auth-service/internal/services/permission_sync.go)
+already established — a `declaredSettings` slice with key, type, default,
+bounds and a description the admin screen renders — and pinned by a test, for
+the same reason `enforcedPermissions` is.
+
+**And it copies that file's scar rather than its mechanism.**
+`SyncPermissions` ends in `DELETE FROM permissions WHERE NOT (codename = ANY($1))`,
+so a codename removed from the list is removed from production and from every
+role holding it on the next boot, silently — its own comment says so. Settings
+must **not** do that: a key that leaves the registry leaves an orphan row, and
+the admin screen shows it as unknown so that discarding an operator's value is
+a deliberate act rather than a side effect of a deploy.
+
+Two permissions, added to `enforcedPermissions` rather than to
+`reservedPermissions` because their routes ship in the same story:
+`settings:read` and `settings:manage`. Note the same `DELETE` behaviour applies
+to permission codenames, so these two names are chosen once and not renamed.
+
+#### Why identity owns this, and the boundary that keeps it coherent
+
+A fair objection: why does the *identity* service hold system configuration?
+Because `auth-service` is not the identity service — it is **the staff-facing
+control plane**. It already owns accounts, roles, permissions and the audit
+log, all of which are operator-controlled state changed through the admin app
+and requiring a permission and an audit trail. System settings are the same
+kind of thing, and every alternative is worse: a settings service is an 8th
+service for one table, the gateway has no database, and `analytics-service` may
+only be written by its own event consumer.
+
+The boundary, so it does not become a dumping ground: **settings are operator
+policy, never domain data.** No world, family, DNA or profile state moves into
+`system_settings`, ever.
 
 ---
 
@@ -1268,6 +1359,21 @@ repo already uses:
   three of the four cases **cannot be observed in production today**, because
   production runs `AI_PROVIDER: mock`, so the test is the only thing standing
   between them and the day `AI_PROVIDER` is flipped.
+- **Settings: the empty-table test** (§9.3) — no `system_settings` rows and an
+  empty Redis, and every setting still resolves to its named default with
+  behaviour identical to the value being set. This is the invariant that stops
+  a settings row becoming required database content with nothing declaring it.
+- **Settings: the gateway never asks `auth-service` for one.** Assert it on the
+  create path with `auth-service` unavailable: the create still succeeds using
+  the default. Without this test, "fixing" the reader into consistency with
+  `RevocationChecker` puts a 20-60 s cold start on the product's main path and
+  nothing fails.
+- **Settings: out-of-range writes are refused** — bounds live in Go, so a
+  revocation window of a day or a rate limit of zero cannot be typed into the
+  admin form (§9.3).
+- **Settings: a key removed from the registry leaves its row** rather than
+  deleting it, unlike `SyncPermissions`. The test exists because the opposite
+  behaviour destroys an operator's value silently on the next boot.
 - **Playwright** — signup, login, create-while-anonymous, claim, and "my worlds"
   on a second browser context.
 
@@ -1520,7 +1626,7 @@ above are guesses at what was on it.
 | # | Decision | Consequence, recorded on purpose |
 | --- | --- | --- |
 | 7 | **Access token 7 days, refresh 3 months** (§4.4) | Safe *only* because the gateway checks `tokenVersion` on every request. Costs: revocation is account-wide, a stolen token is a 7-day credential, and **§11's free keep-warm effect disappears** — with a weekly refresh, `auth-service` is cold at almost every login |
-| 8 | **Over quota degrades to the mock provider; it never refuses.** 5/day anonymous, 25/day account (§9) | A visitor always gets a world. Needs a tier flag on the generate command, and needs `anonymousId` to count against. The one way it goes wrong is a **silent** downgrade, so the UI must say which tier produced the world |
+| 8 | **Over quota degrades to the mock provider; it never refuses.** 5/day anonymous, 25/day account (§9) | A visitor always gets a world. Needs a tier flag on the generate command, and needs `anonymousId` to count against. The one way it goes wrong is a **silent** downgrade, so the UI must say what happened. **Amended by 17b: "which tier" was the wrong signal** — it must say *why*, because three different situations produce a mock world and only one is the visitor's business |
 | 9 | **No account-deletion feature.** "Deleting" is a staff member marking the account inactive (§10) | Already built: `DisableAccount` revokes, bumps `tokenVersion` and audits. Removes the `auth-service` outbox, the `account.deleted` event and the fan-out — **§3.4's correction stops applying**. Leaves no data-erasure path; that is now a manual runbook |
 | 10 | **World deletion is a flag**, product-surface only, **server-enforced**, analytics untouched (§10) | Reversible for ever. Redis share/world cache invalidation is part of the feature — without it the share keeps resolving for up to the TTL, a bug that appears only in production |
 | 11 | **Registration is email + password, unverified. No mail in the first release** (§5) | Two costs: **no "forgot password"** until Phase D (a forgotten password is a manual staff answer), and **no trust may attach to the address** — which the Phase D OAuth linking rule depends on |
@@ -1528,12 +1634,17 @@ above are guesses at what was on it.
 | 13 | **Rename `myunivokai-web`** to a personalisation word (§17) | The exact form was settled in the fourth round — see **decision 15**, which supersedes this row's recommendation. `aud=web` does **not** move; the deployment name should not move until a custom domain does |
 | 14 | **The session lives in cookies the client writes itself** (§4.2), not `localStorage` | Same XSS exposure, so the CSP still does the real work. Buys automatic expiry and a value the web app's own server could read; costs a few hundred bytes on every same-origin request |
 
-### Also decided 2026-09-02, in the fourth round
+### Also decided 2026-09-02, in the fourth round and after
 
 The owner closed the rename and the backfill question directly, and **delegated
-the rest** — *"you decide, I approve"*. The three delegated calls are recorded
-here with their reasoning, because a delegated decision that carries no
-argument is indistinguishable from a guess.
+the rest** — *"you decide, I approve"*. The delegated calls are recorded here
+with their reasoning, because a delegated decision that carries no argument is
+indistinguishable from a guess.
+
+Two rows here are **amendments rather than additions**, and both came from the
+owner reading a decision back and finding it wrong: `17b` corrects `17`, and
+`20b` narrows `20`. They are numbered as amendments so the record shows that
+the first version was wrong rather than hiding it behind a clean list.
 
 | # | Decision | Consequence, recorded on purpose |
 | --- | --- | --- |
@@ -1543,7 +1654,8 @@ argument is indistinguishable from a guess.
 | 17b | **The toast keys on a reason code, never on the producing provider**, and `mock_configured` outranks `quota_exhausted` (§9.1) | The owner asked what happens when the deployment is *already* on mock, and the answer was that the toast fires and lies: production runs `AI_PROVIDER: mock` today, so a provider-keyed toast announces a limit on an AI tier that is switched off. Three routes lead to a mock-produced world and only one of them is the visitor's business. Costs one enum on the job response; buys a field that also tells staff "the primary is down" apart from "the primary is off", which today is only visible by reading `ai_generation_attempts` |
 | 18 | *(delegated)* **No passkeys in this plan at all.** §5.4 becomes a Phase E candidate, not a phase | Closes open item 3. Decision 12 put email and OAuth at the end; a credential type that lands *after* the end is not a plan item, it is a wish. Nothing in §5 forecloses it — the credential model stays additive |
 | 19 | *(delegated)* **§14.5's triage stands as the baseline** | Closes open item 4. The owner's list never arrived across four rounds; treating the triage as provisional for ever would block the sprint. Any idea added later is triaged on the same terms, which is a normal backlog change, not a plan revision |
-| 20 | **The quota limits are admin settings in `auth-service`, not environment variables** — and the mechanism is general, so later settings need no `.env` entry either (§9.3) | Taken because `.env` is already at 170 config reads, 105 example lines and 176 `render.yaml` keys. Costs one table, one admin screen, two permissions and a Redis mirror. **Its one real risk is a cold start on the create path**, which is why the gateway reads only Redis and falls back to a compiled-in default rather than asking `auth-service` — the deliberate inversion of `RevocationChecker`. Counting and enforcement are unaffected by provider (owner's instruction): the mock provider suppresses the *toast*, never the *counter* |
+| 20 | **The quota limits are admin settings in `auth-service`, not environment variables** — and the mechanism is general, so later settings need no `.env` entry either (§9.3) | Taken because `.env` is already at 170 config reads over 64 distinct names, 105 example lines and 176 `render.yaml` keys. Costs one table, one admin screen, two permissions and a Redis mirror. **Its one real risk is a cold start on the create path**, which is why the gateway reads only Redis and falls back to a compiled-in default rather than asking `auth-service` — the deliberate inversion of `RevocationChecker`. Counting and enforcement are unaffected by provider (owner's instruction): the mock provider suppresses the *toast*, never the *counter* |
+| 20b | **All 64 variables were audited; seven become settings now** (§9.3), and the rest are classified as never-a-setting or as costed batch-2 candidates | The owner asked for everything movable to be moved. Two facts found in the audit shrank that honestly rather than by preference: **five of the seven services have no Redis client**, so a setting read outside the gateway or `auth-service` is a project; and **no value is read at the moment of use today** — every one is baked into a struct field at construction, so a registry row alone makes nothing live. The audit also names four values that read as policy and are traps: the CORS origins, `TRUST_PROXY`, `REDIS_KEY_PREFIX`, and `ADMIN_ROUTES_ENABLED` — which as a setting would remove the screen used to turn it back on |
 
 ### Still open
 
@@ -1637,7 +1749,7 @@ or rewrites a working path.**
 | Component | What changes | Torn down |
 | --- | --- | --- |
 | `auth-service` | Handlers for the `web` audience, two config values, plus **one new table** for §9.3's settings. **No migration to any existing table** — `accounts.kind` already admits `'end_user'` and `roles`/`permissions` already carry `audience`, so identity itself needs none; `system_settings` is a wholly new table added beside them | Nothing. Staff paths untouched |
-| `api-gateway` | A new `/api/auth` + `/api/me` route group, a `RequireProductAccessToken` middleware mirroring `admin_auth.go`, a third rate-limit bucket, the quota counter | Nothing. Existing product routes untouched |
+| `api-gateway` | A new `/api/auth` + `/api/me` route group, a `RequireProductAccessToken` middleware mirroring `admin_auth.go`, a third rate-limit bucket, the quota counter, `/api/admin/settings`, and a settings reader plus **five call sites** moved from a captured value to a lookup (§9.3) | Nothing. Existing product routes untouched |
 | `universe` / `nature` / `ocean` | One additive migration each (2 nullable columns + 2 partial indexes), a `WHERE` clause on **4 query sites per service — 12 in total**, one claim consumer each | Nothing |
 | `dna-service` | One additive migration (2 columns, 1 index), one query subject, one claim handler, one provider-tier branch | Nothing |
 | `contracts` | Additive, nil-safe pointer fields | Nothing — see below |
@@ -1666,12 +1778,22 @@ or rewrites a working path.**
    event and a handler in four services. That was the single largest block of
    work in the original plan.
 
-**The real risk is breadth, not rework.** Phase B touches five services at
-once, and that is the thing to be careful about — which is exactly why the
-phases exist and why each service's piece is independently deployable: the
-columns are nullable, the contract fields are nil-safe pointers, so a family
-service deployed before the gateway simply sees `nil` and behaves as it does
-today. There is no flag day.
+**The real risk is breadth, not rework.** Phase B touches **six** services at
+once — the three families, `dna-service`, the gateway, and `auth-service` for
+§9.3's settings table — and that is the thing to be careful about. It is
+exactly why the phases exist and why each service's piece is independently
+deployable:
+
+- the ownership columns are nullable and the contract fields are nil-safe
+  pointers, so a family service deployed before the gateway simply sees `nil`
+  and behaves as it does today;
+- and the settings mechanism has the same property for the same reason: the
+  gateway falls back to its compiled-in default, so it can ship **before**
+  `auth-service` has the table, and `auth-service` can ship the table before
+  anything reads it.
+
+**There is no flag day** anywhere in Phase B, and that is a design property
+rather than luck.
 
 **The one change with a large file count and no logic in it is the rename**
 (§17). That is why it is sequenced outside the phases.

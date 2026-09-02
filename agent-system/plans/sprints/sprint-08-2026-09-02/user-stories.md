@@ -523,7 +523,7 @@ behaviour.
 Scenario: A limit changes without a deploy, and is attributable
 
 Given `.env` already carries 105 example lines, `render.yaml` 176 keys, and the
-seven services 170 config reads between them
+seven services 170 config reads across 64 distinct variable names
 When a staff member holding `settings:manage` changes a declared setting
 Then the new value is validated against the setting's declared type and
 bounds, and rejected if outside them
@@ -576,8 +576,23 @@ Tasks:
       (`string` / `int` / `bool` / `duration` — the four the config loader
       already has), default, bounds and a description the admin screen renders.
       Pin it with a test, as `enforcedPermissions` is pinned.
-- [ ] Declare the two AI generation limits as its first settings, with the
-      existing named constants as their defaults.
+- [ ] Declare **batch 1's seven settings** (plan §9.3): the two AI generation
+      limits (born as settings), `world_cache_ttl`, `share_cache_ttl`,
+      `job_cache_ttl`, `auth_max_failed_attempts` and `auth_lockout_duration`.
+      The five migrated ones keep their environment variable as the **default**
+      — nothing is deleted from `.env`, because removing the fallback breaks the
+      empty-table invariant.
+- [ ] Change those five call sites from a captured struct field to a lookup.
+      **None of them is read at the moment of use today** — every value is
+      baked in when its component is built, so a registry row alone makes
+      nothing live. This is the actual work in this story.
+- [ ] Declare each setting's permitted range **in Go**, and reject out-of-range
+      writes. Bounds are code, never data — that is what makes exposing a
+      security-relevant number safe at all.
+- [ ] Take nothing from batch 2, and do not attempt a general migration: five
+      of the seven services have **no Redis client**, so a setting read by
+      `dna-service` or a family service is a project, not a row (plan §9.3,
+      fact one).
 - [ ] Add `settings:read` and `settings:manage` to `enforcedPermissions` — not
       to `reservedPermissions`, because their routes ship here. Choose both
       names once: `SyncPermissions` deletes any codename that leaves the list,
@@ -636,8 +651,10 @@ Then the reason is `mock_configured`, **not** `quota_exhausted`, because no AI
 generation was withheld — there was no AI tier to withhold it from
 And when `AI_PROVIDER` is a real provider and the caller is over the limit,
 the reason is `quota_exhausted`
-And when a real primary provider is tried and fails so the fallback runs, the
-reason is `ai_failed_fallback` and the quota is not implicated
+And when a real primary provider is tried and fails **and a distinct fallback
+provider is configured**, the reason is `ai_failed_fallback` and the quota is
+not implicated — while a primary failure with **no** distinct fallback ends as
+a failed job, which carries no reason at all, because there is no world
 And the counter keeps counting in every one of those cases, so the ceiling is
 already real on the day `AI_PROVIDER` is flipped rather than starting from zero
 at that moment.

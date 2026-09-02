@@ -64,7 +64,8 @@ nullable columns per family plus one new table in an existing database.
 - Turn on the `web` audience in `auth-service`: signup, login, refresh, logout,
   the 7-day access / 3-month refresh pair, a 12-character minimum with no
   composition rules, the Have I Been Pwned range check on signup only, and one
-  new `register` audit action. **Zero migrations.**
+  new `register` audit action. **Zero migrations** — `system_settings` arrives
+  in Phase B, not here, and identity itself needs no schema change at all.
 - The gateway's `/api/auth` + `/api/me` route group as a **bearer-token** flow:
   a `RequireProductAccessToken` middleware mirroring `admin_auth.go`, its own
   third rate-limit bucket, per-email failure counters in Redis.
@@ -179,11 +180,21 @@ are listed so the sprint ships with them visible rather than discovered.
    ever ask for its erasure.** This is true in production **today** and is
    unchanged by this sprint; it is named here so it is a known state rather
    than a later discovery.
-6. **Phase B touches five services at once.** The risk is breadth, not rework.
-   It is mitigated structurally: both columns are nullable and the contract
-   fields are nil-safe pointers, so a family service deployed ahead of the
-   gateway sees `nil` and behaves exactly as it does today. **There is no flag
-   day** — see [plan §18](../../architecture/end-user-identity-and-ownership.md#18-how-much-of-this-is-demolition).
+6. **Phase B touches six services at once** — the three families,
+   `dna-service`, the gateway, and `auth-service` for the settings table. The
+   risk is breadth, not rework, and it is mitigated structurally: both ownership
+   columns are nullable and the contract fields are nil-safe pointers, so a
+   family service deployed ahead of the gateway sees `nil` and behaves exactly
+   as it does today — and the gateway's settings reader falls back to its
+   compiled-in default, so it can ship before `auth-service` has the table.
+   **There is no flag day** — see
+   [plan §18](../../architecture/end-user-identity-and-ownership.md#18-how-much-of-this-is-demolition).
+7. **A settings mechanism is a place for values to hide.** The invariant that
+   prevents it — every setting keeps a named default in code, and the platform
+   must run correctly with an empty table — is a rule, and rules erode. The
+   guardrail is the empty-table test
+   ([plan §12](../../architecture/end-user-identity-and-ownership.md#12-test-guardrails)),
+   which is why it is a Definition-of-Done item and not a nice-to-have.
 
 ## Sequencing against Sprint 03 (City)
 
