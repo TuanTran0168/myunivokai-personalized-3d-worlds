@@ -833,6 +833,22 @@ const (
 	landmarkCameraStandoffMetres = 8.0
 	landmarkRingDepthMetres      = 26.0
 
+	// The ring's outer edge may not reach past this fraction of the water's own
+	// sighting range. Measured across the shallows' five water types (the only
+	// zone allowed anything past IB): the ring depth above was tuned for
+	// composition and never asked how far the water lets a viewer see, so a
+	// roll toward the far edge in 3C water (sighting range 11.85 m) placed a
+	// landmark at up to 58 m — five sighting-range lengths out, effectively
+	// never rendered — while the SAME roll in IB water (49.9 m) sat inside one
+	// length and read fine. Capping the spread at the achievable reach fixes
+	// the wasted rolls in II/III water outright; it cannot fix 1C/3C, because
+	// there `landmarkCameraStandoffMetres` alone already exceeds the sighting
+	// range — every landmark in that water settles at the closest position the
+	// camera-clearance invariant allows, which is the best this lever can do.
+	// A real fix for 1C/3C needs the camera itself to stand closer, which is a
+	// framing change, not a ring change, and is out of scope here.
+	landmarkMaxSightingRangeFraction = 0.9
+
 	// How much two landmarks of the same kind differ in how deep they settled.
 	// Small, because settling is a variation and not a placement axis — see
 	// landmarkBedDepthMetresByKind for why there is no lift here at all.

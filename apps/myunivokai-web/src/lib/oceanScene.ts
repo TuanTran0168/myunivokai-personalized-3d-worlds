@@ -37,7 +37,7 @@ import { clampNumber, depthAt, roundToHundredths, roundToThousandths } from "./o
 // logic rather than a duplicated table.
 
 // Mirrors oceanSchemaVersion in ocean_config_builder.go.
-export const OCEAN_PREVIEW_SCHEMA_VERSION = "1.6";
+export const OCEAN_PREVIEW_SCHEMA_VERSION = "1.7";
 
 // Depth zones, in canonical order from the surface down. Both boundaries are
 // physical constants of the depth curve rather than round numbers: the sunlit
@@ -639,7 +639,7 @@ const CONTRAST_ATTENUATION_LENGTHS = 4.6;
 // gives up at roughly 2% contrast, which is about 4.6 lengths. This does NOT
 // depend on depth — at two thousand metres a lamp reaches exactly as far as it
 // does at twenty.
-function sightingRangeForWaterType(waterType: string): number {
+export function sightingRangeForWaterType(waterType: string): number {
   const kd475 = JERLOV_KD_475[waterType] ?? JERLOV_KD_475.IB;
   const load = Math.max(0, kd475 - PURE_SEAWATER_KD_BLUE);
   return CONTRAST_ATTENUATION_LENGTHS / (PURE_SEAWATER_KD_GREEN + load * TURBIDITY_SHAPE_GREEN);
@@ -764,6 +764,17 @@ const LANDMARK_ANGLE_JITTER_RADIANS = 0.25;
 // the camera's own distance makes that impossible by construction.
 const LANDMARK_CAMERA_STANDOFF_METRES = 8;
 const LANDMARK_RING_DEPTH_METRES = 26;
+
+// The ring's outer edge may not reach past this fraction of the world's own
+// sighting range — the ring depth above was tuned for composition and never
+// asked how far the water lets a viewer see. Mirrors
+// landmarkMaxSightingRangeFraction in ocean_scene_profile.go, including the
+// measurement behind it: in 3C shallows (11.85 m sighting range) the old
+// formula's mean visible fraction across the whole roll was 0.1%. This cannot
+// fix 1C/3C outright — LANDMARK_CAMERA_STANDOFF_METRES alone already exceeds
+// those waters' sighting range — it only stops the roll from wasting distance
+// the fog has already erased.
+const LANDMARK_MAX_SIGHTING_RANGE_FRACTION = 0.9;
 
 // How deep each kind beds into the sediment, in metres, before the jitter
 // below. Applied as a NEGATIVE heightAboveFloor.
@@ -1289,11 +1300,19 @@ function buildPreviewLandmarkConfigs(
   seed: string,
   landmarkNames: string[],
   cameraDistance: number,
+  jerlovWaterType: string,
   primaryColor: string,
   secondaryColor: string
 ): OceanLandmarkConfig[] {
   const nextRandomValue = randomFromSeed(seed + LANDMARKS_SEED_SUFFIX);
   const usedKinds = new Set<string>();
+
+  // The inner edge is fixed by the camera-clearance invariant; the spread
+  // beyond it is capped by how far this world's own water lets a viewer see,
+  // so the roll never spends distance the fog has already erased.
+  const innerRingRadius = cameraDistance + LANDMARK_CAMERA_STANDOFF_METRES;
+  const maximumUsefulRadius = sightingRangeForWaterType(jerlovWaterType) * LANDMARK_MAX_SIGHTING_RANGE_FRACTION;
+  const ringSpread = Math.max(0, Math.min(LANDMARK_RING_DEPTH_METRES, maximumUsefulRadius - innerRingRadius));
   return landmarkNames.map((landmarkName, index) => {
     const kindRoll = nextRandomValue();
     const angleJitterRoll = nextRandomValue();
@@ -1327,9 +1346,7 @@ function buildPreviewLandmarkConfigs(
       name: landmarkName,
       kind,
       angleRadians: roundToHundredths(baseAngle + (angleJitterRoll - 0.5) * 2 * LANDMARK_ANGLE_JITTER_RADIANS),
-      radiusFromCenter: roundToHundredths(
-        cameraDistance + LANDMARK_CAMERA_STANDOFF_METRES + radiusRoll * LANDMARK_RING_DEPTH_METRES
-      ),
+      radiusFromCenter: roundToHundredths(innerRingRadius + radiusRoll * ringSpread),
       // Negative: every kind is a bottom feature, so the offset is how deep
       // it beds into the sediment rather than how far it floats over it.
       heightAboveFloor: roundToHundredths(
@@ -1421,6 +1438,7 @@ export function buildPreviewOceanSceneConfig(
     seed,
     landmarkNames,
     cameraDistance,
+    water.jerlovWaterType ?? "IB",
     primaryColor,
     secondaryColor
   );

@@ -559,27 +559,58 @@ flora and boulders, which are placed on `heightAt` too. They get away with it
 because they are small and already sunk by a fraction of their own size, but it
 is the same defect and it belongs in one change, not bolted onto this one.
 
-### 4b. The likely real defect: landmarks may be beyond the fog
+### 4b. Landmarks may be beyond the fog — MEASURED, partially fixed. Shipped.
+
+The suspicion was that the shipwreck and the coral garden are already built
+and simply never in frame. Measured with a 5,000-sample Monte Carlo per water
+type over the old formula:
 
 ```
 RadiusFromCenter = cameraDistance + landmarkCameraStandoffMetres
                                   + radiusRoll × landmarkRingDepthMetres
-                                                    ocean_config_builder.go:597
 ```
 
-with `landmarkCameraStandoffMetres = 8.0` and `landmarkRingDepthMetres = 26.0`
-(`ocean_scene_profile.go:809-810`). With `cameraDistance` 16–24 m, the ring lands
-**24–58 m from the origin**, while the camera itself orbits at 20 m — so a
-landmark sits anywhere from 4 m to 78 m away.
+with `landmarkCameraStandoffMetres = 8.0` and `landmarkRingDepthMetres = 26.0`,
+against the fog term the renderer actually uses, `1 − exp(−(d/range)²)` with
+`range = SightingRangeForWaterType(water)`:
 
-Against Jerlov sighting ranges that run as low as **11.85 m** (type `3C`), most
-of that ring is several fog e-foldings out and invisible in practice. The fog
-term is `1 − exp(−(d·density)²)` with `density = 1/range`: at `d = 40 m` in `3C`
-water that is `1 − exp(−11.4) ≈ 100 %` swallowed.
+| Zone | Water | Range | Mean visible | Worst roll | % of rolls < 10 % visible |
+|---|---|---|---|---|---|
+| sunlitShallows | IB (clearest) | 49.9 m | 51.3 % | 26.0 % | 0 % |
+| sunlitShallows | II | 38.3 m | 33.4 % | 10.4 % | 0 % |
+| sunlitShallows | III | 29.4 m | 17.4 % | 2.1 % | 36 % |
+| sunlitShallows | 1C | 21.7 m | 5.2 % | 0.08 % | 81 % |
+| sunlitShallows | 3C (murkiest) | 11.8 m | **0.1 %** | 0.00 % | **100 %** |
+| twilightReach / abyss | I, IA, IB only | 49.9–63.7 m | 51–66 % | 26–44 % | 0 % |
 
-**Measure this before modelling anything new.** The suspicion is that the
-shipwreck and the coral garden are already built and simply never in frame. The
-lever is the ring radius, not new geometry.
+Confirmed and worse than the back-of-envelope estimate this section originally
+gave: `sunlitShallows` is the only zone allowed anything past `IB` (`I`/`IA`/`IB`
+alone can be drawn in twilight and the abyss, and those are all comfortably
+inside reach), so the defect is confined to — but severe in — coastal shallow
+worlds. In `3C` water, every roll placed the landmark beyond ten sighting
+range's worth of fog; the shipwreck and coral garden were exactly as suspected,
+built and never seen.
+
+**What shipped, and what it cannot fix.** `landmarkMaxSightingRangeFraction =
+0.9` caps the ring's spread at 90 % of the world's own sighting range
+(`SightingRangeForWaterType(water.JerlovWaterType)`), computed once per world
+and applied as `ringSpread = clamp(0, landmarkRingDepthMetres, maximumUsefulRadius
+− innerRingRadius)`. This is a genuine fix for `II`/`III` water, where the old
+roll wasted distance the fog had already erased. It is **not** a fix for
+`1C`/`3C`: `landmarkCameraStandoffMetres` alone already places the ring's inner
+edge past those waters' sighting range (24–32 m against an 11.8–21.7 m range),
+and that inner edge is load-bearing — it is the clearance invariant
+`TestLandmarksAreHeroFirstAndDeduped` exists to enforce, so a fix cannot shrink
+it without reopening the camera/landmark collision that invariant was written
+against. In `1C`/`3C` shallows every landmark now settles at the closest legal
+position instead of a random one, which is the best this lever can do; a real
+fix needs the camera itself to stand closer in turbid water, which is a framing
+change and out of scope here. Schema bumped to **1.7**.
+
+Pinned by `TestLandmarkRingNeverReachesPastTheWatersOwnSightingRange`
+(Go) and its FE mirror in `oceanScene.test.ts`, each checked against both a
+world whose water leaves the ring unconstrained and one that pins it to the
+inner edge, so neither branch can silently stop being exercised.
 
 ### 4c. Two seams worth closing while in this file
 

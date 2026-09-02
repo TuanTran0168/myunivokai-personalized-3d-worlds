@@ -415,6 +415,57 @@ func TestLandmarksAreHeroFirstAndDeduped(t *testing.T) {
 	}
 }
 
+// The ring's spread must never place a landmark past the water's own reach,
+// because a shape rolled to the far edge in turbid water is built, textured
+// and placed, and simply never seen.
+//
+// Measured before this shipped: in the murkiest water sunlit shallows can
+// draw (3C, sighting range 11.85 m) the OLD formula's mean visible fraction
+// across the whole roll was 0.1%, worst case 0.00% — the ring depth was tuned
+// for composition (see landmarkRingDepthMetres) and never asked how far the
+// water lets a viewer see. This does not make 1C/3C landmarks reliably
+// visible — landmarkCameraStandoffMetres alone already exceeds those waters'
+// sighting range, which is a camera-framing bound this test does not touch —
+// it only stops the roll from making a bad position worse.
+func TestLandmarkRingNeverReachesPastTheWatersOwnSightingRange(t *testing.T) {
+	builder := NewOceanConfigBuilder()
+	sawUnconstrainedRing := false
+	sawPinnedRing := false
+	for _, mood := range []string{"dreamy", "energetic", "focused", "reflective"} {
+		for landmarkCount := 3; landmarkCount <= 7; landmarkCount++ {
+			for variant := 0; variant < 12; variant++ {
+				config := builder.Build(buildTestInput(
+					fmt.Sprintf("OCN-RING-%s-%d-%d", mood, landmarkCount, variant), mood, landmarkCount))
+				innerRadius := config.Camera.Distance + landmarkCameraStandoffMetres
+				maximumUsefulRadius := SightingRangeForWaterType(config.Water.JerlovWaterType) * landmarkMaxSightingRangeFraction
+				const roundingTolerance = 0.01
+				if maximumUsefulRadius > innerRadius {
+					sawUnconstrainedRing = true
+				} else {
+					sawPinnedRing = true
+				}
+				for index, landmark := range config.Landmarks {
+					if landmark.RadiusFromCenter < innerRadius-roundingTolerance {
+						t.Fatalf("%s/%d/%d landmark %d sits at radius %.2f, inside the camera's clearance at %.2f",
+							mood, landmarkCount, variant, index, landmark.RadiusFromCenter, innerRadius)
+					}
+					ceiling := math.Max(innerRadius, maximumUsefulRadius)
+					if landmark.RadiusFromCenter > ceiling+roundingTolerance {
+						t.Fatalf("%s/%d/%d landmark %d (%s, water %s) sits at radius %.2f, past the %.2f m this water's own sighting range allows",
+							mood, landmarkCount, variant, index, landmark.Kind, config.Water.JerlovWaterType, landmark.RadiusFromCenter, ceiling)
+					}
+				}
+			}
+		}
+	}
+	if !sawUnconstrainedRing {
+		t.Fatal("no world drew water clear enough for the ring to keep its full spread; this test proved nothing about the cap")
+	}
+	if !sawPinnedRing {
+		t.Fatal("no world drew water turbid enough to pin the ring at its inner edge; this test proved nothing about the floor")
+	}
+}
+
 // Every landmark this family draws stands on the seabed, so none of them may be
 // placed above it.
 //
