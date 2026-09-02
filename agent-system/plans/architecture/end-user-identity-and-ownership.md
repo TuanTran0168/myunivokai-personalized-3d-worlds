@@ -1,11 +1,12 @@
 # End-user identity and world ownership
 
-> **Document status:** Proposed. **No code exists.** Fourteen of its decisions
-> were taken by the owner on 2026-09-02 across three rounds and are recorded in
-> §16, and several of them cut scope rather than adding it — read §16 before
-> any other section, because it supersedes parts of §3.4, §5, §10 and §11 in
-> place. The plan itself still awaits approval before user stories and a sprint
-> are written.
+> **Document status:** Proposed. **No code exists.** Nineteen decisions were
+> taken on 2026-09-02 across four rounds — sixteen by the owner, three
+> delegated to me and argued in place — and all of them are recorded in §16,
+> where **nothing is left open**. Several cut scope rather than adding it, so
+> read §16 before any other section: it supersedes parts of §3.4, §5, §9, §10,
+> §11 and §17 in place. The plan itself still awaits approval before user
+> stories and a sprint are written.
 > **Raised:** 2026-09-02 by the owner
 > **Last source review:** 2026-09-02
 > **Answers:** [`DEFERRED-AUTH-001`](../backlog/engineering-backlog.md#deferred-auth-001--define-identity-before-authentication),
@@ -495,7 +496,14 @@ Authorization Code + **PKCE**, run from `auth-service`, with:
 Apple: only if an iOS wrapper ever exists. It is required by App Store policy,
 not by the web.
 
-### 5.4 Passkeys — phase 2, and as an addition
+### 5.4 Passkeys — removed from this plan by decision 18
+
+> **Superseded 2026-09-02 (fourth round).** Passkeys are **not** in this plan
+> at all. Decision 12 put email and OAuth last, in Phase D; a credential type
+> that would land after that is a Phase E candidate, not a phase of this work.
+> The analysis below is kept because it is the argument for *when* they become
+> worth doing, and because §5's credential model was deliberately left
+> additive so that adding them later costs nothing structural.
 
 Passkeys are ready enough in 2026 to be a first-class *additional* credential
 and not ready enough to be the *only* one for a one-person team, because the
@@ -761,13 +769,96 @@ that is how the whole test suite runs.
   so, and `dna-service` serves that one job from the mock provider. The flag is
   set by the gateway only, protected by the same ACL that protects
   `ownerAccountId` (§6.4), so a client cannot ask for the real provider;
-- the response says which tier produced the world, and the UI says so plainly
-  rather than pretending. **A silent quality downgrade is the one way this
-  design goes wrong.**
+- the response says which tier produced the world, and the UI says so once —
+  see §9.1, which decides *how*. **A silent quality downgrade is the one way
+  this design goes wrong.**
 
 Every number is a named config constant, never a literal — `coding-style.md`
 §1. The daily window resets at UTC midnight and the Redis key expires with it,
 so there is no cleanup job.
+
+### 9.1 Decided 2026-09-02: one toast, no permanent marker — and the library already exists
+
+The owner's instruction was *"a simple toast, or silence — it is a house
+rule"*, with the choice delegated. **The decision is the toast**, and the
+reasons are not aesthetic:
+
+- **Silence is not actually silent.** The mock tier is *visibly* different — it
+  draws from `mock_presets.go`, so it is deterministic and a visitor who
+  creates twice in a row gets recognisably related worlds. Saying nothing does
+  not hide the downgrade; it converts it into the belief that the product is
+  broken. One line of copy converts it back into a rule the visitor
+  understands.
+- It is also the cheapest possible support answer for a one-person team: the
+  alternative to a toast is a message asking why two worlds look alike.
+- **But no permanent marker on the world.** §9 exists precisely because the
+  visitor still gets a real, keepable, shareable world. A badge welded to that
+  world for ever would contradict the argument the tier decision was made on,
+  and it would be visible to the friend the link was sent to, who never hit any
+  limit. The truth is owed **once, to the person who hit the limit**, at the
+  moment they hit it — not for ever, to everyone.
+
+**The library question is already closed by the codebase**, which is the
+finding here. There is nothing to evaluate and no dependency to add:
+
+| What | Where | State |
+| --- | --- | --- |
+| `sonner@2.0.7` | [`apps/myunivokai-web/package.json`](../../../apps/myunivokai-web/package.json) | already a dependency |
+| `<Toaster position="top-center" theme="dark" duration={2600} offset="72px">` | [`src/app/layout.tsx:118`](../../../apps/myunivokai-web/src/app/layout.tsx) | already mounted app-wide, already cleared below the 57 px header |
+| `.lg-toast` | [`src/app/globals.css:265`](../../../apps/myunivokai-web/src/app/globals.css) | already the Liquid-Glass material |
+| `toast("Share link ready.")` | [`src/app/worlds/[worldId]/page.tsx:295`](../../../apps/myunivokai-web/src/app/worlds/%5BworldId%5D/page.tsx) | the existing call site to copy |
+
+And `.lg-toast` is genuinely the Apple material rather than a blur and a
+prayer — it is a `--glass-tint` fill over a `--glass-blur` backdrop filter, a
+1 px `rgba(255,255,255,0.12)` hairline, a 14 px radius, brass icons, and the
+part that actually makes it read as glass: `inset 0 1px 0 rgba(255,255,255,
+0.22)`, the specular top edge, over a `0 24px 60px -20px` lift. `--glass-easing`
+already drives the motion. So this work item is **one `toast()` call and one
+string**, and the reason to write it down is to stop a future reader
+"introducing a toast library".
+
+**The copy is English**, like every other string in the app (`familyOptions`,
+`"Share link ready."`). Two candidates, and the second is preferred because it
+names the limit rather than the machinery:
+
+```txt
+"Daily AI limit reached — this world was generated offline."   ← names our internals
+"You've used today's 5 AI worlds. This one was built from presets."  ← preferred
+```
+
+The numbers in that string come from the same named constants as the counter
+(`coding-style.md` §1); the copy is assembled, never a literal with a `5` typed
+into it.
+
+### 9.2 What a world costs, and what the quota is really capping
+
+Grounded in the code rather than estimated, because the quota numbers are a
+money decision and deserve arithmetic:
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| Default model | `gemini-2.5-flash` | [`config.go:97`](../../../services/dna-service/internal/config/config.go) |
+| Output ceiling per call | **1600 tokens** | `profileDNAMaximumTokens`, [`generation_service.go:25`](../../../services/dna-service/internal/services/generation_service.go) |
+| Prompt template | ~1 KB of static text plus the visitor's input | [`prompts/profile_dna_v1.go`](../../../services/dna-service/internal/ai/prompts/profile_dna_v1.go) |
+| Repair attempts on a validation failure | **2**, then the fallback provider | `defaultAIRepairAttempts`, [`config.go:17`](../../../services/dna-service/internal/config/config.go) |
+
+The consequence worth stating plainly: **one create is not one billed call.**
+The orchestrator sizes its attempt slice at `2 + repairAttempts`
+([`orchestrator.go:62`](../../../services/dna-service/internal/ai/orchestrator.go)),
+so a create whose output keeps failing validation can bill up to ~4× the happy
+path. The quota counts **creates**, so the real ceiling is the quota times
+that factor. At `gemini-2.5-flash`'s published rates a happy-path create is
+low single-digit tenths of a US cent; the honest way to hold this number is
+**per-create cost measured from `ai_generation_attempts`**, which already
+stores every attempt with its request and response, rather than from a rate
+card that changes without telling us.
+
+What that makes the quota worth: **before it, the ceiling is unbounded.** A
+script that respects nothing but the per-IP bucket can run all day, and every
+request is a paid generation. After it, the worst case is
+`daily_visitors × 5` plus `accounts × 25`, and that is a number a one-person
+team can look at and decide about. The quota is not a fairness feature — it is
+the difference between a bill with a ceiling and a bill without one.
 
 ---
 
@@ -956,10 +1047,12 @@ honest login.
 the breached-password check. Gateway `/api/auth/*` as a bearer-token flow with
 its own rate-limit bucket and per-email failure counters. The admin account list
 showing `kind = 'end_user'` rows, so a staff member can mark one inactive (§10
-— the service side already works). Web app: login, signup, account menu, the
-session in `localStorage`, **a real CSP** (§4.2), and a login button that tells
-the truth about a cold `auth-service` (§11, and §4.4 cost 3 makes this
-unavoidable rather than optional).
+— the service side already works). One new `register` audit action, which is
+the whole of the registration metric (§14.2). Web app: login, signup, account
+menu, **the session in three first-party cookies the client writes itself**
+(§4.2 — not `localStorage`, decision 14), **a real CSP** (§4.2), and a login
+button that tells the truth about a cold `auth-service` (§11, and §4.4 cost 3
+makes this unavoidable rather than optional).
 *Property: a person can hold an account. Nothing owns anything.*
 
 **Phase B — worlds are owned.** Ownership columns in three families and
@@ -968,7 +1061,9 @@ commands. Write-path authorization. The owner-only world delete as a flag,
 filtered server-side, **with Redis share/world cache invalidation as its own
 task and its own test** (§10 — this is the item that only fails in
 production). The claim (gateway → dna → only the families used). The quota
-counter and the **degrade-to-mock** path through the generate command (§9).
+counter and the **degrade-to-mock** path through the generate command (§9),
+including the one toast that says so — one `toast()` call on a stack that is
+already installed and already styled (§9.1).
 *Property: a world has an owner, an owner can delete it, and the AI bill has a
 ceiling.*
 
@@ -981,16 +1076,105 @@ ceiling.*
 provider + the mock. Email verification, then password reset — which is when
 "forgot password" stops being a manual support answer (§5 cost 1). Then Google
 OAuth, whose linking rule depends on verification existing (§5 cost 2). Then
-GitHub, then passkeys as an additional credential.
+GitHub. **Phase D ends there** — passkeys were removed from the plan entirely
+by decision 18 and are a Phase E candidate, not a step of this one.
 
-**Phase E — product work that ownership unlocks.** §14, once the owner picks.
-The DNA-evolution question (§16 decision 6) lives here.
+**Phase E — product work that ownership unlocks.** §14.5, in whatever order
+the owner picks. The DNA-evolution question (§16 decision 6) lives here, and so
+do passkeys (decision 18).
 
 **The rename (§17) is not a phase.** Do it before Phase A or after Phase C.
 
 ---
 
-## 14. What login unlocks — triaged
+## 14. The business case, then the triage
+
+### 14.1 The three problems login solves, in the order they cost us
+
+This is not "add auth because products have auth". Each of the three is a
+present, describable loss.
+
+1. **Every world is one cleared browser away from gone.** Ownership today is
+   `SAVED_WORLD_IDENTIFIERS_STORAGE_KEY` in `localStorage`
+   ([`savedWorlds.ts:3`](../../../apps/myunivokai-web/src/lib/savedWorlds.ts)) —
+   so a private window, a new phone, a cleared cache, or Safari's own storage
+   eviction destroys the visitor's entire collection while the rows sit intact
+   in Postgres. The product's whole proposition is *"a portrait of you"*, and a
+   portrait you cannot find again is a demo. This is the one that costs
+   retention, and it costs it silently: nobody files a complaint about a world
+   they can no longer prove existed.
+2. **The AI bill has no ceiling.** §9.2. There is no per-caller quota anywhere
+   in the platform and every create is a paid generation. The only present
+   control is a per-IP token bucket, which is a politeness mechanism, not a
+   budget.
+3. **Nothing can be sold, and nothing can be personalised further.** Both
+   depend on a durable identity: quotas and tiers (§9), an evolving DNA (§14.5),
+   a triptych of one person across three families. None of them are blocked on
+   ideas; they are blocked on there being a *someone* to attach to.
+
+### 14.2 The funnel this has to move, and where it can honestly be measured
+
+The funnel:
+
+```txt
+land → create anonymously → see the world → keep it (claim) → return
+```
+
+The plan deliberately does **not** put a wall in front of step 2 (decision 5,
+§16). Anonymous creation stays, because the first world is the pitch and asking
+for a password before the pitch is how the pitch is lost. Login is offered at
+the point the visitor has something to lose — after the world exists, which is
+exactly what §7's claim flow is for. That single sequencing choice is the
+business content of this plan; everything else is machinery.
+
+**Where the numbers come from, and the one place they cannot come from:**
+
+| Question | Answered by | Cost |
+| --- | --- | --- |
+| Registrations per day, logins per day, failed logins, lockouts | `audit_events` in `myunivokai_auth`, `GROUP BY date` — and `idx_audit_events_occurred_at` already exists ([`000001_init.sql:86`](../../../services/auth-service/migrations/000001_init.sql)) | one new `register` audit action; **no migration** |
+| Creates per day, per family, success rate, duration | `world_projections` and `job_projections` in `myunivokai_analytics` — already projected, already keyset-indexed | nothing |
+| Creates on the AI tier vs the mock tier | the gateway's own quota counter (§9) | a counter it already has to keep |
+| **Claim rate — what share of anonymous worlds get claimed** | **Nowhere, by design.** §15 forbids `owner_account_id` in `myunivokai_analytics`, and that rule is not being bent for a metric | see below |
+
+That last row is the honest gap, and it is the right trade. The claim rate is
+answerable **without any identity** as two counts the family services already
+have the columns for: worlds where `owner_account_id IS NOT NULL` over worlds
+created in the same window. That is an aggregate over a column, computed in the
+owning service and reported as a number — not an owner id crossing into the
+staff database. If it ever needs to be a chart, it becomes a counter, not a
+projection field.
+
+### 14.3 What becomes sellable — and the two conditions before it is
+
+Nothing in this plan charges anybody. It is what makes charging *possible*
+later, and the sequence matters:
+
+- **Phase B's quota is the pricing lever**, because a paid tier is then a
+  number change and a provider-tier flag that already exists (§9). Without the
+  quota there is no product difference to sell.
+- **Two conditions before any money moves.** First, a real "forgot password" —
+  decision 11 leaves a forgotten password as a manual staff answer, which is
+  survivable for a free account and indefensible for a paid one. That is Phase
+  D. Second, `auth-service` off the free tier (decision 3): a paying customer
+  cannot be asked to wait 20-60 s for a cold start to log in.
+- **What it would be**, when it comes: a Stripe integration and a pricing
+  decision, not an architecture change (§14.5's last row). Explicitly out of
+  scope here.
+
+### 14.4 What this costs us to run, and what it saves
+
+| | Before this plan | After Phases A-C |
+| --- | --- | --- |
+| AI spend ceiling | unbounded (§9.2) | `visitors × 5 + accounts × 25` creates/day |
+| New paid infrastructure | — | **none.** `auth-service`, its Neon database, Redis and the gateway all already exist and are already deployed; this plan adds no service, no database and no third-party account (§3.1 killed the one service that would have) |
+| Ongoing cost added | — | one more free-tier instance being woken more often, and the cold-start UI that makes that honest (§11) |
+| Support surface added | — | forgotten passwords, answered by hand until Phase D (decision 11) |
+
+The "no new paid infrastructure" row is the single strongest business fact in
+this plan and it is why it is worth doing now rather than after another
+family: the identity half was already paid for by Sprint 4 (§2).
+
+### 14.5 The ideas, triaged
 
 The feasibility column is about **this** codebase, not in general.
 
@@ -1035,9 +1219,11 @@ above are guesses at what was on it.
 - **No `end_user` account holding a permission row**, and no `web` token
   accepted by the admin edge — in both directions, with tests.
 - **No `library-service`** until the trigger in §3.1 actually fires.
-- **No silent quality downgrade.** A world produced on the mock tier says so
-  (§9). The quota is allowed to cost the visitor an AI call; it is not allowed
-  to cost them the truth.
+- **No silent quality downgrade.** A world produced on the mock tier says so —
+  **once, in a toast, to the person who hit the limit** (§9.1). The quota is
+  allowed to cost the visitor an AI call; it is not allowed to cost them the
+  truth. Equally: **no permanent tier badge** on the world itself, because the
+  friend who opens the share link hit no limit and is owed no explanation.
 - **No world delete that skips the Redis caches** (§10), and no filtering that
   lives in the frontend.
 - **No trust attached to an unverified email address** (§5) — including, and
@@ -1055,7 +1241,7 @@ above are guesses at what was on it.
 | # | Decision | Consequence, recorded on purpose |
 | --- | --- | --- |
 | 1 | **Extend `auth-service` to serve the product too**, rather than build a separate `identity-service` | Keeps every hardened primitive (Argon2id, lockout, rotation, reuse detection, audit, revocation). Staff and end users share one `accounts` table, so the separation must be **structural**: `kind`, the audience claim, `end_user` holds no permission row, and a test in both directions (§12) |
-| 2 | **The product session is a bearer token in the `Authorization` header**, not a cookie. Login is an ordinary API call to the gateway and the browser keeps calling the gateway directly | No domain to buy, no BFF, no CORS change, and **no CSRF surface at all**. The cost is that an XSS can steal the refresh token from `localStorage`, which makes the web app's missing CSP a security control rather than hygiene (§4.2) |
+| 2 | **The product session is a bearer token in the `Authorization` header**, not a cookie. Login is an ordinary API call to the gateway and the browser keeps calling the gateway directly | No domain to buy, no BFF, no CORS change, and **no CSRF surface at all**. The cost is that an XSS can steal the refresh token from wherever the client keeps it — decision 14 later moved that store to a client-written cookie, which changes the exposure **not at all** — and that is what makes the web app's missing CSP a security control rather than hygiene (§4.2) |
 | 3 | **`auth-service` stays on the free tier; the UI tells the truth about a cold start** | The first login after a quiet period can take 20-60 s. Turns into a frontend work item that is not optional (§11). Buying a warm instance later changes nothing else |
 | 4 | **Account deletion is a soft flag with no purge job**, scoped to the product surface and **enforced server-side** | One column per table, reversible for ever, no destructive fan-out. Personal data stays in the database after a person asks to be gone, so erasure is discharged by a **manual runbook** instead of a scheduled job (§10) |
 | 4b | **`analytics-service` is untouched** — deleted worlds keep counting in staff statistics | Historically accurate aggregates, no new projection field, and the data-boundary rule is not engaged. Costs staff a world in the admin list whose share 404s with no marker saying why (§10) |
@@ -1072,20 +1258,39 @@ above are guesses at what was on it.
 | 10 | **World deletion is a flag**, product-surface only, **server-enforced**, analytics untouched (§10) | Reversible for ever. Redis share/world cache invalidation is part of the feature — without it the share keeps resolving for up to the TTL, a bug that appears only in production |
 | 11 | **Registration is email + password, unverified. No mail in the first release** (§5) | Two costs: **no "forgot password"** until Phase D (a forgotten password is a manual staff answer), and **no trust may attach to the address** — which the Phase D OAuth linking rule depends on |
 | 12 | **Email and OAuth are last** (Phase D) | Nothing in Phases A–C waits on a mail provider or a DKIM record |
-| 13 | **Rename `myunivokai-web`** to a personalisation word (§17) | Recommended form `myunivokai-personal`; `myunivokai-personalization` if the noun is wanted. `aud=web` does **not** move; the deployment name should not move until a custom domain does |
+| 13 | **Rename `myunivokai-web`** to a personalisation word (§17) | The exact form was settled in the fourth round — see **decision 15**, which supersedes this row's recommendation. `aud=web` does **not** move; the deployment name should not move until a custom domain does |
 | 14 | **The session lives in cookies the client writes itself** (§4.2), not `localStorage` | Same XSS exposure, so the CSP still does the real work. Buys automatic expiry and a value the web app's own server could read; costs a few hundred bytes on every same-origin request |
+
+### Also decided 2026-09-02, in the fourth round
+
+The owner closed the rename and the backfill question directly, and **delegated
+the rest** — *"you decide, I approve"*. The three delegated calls are recorded
+here with their reasoning, because a delegated decision that carries no
+argument is indistinguishable from a guess.
+
+| # | Decision | Consequence, recorded on purpose |
+| --- | --- | --- |
+| 15 | **The name is `myunivokai-personalization`** — the owner's own word, in full (§17) | Closes open item 1. Two costs accepted with it, and §17 now discharges both in writing: the spelling is pinned to **US `-ization`**, and 26 characters land in every path, CI filter and Dockerfile |
+| 16 | **No backfill of existing worlds. `NULL` is the answer** — confirmed by the owner | Already how the schema was designed (§6.2), so this is a confirmation rather than a change: every pre-plan world is anonymous and unclaimable, for ever, and that is correct — nobody can prove they made it |
+| 17 | *(delegated)* **The mock tier shows one toast and no permanent marker**, using the `sonner` + `.lg-toast` stack the app already ships (§9.1) | Closes open item 2. The owner allowed silence; the toast was chosen because the mock tier is *visibly* deterministic, so silence reads as a broken product rather than as a limit. **Zero new dependencies** — the Liquid-Glass toast already exists and is already mounted |
+| 18 | *(delegated)* **No passkeys in this plan at all.** §5.4 becomes a Phase E candidate, not a phase | Closes open item 3. Decision 12 put email and OAuth at the end; a credential type that lands *after* the end is not a plan item, it is a wish. Nothing in §5 forecloses it — the credential model stays additive |
+| 19 | *(delegated)* **§14.5's triage stands as the baseline** | Closes open item 4. The owner's list never arrived across four rounds; treating the triage as provisional for ever would block the sprint. Any idea added later is triaged on the same terms, which is a normal backlog change, not a plan revision |
 
 ### Still open
 
-1. **Which exact rename form** (§17) — `myunivokai-personal` or the full
-   `myunivokai-personalization`.
-2. **Does the create screen tell the visitor when they are on the mock tier,
-   and how?** (§9). The mechanism is decided; the wording is not, and a silent
-   downgrade is the failure mode.
-3. **Passkeys at all?** Recommended yes, but only as an *additional* credential
-   and only after Phase D (§5.4).
-4. **Does the owner's own idea list change §14?** It was not in the message
-   that raised this plan. Paste it and it gets triaged on the same terms.
+**Nothing.** All nineteen decisions above are taken. The plan is ready for
+approval, and what follows approval is user stories and a sprint, not more
+design.
+
+Two things are *deliberately* undecided and must not be mistaken for gaps,
+because deciding them now would be deciding them wrongly:
+
+1. **What DNA version 2 means for worlds already rendered from version 1**
+   (§14.5, the evolving-DNA row) — a product question that needs the first
+   login to exist before it can be answered honestly.
+2. **The pricing numbers** (§14.3) — blocked on the quota existing and on
+   per-create cost being *measured* from `ai_generation_attempts` rather than
+   read off a rate card (§9.2).
 
 ## 17. Renaming `myunivokai-web`
 
@@ -1097,15 +1302,27 @@ product is **"My Unique OK AI", not "my universe"**, and no name may privilege
 the universe family over forest or ocean. Principle 8 adds the second
 constraint: a name must not be borrowed from a family's most evocative corner.
 
-**Decided 2026-09-02: the name says personalisation, not portrait.**
-Recommended form: **`myunivokai-personal`** — the same root and the same
-meaning as the owner's `personalization`, in the form that survives being typed
-into a `cd`, a Dockerfile path, a CI `paths:` filter and a sentence.
+**Decided 2026-09-02 by the owner: the app is `myunivokai-personalization`.**
+The full noun, not the shortened adjective — the word names the *act* the
+product performs, which is what was asked for. Both of the costs I raised
+against it are accepted, and both are discharged here rather than left to be
+rediscovered:
+
+- **The spelling is `-ization`, US, for ever.** `-isation` is not an accepted
+  variant anywhere in this repo — not in a folder, a deployment, an import
+  path, a CI filter or a sentence. This is written down because a spelling fork
+  in a path is a class of bug that survives review: it fails only on
+  case-sensitive filesystems and only in CI, long after the person who typed it
+  has moved on. One test of it exists already for free — the CI `paths:` filter
+  simply stops matching, so the job silently does not run. Check that the job
+  ran.
+- **26 characters is the price and it is paid once.** `apps/myunivokai-personalization`.
+  Nothing about it is load-bearing except that it is typed correctly.
 
 | Candidate | Verdict |
 | --- | --- |
-| `myunivokai-personal` | **Recommended.** Short, family-neutral, and reads correctly in all four places a name has to live: `apps/myunivokai-personal`, the deployment, prose, and a shell |
-| `myunivokai-personalization` | The owner's literal word, and fine if the noun is wanted. Two costs: 26 characters in every path, and **a spelling fork** — `-ization` vs `-isation` is a coin flip that gets mistyped for ever. If this one is chosen, fix it as the US spelling in writing, once |
+| `myunivokai-personalization` | **Chosen by the owner 2026-09-02.** The literal word, the full noun, the act rather than the output. Its two costs are pinned above |
+| `myunivokai-personal` | The shorter form I recommended, and no longer relevant except as the record of what was considered: same root, same meaning, fewer characters, but an adjective where the owner wanted the noun |
 | `myunivokai-portrait` | The repo's own existing word ("portrait platform", "portrait families" in the architecture README) — but it names the *output*, and the owner asked for the *act*. Kept in the table because the docs will still say "portrait" everywhere and that is not a contradiction |
 | `myunivokai-me` | Shortest, most personal, and **collides with `/api/me`**, the account route group this very plan introduces. "The me app calls the me routes" is a sentence nobody should have to disambiguate |
 | `myunivokai-persona` | A persona is a mask worn outward; personalisation is about the person. The product means the second |
@@ -1117,7 +1334,8 @@ the app does not oblige a vocabulary purge.
 
 ### What the rename actually touches, and the one part that must not move
 
-- **Rename freely:** the `apps/myunivokai-web/` folder, its `Dockerfile.*`, the
+- **Rename freely** — `apps/myunivokai-web/` → `apps/myunivokai-personalization/`,
+  and with it its `Dockerfile.*`, the
   root and component `docker-compose-local.yaml`, `Makefile`, `run.sh`, the
   commented block in `render.yaml`, the CI paths in `.github/workflows/ci.yml`,
   and every mention across `agent-system/` (dozens — a rename is mostly a docs
@@ -1166,9 +1384,14 @@ or rewrites a working path.**
    touches. Adding `ownerAccountId` and `anonymousId` to a command does not go
    near it. (There are only 8 fixture files in `contracts/fixtures` in any
    case.)
-2. **Every existing world stays valid.** Both new columns are nullable on
-   purpose, and `ADD COLUMN` with no default is metadata-only on PostgreSQL 11+,
-   so the migration is instant against live tables and no backfill exists.
+2. **Every existing world stays valid, and there is no backfill** —
+   confirmed by the owner on 2026-09-02 (decision 16). Both new columns are
+   nullable on purpose, and `ADD COLUMN` with no default is metadata-only on
+   PostgreSQL 11+, so the migration is instant against live tables. Every
+   pre-plan world stays `NULL` on both columns for ever, which is not a gap but
+   the correct answer: an anonymous world created before `anonymous_id`
+   existed has **no one who can prove they made it**, so it must never become
+   claimable. §7's claim matches on `anonymous_id`, and `NULL` matches nothing.
 3. **No account-deletion machinery**, because §10 decided not to build the
    feature — which retired the `auth-service` outbox, the `account.deleted`
    event and a handler in four services. That was the single largest block of
