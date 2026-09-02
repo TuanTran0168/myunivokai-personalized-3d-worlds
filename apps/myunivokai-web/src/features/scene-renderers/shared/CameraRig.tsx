@@ -8,6 +8,7 @@ import type { OrbitControls as OrbitControlsImplementation } from "three-stdlib"
 import { REDUCED_MOTION_MEDIA_QUERY } from "@/lib/formRailCollapse";
 import { usePlanetPositionTracker } from "./PlanetPositionTracker";
 import { useTerrainHeightSampler } from "./TerrainHeightSampler";
+import { clearCameraPose, publishCameraPose } from "./cameraPoseProbe";
 import {
   CAMERA_INTRO_START_POSE,
   cameraIntroFrameSeconds,
@@ -232,6 +233,12 @@ export function CameraRig({
   // white rock face. The offset has to be right from the first update instead.
   const appliedRestingTargetRef = useRef<string | null>(null);
 
+  // The pose probe's own scratch pair, separate from the opening move's: the
+  // two run in the same frame and sharing one Spherical would have the probe
+  // reporting whatever pose the move was mid-way through computing.
+  const probeSpherical = useMemo(() => new Spherical(), []);
+  const scratchProbeOffset = useMemo(() => new Vector3(), []);
+
   const scratchForward = useMemo(() => new Vector3(), []);
   const scratchRight = useMemo(() => new Vector3(), []);
   const scratchMove = useMemo(() => new Vector3(), []);
@@ -448,6 +455,37 @@ export function CameraRig({
     // just produced rather than something a later step could still undo.
     clampCameraAboveTerrain(orbitControls);
   });
+
+  // The pose, published after the frame above has had its say. Its own callback
+  // rather than a line at the end of that one, because that one returns early
+  // in two of the states most worth watching — mid opening move, and mid focus
+  // glide — and a probe that goes quiet during exactly those is worse than
+  // none. r3f runs same-priority callbacks in registration order, so this one
+  // runs second; a non-zero priority would not order it, it would switch off
+  // automatic rendering altogether.
+  useFrame(() => {
+    const orbitControls = orbitControlsReference.current;
+    if (!orbitControls) {
+      return;
+    }
+    probeSpherical.setFromVector3(scratchProbeOffset.copy(camera.position).sub(orbitControls.target));
+    publishCameraPose(window, {
+      positionX: camera.position.x,
+      positionY: camera.position.y,
+      positionZ: camera.position.z,
+      targetX: orbitControls.target.x,
+      targetY: orbitControls.target.y,
+      targetZ: orbitControls.target.z,
+      orbitRadiusMetres: probeSpherical.radius,
+      polarAngleRadians: probeSpherical.phi,
+      azimuthAngleRadians: probeSpherical.theta,
+      ceilingMetres: maximumCameraHeightMetres ?? null
+    });
+  });
+
+  // A scene swap remounts the whole canvas, and a pose left behind by the
+  // outgoing world would be read as the incoming one's first frame.
+  useEffect(() => () => clearCameraPose(window), []);
 
   return (
     <OrbitControls

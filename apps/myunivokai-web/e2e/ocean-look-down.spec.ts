@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import {
+  CAMERA_POSE_WINDOW_KEY,
+  type PublishedCameraPose
+} from "../src/features/scene-renderers/shared/cameraPoseProbe";
 
 /**
  * Reported: orbiting the camera in an ocean world fills the frame with a pale
@@ -19,32 +23,50 @@ import { mkdirSync } from "node:fs";
  */
 
 /**
- * MEASURED 2026-09-01, AND IT CHANGES WHAT THIS FILE IS WORTH: the gesture below
- * does not appear to move the camera at all.
+ * WHAT THIS FILE COULD NOT SEE UNTIL 2026-09-02, AND WHY IT NOW ASSERTS ON THE
+ * CAMERA ITSELF.
  *
- * The camera-breach fix was disabled and this spec re-run as a control. It
- * passed, with numbers within noise of the fixed build (reef: 0.285 luma /
- * 0.632 saturation unfixed, 0.299 / 0.621 fixed). The committed screenshot from
- * the unfixed run settles why: it is the untouched RESTING framing — level, in
- * open water, at the resting distance — after a 900 px drag and twelve wheel
- * notches. In that world (`energetic`, 18.65 m deep, surface drawn) an
- * unclamped drag to the pole puts the lens at 24.4 m, six metres into the air.
- * The frame shows nothing of the sort, so the input never reached OrbitControls.
+ * The frame statistics below are a real instrument for a real fault, and they
+ * still are. What they cannot do is tell "the camera did not breach the
+ * surface" from "the camera did not move at all" — both read as a perfectly
+ * ordinary frame of water. So a control run of this spec with the camera fix
+ * reverted passed, with numbers within noise of the fixed build (reef 0.285
+ * luma / 0.632 saturation unfixed against 0.299 / 0.621 fixed), and the file
+ * stayed green through the entire life of the bug it is named after.
  *
- * So this file has never exercised the camera, which is why it stayed green
- * through the whole life of the bug it is named after. Until the input path is
- * fixed, treat a pass here as "the scene still renders", not as "the camera is
- * safe". The camera invariant is pinned in `oceanMath.test.ts` instead, where it
- * is checked across every world the generator can make, at every radius in the
- * envelope, without a GPU.
+ * That control was then read as proof that the gesture never reached
+ * `OrbitControls` at all. MEASURED AGAIN ON 2026-09-02, WITH THE CAMERA'S OWN
+ * POSE PUBLISHED FROM INSIDE THE RIG (`cameraPoseProbe.ts`), THAT READING IS
+ * WRONG. The input lands, in every ocean mood, on the production build:
  *
- * The likely causes, in the order worth checking: `page.locator("canvas")
- * .first()` may not be the scene's canvas (and `measureFrame`'s own
- * `document.querySelector("canvas")` would then be reading the same wrong one),
- * or an overlay is taking the pointer at the drag point. Instrumenting the
- * camera height and asserting it directly is the fix — a threshold on frame
- * statistics cannot tell "the camera did not breach" from "the camera did not
- * move".
+ *   world                resting radius → dragged pose            ceiling
+ *   Glass Shallows       19.74 → 26.0, polar 1.449 → ~0, y 24.00  none (above water)
+ *   Mesophotic Current   21.83 → 26.0, polar 1.607 → 1.143, y 15.159  15.159
+ *   Reef Crest           21.10 → 26.0, polar 1.241 → ~0, y 21.635  24.737
+ *   The Abyss            18.57 → 26.0, polar 1.217 → ~0, y 21.635  1773.27
+ *
+ * The wheel reaches the distance limit and the drag reaches the polar limit in
+ * all four. Two other things the same measurement settled: the page carries
+ * exactly ONE canvas, at the full viewport, so `page.locator("canvas").first()`
+ * was never reading the wrong one; and the arithmetic the old note argued from
+ * (an 18.65 m reef, so a drag to the pole would put the lens six metres into
+ * the air) no longer describes the world — the shallows were sunk deeper, and
+ * the reef's own ceiling now sits at 24.74 m with the pole three metres under
+ * it.
+ *
+ * So the gap was never the input path. It was that a threshold on pixels is the
+ * wrong instrument for a claim about a camera. Every test below now reads the
+ * pose out of the running rig and asserts three things a screenshot cannot
+ * carry: the wheel widened the orbit, the drag turned it, and the lens finished
+ * at or under the ceiling that rig was given. `Mesophotic Current` is the world
+ * where that last one bites — its drag stops dead ON the ceiling, 15.159 m,
+ * with 0.000 m of headroom, which is the clamp from work item 1 doing its job
+ * where a screenshot could only show more water.
+ *
+ * The geometric invariant is still pinned in `oceanMath.test.ts` as well, where
+ * it is checked across every world the generator can make, at every radius in
+ * the envelope, without a GPU. This file is the end-to-end half: it proves the
+ * clamp survives the real input path, the real rig and the real frame.
  */
 
 const SHOT_DIRECTORY = "e2e/shots/ocean-look-down";
@@ -65,6 +87,32 @@ const ZOOM_OUT_WHEEL_PIXELS = 240;
 // threshold's precision. The luma ceiling is the other half of the same claim.
 const MINIMUM_FRAME_SATURATION = 0.18;
 const MAXIMUM_FRAME_LUMA = 0.45;
+
+// Proof the wheel landed, not a measure of how far it should go. The smallest
+// gain measured across the four moods was 4.17 m (Reef Crest, 21.10 → 26.0), so
+// a metre is comfortably inside the signal and far outside damping noise.
+const MINIMUM_ZOOM_OUT_METRES = 1;
+// Proof the drag landed. The smallest turn measured was 0.46 rad (Mesophotic
+// Current, stopped early BY the ceiling clamp — the others ran the full 1.2 rad
+// to the pole), and 0.1 rad is 5.7 degrees: far more than damping settles out,
+// far less than any real gesture.
+const MINIMUM_POLAR_CHANGE_RADIANS = 0.1;
+// The clamp lands the lens exactly ON the ceiling (measured: 15.1589381768
+// against a ceiling of 15.1589381768), so this covers float noise and nothing
+// else. A breach is metres, not centimetres — the reverted-fix control put the
+// lens six metres out.
+const CEILING_TOLERANCE_METRES = 0.01;
+// How many frames the rig must have published before the pose is read as
+// settled. The scene's own first frame is not enough: the opening settle is
+// still running, and under software GL the whole preview draws at about two
+// frames a second, so this is a second or so of drawn scene rather than a
+// fixed sleep hoping one arrived.
+const SETTLED_PUBLISHED_FRAME_COUNT = 3;
+// The cold browser's first ocean frame waits on a shader compile that measured
+// several seconds under swiftshader — long enough that the first test of a run
+// used to read the pose before the scene had drawn at all, while every test
+// after it passed on the compiled program.
+const FIRST_FRAME_TIMEOUT_MILLISECONDS = 60_000;
 
 function shotDirectory(): string {
   mkdirSync(SHOT_DIRECTORY, { recursive: true });
@@ -118,6 +166,25 @@ async function measureFrame(page: Page): Promise<FrameStatistics> {
   });
 }
 
+/**
+ * Where the lens is, as the rig itself reports it.
+ *
+ * Read through the same constant the rig publishes under, imported rather than
+ * retyped: a probe whose two ends disagree about the key reads as "the scene
+ * never drew", and a spec that cannot tell that from "the camera never moved"
+ * is the thing this file is being fixed out of.
+ */
+async function readCameraPose(page: Page): Promise<PublishedCameraPose> {
+  const pose = await page.evaluate(
+    (key) => window[key as typeof CAMERA_POSE_WINDOW_KEY] ?? null,
+    CAMERA_POSE_WINDOW_KEY
+  );
+  if (!pose) {
+    throw new Error("the rig has published no camera pose — the scene never drew a frame");
+  }
+  return pose;
+}
+
 async function openOceanPreview(page: Page, moodLabel: RegExp): Promise<void> {
   await page.goto("/");
   await page.locator(".rail-scroll").waitFor();
@@ -127,6 +194,17 @@ async function openOceanPreview(page: Page, moodLabel: RegExp): Promise<void> {
   await page.getByRole("button", { name: moodLabel }).click();
   // The preview rebuild is debounced, then the scene has to draw a frame.
   await page.waitForTimeout(2500);
+  // And the debounce is a guess about the app while THIS is the scene's own
+  // answer: the rig publishes a pose per drawn frame, so waiting for a few of
+  // them waits for the thing the sleep was standing in for.
+  await page.waitForFunction(
+    ([key, settledFrameCount]) => {
+      const pose = window[key as typeof CAMERA_POSE_WINDOW_KEY];
+      return pose !== undefined && pose.publishedFrameCount >= (settledFrameCount as number);
+    },
+    [CAMERA_POSE_WINDOW_KEY, SETTLED_PUBLISHED_FRAME_COUNT] as const,
+    { timeout: FIRST_FRAME_TIMEOUT_MILLISECONDS }
+  );
 }
 
 /**
@@ -176,7 +254,8 @@ async function zoomToWidest(page: Page): Promise<void> {
 }
 
 test.describe("turning the camera in an ocean world", () => {
-  // Both ends of the family's one axis, and both ends of the orbit.
+  // Both ends of the family's one axis, both ends of the orbit, and the world in
+  // the middle where the ceiling is what stops the drag.
   //
   // The fault was reported on a reef and reproduced in the abyss too, and that
   // was read here as RULING OUT the camera crossing the waterline, on the
@@ -184,20 +263,39 @@ test.describe("turning the camera in an ocean world", () => {
   // cost two rounds of shader work: the same pale frame had two causes, and
   // fixing the abyss one (the backdrop dome, unfogged) left the reef one
   // standing. The reef's cause is geometric — the orbit lifts the lens out of
-  // the water while the rig still believes it is submerged — and it is pinned
-  // in oceanMath.test.ts, where it can be checked without a GPU. This file
-  // keeps the abyss honest and confirms the reef on real pixels.
+  // the water while the rig still believes it is submerged.
+  //
+  // `Mesophotic Current` is here for that second cause specifically: measured
+  // 2026-09-02, it is the one preview world deep enough to have a ceiling and
+  // shallow enough for the widest orbit to reach it, so its drag ends ON the
+  // clamp rather than at the pole. Reef Crest and The Abyss keep the frame
+  // honest; this one keeps the clamp honest.
+  const ORBIT_THAT_RAISES_THE_LENS = { name: "one way", sign: 1 as const };
+  const ORBIT_THAT_LOWERS_IT = { name: "the other", sign: -1 as const };
   for (const world of [
-    { name: "Reef Crest", moodLabel: /reef crest/i },
-    { name: "The Abyss", moodLabel: /the abyss/i }
+    { name: "Reef Crest", moodLabel: /reef crest/i, orbits: [ORBIT_THAT_RAISES_THE_LENS, ORBIT_THAT_LOWERS_IT] },
+    // Raised only. Measured 2026-09-02: dragging this world's orbit DOWN walks
+    // the lens onto the seabed and then ratchets the radius in from 26 m to
+    // 4.3 m — the terrain clamp lifts camera and target together, the idle lerp
+    // puts the target back on the framing, and the two together shorten the
+    // offset a little every frame. The frame at the end of that is a single
+    // pale object at arm's length (0.647 luma), which is a measurement of a
+    // creature, not of the medium. The radius ratchet is a real fault and it is
+    // recorded in the roadmap; asserting the medium's colour through it would
+    // only make this file fail for the wrong reason.
+    // Raised, this is also the brightest frame the file measures — 0.437 luma
+    // against the 0.45 ceiling, because the lens ends up ON the clamp with the
+    // surface right above it. That margin is thin on purpose: it is the frame a
+    // brightness regression would blow first.
+    { name: "Mesophotic Current", moodLabel: /mesophotic current/i, orbits: [ORBIT_THAT_RAISES_THE_LENS] },
+    { name: "The Abyss", moodLabel: /the abyss/i, orbits: [ORBIT_THAT_RAISES_THE_LENS, ORBIT_THAT_LOWERS_IT] }
   ]) {
-    for (const orbit of [
-      { name: "one way", sign: 1 as const },
-      { name: "the other", sign: -1 as const }
-    ]) {
+    for (const orbit of world.orbits) {
       test(`${world.name}, orbiting ${orbit.name}: shows seawater, not a wall of light`, async ({ page }) => {
         test.skip(test.info().project.name !== "desktop", "one viewport is enough for a render fault");
         await openOceanPreview(page, world.moodLabel);
+        const restingPose = await readCameraPose(page);
+
         // Zoomed OUT first, which is the condition the owner reported and the
         // one this file was missing: the lift a tilt buys is the orbit radius
         // times the cosine of the polar angle, so the same drag that is
@@ -205,12 +303,40 @@ test.describe("turning the camera in an ocean world", () => {
         // the wide end. Dragging at the resting radius alone measured clean
         // frames while the bug was live.
         await zoomToWidest(page);
+        const zoomedPose = await readCameraPose(page);
         await orbitToPolarLimit(page, orbit.sign);
+        const draggedPose = await readCameraPose(page);
 
         const frame = await measureFrame(page);
         const slug = `${world.name}-${orbit.name}`.toLowerCase().replace(/[^a-z]+/g, "-");
         await page.screenshot({ path: `${shotDirectory()}/${slug}.png` });
         console.log(`${world.name} ${orbit.name}`.padEnd(30), JSON.stringify(frame));
+        console.log(`${world.name} ${orbit.name}`.padEnd(30), JSON.stringify(draggedPose));
+
+        // The gesture landed. Asserted before anything about what the frame
+        // looks like, because a clean frame from a camera that never moved is
+        // the exact false pass this file used to hand back.
+        expect(
+          zoomedPose.orbitRadiusMetres,
+          "the wheel did not reach the controls: the orbit is no wider than it started"
+        ).toBeGreaterThan(restingPose.orbitRadiusMetres + MINIMUM_ZOOM_OUT_METRES);
+        expect(
+          Math.abs(draggedPose.polarAngleRadians - zoomedPose.polarAngleRadians),
+          "the drag did not reach the controls: the orbit is at the same pitch it started at"
+        ).toBeGreaterThan(MINIMUM_POLAR_CHANGE_RADIANS);
+
+        // And it landed inside the water. The ceiling is read from the rig
+        // rather than solved here on purpose: the invariant worth asserting is
+        // that the lens stayed under the ceiling THIS RIG WAS GIVEN, and a test
+        // that computes its own is testing its own arithmetic.
+        expect(
+          draggedPose.ceilingMetres,
+          "this world used to be submerged and now reports no ceiling — the fixture changed, not the camera"
+        ).not.toBeNull();
+        expect(
+          draggedPose.positionY,
+          "the lens finished above the surface, where the rig is still built for water"
+        ).toBeLessThanOrEqual((draggedPose.ceilingMetres ?? 0) + CEILING_TOLERANCE_METRES);
 
         expect(frame.meanSaturation, "the frame has lost its colour to a pale layer").toBeGreaterThan(
           MINIMUM_FRAME_SATURATION
