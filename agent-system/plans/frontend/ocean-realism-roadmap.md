@@ -287,12 +287,12 @@ So the fish never *leave*. They orbit forever at a roughly constant distance
 band. **That is the real content of the owner's request**: there is currently no
 departure behaviour at all to make gradual.
 
-### 2b. The two things that make a fish disappear
+### 2b. The two things that make a fish disappear — DONE. Shipped.
 
 | Mechanism | Evidence | Character |
 |---|---|---|
-| **The camera breach** (work item 1) | the opaque lid, above | everything vanishes at once |
-| **The model-adopt cross-fade** | `ADOPT_FADE_HALF_SECONDS = 0.22` (`:1645`), fade-out → geometry swap → fade-in, driven by `material.opacity` with `material.transparent = true` (`:1674-1706`) | one whole school blinks out and back over 0.44 s |
+| **The camera breach** (work item 1) | the opaque lid, above | everything vanishes at once — already fixed |
+| **The model-adopt cross-fade** | `ADOPT_FADE_HALF_SECONDS = 0.22`, fade-out → geometry swap → fade-in, driven by `material.opacity` with `material.transparent = true` | one whole school blinks out and back over 0.44 s |
 
 The adopt fade fires when that species' GLB finishes downloading —
 `loadSpeciesGeometry(species).then(model => school.adopt(model))`
@@ -301,47 +301,72 @@ different schools blink at different moments, seconds after the scene appears.
 A visitor watching a fish swim sees it vanish. **This is almost certainly the
 "cá đang bơi thì biến mất" the owner means.**
 
-Fix: the swap does not need to be invisible-then-visible. Cross-fade *between*
-the two geometries (draw both for 0.44 s, one fading out and one in), or simply
-swap on the frame the school is furthest from the camera and deepest in fog.
-The cheapest correct version is to make the fade depth-aware: scale
-`ADOPT_FADE_HALF_SECONDS` to zero when the school is already fog-swallowed, so
-the swap happens invisibly for distant schools and only near ones pay for a
-cross-fade.
+Shipped exactly the cheap version this section proposed: the fade is now
+depth-aware. At the moment a fade starts, the nearest leader's distance to the
+camera is measured against `visibilityMetres`, and `ADOPT_FADE_HALF_SECONDS`
+(now a per-fade `adoptFadeHalfSeconds`, scaled from a `_BASE` constant) is
+scaled toward zero as fog-swallow approaches 1. A school already several
+sighting ranges out swaps its geometry the same tick the fade would have
+started — nothing left to hide, so nothing left to animate. A school still in
+clear water gets the full 0.22 s fade, unchanged.
 
-### 2c. The departure behaviour the owner asked for
+### 2c. The departure behaviour the owner asked for — DONE. Shipped.
 
-Add a **swim-out** to the ring model: periodically a school's ring radius eases
-outward past the sighting range and back, so animals recede into the fog and
-return from it, instead of orbiting at a fixed distance forever.
+Added a **swim-out** to the ring model: every leader's *rendered* radius (never
+the persistent `leader.radius`) eases past the ring toward
+`ringLimit × 1.6` and back over a 90 s cycle, phased per-leader so schools
+never sync. At the multiplier's peak a leader sits at
+`1 − exp(−1.6²) ≈ 92 %` fog-swallowed — visibly dissolving into haze rather
+than vanishing at a hard edge — then eases back to its ordinary orbit. This
+reads as *behaviour* rather than a fade, needs no material transparency (the
+instanced draw and its sorting stay untouched — the reason this was preferred
+over a per-instance alpha in the first place), and the scene's own fog does
+the actual dissolving.
 
-This is preferable to a per-instance alpha for three reasons:
-
-- it needs **no material transparency**, so the instanced draw and its sorting
-  are untouched — important against `oceanFrameBudget.test.ts`'s `maximumBlown:
-  0.02` and the 60 fps floor;
-- the scene fog already does the dissolving, physically, for free (`FogExp2`
-  with `density = 1/sightingRange`);
-- it reads as *behaviour* rather than as a fade, which is what "bơi ra xa dần"
-  describes.
-
-Implement it as a per-leader radius envelope in the same place the existing
-`approachesCamera` envelope lives (`oceanRigFauna.ts`, inside `update`), which
-already blends the *rendered* radius without touching the persistent
-`leader.angle` — so there is no separate "return" phase to author. Mirror that
-function's structure exactly.
+Universal rather than a per-species opt-in like `approachesCamera`: the
+report was about ordinary schools generally, not a rare spectacle for a
+handful of charismatic species. One correction made while shipping it: when a
+school carries no `visibilityMetres` (the open-water default,
+`Number.POSITIVE_INFINITY` — every real call from `oceanRig.ts` passes a real
+figure, but a school built without one, as most of this file's own tests do,
+did not), `ringLimit` is `Infinity` and `Infinity × 1.6` propagated as `NaN`
+through the leader's heading normalisation the moment the envelope engaged,
+freezing every school in the rig, not just the ones under test. Fixed by
+falling back to `species.pathRadius × 1.6` when `ringLimit` is not finite —
+with no fog to dissolve into, the "outward" swim is a lap past the species'
+own ring rather than a distance the water defines.
 
 ### 2d. Other movement defects found while reading
 
-- `setSurfacing` is defined at `oceanRigFauna.ts:1653` and **called nowhere** —
-  grep over `src/` finds only the type at `:1349` and the implementation. The
-  dolphin breach it exists to drive can therefore never raise `breachHeight`.
-- The leader's height is clamped to `[floorY, ceiling]` **before** the surfacing
-  and camera-approach blends, and is not re-clamped after. A giant that blends
-  toward `cameraPosition.y` follows a breached camera above the surface.
-- `members[i]` is guarded with `if (!member) continue;` (`:1817`), which leaves
-  that instance's matrix **stale** rather than hidden. Worth confirming whether
-  holes are reachable; if they are, the fish freezes rather than disappears.
+- **Fixed.** The leader's height is clamped to `[floorY, ceiling]` before the
+  surfacing and camera-approach blends, and was not re-clamped after — "a
+  giant that blends toward `cameraPosition.y` follows a breached camera above
+  the surface." The fix caps the *blend target* (`cameraPosition.y`, clamped
+  to `[floorY, ceiling]`) rather than the *blended result*, because one
+  species — the dolphin — sets both `approachesCamera` and `surfacing`, and
+  its surfacing breach legitimately sits above `ceiling` (bounded instead by
+  `ceiling + breachHeight` at the per-member position clamp). Re-clamping the
+  result would have clipped a real breach every time it happened to coincide
+  with the approach cycle; capping the target does not touch surfacing at all.
+- **Confirmed not a live bug.** `members[i]` is guarded with
+  `if (!member) continue;`, which would leave that instance's matrix stale
+  rather than hidden if a hole were reachable. It is not: `members` is built by
+  sequential `.push()` inside a loop that only `break`s when
+  `leaders[i % leaders.length]` is undefined, which requires
+  `species.leaders === 0` — every one of the roster's 32 species sets
+  `leaders >= 1`. `members.length` is therefore always either `species.count`
+  or (for a hypothetical future zero-leader species) `0`; never a partially
+  populated array with a hole in the middle. Left as a defensive guard, not a
+  bug to fix.
+- **Not fixed, and still open.** `setSurfacing` is defined and returned on the
+  `School` interface, and is called nowhere in `src/`. This is narrower than
+  first read: the dolphin's breathing cycle still runs and still raises
+  `breachHeight`, using the DEFAULT `baseOffset = 0` / `breach = -1.2` the
+  closure initialises — surfacing is not dead. What is dead is the ability to
+  *change* those two numbers live (e.g. from `OceanRenderer.tsx`, the way the
+  whale-fall mat and selection ring were re-anchored to the sediment line in
+  work item 4a-fix). No caller has ever needed to, so there is no wiring bug
+  to point at yet — just an unused capability, left as found.
 
 ## Work item 3 — the seabed, and "raise the floor"
 

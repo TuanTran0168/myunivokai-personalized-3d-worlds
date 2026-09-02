@@ -1374,6 +1374,8 @@ type Leader = {
   breathPhase: number;
   /** Drives the approachesCamera cycle — see FaunaSpecies.approachesCamera. */
   approachPhase: number;
+  /** Drives the swim-out cycle — see SWIM_OUT_CYCLE_SECONDS below. */
+  swimOutPhase: number;
   /** How close the nearest predator is, 0 (calm) to 1 (at the flee radius' edge or closer). */
   alarm: number;
   position: Vector3;
@@ -1553,6 +1555,28 @@ export function createSchool(
   // this only pulls in the four that were outside it, and their sizes differ by a
   // factor of four, so they still read as near and far.
   const ringLimit = Math.max(6, visibilityMetres);
+  // Every leader's rendered radius eases past the ring toward the fog and
+  // back over this cycle, so a school recedes into haze and returns from it
+  // instead of holding one fixed distance forever — an animal was reported
+  // vanishing mid-swim, and the ring itself never moves, so there was no
+  // departure to see: only the adopt-fade snap (fixed above) and the camera
+  // breach (fixed in oceanMath.ts) ever removed one from frame. Each leader's
+  // own swimOutPhase keeps the schools out of sync with each other.
+  const SWIM_OUT_CYCLE_SECONDS = 90;
+  // How far past the ring's own limit a leader recedes at the cycle's peak,
+  // as a multiple of ringLimit — the water's own sighting range. 1.6x puts
+  // the peak at 1 - exp(-1.6^2) ≈ 92% fog-swallowed, so the animal visibly
+  // dissolves into haze rather than vanishing at a hard edge.
+  const SWIM_OUT_PEAK_SIGHTING_RANGE_MULTIPLIER = 1.6;
+  // Without a real fog limit — visibilityMetres left at its open-water
+  // default — ringLimit is Infinity, and Infinity * 1.6 propagates through
+  // the leader math (cos(angle) * Infinity, then normalize()'s Infinity /
+  // Infinity) as NaN. Recede toward the species' own ring instead: there is
+  // no fog to dissolve into, so the "outward" swim is a lap past its own
+  // ordinary radius rather than a distance the water defines.
+  const swimOutOuterRadius = Number.isFinite(ringLimit)
+    ? ringLimit * SWIM_OUT_PEAK_SIGHTING_RANGE_MULTIPLIER
+    : species.pathRadius * SWIM_OUT_PEAK_SIGHTING_RANGE_MULTIPLIER;
   // A bait ball: leaders cluster onto ONE shared, drifting angle/radius
   // instead of scattering independently around the whole ring — see
   // FaunaSpecies.vortex and the member spiral below. Drawn once, before the
@@ -1577,6 +1601,7 @@ export function createSchool(
       bob: next() * Math.PI * 2,
       breathPhase: next(),
       approachPhase: next(),
+      swimOutPhase: next(),
       alarm: 0,
       // Seeded on the ring immediately, not at the origin — the first real
       // update() call derives heading from displacement since the LAST
@@ -1642,7 +1667,10 @@ export function createSchool(
   let pendingAdoptModel: NormalisedModel | null = null;
   let adoptFadeStartElapsed: number | null = null;
   let adoptFadeSwapped = false;
-  const ADOPT_FADE_HALF_SECONDS = 0.22;
+  const ADOPT_FADE_HALF_SECONDS_BASE = 0.22;
+  // Set for the CURRENT fade only, from how fog-swallowed the school already
+  // is when the fade starts — see the depth-aware scaling below.
+  let adoptFadeHalfSeconds = ADOPT_FADE_HALF_SECONDS_BASE;
 
   return {
     species,
@@ -1672,10 +1700,26 @@ export function createSchool(
       if (pendingAdoptModel && adoptFadeStartElapsed === null) {
         adoptFadeStartElapsed = elapsed;
         material.transparent = true;
+        // The fade exists to hide a geometry snap from the viewer. Fog that
+        // has already erased the school hides it for free — a cold-cache
+        // species load used to blink every instance of that species
+        // invisible-then-visible over 0.44 s regardless of distance, which is
+        // exactly what "cá đang bơi thì biến mất" describes for a school
+        // still well inside sighting range. Scale the fade toward zero as the
+        // school approaches full fog-swallow, so a distant school swaps
+        // instantly instead of animating an opacity change nobody can see.
+        const nearestDistance = cameraPosition
+          ? leaders.reduce(
+              (nearest, leader) => Math.min(nearest, leader.position.distanceTo(cameraPosition)),
+              Number.POSITIVE_INFINITY,
+            )
+          : 0;
+        const fogSwallow = 1 - Math.exp(-Math.pow(nearestDistance / visibilityMetres, 2));
+        adoptFadeHalfSeconds = ADOPT_FADE_HALF_SECONDS_BASE * (1 - fogSwallow);
       }
       if (adoptFadeStartElapsed !== null) {
         const fadeElapsed = elapsed - adoptFadeStartElapsed;
-        if (!adoptFadeSwapped && fadeElapsed >= ADOPT_FADE_HALF_SECONDS) {
+        if (!adoptFadeSwapped && fadeElapsed >= adoptFadeHalfSeconds) {
           const model = pendingAdoptModel;
           if (model) {
             model.geometry.setAttribute("aPhase", new InstancedBufferAttribute(phases, 1));
@@ -1691,7 +1735,7 @@ export function createSchool(
           }
           adoptFadeSwapped = true;
         }
-        const fadeTotal = ADOPT_FADE_HALF_SECONDS * 2;
+        const fadeTotal = adoptFadeHalfSeconds * 2;
         if (fadeElapsed >= fadeTotal) {
           material.opacity = 1;
           material.transparent = false;
@@ -1700,9 +1744,9 @@ export function createSchool(
           adoptFadeSwapped = false;
         } else {
           material.opacity =
-            fadeElapsed < ADOPT_FADE_HALF_SECONDS
-              ? 1 - fadeElapsed / ADOPT_FADE_HALF_SECONDS
-              : (fadeElapsed - ADOPT_FADE_HALF_SECONDS) / ADOPT_FADE_HALF_SECONDS;
+            fadeElapsed < adoptFadeHalfSeconds
+              ? 1 - fadeElapsed / adoptFadeHalfSeconds
+              : (fadeElapsed - adoptFadeHalfSeconds) / adoptFadeHalfSeconds;
         }
       }
 
@@ -1714,6 +1758,15 @@ export function createSchool(
         leader.angle += leader.speed * speedMultiplier * dt;
         let angle = leader.angle;
         let radius = leader.radius * (1 + Math.sin(leader.angle * 1.7 + leader.bob) * 0.14);
+        // Swim-out: blends the RENDERED radius only, exactly like the
+        // approachesCamera envelope below — leader.radius (persistent) never
+        // changes, so there is no separate "return" phase to author. The
+        // envelope decaying back to 0 IS the return.
+        const swimOutCycle = ((elapsed / SWIM_OUT_CYCLE_SECONDS + leader.swimOutPhase) % 1 + 1) % 1;
+        const recede = Math.pow(Math.sin(Math.PI * swimOutCycle), 2);
+        if (recede > 0.001) {
+          radius = radius * (1 - recede) + swimOutOuterRadius * recede;
+        }
         let height = leader.height + Math.sin(elapsed * 0.24 + leader.bob) * species.heightRange * 0.3;
         height += baseOffset;
         height = Math.min(Math.max(height, floorY), ceiling);
@@ -1750,7 +1803,15 @@ export function createSchool(
             deltaAngle -= Math.PI * 2 * Math.round(deltaAngle / (Math.PI * 2));
             angle += deltaAngle * approach;
             radius = radius * (1 - approach) + camDist * approach;
-            height = height * (1 - approach) + cameraPosition.y * approach;
+            // The blend TARGET is capped to [floorY, ceiling], not the
+            // result: a camera that has breached the surface must not pull a
+            // shark or manta up through it. Capping the target rather than
+            // re-clamping height afterward also leaves the dolphin's own
+            // surfacing breach (which legitimately sits above `ceiling`,
+            // bounded instead by `ceiling + breachHeight` below) unclipped —
+            // the dolphin is the one species with both behaviours.
+            const approachTargetHeight = Math.min(Math.max(cameraPosition.y, floorY), ceiling);
+            height = height * (1 - approach) + approachTargetHeight * approach;
           }
         }
         leaderTarget.set(Math.cos(angle) * radius, height, Math.sin(angle) * radius);
