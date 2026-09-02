@@ -45,8 +45,8 @@ func newAdminRouter(serviceConfig config.Config, brokerClient broker.Client, edg
 	adminRouter.With(middleware.RequireAdminRefreshCookie).Post("/auth/logout", authHandler.Logout)
 
 	requireAccessToken := middleware.RequireAdminAccessToken(
-		auth.NewTokenVerifier(serviceConfig.AdminAccessPublicKeys),
-		auth.NewRevocationChecker(edgeStore, brokerClient, serviceConfig.NATSRequestTimeout, serviceConfig.AdminTokenVersionCacheTTL),
+		auth.NewTokenVerifier(serviceConfig.AccessTokenPublicKeys),
+		auth.NewRevocationChecker(edgeStore, brokerClient, serviceConfig.NATSRequestTimeout, serviceConfig.TokenVersionCacheTTL),
 	)
 	requirePermission := func(code contracts.PermissionCode) func(http.Handler) http.Handler {
 		return middleware.RequireAdminPermission(transport, code)

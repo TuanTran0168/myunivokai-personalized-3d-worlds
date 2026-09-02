@@ -21,16 +21,25 @@ type EdgeStore interface {
 	wakeStatsReader
 	middleware.DistributedLimiter
 	auth.TokenVersionCache
+	IdentityFailureCounter
 	Ping(context.Context) error
 	Close() error
 }
 
-// productRateLimitRouteKey and adminRateLimitRouteKey give the two route
-// groups independent Redis token buckets. They must never be equal - see
-// middleware.RateLimit.
+// The three route groups' independent Redis token buckets. No two may ever be
+// equal - the underlying key is <prefix>:rate:<routeKey>:<clientIP>, so a
+// shared value would silently apply whichever group's parameters wrote last.
+// See middleware.RateLimit.
+//
+// authRateLimitRouteKey is much tighter than the product one (plan section
+// 5.5) because the traffic is genuinely different: a person signs in a handful
+// of times a day, while the product bucket has to be sized for every world
+// read. Config.Validate refuses a configuration where it is the looser of the
+// two.
 const (
 	productRateLimitRouteKey = "product"
 	adminRateLimitRouteKey   = "admin"
+	authRateLimitRouteKey    = "auth"
 )
 
 // NewRouter builds the gateway's whole HTTP surface.
@@ -72,17 +81,25 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 	router.Get("/api/v1/readyz", healthHandler.Readiness)
 	router.Get("/api/v1/statusz", healthHandler.Readiness)
 
+	// The identity group: the same origin and the same CORS policy as the
+	// business group below, its own rate-limit bucket, and no response cache
+	// anywhere near it. Registered ABOVE the business group for the reason
+	// that group's own comment gives about /api/{family}: chi prefers a static
+	// segment to a parameter one, but relying on that instead of on
+	// registration order is how /api/me/worlds becomes the nature family's
+	// problem in Phase C.
+	router.Group(func(identityRouter chi.Router) {
+		identityRouter.Use(cors.Handler(productCORSOptions(serviceConfig)))
+		identityRouter.Use(middleware.RateLimit(edgeStore, authRateLimitRouteKey, serviceConfig.AuthRateLimitRequestsPerSecond, serviceConfig.AuthRateLimitBurst))
+		identityRouter.Use(middleware.BodyLimit(serviceConfig.MaximumRequestBodyBytes))
+		registerProductAuthRoutes(identityRouter, serviceConfig, brokerClient, edgeStore, rpcTransport)
+	})
+
 	// The product CORS handler is scoped to this group, not global - it must
 	// never reach /api/admin, which mounts its own further down. See
 	// agent-system/plans/services/auth-and-admin-plan.md#amended--one-gateway-two-route-groups.
 	router.Group(func(businessRouter chi.Router) {
-		businessRouter.Use(cors.Handler(cors.Options{
-			AllowedOrigins: serviceConfig.AllowedOrigins,
-			AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-			AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
-			ExposedHeaders: []string{"Cache-Control", "Retry-After", "X-Cache", "X-Request-Id"},
-			MaxAge:         corsMaximumAgeSeconds,
-		}))
+		businessRouter.Use(cors.Handler(productCORSOptions(serviceConfig)))
 		businessRouter.Use(middleware.RateLimit(edgeStore, productRateLimitRouteKey, serviceConfig.RateLimitRequestsPerSecond, serviceConfig.RateLimitBurst))
 		businessRouter.Use(middleware.BodyLimit(serviceConfig.MaximumRequestBodyBytes))
 		businessRouter.Get("/api/jobs/{jobID}", dnaJobHandler.GetJob)
@@ -92,13 +109,13 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 		businessRouter.Route("/api/nature", func(familyRouter chi.Router) {
 			registerWorldRoutes(familyRouter, natureHandler)
 		})
-			businessRouter.Route("/api/ocean", func(familyRouter chi.Router) {
-				registerWorldRoutes(familyRouter, oceanHandler)
-			})
-			// Every supported family must be registered ABOVE this line: chi
-			// matches in registration order, so a family mounted after the
-			// wildcard would answer WORLD_FAMILY_NOT_FOUND for routes that exist.
-			businessRouter.Route("/api/{family}", registerUnsupportedFamilyRoutes)
+		businessRouter.Route("/api/ocean", func(familyRouter chi.Router) {
+			registerWorldRoutes(familyRouter, oceanHandler)
+		})
+		// Every supported family must be registered ABOVE this line: chi
+		// matches in registration order, so a family mounted after the
+		// wildcard would answer WORLD_FAMILY_NOT_FOUND for routes that exist.
+		businessRouter.Route("/api/{family}", registerUnsupportedFamilyRoutes)
 	})
 	if serviceConfig.AdminRoutesEnabled {
 		router.Mount("/api/admin", newAdminRouter(serviceConfig, brokerClient, edgeStore, rpcTransport, waker))

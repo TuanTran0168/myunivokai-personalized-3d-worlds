@@ -26,8 +26,12 @@ func testAdminGatewayConfig() config.Config {
 	serviceConfig.AdminAllowedOrigin = "https://admin.example.com"
 	serviceConfig.AdminRateLimitRequestsPerSecond = 1000
 	serviceConfig.AdminRateLimitBurst = 1000
-	serviceConfig.AdminAccessPublicKeys = []ed25519.PublicKey{adminTestPublicKey}
-	serviceConfig.AdminTokenVersionCacheTTL = time.Minute
+	// Both keys, not just the admin one. It keeps the identity edge working in
+	// these tests too, and it exercises the multi-key rotation path
+	// TokenVerifier exists for - listing a new key alongside the outgoing one
+	// is what S4-AUTH-005 made possible.
+	serviceConfig.AccessTokenPublicKeys = []ed25519.PublicKey{adminTestPublicKey, productTestPublicKey}
+	serviceConfig.TokenVersionCacheTTL = time.Minute
 	return serviceConfig
 }
 

@@ -34,11 +34,41 @@ const (
 	// product default it used to copy verbatim.
 	defaultAdminRateLimitRequestsPerSecond = 10
 	defaultAdminRateLimitBurst             = 50
+
+	// The identity endpoints get their own bucket, much tighter than the
+	// product one, because the traffic is genuinely different: a person signs
+	// in a handful of times a day, while the product group serves every world
+	// read and variant regeneration. A shared bucket would have to be sized
+	// for the second and would therefore not constrain the first at all.
+	//
+	// Batch-2 setting candidates rather than batch-1 (decision 20c scoped
+	// batch 1 to auth-service's own values), so they stay environment
+	// variables shaped exactly like the two buckets above.
+	defaultAuthRateLimitRequestsPerSecond = 1
+	defaultAuthRateLimitBurst             = 10
+
+	// The per-email failure counter's two numbers (plan §5.5). They are Go
+	// constants with no environment variable, because unlike a rate limit
+	// they are not something an operator tunes under load - a higher ceiling
+	// here does not relieve traffic, it only widens the window for a
+	// distributed guess against one account.
+	//
+	// Deliberately looser than auth-service's own account lockout (5 attempts
+	// / 15 minutes), which stays the last line: this counter exists to catch
+	// the attempt spread across many addresses that the per-IP bucket cannot
+	// see, so it must not fire before the lockout it backstops.
+	identityFailureLimit  = 10
+	identityFailureWindow = 15 * time.Minute
 	// Matches auth-service's own AUTH_TOKEN_VERSION_CACHE_TTL default - the
 	// two writers (auth-service on bump, the gateway on cache-miss fallback)
 	// don't need to agree exactly, but starting from the same number is the
 	// sane default until real usage says otherwise.
-	defaultAdminTokenVersionCacheTTL = 15 * 24 * time.Hour
+	// The revocation cache's TTL. Named for the admin surface in its
+	// environment variable and no longer only about it: from S8-IDENTITY-002
+	// the product edge checks the same cached tokenVersion on every request,
+	// which is the fact that makes a 7-day product access token revocable at
+	// all (plan section 4.4).
+	defaultTokenVersionCacheTTL = 15 * 24 * time.Hour
 	// Wake defaults. "none" mirrors AI_PROVIDER's "mock": the shipped
 	// configuration reaches nobody's infrastructure until an operator opts
 	// in, and it is also the permanently correct value on an always-on host.
@@ -109,14 +139,25 @@ type Config struct {
 	AdminAllowedOrigin              string
 	AdminRateLimitRequestsPerSecond float64
 	AdminRateLimitBurst             int
-	// AdminAccessPublicKeys holds every currently-accepted Ed25519 public key
+	AuthRateLimitRequestsPerSecond  float64
+	AuthRateLimitBurst              int
+	// AccessTokenPublicKeys holds every currently-accepted Ed25519 public key.
+	//
+	// Its environment variable is still ADMIN_ACCESS_PUBLIC_KEYS while the Go
+	// field deliberately no longer says "admin": both edges verify with the
+	// same key, because auth-service mints both audiences with one signing key
+	// and the audience is a claim inside the token rather than a second key.
+	// The variable keeps its name because it is a deployed secret in a Render
+	// environment group and renaming it would be a coordinated rotation to buy
+	// nothing; the field is renamed because a reader of the product edge would
+	// otherwise believe it verifies with an admin-only key.
 	// for verifying the admin access token locally (RequireAdminAccessToken) -
 	// never the private key, which only auth-service ever holds. More than
 	// one during a rotation drill: add the new key before removing the old
 	// one so no session is force-logged-out - see
 	// agent-system/plans/services/auth-and-admin-plan.md#tokens.
-	AdminAccessPublicKeys     []ed25519.PublicKey
-	AdminTokenVersionCacheTTL time.Duration
+	AccessTokenPublicKeys     []ed25519.PublicKey
+	TokenVersionCacheTTL time.Duration
 	// ServiceWakePlatform names the hosting mechanism used to start a
 	// sleeping instance - see internal/wake. "none" disables waking
 	// entirely, which is both the default and the correct setting on any
@@ -176,7 +217,9 @@ func Load() (Config, error) {
 		AdminAllowedOrigin:              get("ADMIN_ALLOWED_ORIGIN", ""),
 		AdminRateLimitRequestsPerSecond: getFloat("ADMIN_RATE_LIMIT_REQUESTS_PER_SECOND", defaultAdminRateLimitRequestsPerSecond),
 		AdminRateLimitBurst:             getInt("ADMIN_RATE_LIMIT_BURST", defaultAdminRateLimitBurst),
-		AdminTokenVersionCacheTTL:       getDuration("ADMIN_TOKEN_VERSION_CACHE_TTL", defaultAdminTokenVersionCacheTTL),
+		AuthRateLimitRequestsPerSecond:  getFloat("AUTH_RATE_LIMIT_REQUESTS_PER_SECOND", defaultAuthRateLimitRequestsPerSecond),
+		AuthRateLimitBurst:              getInt("AUTH_RATE_LIMIT_BURST", defaultAuthRateLimitBurst),
+		TokenVersionCacheTTL:       getDuration("ADMIN_TOKEN_VERSION_CACHE_TTL", defaultTokenVersionCacheTTL),
 
 		ServiceWakePlatform:       get("SERVICE_WAKE_PLATFORM", defaultServiceWakePlatform),
 		ServiceWakeTimeout:        getDuration("SERVICE_WAKE_TIMEOUT", defaultServiceWakeTimeout),
@@ -186,11 +229,11 @@ func Load() (Config, error) {
 		TelemetryEnabled:       getBool("TELEMETRY_ENABLED", false),
 		TelemetryFlushInterval: getDuration("TELEMETRY_FLUSH_INTERVAL", defaultTelemetryFlushInterval),
 	}
-	adminAccessPublicKeys, err := decodeEd25519PublicKeys(get("ADMIN_ACCESS_PUBLIC_KEYS", ""))
+	accessTokenPublicKeys, err := decodeEd25519PublicKeys(get("ADMIN_ACCESS_PUBLIC_KEYS", ""))
 	if err != nil {
 		return Config{}, err
 	}
-	loadedConfig.AdminAccessPublicKeys = adminAccessPublicKeys
+	loadedConfig.AccessTokenPublicKeys = accessTokenPublicKeys
 	serviceWakeTargets, err := readServiceWakeTargets()
 	if err != nil {
 		return Config{}, err
@@ -255,6 +298,16 @@ func (loadedConfig Config) Validate() error {
 	if strings.TrimSpace(loadedConfig.NATSURL) == "" || strings.TrimSpace(loadedConfig.RedisURL) == "" {
 		return errors.New("NATS_URL and REDIS_URL are required")
 	}
+	if loadedConfig.AuthRateLimitRequestsPerSecond <= 0 || loadedConfig.AuthRateLimitBurst <= 0 {
+		return errors.New("auth rate limit parameters must be positive")
+	}
+	// The identity bucket must stay the tighter of the two, or the route group
+	// it exists to constrain is policed more loosely than the one it was
+	// separated from - which is worse than having no separate bucket, because
+	// it reads as protection while removing it.
+	if loadedConfig.AuthRateLimitRequestsPerSecond > loadedConfig.RateLimitRequestsPerSecond {
+		return errors.New("AUTH_RATE_LIMIT_REQUESTS_PER_SECOND must not exceed RATE_LIMIT_REQUESTS_PER_SECOND")
+	}
 	if loadedConfig.MaximumRequestBodyBytes <= 0 || loadedConfig.RateLimitRequestsPerSecond <= 0 || loadedConfig.RateLimitBurst <= 0 {
 		return errors.New("request body and rate limit values must be positive")
 	}
@@ -277,6 +330,21 @@ func (loadedConfig Config) Validate() error {
 			}
 		}
 	}
+	// Required unconditionally, unlike everything else in the admin block
+	// below, because /api/auth and /api/me are NOT gated by
+	// ADMIN_ROUTES_ENABLED: from Phase A the gateway always carries a
+	// token-verifying edge. Without a key, RequireProductAccessToken rejects
+	// every valid session with a 401 and nothing says why - a silent failure
+	// this turns into a loud one at boot.
+	//
+	// Not a new burden on local development: .env.example ships
+	// ADMIN_ROUTES_ENABLED=true, so the admin block below already demanded it.
+	if len(loadedConfig.AccessTokenPublicKeys) == 0 {
+		return errors.New("ADMIN_ACCESS_PUBLIC_KEYS is required: the gateway verifies every product and admin access token locally with it")
+	}
+	if loadedConfig.TokenVersionCacheTTL <= 0 {
+		return errors.New("ADMIN_TOKEN_VERSION_CACHE_TTL must be positive")
+	}
 	if loadedConfig.AdminRoutesEnabled {
 		// No wildcard is acceptable here at any point, dev included — the
 		// admin origin check is unconditional, unlike the product group's
@@ -287,12 +355,6 @@ func (loadedConfig Config) Validate() error {
 		}
 		if loadedConfig.AdminRateLimitRequestsPerSecond <= 0 || loadedConfig.AdminRateLimitBurst <= 0 {
 			return errors.New("admin rate limit values must be positive")
-		}
-		if len(loadedConfig.AdminAccessPublicKeys) == 0 {
-			return errors.New("ADMIN_ACCESS_PUBLIC_KEYS is required when ADMIN_ROUTES_ENABLED is true")
-		}
-		if loadedConfig.AdminTokenVersionCacheTTL <= 0 {
-			return errors.New("ADMIN_TOKEN_VERSION_CACHE_TTL must be positive")
 		}
 	}
 	// Only meaningful once a platform is selected: with waking off these
@@ -329,6 +391,19 @@ func (loadedConfig Config) serviceWakeConfigured() bool {
 
 func (loadedConfig Config) Address() string {
 	return loadedConfig.APIHost + ":" + loadedConfig.APIPort
+}
+
+// IdentityFailureLimit and IdentityFailureWindow expose the per-email
+// throttle's two constants as methods rather than fields, which is the whole
+// point: a field would be assignable, and something assignable eventually
+// gets an environment variable attached to it. See their declarations for why
+// these two in particular are not operator dials.
+func (loadedConfig Config) IdentityFailureLimit() int {
+	return identityFailureLimit
+}
+
+func (loadedConfig Config) IdentityFailureWindow() time.Duration {
+	return identityFailureWindow
 }
 
 // IsProduction reports whether cookies and other environment-sensitive

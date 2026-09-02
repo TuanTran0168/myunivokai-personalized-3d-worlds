@@ -46,6 +46,35 @@ func TestValidationRequiresPositiveOperationalLimits(t *testing.T) {
 	}
 }
 
+// The identity bucket is required whether or not the admin surface is on,
+// and must stay tighter than the product one - see the check's own comment
+// for why a looser identity bucket is worse than no separate bucket at all.
+func TestValidationRequiresATighterIdentityRateLimitThanTheProductOne(t *testing.T) {
+	serviceConfig := validTestConfig()
+	serviceConfig.AuthRateLimitRequestsPerSecond = 0
+	if err := serviceConfig.Validate(); err == nil {
+		t.Fatal("expected a zero auth rate limit to be rejected")
+	}
+
+	serviceConfig = validTestConfig()
+	serviceConfig.AuthRateLimitRequestsPerSecond = serviceConfig.RateLimitRequestsPerSecond + 1
+	if err := serviceConfig.Validate(); err == nil {
+		t.Fatal("expected an identity bucket looser than the product bucket to be rejected")
+	}
+}
+
+// The verification key is the one thing the product edge cannot do without,
+// and ADMIN_ROUTES_ENABLED does not gate /api/auth or /api/me. Missing it used
+// to be a 401 on every valid session with nothing saying why.
+func TestValidationRequiresTheAccessTokenPublicKeyEvenWithAdminRoutesOff(t *testing.T) {
+	serviceConfig := validTestConfig()
+	serviceConfig.AdminRoutesEnabled = false
+	serviceConfig.AccessTokenPublicKeys = nil
+	if err := serviceConfig.Validate(); err == nil {
+		t.Fatal("expected a missing access-token public key to be rejected even with the admin routes disabled")
+	}
+}
+
 func TestValidationSkipsAdminChecksWhenDisabled(t *testing.T) {
 	serviceConfig := validTestConfig()
 	serviceConfig.AdminRoutesEnabled = false
@@ -108,23 +137,25 @@ func TestTelemetryFlushIntervalIsOnlyRequiredOnceTelemetryIsOn(t *testing.T) {
 
 func validTestConfig() Config {
 	return Config{
-		AppEnvironment:             "test",
-		AllowedOrigins:             []string{"http://localhost:41300"},
-		MaximumRequestBodyBytes:    64 * 1024,
-		RateLimitRequestsPerSecond: 10,
-		RateLimitBurst:             20,
-		NATSURL:                    "nats://localhost:4222",
-		NATSPublishTimeout:         time.Second,
-		NATSRequestTimeout:         time.Second,
-		NATSConnectTimeout:         time.Second,
-		NATSReconnectWait:          time.Second,
-		RedisURL:                   "redis://localhost:6379/0",
-		RedisKeyPrefix:             "test",
-		JobCacheTimeToLive:         time.Minute,
-		WorldCacheTimeToLive:       time.Minute,
-		ShareCacheTimeToLive:       time.Minute,
-		ShutdownTimeout:            time.Second,
-		AdminAccessPublicKeys:      []ed25519.PublicKey{testAdminPublicKey},
-		AdminTokenVersionCacheTTL:  time.Minute,
+		AppEnvironment:                 "test",
+		AllowedOrigins:                 []string{"http://localhost:41300"},
+		MaximumRequestBodyBytes:        64 * 1024,
+		RateLimitRequestsPerSecond:     10,
+		RateLimitBurst:                 20,
+		AuthRateLimitRequestsPerSecond: 1,
+		AuthRateLimitBurst:             10,
+		NATSURL:                        "nats://localhost:4222",
+		NATSPublishTimeout:             time.Second,
+		NATSRequestTimeout:             time.Second,
+		NATSConnectTimeout:             time.Second,
+		NATSReconnectWait:              time.Second,
+		RedisURL:                       "redis://localhost:6379/0",
+		RedisKeyPrefix:                 "test",
+		JobCacheTimeToLive:             time.Minute,
+		WorldCacheTimeToLive:           time.Minute,
+		ShareCacheTimeToLive:           time.Minute,
+		ShutdownTimeout:                time.Second,
+		AccessTokenPublicKeys:          []ed25519.PublicKey{testAdminPublicKey},
+		TokenVersionCacheTTL:           time.Minute,
 	}
 }

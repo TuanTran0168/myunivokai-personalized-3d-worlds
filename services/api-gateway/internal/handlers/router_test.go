@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -68,12 +69,21 @@ type fakeEdgeStore struct {
 
 	wakeStats      map[string]edge.ServiceWakeStats
 	wakeStatsError error
+
+	// identityFailures is the per-email sign-in tally. Keyed by the hashed
+	// identity key the handler passes, exactly as Redis is, so a test can
+	// assert on edge.IdentityFailureKey(email) without knowing the hash.
+	identityFailures      map[string]int
+	identityFailuresError error
+
+	rateLimitRouteKeys map[string]int
 }
 
 func newFakeEdgeStore() *fakeEdgeStore {
 	return &fakeEdgeStore{
 		values: make(map[string][]byte), timeToLives: make(map[string]time.Duration),
 		deleteCounts: make(map[string]int), tokenVersions: make(map[string]int),
+		identityFailures: make(map[string]int),
 	}
 }
 
@@ -94,8 +104,47 @@ func (store *fakeEdgeStore) SetTokenVersion(_ context.Context, accountID string,
 	return nil
 }
 
-func (store *fakeEdgeStore) Allow(context.Context, string, string, float64, int) (bool, time.Duration, error) {
+// Allow always allows, and records which bucket was asked. The route key is
+// the whole of the guarantee that two route groups are policed independently
+// (middleware.RateLimit's own comment says why), so a test asserting the
+// identity group has its own bucket has to be able to see it.
+func (store *fakeEdgeStore) Allow(_ context.Context, routeKey, _ string, _ float64, _ int) (bool, time.Duration, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.rateLimitRouteKeys == nil {
+		store.rateLimitRouteKeys = make(map[string]int)
+	}
+	store.rateLimitRouteKeys[routeKey]++
 	return true, 0, nil
+}
+
+func (store *fakeEdgeStore) RecordIdentityFailure(_ context.Context, identityKey string, _ time.Duration) (int, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.identityFailuresError != nil {
+		return 0, store.identityFailuresError
+	}
+	store.identityFailures[identityKey]++
+	return store.identityFailures[identityKey], nil
+}
+
+func (store *fakeEdgeStore) IdentityFailureCount(_ context.Context, identityKey string) (int, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.identityFailuresError != nil {
+		return 0, store.identityFailuresError
+	}
+	return store.identityFailures[identityKey], nil
+}
+
+func (store *fakeEdgeStore) ClearIdentityFailures(_ context.Context, identityKey string) error {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.identityFailuresError != nil {
+		return store.identityFailuresError
+	}
+	delete(store.identityFailures, identityKey)
+	return nil
 }
 
 func (store *fakeEdgeStore) Get(_ context.Context, namespace, identifier string) ([]byte, error) {
@@ -381,8 +430,14 @@ func testGatewayConfig() config.Config {
 	return config.Config{
 		AppEnvironment: "test", AppName: "Gateway Test", AllowedOrigins: []string{"http://localhost:41300"},
 		RateLimitRequestsPerSecond: 1000, RateLimitBurst: 1000, MaximumRequestBodyBytes: 64 * 1024,
+		AuthRateLimitRequestsPerSecond: 1000, AuthRateLimitBurst: 1000,
 		NATSPublishTimeout: time.Second, NATSRequestTimeout: time.Second, JobCacheTimeToLive: time.Minute,
 		WorldCacheTimeToLive: time.Minute, ShareCacheTimeToLive: time.Minute,
+		// The identity edge is not gated by ADMIN_ROUTES_ENABLED, so every
+		// gateway test needs a key it can verify with - unlike Sprint 4, where
+		// only testAdminGatewayConfig did.
+		AccessTokenPublicKeys: []ed25519.PublicKey{productTestPublicKey},
+		TokenVersionCacheTTL:  time.Minute,
 	}
 }
 

@@ -32,6 +32,135 @@ paths:
         "200": { description: NATS and Redis are ready }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { description: A required edge dependency is unavailable }
+  /api/auth/signup:
+    post:
+      summary: Register an end-user account and sign it in
+      operationId: signUpEndUser
+      description: >-
+        Creates an account with the `web` audience and returns a session. The
+        email address is stored UNVERIFIED and no mail is sent, so nothing may
+        key off it — see the identity plan's section 5 and decision 11, and the
+        two costs that decision accepts: there is no password reset until Phase
+        D, and no trust may attach to the address.
+
+        A 409 discloses that an address already holds an account. That is
+        accepted rather than hidden: uniform signup responses require email
+        verification, and every alternative either needs an inbox or turns the
+        endpoint into a password oracle. Login is uniform and stays uniform.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "201":
+          description: The account was created and signed in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/EmailUnavailable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/auth/login:
+    post:
+      summary: Sign in to the product
+      operationId: logInEndUser
+      description: >-
+        Returns the tokens in the response BODY and sets no cookie, which is
+        the identity plan's section 4.1 decision: the web app and the gateway
+        are two different sites, so a session cookie would need SameSite=None
+        and fail silently on Safari and Firefox. The client sends
+        `Authorization: Bearer <accessToken>` by hand, which is also why this
+        design has no CSRF surface at all.
+
+        The response is identical whether the address exists, belongs to a
+        staff account, or the password is wrong.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "200":
+          description: A new session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/AccountUnavailable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/auth/refresh:
+    post:
+      summary: Rotate a product session
+      operationId: refreshEndUserSession
+      description: >-
+        Single use. The presented token is consumed and a whole new pair is
+        returned; presenting a token that was already used revokes its entire
+        rotation family, because that means the previous response was
+        intercepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: A rotated session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/AccountUnavailable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/auth/logout:
+    post:
+      summary: Sign out of the product
+      operationId: logOutEndUser
+      description: >-
+        Revokes the presented token's whole rotation family. The token is taken
+        from the body rather than from a session, so signing out works when the
+        access token has already expired — an ordinary state given a 7-day
+        access token and a 3-month refresh token. An already-invalid token is a
+        no-op: the caller's goal is already true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "204": { description: The session family was revoked }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/me:
+    get:
+      summary: Get the signed-in account
+      operationId: getSignedInAccount
+      description: >-
+        Reads the account named by the token's subject; a caller cannot ask
+        about any other account.
+
+        This route reaches auth-service, which sleeps. A client must not call
+        it on every page load — the account it needs is already in the session
+        response it stored at sign-in — because the identity plan's section 11
+        wake budget assumes a signed-in visitor browsing worlds wakes
+        auth-service not at all.
+      security:
+        - productAccessToken: []
+      responses:
+        "200":
+          description: The signed-in account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductAccount" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /api/jobs/{jobId}:
     get:
       summary: Get an asynchronous generation job
@@ -177,6 +306,22 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
 components:
+  securitySchemes:
+    productAccessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        The Ed25519 access token returned by /api/auth/login, carried in an
+        Authorization header the client sets itself. The gateway verifies the
+        signature locally and checks the account's tokenVersion in Redis on
+        EVERY request, which is what makes a 7-day access token revocable
+        instantly and therefore defensible — see the identity plan's section
+        4.4.
+
+        Tokens minted for the `admin` audience are rejected here, and this
+        token is rejected by every /api/admin route. Both directions, or the
+        separation is not proven.
   parameters:
     Family:
       name: family
@@ -277,6 +422,45 @@ components:
             seed: { type: string }
             config: { type: object }
         publicDNA: { type: object }
+    Credentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password:
+          type: string
+          minLength: 12
+          description: >-
+            At least 12 characters, with no composition rules — current NIST
+            guidance. Rejected on signup if it appears in the Have I Been Pwned
+            corpus, and never rejected for that reason on login.
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    ProductAccount:
+      type: object
+      required: [accountId, email, createdAt]
+      description: >-
+        Deliberately narrower than the admin surface's account model: no roles,
+        no permissions, no super-admin flag and no kind. An end-user account
+        holds none of them, and a client that can read them is one that will
+        eventually decide something with them.
+      properties:
+        accountId: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        createdAt: { type: string, format: date-time }
+    ProductSession:
+      type: object
+      required: [accessToken, accessExpiresAt, refreshToken, refreshExpiresAt, account]
+      properties:
+        accessToken: { type: string }
+        accessExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string }
+        refreshExpiresAt: { type: string, format: date-time }
+        account: { $ref: "#/components/schemas/ProductAccount" }
     ErrorBody:
       type: object
       required: [code, message]
@@ -293,6 +477,46 @@ components:
   responses:
     BadRequest:
       description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthenticated:
+      description: >-
+        No valid session. UNAUTHENTICATED means no usable credential was
+        presented; SESSION_REVOKED means the token verified but the account's
+        tokenVersion has moved past it, so the client must sign in again rather
+        than retry. INVALID_CREDENTIALS and INVALID_REFRESH_TOKEN are the same
+        status from the /api/auth routes.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    AccountUnavailable:
+      description: >-
+        The credential was correct and the account cannot be used:
+        ACCOUNT_DISABLED (a staff member marked it inactive) or ACCOUNT_LOCKED
+        (too many failed attempts, temporary).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    EmailUnavailable:
+      description: >-
+        EMAIL_UNAVAILABLE — that address already holds an account. See
+        /api/auth/signup for why this is disclosed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    RateLimited:
+      description: >-
+        Too many requests. RATE_LIMITED is the per-IP bucket for this route
+        group, which is much tighter than the product group's.
+        TOO_MANY_ATTEMPTS is the per-email sign-in counter, which catches one
+        account being guessed at from many addresses — something a per-IP
+        bucket cannot see.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          required: false
+          schema: { type: integer, minimum: 1 }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
