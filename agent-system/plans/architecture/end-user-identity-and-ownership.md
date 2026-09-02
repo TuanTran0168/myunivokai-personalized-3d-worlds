@@ -605,7 +605,7 @@ this map is the deliverable, because deletion is only as good as it:
 | `auth-service` | `accounts.email`, password hash, `refresh_tokens`, audit rows | Flag the account, revoke every refresh token, bump `tokenVersion` | Delete the account; keep an audit stub with no email |
 | `dna-service` | **`profiles.raw_input`** (the raw personal answers), `dna_versions.profile_dna`, `ai_generation_attempts.request_json/response_json` | Nothing removed. Rows stay, unreachable through any product route | Delete every row for the account's profiles |
 | `universe/nature/ocean` | `worlds.visual_intent`, **`worlds.dna_snapshot`**, `nickname`, `role`, `quote`, variants, shares | Flag the worlds; they leave every list and their shares stop resolving | Delete the worlds, variants and shares |
-| `analytics-service` | admin projections, allow-listed | Must **never** receive `owner_account_id`. Aggregates survive; identifiers do not | Unchanged - it holds no identifier to erase |
+| `analytics-service` | admin projections, allow-listed | **Untouched by design.** Must **never** receive `owner_account_id`; the worlds keep counting in staff statistics | Unchanged - it holds no identifier to erase |
 | `telemetry-service` | route rollups, no PII | Untouched | Untouched |
 
 **Decided 2026-09-02 by the owner: soft delete by flag, and no purge job.**
@@ -615,6 +615,49 @@ Nothing is physically removed, and the deletion is reversible for ever.
 
 What that buys: one column per table, no fan-out of destructive writes, no
 scheduled job, and a mis-click is always recoverable.
+
+### The flag hides the product surface. It is not enforced by the frontend
+
+Two things that sound alike and are not, written out because the second one is
+a data leak:
+
+- **The scope of the flag** is the product surface: the gallery, the world
+  route, the share page, login. Staff analytics is deliberately **outside** that
+  scope (below).
+- **The place the flag is enforced** is the server, never the client. A flagged
+  world is filtered in the family service's own query and in the share
+  resolution, so `GET /api/{family}/worlds?ids=…` and
+  `GET /api/{family}/share/worlds/{slug}` stop returning it **to anyone**,
+  including a caller with the raw UUID and no browser. A frontend that merely
+  hides a card it was handed is not a deletion at all — the data is still on the
+  wire.
+
+One implementation consequence that is easy to miss: **the gateway caches share
+responses in Redis** (`ShareCacheTimeToLive`,
+[`world_handler.go`](../../../services/api-gateway/internal/handlers/world_handler.go)).
+Flagging a world must invalidate that cache entry, or the share keeps resolving
+from cache for up to the TTL after the account was deleted. The same is true of
+the world cache (`WorldCacheTimeToLive`).
+
+### Analytics keeps counting, and gets no new field
+
+**Decided 2026-09-02 by the owner: `analytics-service` is untouched — a deleted
+account's worlds keep appearing in staff statistics exactly as before.** That is
+coherent with what that read model already is: an aggregate over an allow list
+that deliberately holds **no** `owner_account_id`, so it has nothing to
+recognise a deletion by and nothing personal to hide. Totals, timeseries and
+rare-feature rolls stay historically accurate rather than silently shrinking
+whenever somebody deletes an account.
+
+Nothing is added to `contracts.WorldSnapshot` or to the projection for this, so
+the baseline's data-boundary rule is not engaged.
+
+The operational cost of that choice, so it is not a surprise later: **staff will
+see a world in the admin list whose share page returns 404**, with no marker
+explaining why. If that becomes confusing in practice, the fix is one boolean
+(`deleted`) into the snapshot and the projection — a badge in the admin list —
+which changes no aggregate and no chart. It is deliberately **not** in scope
+now.
 
 **What it does not buy, recorded so it is a known position and not a
 discovery:** a flag is not erasure. `profiles.raw_input` and
@@ -807,7 +850,8 @@ above are guesses at what was on it.
 | 1 | **Extend `auth-service` to serve the product too**, rather than build a separate `identity-service` | Keeps every hardened primitive (Argon2id, lockout, rotation, reuse detection, audit, revocation). Staff and end users share one `accounts` table, so the separation must be **structural**: `kind`, the audience claim, `end_user` holds no permission row, and a test in both directions (§12) |
 | 2 | **The product session is a bearer token in the `Authorization` header**, not a cookie. Login is an ordinary API call to the gateway and the browser keeps calling the gateway directly | No domain to buy, no BFF, no CORS change, and **no CSRF surface at all**. The cost is that an XSS can steal the refresh token from `localStorage`, which makes the web app's missing CSP a security control rather than hygiene (§4.2) |
 | 3 | **`auth-service` stays on the free tier; the UI tells the truth about a cold start** | The first login after a quiet period can take 20-60 s. Turns into a frontend work item that is not optional (§11). Buying a warm instance later changes nothing else |
-| 4 | **Account deletion is a soft flag with no purge job** | One column per table, reversible for ever, no destructive fan-out. Personal data stays in the database after a person asks to be gone, so erasure is discharged by a **manual runbook** instead of a scheduled job (§10) |
+| 4 | **Account deletion is a soft flag with no purge job**, scoped to the product surface and **enforced server-side** | One column per table, reversible for ever, no destructive fan-out. Personal data stays in the database after a person asks to be gone, so erasure is discharged by a **manual runbook** instead of a scheduled job (§10) |
+| 4b | **`analytics-service` is untouched** — deleted worlds keep counting in staff statistics | Historically accurate aggregates, no new projection field, and the data-boundary rule is not engaged. Costs staff a world in the admin list whose share 404s with no marker saying why (§10) |
 | 5 | **Anonymous creation stays** | The whole of §7 depends on it. It is also the product's first impression, and removing it was never on the table |
 | 6 | **One profile per create, as today** | Recommended and taken: it keeps the claim a single idempotent column flip. "One profile per account, with an evolving DNA" becomes its own plan in Phase E, because it turns the claim into a *merge* of N anonymous profiles - exactly the complexity that should not share a sprint with the first login this product has ever had |
 
