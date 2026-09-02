@@ -526,17 +526,34 @@ When they create another world
 Then the world is still created, from the **mock** provider, and is real,
 deterministic, family-appropriate and theirs
 And no request is refused and no `429` is returned on the create path
-And the response states which tier produced the world
+And the response states **why** this world was produced the way it was, as a
+reason code rather than as a provider name
 And the counter is keyed on the anonymous id or the account id, never on the
 address, and expires with the UTC day so nothing has to clean it up
 And a client cannot ask for the real provider, because the tier flag is set by
 the gateway and protected by the same ACL as the owner id.
 
+Scenario: The reason distinguishes the three routes to a mock-produced world
+
+Given `AI_PROVIDER` is configured as `mock`, which is what production runs
+today
+When a caller passes the daily limit and creates another world
+Then the reason is `mock_configured`, **not** `quota_exhausted`, because no AI
+generation was withheld — there was no AI tier to withhold it from
+And when `AI_PROVIDER` is a real provider and the caller is over the limit,
+the reason is `quota_exhausted`
+And when a real primary provider is tried and fails so the fallback runs, the
+reason is `ai_failed_fallback` and the quota is not implicated
+And the counter keeps counting in every one of those cases, so the ceiling is
+already real on the day `AI_PROVIDER` is flipped rather than starting from zero
+at that moment.
+
 Source evidence:
-- agent-system/plans/architecture/end-user-identity-and-ownership.md — §9, §9.2, §16 decision 8
-- services/dna-service/internal/aifactory/factory.go — a primary and a fallback provider are already built side by side
+- agent-system/plans/architecture/end-user-identity-and-ownership.md — §9, §9.1 (the reason code and its precedence), §9.2, §16 decisions 8 and 17b
+- render.yaml — `AI_PROVIDER: mock` in production, which is why a provider name cannot be the signal
+- services/dna-service/internal/config/config.go — both providers default to `mock`; `defaultAIRepairAttempts = 2`, which is why one create can bill more than one call
+- services/dna-service/internal/aifactory/factory.go — the fallback is only constructed when it differs from the primary, so today there is no fallback at all
 - services/dna-service/internal/ai/providers/mock_presets.go — the mock already produces usable DNA; it is how the test suite runs
-- services/dna-service/internal/config/config.go — `defaultAIRepairAttempts = 2`, which is why one create can bill more than one call
 
 Tasks:
 - [ ] `feat/be/daily-generation-quota`: increment the Redis counter in the
@@ -544,11 +561,23 @@ Tasks:
       the key prefix as named config values.
 - [ ] Add the tier flag to the generate command and honour it in
       `dna-service` by serving that job from the mock provider.
-- [ ] Return the producing tier in the job/world response.
+- [ ] Return a **reason code** on the job/world response —
+      `ai_generated` / `quota_exhausted` / `mock_configured` /
+      `ai_failed_fallback` — computed in `dna-service`, which is the only place
+      all three facts exist at once. Not a provider name: a provider name makes
+      the frontend guess why, and it cannot.
+- [ ] Implement the precedence explicitly: `mock_configured` **outranks**
+      `quota_exhausted`. Put the reason in a comment, because reversing this
+      is what produces a limit warning on a deployment that has no AI tier.
 - [ ] Add the guardrail test: the 6th anonymous creation of a day is served by
       the mock provider and still yields a valid world.
+- [ ] Add the table-driven reason test covering all four values, including a
+      stubbed failing primary. **Three of the four cannot be observed in
+      production today**, because production runs on mock — this test is the
+      only thing standing between them and the day `AI_PROVIDER` is flipped.
 - [ ] Record the measured per-create cost from `ai_generation_attempts` once
-      real traffic exists, rather than carrying a rate-card estimate forward.
+      the AI tier is actually switched on, rather than carrying a rate-card
+      estimate forward.
 
 ### S8-IDENTITY-013 — Say so, once, when a world came from presets
 
@@ -561,7 +590,7 @@ so that I read it as a limit rather than as a broken product.
 
 Scenario: One toast, and no permanent mark
 
-Given the create response says the world came from the mock tier
+Given the create response's reason code is `quota_exhausted`
 When the world finishes generating
 Then a single toast names the limit and what happened, in English, using the
 app's existing Liquid-Glass toast surface
@@ -571,17 +600,32 @@ And the world itself carries **no** permanent tier badge, so the friend who
 opens the share link — who hit no limit — is shown nothing about it
 And no new toast dependency is added.
 
+Scenario: The toast stays quiet for the two reasons that are not the visitor's
+
+Given the deployment runs `AI_PROVIDER: mock`, as production does today
+When any number of worlds are created, including past the daily limit
+Then **no toast appears at all**, because nothing was withheld and there was
+no AI tier to lose
+And when a real primary provider fails and the fallback produces the world,
+no toast appears either — that is an incident belonging to staff, and showing
+it to the visitor blames them for our outage
+And the frontend decides this from the **reason code only**, never from a
+provider name reaching it.
+
 Source evidence:
-- agent-system/plans/architecture/end-user-identity-and-ownership.md — §9.1, §15 (no silent quality downgrade, and no permanent badge either), §16 decision 17
+- agent-system/plans/architecture/end-user-identity-and-ownership.md — §9.1 (including the failure the owner found), §15 (no silent downgrade, and no announced downgrade that did not happen), §16 decisions 17 and 17b
+- render.yaml — `AI_PROVIDER: mock` in production, which is what makes the quiet case the *current* case rather than a hypothetical
 - apps/myunivokai-web/package.json — `sonner@2.0.7` is already a dependency
 - apps/myunivokai-web/src/app/layout.tsx — the `<Toaster>` is already mounted app-wide and already cleared below the header
 - apps/myunivokai-web/src/app/globals.css — `.lg-toast` is already the Liquid-Glass material, including the inset specular top edge
 
 Tasks:
-- [ ] `feat/fe/mock-tier-toast`: one `toast()` call on the existing stack, with
-      the copy assembled from the limit constants.
-- [ ] Add a test that the toast fires on the mock tier and does not fire on the
-      AI tier.
+- [ ] `feat/fe/mock-tier-toast`: one `toast()` call on the existing stack,
+      fired for `quota_exhausted` and for nothing else, with the copy assembled
+      from the limit constants.
+- [ ] Write next to that check, in the code, that keying on a provider name
+      instead re-merges three different situations at the last possible moment.
+- [ ] Add a test per reason code: one fires, three stay silent.
 
 ---
 

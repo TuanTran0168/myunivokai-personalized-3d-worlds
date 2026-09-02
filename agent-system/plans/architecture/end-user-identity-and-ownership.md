@@ -820,6 +820,68 @@ already drives the motion. So this work item is **one `toast()` call and one
 string**, and the reason to write it down is to stop a future reader
 "introducing a toast library".
 
+#### The failure this design walked into, found by the owner on 2026-09-02
+
+> The owner asked: *"if the deployment is set up as mock, does the toast still
+> show?"* As written above, **yes — and it says something false.**
+
+**Production is on the mock provider right now.**
+[`render.yaml`](../../../render.yaml) sets `AI_PROVIDER: mock` and
+`AI_FALLBACK_PROVIDER: mock`, and `config.go:89-90` defaults both to `mock`
+anyway. So every world in production today comes from the mock provider, and a
+toast keyed on *"this world came from mock"* would fire on the 6th creation to
+announce a limit on an AI tier **that is not switched on**. That is not a
+cosmetic bug: it is the exact failure §15 forbids, arrived at from the opposite
+direction — not a silent downgrade, but a **loudly announced downgrade that
+never happened**.
+
+There are **three** independent routes to a mock-produced world, and the
+version of §9.1 above conflated them:
+
+| Route | Was an AI generation lost? | Whose fact is it? |
+| --- | --- | --- |
+| The caller passed the daily limit | **Yes** | the gateway — it set the flag |
+| `AI_PROVIDER` is configured as `mock` | **No.** There was never an AI tier | `dna-service`'s own config |
+| The primary provider was tried and failed, so the fallback ran | **No.** That is an incident | `dna-service` at runtime |
+
+Only the first one is the visitor's business. The second is a deployment state
+the visitor cannot act on and never lost anything to. The third is an
+**operational** fact — it belongs in `ai_generation_attempts` and in staff
+telemetry, where it already goes, and putting it in a toast would blame the
+visitor for our provider being down.
+
+**The fix: the response carries a reason, not a provider name.** A provider
+name forces the frontend to guess *why*, and it has no way to know. The reason
+is computed in `dna-service`, because that is the only place all three facts
+exist at once — the gateway's quota flag arrived on the command, the configured
+primary is its own config, and the fallback is its own runtime outcome.
+
+```txt
+generationTier.reason ∈ {
+  ai_generated,          → no toast
+  quota_exhausted,       → TOAST. the only value that produces one
+  mock_configured,       → no toast. there is no AI tier to have lost
+  ai_failed_fallback     → no toast. an incident, surfaced to staff
+}
+```
+
+**Precedence, written down because two implementers would order it
+differently:** `mock_configured` **beats** `quota_exhausted`. If the primary is
+mock and the caller is also over the limit, the reason is `mock_configured` and
+there is no toast — because nothing was withheld. Ordering it the other way
+reintroduces exactly the false message the owner caught.
+
+Two consequences worth stating:
+
+- **The frontend must never key the toast on a provider name**, even one that
+  reaches it. Keying on the reason is what makes the three routes stay
+  distinguishable, and a `provider == "mock"` check in the web app would
+  re-merge them at the last possible moment. Name this in the code.
+- **The counter keeps counting regardless.** It is correct to count creations
+  even while the AI tier is off: the count is what makes the ceiling real the
+  day `AI_PROVIDER` is flipped, and a counter that only starts on the flip
+  starts from zero at exactly the wrong moment.
+
 **The copy is English**, like every other string in the app (`familyOptions`,
 `"Share link ready."`). Two candidates, and the second is preferred because it
 names the limit rather than the machinery:
@@ -858,10 +920,23 @@ card that changes without telling us.
 
 What that makes the quota worth: **before it, the ceiling is unbounded.** A
 script that respects nothing but the per-IP bucket can run all day, and every
-request is a paid generation. After it, the worst case is
+request would be a paid generation. After it, the worst case is
 `daily_visitors × 5` plus `accounts × 25`, and that is a number a one-person
 team can look at and decide about. The quota is not a fairness feature — it is
 the difference between a bill with a ceiling and a bill without one.
+
+**But be precise about the tense, because the honest version is stronger.**
+Today's AI spend is **zero**: production runs `AI_PROVIDER: mock`
+([`render.yaml`](../../../render.yaml)), so nothing is currently being billed
+and no bill is currently running away. What is unbounded is not today's
+spend — it is **the first day `AI_PROVIDER` is flipped to `gemini`**, which
+with no quota in place is a switch with no ceiling behind it.
+
+So the quota is a **precondition for turning the AI on**, not a remedy for a
+bill already bleeding. That is an argument for building it *now*, while it
+costs nothing to get wrong, rather than after the flip — and it is a reason the
+guardrail test in §12 matters more than usual, because until the flip there is
+no production signal that the quota works at all.
 
 ---
 
@@ -1029,6 +1104,15 @@ repo already uses:
 - **The quota tier** — the 6th anonymous creation of a day is served by the
   mock provider and still returns a world; the 26th for an account likewise; and
   a client cannot request the AI tier by sending the flag itself.
+- **The reason code, all four values, table-driven** (§9.1). This is the
+  guardrail that would have caught the mistake the owner caught by reading:
+  with `AI_PROVIDER=mock` the 6th creation returns `mock_configured` and **not**
+  `quota_exhausted`; with a stubbed failing primary it returns
+  `ai_failed_fallback`; and the frontend test asserts the toast appears for
+  exactly one of the four values. Worth stating why this test earns its place:
+  three of the four cases **cannot be observed in production today**, because
+  production runs `AI_PROVIDER: mock`, so the test is the only thing standing
+  between them and the day `AI_PROVIDER` is flipped.
 - **Playwright** — signup, login, create-while-anonymous, claim, and "my worlds"
   on a second browser context.
 
@@ -1106,10 +1190,14 @@ present, describable loss.
    portrait you cannot find again is a demo. This is the one that costs
    retention, and it costs it silently: nobody files a complaint about a world
    they can no longer prove existed.
-2. **The AI bill has no ceiling.** §9.2. There is no per-caller quota anywhere
-   in the platform and every create is a paid generation. The only present
-   control is a per-IP token bucket, which is a politeness mechanism, not a
-   budget.
+2. **There is no ceiling behind the switch that turns the AI on.** Stated
+   carefully, because the careless version is wrong: today's AI spend is
+   **zero** — production runs `AI_PROVIDER: mock`. The loss is not a bill
+   running now, it is that **`AI_PROVIDER: gemini` cannot safely be typed**
+   while the only per-caller control in the platform is a per-IP token bucket,
+   which is a politeness mechanism and not a budget. The product's central
+   feature is therefore switched off, and the quota is what allows it to be
+   switched on. See §9.2.
 3. **Nothing can be sold, and nothing can be personalised further.** Both
    depend on a durable identity: quotas and tiers (§9), an evolving DNA (§14.5),
    a triptych of one person across three families. None of them are blocked on
@@ -1168,7 +1256,7 @@ later, and the sequence matters:
 
 | | Before this plan | After Phases A-C |
 | --- | --- | --- |
-| AI spend ceiling | unbounded (§9.2) | `visitors × 5 + accounts × 25` creates/day |
+| AI spend ceiling | none — so the AI stays off, and spend is zero by *avoidance* (§9.2) | `visitors × 5 + accounts × 25` creates/day, which is what makes `AI_PROVIDER: gemini` typeable |
 | New paid infrastructure | — | **none.** `auth-service`, its Neon database, Redis and the gateway all already exist and are already deployed; this plan adds no service, no database and no third-party account (§3.1 killed the one service that would have) |
 | Ongoing cost added | — | one more free-tier instance being woken more often, and the cold-start UI that makes that honest (§11) |
 | Support surface added | — | forgotten passwords, answered by hand until Phase D (decision 11) |
@@ -1222,11 +1310,19 @@ above are guesses at what was on it.
 - **No `end_user` account holding a permission row**, and no `web` token
   accepted by the admin edge — in both directions, with tests.
 - **No `library-service`** until the trigger in §3.1 actually fires.
-- **No silent quality downgrade.** A world produced on the mock tier says so —
-  **once, in a toast, to the person who hit the limit** (§9.1). The quota is
-  allowed to cost the visitor an AI call; it is not allowed to cost them the
-  truth. Equally: **no permanent tier badge** on the world itself, because the
-  friend who opens the share link hit no limit and is owed no explanation.
+- **No silent quality downgrade** — and **no announced downgrade that did not
+  happen**, which is the same rule read from the other side. A world withheld
+  from the AI tier says so **once, in a toast, to the person who hit the
+  limit** (§9.1). The quota is allowed to cost the visitor an AI call; it is
+  not allowed to cost them the truth. Three things follow, and the last two
+  were found by the owner asking what happens on a mock deployment:
+  - **no permanent tier badge** on the world itself — the friend who opens the
+    share link hit no limit and is owed no explanation;
+  - **no toast when the primary provider is configured as `mock`**, because
+    nothing was withheld and there was no AI tier to lose;
+  - **no toast when the primary failed and the fallback ran.** That is an
+    incident, it belongs to staff, and showing it to the visitor blames them
+    for our outage.
 - **No world delete that skips the Redis caches** (§10), and no filtering that
   lives in the frontend.
 - **No trust attached to an unverified email address** (§5) — including, and
@@ -1275,7 +1371,8 @@ argument is indistinguishable from a guess.
 | --- | --- | --- |
 | 15 | **The name is `myunivokai-personalization`** — the owner's own word, in full (§17) | Closes open item 1. Two costs accepted with it, and §17 now discharges both in writing: the spelling is pinned to **US `-ization`**, and 26 characters land in every path, CI filter and Dockerfile |
 | 16 | **No backfill of existing worlds. `NULL` is the answer** — confirmed by the owner | Already how the schema was designed (§6.2), so this is a confirmation rather than a change: every pre-plan world is anonymous and unclaimable, for ever, and that is correct — nobody can prove they made it |
-| 17 | *(delegated)* **The mock tier shows one toast and no permanent marker**, using the `sonner` + `.lg-toast` stack the app already ships (§9.1) | Closes open item 2. The owner allowed silence; the toast was chosen because the mock tier is *visibly* deterministic, so silence reads as a broken product rather than as a limit. **Zero new dependencies** — the Liquid-Glass toast already exists and is already mounted |
+| 17 | *(delegated)* **The mock tier shows one toast and no permanent marker**, using the `sonner` + `.lg-toast` stack the app already ships (§9.1) | Closes open item 2. The owner allowed silence; the toast was chosen because the mock tier is *visibly* deterministic, so silence reads as a broken product rather than as a limit. **Zero new dependencies** — the Liquid-Glass toast already exists and is already mounted. **Amended the same day, see decision 17b — as first written this decision was wrong** |
+| 17b | **The toast keys on a reason code, never on the producing provider**, and `mock_configured` outranks `quota_exhausted` (§9.1) | The owner asked what happens when the deployment is *already* on mock, and the answer was that the toast fires and lies: production runs `AI_PROVIDER: mock` today, so a provider-keyed toast announces a limit on an AI tier that is switched off. Three routes lead to a mock-produced world and only one of them is the visitor's business. Costs one enum on the job response; buys a field that also tells staff "the primary is down" apart from "the primary is off", which today is only visible by reading `ai_generation_attempts` |
 | 18 | *(delegated)* **No passkeys in this plan at all.** §5.4 becomes a Phase E candidate, not a phase | Closes open item 3. Decision 12 put email and OAuth at the end; a credential type that lands *after* the end is not a plan item, it is a wish. Nothing in §5 forecloses it — the credential model stays additive |
 | 19 | *(delegated)* **§14.5's triage stands as the baseline** | Closes open item 4. The owner's list never arrived across four rounds; treating the triage as provisional for ever would block the sprint. Any idea added later is triaged on the same terms, which is a normal backlog change, not a plan revision |
 

@@ -645,13 +645,18 @@ And a `web` token is rejected by the admin edge and an `admin` token by the
 product edge, both proven by test
 And `owner_account_id` never reaches `myunivokai_analytics`.
 
-Scenario: The bill gains a ceiling without the visitor losing a world
+Scenario: The spend gains a ceiling without the visitor losing a world
 
-Given no per-caller quota exists anywhere in the platform today
-When a caller passes the daily AI limit
+Given no per-caller quota exists anywhere in the platform today, which is why
+`AI_PROVIDER` is still `mock` in production
+When a caller passes the daily AI limit on a deployment where the AI tier is
+actually on
 Then the world is still created, from the mock provider, and the visitor is
 told once
-And no create request is refused.
+And no create request is refused
+And on a deployment still configured as `mock`, the visitor is told **nothing**
+— the reason code is `mock_configured`, not `quota_exhausted`, because no AI
+generation was withheld.
 
 Epic exit:
 

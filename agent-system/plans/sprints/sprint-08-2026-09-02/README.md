@@ -13,8 +13,10 @@ hold an account, a world can have an owner, an owner can delete one, the
 anonymous worlds someone already made can be claimed into their new account,
 and the gallery survives a cleared browser — which it does not today.
 
-The AI bill also gains a ceiling for the first time, because the quota and
-ownership are the same feature seen from two sides.
+The AI spend also gains a ceiling for the first time, because the quota and
+ownership are the same feature seen from two sides — and that ceiling is what
+makes it safe to switch the AI provider on at all, which production has never
+done.
 
 Backlog epic:
 [EPIC-S8-IDENTITY-001](../../backlog/engineering-backlog.md#epic-s8-identity-001--end-user-identity-and-world-ownership)
@@ -38,8 +40,12 @@ Three losses that exist right now, in the order they cost us
    ([`savedWorlds.ts:3`](../../../../apps/myunivokai-web/src/lib/savedWorlds.ts)),
    so a private window or a new phone destroys a visitor's collection while the
    rows sit intact in Postgres.
-2. **The AI bill has no ceiling.** No per-caller quota exists anywhere in the
-   platform, and every create is a paid generation.
+2. **There is no ceiling behind the switch that turns the AI on.** Production
+   runs `AI_PROVIDER: mock` ([`render.yaml`](../../../../render.yaml)), so
+   today's AI spend is zero — the loss is not a bill running now, it is that
+   `AI_PROVIDER: gemini` **cannot safely be typed** while the only per-caller
+   control in the platform is a per-IP token bucket. The product's central
+   feature is switched off, and the quota is what allows it to be switched on.
 3. **Nothing can be sold and nothing can be personalised further**, because
    both need a durable identity to attach to.
 
@@ -80,7 +86,10 @@ sprint adds **no service, no database and no third-party account** — the plan'
 - The anonymous claim: gateway → `dna-service` → only the families that
   visitor actually used.
 - The daily quota counter, and the **degrade-to-mock** path rather than a
-  `429`, plus the one toast that says so.
+  `429`, plus the one toast that says so — driven by a **reason code**, never
+  by a provider name, because production already runs on the mock provider and
+  a provider-keyed message would announce a limit on an AI tier that is
+  switched off.
 
 **Phase C — the gallery is real.**
 
@@ -114,8 +123,13 @@ every path in CI and none of the logic.
       share slug **through the gateway**, verified by a test that goes through
       the gateway rather than the service.
 - [ ] A replayed claim, and a second device's claim, each update zero rows.
-- [ ] The 6th anonymous creation of a day is served by the mock provider, still
-      produces a real world, and says so once in a toast.
+- [ ] The 6th anonymous creation of a day is served by the mock provider and
+      still produces a real world.
+- [ ] **On a deployment configured with `AI_PROVIDER: mock` — which is what
+      production runs today — no quota toast appears at all**, and the reason
+      code is `mock_configured` rather than `quota_exhausted`. All four reason
+      values are covered by a table-driven test, because three of them cannot
+      be observed in production until the AI tier is switched on.
 - [ ] `GET /api/me/worlds` returns no DNA, no raw input and no email — the same
       response-model test the share endpoint already has.
 - [ ] No `owner_account_id` reaches `myunivokai_analytics`, checked against the
