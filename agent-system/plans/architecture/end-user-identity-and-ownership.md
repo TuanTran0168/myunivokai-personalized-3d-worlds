@@ -1,7 +1,7 @@
 # End-user identity and world ownership
 
-> **Document status:** Proposed. **No code exists.** Thirteen of its decisions
-> were taken by the owner on 2026-09-02 across two rounds and are recorded in
+> **Document status:** Proposed. **No code exists.** Fourteen of its decisions
+> were taken by the owner on 2026-09-02 across three rounds and are recorded in
 > §16, and several of them cut scope rather than adding it — read §16 before
 > any other section, because it supersedes parts of §3.4, §5, §10 and §11 in
 > place. The plan itself still awaits approval before user stories and a sprint
@@ -258,22 +258,45 @@ today.
 
 ### 4.2 Where the tokens live, and the one risk this accepts
 
+**Decided 2026-09-02: the box is a cookie the client writes itself**, not
+`localStorage` — a first-party cookie on the web app's own origin, set and read
+by its own JavaScript, with the value put into the `Authorization` header by
+hand. The browser's automatic cross-site attachment (§4.5) is the half that is
+dropped, and it is the only half that was ever a problem.
+
 | Token | Stored | Lifetime |
 | --- | --- | --- |
-| Access | `localStorage` under `myunivokai.session` | **7 days** |
-| Refresh | `localStorage`, same record | **3 months**, rotating |
-| `anonymousId` | `localStorage`, beside the existing `myunivokai.savedWorldIds` | 180 days (§7) |
+| Access | cookie `myunivokai_access`, `path=/`, `SameSite=Lax`, `Secure` in production | **7 days** |
+| Refresh | cookie `myunivokai_refresh`, same attributes | **3 months**, rotating |
+| `anonymousId` | cookie `myunivokai_anonymous`, same attributes | 180 days (§7) |
 
-The access token is **persisted rather than held in memory**, which is a
-consequence of its 7-day lifetime rather than a separate decision: the point of
-a long access token is that a page reload needs no network at all, and a
+None of these are `httpOnly` — a cookie written by JavaScript cannot be, by
+definition. So the XSS exposure is **identical** to `localStorage`, and the CSP
+below is doing the same work either way.
+
+Two genuine differences from `localStorage`, one in each direction:
+
+- **In favour of the cookie:** expiry is the browser's job rather than ours (a
+  `max-age` and the value is gone, with no TTL bookkeeping in application
+  code), and because it is first-party to the web app, a Next.js **server**
+  component on that origin could read it if the authenticated area is ever
+  server-rendered. `localStorage` can never be read on the server.
+- **Against:** the cookie is attached to **every** same-origin request,
+  including page navigations and same-origin asset requests that have no use
+  for it — a few hundred wasted bytes per request, and the value lands in the
+  web app's own request logs. Also a 4 KB per-cookie ceiling, which an Ed25519
+  JWT is nowhere near.
+
+The access token is **persisted rather than held in memory**, which follows
+from its 7-day lifetime rather than being a separate decision: the point of a
+long access token is that a page reload needs no network at all, and a
 memory-only token would force a refresh round trip on every reload — waking a
 sleeping `auth-service` to do it.
 
 **The risk being accepted, stated plainly: an XSS in the web app can steal the
-refresh token, and therefore the session.** An httpOnly cookie is the only
-thing that removes that class of attack, and it is unavailable without a
-domain. What bounds the damage is already built:
+refresh token, and therefore the session.** A *server-set* `httpOnly` cookie is
+the only thing that removes that class of attack, and it is unavailable without
+a domain (§4.5). What bounds the damage is already built:
 
 - **Refresh rotation with family-wide reuse detection.** A stolen refresh token
   is single-use; the moment either the thief or the real visitor uses the
@@ -287,8 +310,9 @@ domain. What bounds the damage is already built:
 - **A real CSP on the web app**, which does not exist today: the gateway sets
   `default-src 'none'` for its own JSON responses
   ([`security_headers.go`](../../../services/api-gateway/internal/middleware/security_headers.go)),
-  but `apps/myunivokai-web` sets no headers at all. Once the session lives in
-  `localStorage`, a CSP stops being hygiene and becomes a security control.
+  but the web app sets no headers at all. Once the session lives anywhere
+  JavaScript can read it — a JS cookie and `localStorage` are the same in this
+  respect — a CSP stops being hygiene and becomes a security control.
   **It is a Phase A work item, not a nice-to-have.**
 
 **The switch trigger.** If a custom domain is ever attached, move the session to
@@ -365,12 +389,13 @@ So the blocked thing is never the token's format — it is *who sends the
 credential*. A token the client attaches by hand is never a third-party cookie,
 whatever box it was kept in.
 
-**Which box, then?** A JS-readable cookie and `localStorage` are equally
-readable by an XSS, so the cookie box buys no security — while costing a 4 KB
-limit and being attached to every same-origin request that does not need it.
-`httpOnly` is the only box an XSS cannot reach, and only a server can set an
-`httpOnly` cookie — which is the cross-site problem again. Hence `localStorage`,
-and hence the CSP in §4.2 doing the work the `httpOnly` flag would have done.
+**Which box, then?** Either works, because a JS-readable cookie and
+`localStorage` are equally readable by an XSS; `httpOnly` is the only box an
+XSS cannot reach, and only a *server* can set an `httpOnly` cookie — which is
+the cross-site problem again. **The owner chose the cookie box** (§4.2), which
+buys automatic expiry and a value the web app's own server could read, and
+costs a few bytes on every same-origin request. Either way the CSP is what does
+the work `httpOnly` would have done.
 
 ---
 
@@ -626,7 +651,7 @@ Neon-specific coupling, for no additional guarantee.
 ```
 1. POST /api/{family}/worlds with no session
    → gateway mints anonymousId=<uuid> and RETURNS IT IN THE 202 BODY
-     (the client stores it in localStorage beside myunivokai.savedWorldIds)
+     (the client writes it to its own myunivokai_anonymous cookie)
    → rides the generate command → profiles.anonymous_id → compose → worlds.anonymous_id
    → a subsequent create sends X-Anonymous-Id and reuses the same one
 
@@ -657,9 +682,9 @@ Properties that matter:
 - **No new event type.** `revision` + outbox + `world.changed` are all in
   production.
 - **The `anonymousId` is a bearer credential.** Whoever holds it owns those
-  worlds, and under §4.1 it sits in `localStorage`, so an XSS can take it. That
-  is the same exposure as the refresh token and the same mitigation applies —
-  the CSP. 180 days bounds it.
+  worlds, and under §4.2 it sits in a JS-readable cookie, so an XSS can take
+  it. Same exposure as the refresh token, same mitigation — the CSP. 180 days
+  bounds it, and the cookie's own `max-age` is what enforces that.
 - **It cannot be replaced by the world ids the client already stores.** A world
   id is not a secret: `/worlds/{worldId}` is the URL a visitor sends to a
   friend. "Claim these ids" would let the recipient of a shared link claim
@@ -1047,11 +1072,13 @@ above are guesses at what was on it.
 | 10 | **World deletion is a flag**, product-surface only, **server-enforced**, analytics untouched (§10) | Reversible for ever. Redis share/world cache invalidation is part of the feature — without it the share keeps resolving for up to the TTL, a bug that appears only in production |
 | 11 | **Registration is email + password, unverified. No mail in the first release** (§5) | Two costs: **no "forgot password"** until Phase D (a forgotten password is a manual staff answer), and **no trust may attach to the address** — which the Phase D OAuth linking rule depends on |
 | 12 | **Email and OAuth are last** (Phase D) | Nothing in Phases A–C waits on a mail provider or a DKIM record |
-| 13 | **Rename `myunivokai-web`** (§17) | Recommended `myunivokai-portrait` — the repo's own word, family-neutral. `aud=web` does **not** move; the deployment name should not move until a custom domain does |
+| 13 | **Rename `myunivokai-web`** to a personalisation word (§17) | Recommended form `myunivokai-personal`; `myunivokai-personalization` if the noun is wanted. `aud=web` does **not** move; the deployment name should not move until a custom domain does |
+| 14 | **The session lives in cookies the client writes itself** (§4.2), not `localStorage` | Same XSS exposure, so the CSP still does the real work. Buys automatic expiry and a value the web app's own server could read; costs a few hundred bytes on every same-origin request |
 
 ### Still open
 
-1. **Which rename** (§17), if not `myunivokai-portrait`.
+1. **Which exact rename form** (§17) — `myunivokai-personal` or the full
+   `myunivokai-personalization`.
 2. **Does the create screen tell the visitor when they are on the mock tier,
    and how?** (§9). The mechanism is decided; the wording is not, and a silent
    downgrade is the failure mode.
@@ -1070,20 +1097,23 @@ product is **"My Unique OK AI", not "my universe"**, and no name may privilege
 the universe family over forest or ocean. Principle 8 adds the second
 constraint: a name must not be borrowed from a family's most evocative corner.
 
-**Recommended: `myunivokai-portrait`.** It is the word this repo already uses
-for what the thing makes — the architecture README opens with "Myunivokai as a
-scalable **portrait** platform" and calls the families "**portrait** families" —
-so it needs no new vocabulary. A portrait is of exactly one person, which is
-the personalisation the rename is reaching for, and it is family-neutral by
-construction.
+**Decided 2026-09-02: the name says personalisation, not portrait.**
+Recommended form: **`myunivokai-personal`** — the same root and the same
+meaning as the owner's `personalization`, in the form that survives being typed
+into a `cd`, a Dockerfile path, a CI `paths:` filter and a sentence.
 
 | Candidate | Verdict |
 | --- | --- |
-| `myunivokai-portrait` | **Recommended.** The repo's own word; personal by definition; family-neutral; reads correctly as a folder, a deployment and in prose |
-| `myunivokai-me` | Shortest and most personal, but it **collides with `/api/me`**, the account route group this very plan introduces. "The me app calls the me routes" is a sentence nobody should have to disambiguate |
-| `myunivokai-self` | Personal but clinical, and awkward in prose ("the self app") |
+| `myunivokai-personal` | **Recommended.** Short, family-neutral, and reads correctly in all four places a name has to live: `apps/myunivokai-personal`, the deployment, prose, and a shell |
+| `myunivokai-personalization` | The owner's literal word, and fine if the noun is wanted. Two costs: 26 characters in every path, and **a spelling fork** — `-ization` vs `-isation` is a coin flip that gets mistyped for ever. If this one is chosen, fix it as the US spelling in writing, once |
+| `myunivokai-portrait` | The repo's own existing word ("portrait platform", "portrait families" in the architecture README) — but it names the *output*, and the owner asked for the *act*. Kept in the table because the docs will still say "portrait" everywhere and that is not a contradiction |
+| `myunivokai-me` | Shortest, most personal, and **collides with `/api/me`**, the account route group this very plan introduces. "The me app calls the me routes" is a sentence nobody should have to disambiguate |
+| `myunivokai-persona` | A persona is a mask worn outward; personalisation is about the person. The product means the second |
 | `myunivokai-mirror` | Evocative, and that is the problem: principle 8 exists to stop exactly this kind of name |
-| `myunivokai-persona` | A persona is a mask worn outward; a portrait is a likeness. The product means the second |
+
+Note that "portrait" stays in the *prose* either way — it is the word the
+architecture README and the family docs use for what a world is, and renaming
+the app does not oblige a vocabulary purge.
 
 ### What the rename actually touches, and the one part that must not move
 
@@ -1108,3 +1138,48 @@ construction.
 **Sequencing:** do the rename **before** Phase A or **after** Phase C, never
 during. It touches almost every path in CI and none of the logic, so landing it
 next to a large feature branch buys nothing but merge conflicts.
+
+---
+
+## 18. How much of this is demolition?
+
+Asked directly on 2026-09-02, and it deserves a counted answer rather than a
+reassuring one. **Almost none of it. Nothing in this plan deletes a capability
+or rewrites a working path.**
+
+| Component | What changes | Torn down |
+| --- | --- | --- |
+| `auth-service` | Handlers for the `web` audience, two config values. **Zero migrations** — `accounts.kind` already admits `'end_user'` and `roles`/`permissions` already carry `audience` | Nothing. Staff paths untouched |
+| `api-gateway` | A new `/api/auth` + `/api/me` route group, a `RequireProductAccessToken` middleware mirroring `admin_auth.go`, a third rate-limit bucket, the quota counter | Nothing. Existing product routes untouched |
+| `universe` / `nature` / `ocean` | One additive migration each (2 nullable columns + 2 partial indexes), a `WHERE` clause on **4 query sites per service — 12 in total**, one claim consumer each | Nothing |
+| `dna-service` | One additive migration (2 columns, 1 index), one query subject, one claim handler, one provider-tier branch | Nothing |
+| `contracts` | Additive, nil-safe pointer fields | Nothing — see below |
+| NATS ACL | About 3 lines: gateway +1 publish, dna +3 publish, each family +1 subscribe | Nothing |
+| `myunivokai-admin` | Let the account list show `kind = 'end_user'` rows | Nothing |
+| the web app | **The only real rework**, and it is one file family: the gallery moves from localStorage-only to server-list-plus-cache (`savedWorlds.ts` + the gallery page), plus new auth pages, a session module, and an API-client change | Nothing — `localStorage` stays as the anonymous path and the cache |
+
+**Three specific things that would have been expensive and are not:**
+
+1. **No `schemaVersion` bump and no golden fixtures to re-roll.** `SchemaVersion`
+   belongs to `ProfileDNA` ([`contracts.go:349`](../../../contracts/go/contracts.go)) —
+   the AI *output* schema — not to the command or world envelopes this plan
+   touches. Adding `ownerAccountId` and `anonymousId` to a command does not go
+   near it. (There are only 8 fixture files in `contracts/fixtures` in any
+   case.)
+2. **Every existing world stays valid.** Both new columns are nullable on
+   purpose, and `ADD COLUMN` with no default is metadata-only on PostgreSQL 11+,
+   so the migration is instant against live tables and no backfill exists.
+3. **No account-deletion machinery**, because §10 decided not to build the
+   feature — which retired the `auth-service` outbox, the `account.deleted`
+   event and a handler in four services. That was the single largest block of
+   work in the original plan.
+
+**The real risk is breadth, not rework.** Phase B touches five services at
+once, and that is the thing to be careful about — which is exactly why the
+phases exist and why each service's piece is independently deployable: the
+columns are nullable, the contract fields are nil-safe pointers, so a family
+service deployed before the gateway simply sees `nil` and behaves as it does
+today. There is no flag day.
+
+**The one change with a large file count and no logic in it is the rename**
+(§17). That is why it is sequenced outside the phases.
