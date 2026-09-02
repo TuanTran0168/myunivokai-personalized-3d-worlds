@@ -328,6 +328,7 @@ export function UniverseCanvas({
         scene?.water?.visibilityMetres ?? 30,
         scene?.lighting?.surfaceAzimuthRadians,
         scene?.depth?.seafloorMetres,
+        scene?.lighting?.surfaceElevationRadians,
       )
     : null;
   // How high the ocean's lens may go before it is out of its own sea. The

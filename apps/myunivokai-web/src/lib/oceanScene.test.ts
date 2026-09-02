@@ -4,7 +4,8 @@ import {
   OCEAN_ZONE_SUNLIT_SHALLOWS,
   OCEAN_ZONE_TWILIGHT_REACH,
   buildPreviewOceanSceneConfig,
-  oceanZoneForDepth
+  oceanZoneForDepth,
+  sightingRangeForWaterType
 } from "./oceanScene";
 import { depthAt } from "./oceanDepthCurve";
 import type { PreviewSceneInput } from "./scene";
@@ -97,7 +98,7 @@ describe("the ocean preview builder", () => {
   it("stamps the contract keys the renderer registry resolves on", () => {
     const scene = buildPreviewOceanSceneConfig(previewInput());
     expect(scene.sceneType).toBe("ocean");
-    expect(scene.schemaVersion).toBe("1.6");
+    expect(scene.schemaVersion).toBe("1.7");
     expect(scene.assets?.catalogVersion).toBe("ocean-1");
     // This family has no sky, so it must never claim an environment map.
     expect(scene.assets?.hdriKey).toBeUndefined();
@@ -304,6 +305,38 @@ describe("the ocean preview builder", () => {
       expect(radius).toBeGreaterThanOrEqual(distance + 8);
       expect(radius).toBeLessThanOrEqual(distance + 8 + 26);
     }
+  });
+
+  // Mirrors TestLandmarkRingNeverReachesPastTheWatersOwnSightingRange in
+  // ocean_config_builder_test.go. The ring's 26 m spread was tuned for
+  // composition and never asked how far the water lets a viewer see, so a
+  // far-edge roll in turbid shallows placed a landmark several fog
+  // e-foldings out — built, textured, and never seen.
+  it("never rolls a landmark past the reach its own water allows", () => {
+    const ROUNDING_TOLERANCE = 0.01;
+    const MAX_SIGHTING_RANGE_FRACTION = 0.9;
+    let sawUnconstrainedRing = false;
+    let sawPinnedRing = false;
+    for (const scene of previewsAcrossMoodsAndNicknames(30)) {
+      const landmarks = scene.landmarks ?? [];
+      const distance = scene.camera?.distance ?? 0;
+      const innerRadius = distance + 8;
+      const maximumUsefulRadius =
+        sightingRangeForWaterType(scene.water?.jerlovWaterType ?? "IB") * MAX_SIGHTING_RANGE_FRACTION;
+      if (maximumUsefulRadius > innerRadius) {
+        sawUnconstrainedRing = true;
+      } else {
+        sawPinnedRing = true;
+      }
+      const ceiling = Math.max(innerRadius, maximumUsefulRadius);
+      for (const landmark of landmarks) {
+        const radius = landmark.radiusFromCenter ?? 0;
+        expect(radius).toBeGreaterThanOrEqual(innerRadius - ROUNDING_TOLERANCE);
+        expect(radius).toBeLessThanOrEqual(ceiling + ROUNDING_TOLERANCE);
+      }
+    }
+    expect(sawUnconstrainedRing).toBe(true);
+    expect(sawPinnedRing).toBe(true);
   });
 
   // Still needed alongside the per-mood test above: pinning each mood to a depth

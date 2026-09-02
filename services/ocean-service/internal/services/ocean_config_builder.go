@@ -32,14 +32,20 @@ import (
 // ocean_scene_profile.go): all six kinds are seabed features and the lift left
 // them hanging in the water column with a gap underneath.
 //
-// No reader is kept for 1.1 through 1.5 because this family has not shipped and
+// 1.7 caps landmarks.radiusFromCenter's spread at the world's own sighting
+// range (see landmarkMaxSightingRangeFraction in ocean_scene_profile.go): the
+// ring's 26 m depth was tuned for composition and never asked how far the
+// water lets a viewer see, so a far-edge roll in turbid shallows placed a
+// landmark several fog e-foldings out — built, textured, and never seen.
+//
+// No reader is kept for 1.1 through 1.6 because this family has not shipped and
 // nothing has ever been stored at any of them — a compatibility shim for zero
 // rows is a liability, not caution. The version still moves so the renderer key
 // does, and so contracts/scenes/ocean-scene-config.schema.json has to move with
 // it: that file's `const` is what makes the contracts conformance test the
 // thing that catches a forgotten bump.
 const (
-	oceanSchemaVersion = "1.6"
+	oceanSchemaVersion = "1.7"
 	oceanSceneType     = "ocean"
 )
 
@@ -120,7 +126,7 @@ func (b *OceanConfigBuilder) Build(input BuildOceanConfigInput) models.OceanScen
 	flora := buildFloraConfig(input, depth, moodProfile, styleProfile)
 	fauna := buildFaunaConfig(input, depth, water, moodProfile, styleProfile)
 	bioluminescence := buildBioluminescenceConfig(input, depth, moodProfile, styleProfile)
-	landmarks := buildLandmarkConfigs(input, cameraDistance, primary, secondary)
+	landmarks := buildLandmarkConfigs(input, cameraDistance, water, primary, secondary)
 
 	return models.OceanSceneConfig{
 		SchemaVersion: oceanSchemaVersion,
@@ -568,11 +574,20 @@ func buildBioluminescenceConfig(input BuildOceanConfigInput, depth models.DepthC
 // deep it settled. The first landmark is always the kelp cathedral; accent
 // colours cycle secondary/accent/primary exactly like universe planets and
 // forest landmarks, so the palette reads the same across all three portraits.
-func buildLandmarkConfigs(input BuildOceanConfigInput, cameraDistance float64, primary, secondary string) []models.LandmarkSceneConfig {
+func buildLandmarkConfigs(input BuildOceanConfigInput, cameraDistance float64, water models.WaterConfig, primary, secondary string) []models.LandmarkSceneConfig {
 	rng := seed.NewPRNG(input.Seed + landmarksSeedSuffix)
 	landmarkCount := len(input.DNA.Landmarks)
 	landmarks := make([]models.LandmarkSceneConfig, 0, landmarkCount)
 	usedKinds := map[string]bool{}
+
+	// The ring's inner edge is fixed by the camera-clearance invariant (see
+	// landmarkCameraStandoffMetres); the spread beyond it is capped by how far
+	// this world's own water lets a viewer see, so the roll never spends
+	// distance the fog has already erased. See landmarkMaxSightingRangeFraction.
+	innerRingRadius := cameraDistance + landmarkCameraStandoffMetres
+	maximumUsefulRadius := SightingRangeForWaterType(water.JerlovWaterType) * landmarkMaxSightingRangeFraction
+	ringSpread := math.Max(0, math.Min(landmarkRingDepthMetres, maximumUsefulRadius-innerRingRadius))
+
 	for index, dnaLandmark := range input.DNA.Landmarks {
 		kindRoll := rng.Float64()
 		angleJitterRoll := rng.Float64()
@@ -603,7 +618,7 @@ func buildLandmarkConfigs(input BuildOceanConfigInput, cameraDistance float64, p
 			Meaning:          dnaLandmark.Meaning,
 			Kind:             kind,
 			AngleRadians:     round(baseAngle + (angleJitterRoll-0.5)*2*landmarkAngleJitterRadians),
-			RadiusFromCenter: round(cameraDistance + landmarkCameraStandoffMetres + radiusRoll*landmarkRingDepthMetres),
+			RadiusFromCenter: round(innerRingRadius + radiusRoll*ringSpread),
 			// Negative: every kind is a bottom feature, so the offset is how
 			// deep it beds into the sediment. See landmarkBedDepthMetresByKind.
 			HeightAboveFloor: round(-(landmarkBedDepthMetresByKind[kind] + bedDepthRoll*landmarkBedDepthJitterMetres)),

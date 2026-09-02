@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://myunivokai.com/contracts/scenes/ocean-scene-config.schema.json",
   "title": "OceanSceneConfig",
-  "description": "Scene contract for the ocean family, produced by ocean-service (sceneType 'ocean', schemaVersion '1.6'). Renderers are keyed by (sceneType, schemaVersion). Only semantic and hero placements are stored; mass scatter (flora, marine snow, plankton, school paths) is derived frontend-side from the placement/path seeds embedded here. The whole water and lighting section is DERIVED from depth.metres by services/ocean-service/internal/services/depth_curve.go and then stored, so re-tuning the curve never changes a world that already exists. There is no hdriKey anywhere: the sky, where a world has one, is evaluated analytically (Preetham) rather than sampled, and below the waterline there is no sky to sample at all. Golden fixtures in services/ocean-service/internal/services/testdata are the executable form of this contract.",
+  "description": "Scene contract for the ocean family, produced by ocean-service (sceneType 'ocean', schemaVersion '1.7'). Renderers are keyed by (sceneType, schemaVersion). Only semantic and hero placements are stored; mass scatter (flora, marine snow, plankton, school paths) is derived frontend-side from the placement/path seeds embedded here. The whole water and lighting section is DERIVED from depth.metres by services/ocean-service/internal/services/depth_curve.go and then stored, so re-tuning the curve never changes a world that already exists. There is no hdriKey anywhere: the sky, where a world has one, is evaluated analytically (Preetham) rather than sampled, and below the waterline there is no sky to sample at all. Golden fixtures in services/ocean-service/internal/services/testdata are the executable form of this contract.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -28,7 +28,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "1.6"
+      "const": "1.7"
     },
     "sceneType": {
       "const": "ocean"

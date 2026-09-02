@@ -287,12 +287,12 @@ So the fish never *leave*. They orbit forever at a roughly constant distance
 band. **That is the real content of the owner's request**: there is currently no
 departure behaviour at all to make gradual.
 
-### 2b. The two things that make a fish disappear
+### 2b. The two things that make a fish disappear — DONE. Shipped.
 
 | Mechanism | Evidence | Character |
 |---|---|---|
-| **The camera breach** (work item 1) | the opaque lid, above | everything vanishes at once |
-| **The model-adopt cross-fade** | `ADOPT_FADE_HALF_SECONDS = 0.22` (`:1645`), fade-out → geometry swap → fade-in, driven by `material.opacity` with `material.transparent = true` (`:1674-1706`) | one whole school blinks out and back over 0.44 s |
+| **The camera breach** (work item 1) | the opaque lid, above | everything vanishes at once — already fixed |
+| **The model-adopt cross-fade** | `ADOPT_FADE_HALF_SECONDS = 0.22`, fade-out → geometry swap → fade-in, driven by `material.opacity` with `material.transparent = true` | one whole school blinks out and back over 0.44 s |
 
 The adopt fade fires when that species' GLB finishes downloading —
 `loadSpeciesGeometry(species).then(model => school.adopt(model))`
@@ -301,47 +301,72 @@ different schools blink at different moments, seconds after the scene appears.
 A visitor watching a fish swim sees it vanish. **This is almost certainly the
 "cá đang bơi thì biến mất" the owner means.**
 
-Fix: the swap does not need to be invisible-then-visible. Cross-fade *between*
-the two geometries (draw both for 0.44 s, one fading out and one in), or simply
-swap on the frame the school is furthest from the camera and deepest in fog.
-The cheapest correct version is to make the fade depth-aware: scale
-`ADOPT_FADE_HALF_SECONDS` to zero when the school is already fog-swallowed, so
-the swap happens invisibly for distant schools and only near ones pay for a
-cross-fade.
+Shipped exactly the cheap version this section proposed: the fade is now
+depth-aware. At the moment a fade starts, the nearest leader's distance to the
+camera is measured against `visibilityMetres`, and `ADOPT_FADE_HALF_SECONDS`
+(now a per-fade `adoptFadeHalfSeconds`, scaled from a `_BASE` constant) is
+scaled toward zero as fog-swallow approaches 1. A school already several
+sighting ranges out swaps its geometry the same tick the fade would have
+started — nothing left to hide, so nothing left to animate. A school still in
+clear water gets the full 0.22 s fade, unchanged.
 
-### 2c. The departure behaviour the owner asked for
+### 2c. The departure behaviour the owner asked for — DONE. Shipped.
 
-Add a **swim-out** to the ring model: periodically a school's ring radius eases
-outward past the sighting range and back, so animals recede into the fog and
-return from it, instead of orbiting at a fixed distance forever.
+Added a **swim-out** to the ring model: every leader's *rendered* radius (never
+the persistent `leader.radius`) eases past the ring toward
+`ringLimit × 1.6` and back over a 90 s cycle, phased per-leader so schools
+never sync. At the multiplier's peak a leader sits at
+`1 − exp(−1.6²) ≈ 92 %` fog-swallowed — visibly dissolving into haze rather
+than vanishing at a hard edge — then eases back to its ordinary orbit. This
+reads as *behaviour* rather than a fade, needs no material transparency (the
+instanced draw and its sorting stay untouched — the reason this was preferred
+over a per-instance alpha in the first place), and the scene's own fog does
+the actual dissolving.
 
-This is preferable to a per-instance alpha for three reasons:
-
-- it needs **no material transparency**, so the instanced draw and its sorting
-  are untouched — important against `oceanFrameBudget.test.ts`'s `maximumBlown:
-  0.02` and the 60 fps floor;
-- the scene fog already does the dissolving, physically, for free (`FogExp2`
-  with `density = 1/sightingRange`);
-- it reads as *behaviour* rather than as a fade, which is what "bơi ra xa dần"
-  describes.
-
-Implement it as a per-leader radius envelope in the same place the existing
-`approachesCamera` envelope lives (`oceanRigFauna.ts`, inside `update`), which
-already blends the *rendered* radius without touching the persistent
-`leader.angle` — so there is no separate "return" phase to author. Mirror that
-function's structure exactly.
+Universal rather than a per-species opt-in like `approachesCamera`: the
+report was about ordinary schools generally, not a rare spectacle for a
+handful of charismatic species. One correction made while shipping it: when a
+school carries no `visibilityMetres` (the open-water default,
+`Number.POSITIVE_INFINITY` — every real call from `oceanRig.ts` passes a real
+figure, but a school built without one, as most of this file's own tests do,
+did not), `ringLimit` is `Infinity` and `Infinity × 1.6` propagated as `NaN`
+through the leader's heading normalisation the moment the envelope engaged,
+freezing every school in the rig, not just the ones under test. Fixed by
+falling back to `species.pathRadius × 1.6` when `ringLimit` is not finite —
+with no fog to dissolve into, the "outward" swim is a lap past the species'
+own ring rather than a distance the water defines.
 
 ### 2d. Other movement defects found while reading
 
-- `setSurfacing` is defined at `oceanRigFauna.ts:1653` and **called nowhere** —
-  grep over `src/` finds only the type at `:1349` and the implementation. The
-  dolphin breach it exists to drive can therefore never raise `breachHeight`.
-- The leader's height is clamped to `[floorY, ceiling]` **before** the surfacing
-  and camera-approach blends, and is not re-clamped after. A giant that blends
-  toward `cameraPosition.y` follows a breached camera above the surface.
-- `members[i]` is guarded with `if (!member) continue;` (`:1817`), which leaves
-  that instance's matrix **stale** rather than hidden. Worth confirming whether
-  holes are reachable; if they are, the fish freezes rather than disappears.
+- **Fixed.** The leader's height is clamped to `[floorY, ceiling]` before the
+  surfacing and camera-approach blends, and was not re-clamped after — "a
+  giant that blends toward `cameraPosition.y` follows a breached camera above
+  the surface." The fix caps the *blend target* (`cameraPosition.y`, clamped
+  to `[floorY, ceiling]`) rather than the *blended result*, because one
+  species — the dolphin — sets both `approachesCamera` and `surfacing`, and
+  its surfacing breach legitimately sits above `ceiling` (bounded instead by
+  `ceiling + breachHeight` at the per-member position clamp). Re-clamping the
+  result would have clipped a real breach every time it happened to coincide
+  with the approach cycle; capping the target does not touch surfacing at all.
+- **Confirmed not a live bug.** `members[i]` is guarded with
+  `if (!member) continue;`, which would leave that instance's matrix stale
+  rather than hidden if a hole were reachable. It is not: `members` is built by
+  sequential `.push()` inside a loop that only `break`s when
+  `leaders[i % leaders.length]` is undefined, which requires
+  `species.leaders === 0` — every one of the roster's 32 species sets
+  `leaders >= 1`. `members.length` is therefore always either `species.count`
+  or (for a hypothetical future zero-leader species) `0`; never a partially
+  populated array with a hole in the middle. Left as a defensive guard, not a
+  bug to fix.
+- **Not fixed, and still open.** `setSurfacing` is defined and returned on the
+  `School` interface, and is called nowhere in `src/`. This is narrower than
+  first read: the dolphin's breathing cycle still runs and still raises
+  `breachHeight`, using the DEFAULT `baseOffset = 0` / `breach = -1.2` the
+  closure initialises — surfacing is not dead. What is dead is the ability to
+  *change* those two numbers live (e.g. from `OceanRenderer.tsx`, the way the
+  whale-fall mat and selection ring were re-anchored to the sediment line in
+  work item 4a-fix). No caller has ever needed to, so there is no wiring bug
+  to point at yet — just an unused capability, left as found.
 
 ## Work item 3 — the seabed, and "raise the floor"
 
@@ -559,40 +584,99 @@ flora and boulders, which are placed on `heightAt` too. They get away with it
 because they are small and already sunk by a fraction of their own size, but it
 is the same defect and it belongs in one change, not bolted onto this one.
 
-### 4b. The likely real defect: landmarks may be beyond the fog
+### 4b. Landmarks may be beyond the fog — MEASURED, partially fixed. Shipped.
+
+The suspicion was that the shipwreck and the coral garden are already built
+and simply never in frame. Measured with a 5,000-sample Monte Carlo per water
+type over the old formula:
 
 ```
 RadiusFromCenter = cameraDistance + landmarkCameraStandoffMetres
                                   + radiusRoll × landmarkRingDepthMetres
-                                                    ocean_config_builder.go:597
 ```
 
-with `landmarkCameraStandoffMetres = 8.0` and `landmarkRingDepthMetres = 26.0`
-(`ocean_scene_profile.go:809-810`). With `cameraDistance` 16–24 m, the ring lands
-**24–58 m from the origin**, while the camera itself orbits at 20 m — so a
-landmark sits anywhere from 4 m to 78 m away.
+with `landmarkCameraStandoffMetres = 8.0` and `landmarkRingDepthMetres = 26.0`,
+against the fog term the renderer actually uses, `1 − exp(−(d/range)²)` with
+`range = SightingRangeForWaterType(water)`:
 
-Against Jerlov sighting ranges that run as low as **11.85 m** (type `3C`), most
-of that ring is several fog e-foldings out and invisible in practice. The fog
-term is `1 − exp(−(d·density)²)` with `density = 1/range`: at `d = 40 m` in `3C`
-water that is `1 − exp(−11.4) ≈ 100 %` swallowed.
+| Zone | Water | Range | Mean visible | Worst roll | % of rolls < 10 % visible |
+|---|---|---|---|---|---|
+| sunlitShallows | IB (clearest) | 49.9 m | 51.3 % | 26.0 % | 0 % |
+| sunlitShallows | II | 38.3 m | 33.4 % | 10.4 % | 0 % |
+| sunlitShallows | III | 29.4 m | 17.4 % | 2.1 % | 36 % |
+| sunlitShallows | 1C | 21.7 m | 5.2 % | 0.08 % | 81 % |
+| sunlitShallows | 3C (murkiest) | 11.8 m | **0.1 %** | 0.00 % | **100 %** |
+| twilightReach / abyss | I, IA, IB only | 49.9–63.7 m | 51–66 % | 26–44 % | 0 % |
 
-**Measure this before modelling anything new.** The suspicion is that the
-shipwreck and the coral garden are already built and simply never in frame. The
-lever is the ring radius, not new geometry.
+Confirmed and worse than the back-of-envelope estimate this section originally
+gave: `sunlitShallows` is the only zone allowed anything past `IB` (`I`/`IA`/`IB`
+alone can be drawn in twilight and the abyss, and those are all comfortably
+inside reach), so the defect is confined to — but severe in — coastal shallow
+worlds. In `3C` water, every roll placed the landmark beyond ten sighting
+range's worth of fog; the shipwreck and coral garden were exactly as suspected,
+built and never seen.
 
-### 4c. Two seams worth closing while in this file
+**What shipped, and what it cannot fix.** `landmarkMaxSightingRangeFraction =
+0.9` caps the ring's spread at 90 % of the world's own sighting range
+(`SightingRangeForWaterType(water.JerlovWaterType)`), computed once per world
+and applied as `ringSpread = clamp(0, landmarkRingDepthMetres, maximumUsefulRadius
+− innerRingRadius)`. This is a genuine fix for `II`/`III` water, where the old
+roll wasted distance the fog had already erased. It is **not** a fix for
+`1C`/`3C`: `landmarkCameraStandoffMetres` alone already places the ring's inner
+edge past those waters' sighting range (24–32 m against an 11.8–21.7 m range),
+and that inner edge is load-bearing — it is the clearance invariant
+`TestLandmarksAreHeroFirstAndDeduped` exists to enforce, so a fix cannot shrink
+it without reopening the camera/landmark collision that invariant was written
+against. In `1C`/`3C` shallows every landmark now settles at the closest legal
+position instead of a random one, which is the best this lever can do; a real
+fix needs the camera itself to stand closer in turbid water, which is a framing
+change and out of scope here. Schema bumped to **1.7**.
 
-- **Two different caustics implementations run side by side.** The seabed,
-  boulders and sponges use a ridged-sine `causticVeins` copied from the
-  prototype (`oceanRigTerrain.ts:75-101`); only landmarks use the physically
-  derived differential-area form in `oceanCaustics.ts`. They compute different
-  fields at strengths ~5.4× apart, so a coral head and the sand it stands on are
-  lit by different patterns. `OceanRenderer.tsx:180-181` claims they stay in
-  step; only the clock does. **Move everything onto `oceanCaustics.ts`.**
-- **The seabed's caustic strength is recomputed locally** rather than read from
-  `lighting.causticStrength`, which the landmarks do use — the same class of
-  defect the rig already fixed once for `godRayStrength`.
+Pinned by `TestLandmarkRingNeverReachesPastTheWatersOwnSightingRange`
+(Go) and its FE mirror in `oceanScene.test.ts`, each checked against both a
+world whose water leaves the ring unconstrained and one that pins it to the
+inner edge, so neither branch can silently stop being exercised.
+
+### 4c. Two seams worth closing while in this file — DONE. Shipped.
+
+- **Two different caustics implementations ran side by side.** The seabed,
+  boulders and sponges used a ridged-sine `causticVeins` copied from the
+  prototype; only landmarks used the physically derived differential-area form
+  in `oceanCaustics.ts`. They computed different fields at strengths ~5.4×
+  apart (`causticStrength * 0.185` on the terrain side, the raw value on the
+  landmark side — `1 / 0.185 ≈ 5.4`), so a coral head and the sand it stood on
+  were lit by different patterns. `oceanRigTerrain.ts`'s own `applyCaustics`,
+  `createCausticUniforms` and the whole `GLSL_CAUSTICS` chunk are gone; the
+  seabed, its boulders (`oceanRigTerrain.ts`) and its sponges
+  (`oceanRigFlora.ts`) now call `oceanCaustics.ts`'s `applyCaustics` directly,
+  with no local gain. One bonus this unification pays for on its own: the
+  differential-area form's `uCausticDepth` — veins widen and soften with how
+  far light travels from surface to floor — now reaches the seabed too, wired
+  from `seafloorDepthMetres`, the exact quantity the landmarks already used for
+  the same uniform.
+- **The seabed's caustic strength was recomputed locally** rather than read
+  from `lighting.causticStrength`, which the landmarks used directly — the
+  same class of defect the rig already fixed once for `godRayStrength`.
+  `OceanRigOptions` gained a `causticStrength?: number` field, mirroring
+  `godRayStrength?: number` exactly, defaulting to `1` (no dampening) for a
+  caller with no stored value to pass. It is **multiplied** against the
+  existing local term, not swapped in for it: the two model different physics.
+  `causticStrength` (the depth curve's own value) is how much LIGHT survives
+  to this depth, reaching zero at the sunlight floor; the local coherence term
+  is how much of the floor still lies within a few attenuation lengths of the
+  viewer, past which even surviving light draws an incoherent blur rather than
+  a pattern. Before this, the seabed had only the second term and the
+  landmarks had only the first — not two effects reconciled, but one missing
+  from each side.
+
+Pinned by `oceanRigTerrain.test.ts`: `tintSeabed` passes `causticStrength`
+straight through to the shared uniform with no separate gain, and sets
+`uCausticDepth` from the surface-to-floor distance it is given, floored at
+0.5 m. The multiplication itself lives in `createOceanRig`, which needs a real
+`WebGLRenderer` and canvas to build (sand textures, sky, surface) and so sits
+outside what this test environment (Node, no DOM) can exercise directly —
+the same boundary every other part of the full rig's construction already
+sits behind.
 
 ### 4d. Making the sand itself read as real
 
@@ -608,12 +692,76 @@ one-line experiment worth measuring.
 Restorations from our own prototype come first: the code is in the repo, it was
 reviewed and liked, and it is cheap.
 
-| # | Change | Gain / cost | Files |
-|---|---|---|---|
-| 1 | **Unify caustics** on the differential-area form (4c) | high / medium | `oceanRigTerrain.ts`, `oceanRigFlora.ts`, `oceanRig.ts` |
-| 2 | **Restore anisotropic god-ray sampling.** Prototype samples the beam cross-section at `section * vec2(0.30, 0.075)`; production uses isotropic `beamPlane * 0.09`. The 4:1 anisotropy is what makes a shaft a *curtain* instead of a blob. Also restore the `grain` octave, the depth `fade`, and the per-fragment march jitter that hides 24-step banding | high / small | `oceanRig.ts` |
-| 3 | **Wire up `BLUE_SEA_YAW_OFFSET_RADIANS`** (118°, `oceanSky.ts:117-128`) — it is written, documented, and imported by nothing. Above-water worlds currently always shoot *into* the sun. Prototype measurements: facing the sun gives saturation 0.12, facing 118° away gives 0.17 overall and 0.31 in the near field, same shaders. Apply only for a high sun; keep yaw 0 for golden hour | high / small | `oceanMath.ts` |
-| 4 | **Window-centred sparkle falloff** — restore `* (1.0 - coneT)` in place of `* window`, so Snell's window has a radial gradient rather than a flat disc with a hard rim | low / trivial | `oceanRig.ts` |
+| # | Change | Gain / cost | Files | Status |
+|---|---|---|---|---|
+| 1 | **Unify caustics** on the differential-area form (4c) | high / medium | `oceanRigTerrain.ts`, `oceanRigFlora.ts`, `oceanRig.ts` | DONE |
+| 2 | **Restore anisotropic god-ray sampling.** Prototype samples the beam cross-section at `section * vec2(0.30, 0.075)`; production uses isotropic `beamPlane * 0.09`. The 4:1 anisotropy is what makes a shaft a *curtain* instead of a blob. Also restore the `grain` octave, the depth `fade`, and the per-fragment march jitter that hides 24-step banding | high / small | `oceanRig.ts` | DONE |
+| 3 | **Wire up `BLUE_SEA_YAW_OFFSET_RADIANS`** (118°, `oceanSky.ts:117-128`) — it is written, documented, and imported by nothing. Above-water worlds currently always shoot *into* the sun. Prototype measurements: facing the sun gives saturation 0.12, facing 118° away gives 0.17 overall and 0.31 in the near field, same shaders. Apply only for a high sun; keep yaw 0 for golden hour | high / small | `oceanMath.ts` | DONE |
+| 4 | **Window-centred sparkle falloff** — restore `* (1.0 - coneT)` in place of `* window`, so Snell's window has a radial gradient rather than a flat disc with a hard rim | low / trivial | `oceanRig.ts` | DONE |
+
+### Item 2 — DONE. Shipped.
+
+`oceanRig.ts`'s god-ray fragment shader gained the four things the prototype had
+and production had quietly dropped: the beam plane is now sampled at
+`vec2(0.30, 0.075)` instead of an isotropic `0.09` — narrow along the beam's
+own axis, wide across it, which is the 4:1 ratio that reads as a *shaft*
+rather than a blob; a second, finer-scale `noise` octave (`grain`, 0.62-1.0)
+rides on top of the thresholded `fbm` so an edge is not one smooth gradient;
+a `fade = exp(-max(0, uSurfaceY - p.y) * 0.02)` term dims a sample the
+FARTHER below the surface it sits, independent of how far the camera is from
+it — the march's own `uExtinction` term only ever measured the camera's own
+viewing distance, never how much water lies straight above a given point; and
+the march offset is now `jitter + i * stepSize` with `jitter` a per-fragment
+hash of `gl_FragCoord`, rather than the fixed `(i + 0.5) / STEPS` phase every
+fragment shared, which is what turns 24-step banding into noise instead.
+Pinned by the existing `oceanShaderSource.test.ts` GLSL lint, which nothing
+about this change was expected to trip — only new arithmetic, no new
+reserved words or shadowed built-ins.
+
+### Item 3 — DONE. Shipped.
+
+`oceanCameraFraming` (`oceanMath.ts`) gained a sixth, optional
+`sunElevationRadians` parameter, defaulting to
+`HIGH_SUN_ELEVATION_THRESHOLD_RADIANS` itself — so a caller with nothing to
+pass (every call site before this change) gets the offset OFF, exactly the
+behaviour that existed before this parameter did. `UniverseCanvas.tsx` now
+passes `scene?.lighting?.surfaceAzimuthRadians`'s sibling field,
+`surfaceElevationRadians`, through to it.
+
+`HIGH_SUN_ELEVATION_THRESHOLD_RADIANS = 0.3` splits the above-water band
+(0.06-0.70 rad) between the family's two archetypes — golden hour rolls
+around 0.08, daylight around 0.65 — with wide margin on both sides. The
+offset applies only `above && sunElevationRadians > threshold`: above water
+only, because underwater the god rays and Snell's window still need the
+camera looking along the sun's actual bearing to have anything to show, and
+only past the threshold, because a low golden-hour sun is the one case where
+shooting straight at it is the composition itself — which is why the
+prototype's own golden-hour preset ships yaw 0 rather than the offset.
+
+Pinned by four new tests in `oceanMath.test.ts`: yaw equals the sun's own
+bearing above water under a low sun, turns exactly
+`BLUE_SEA_YAW_OFFSET_RADIANS` away from it under a high one, never applies
+underwater even under a high sun, and defaults to no offset for a caller that
+passes no elevation at all.
+
+### Item 4 — DONE. Shipped.
+
+`oceanRig.ts`'s water-surface fragment shader gained the prototype's own
+`coneT = clamp(sinTheta / 0.75, 0.0, 1.0)` — the same critical-angle geometry
+the window's own `smoothstep(0.70, 0.775, sinTheta)` is built from, just
+un-smoothed into a plain ratio — and the sparkle term switched from
+`* window` to `* (1.0 - coneT)`. `window` is a flat 1 across the whole disc
+and only drops at the rim over a 0.075-wide smoothstep band, so the sparkle
+it gated was a flat highlight with a thin dark ring at the edge. `coneT` is 0
+at the zenith and rises linearly to 1 at the critical angle, so `1 - coneT`
+gives the sparkle a radial falloff across the whole window — brightest
+looking straight up, fading gradually toward the rim — matching how the
+prototype's own comment describes it: *"strongest where refraction magnifies
+the slope."* Not independently testable: this is a pure fragment-shader
+change with no CPU-side logic, caught only by `oceanShaderSource.test.ts`'s
+GLSL lint (which found nothing to flag — no new reserved words or shadowed
+built-ins) and otherwise falling into the same Node/no-DOM boundary as items
+2 and 3 above.
 
 ### From the open web
 

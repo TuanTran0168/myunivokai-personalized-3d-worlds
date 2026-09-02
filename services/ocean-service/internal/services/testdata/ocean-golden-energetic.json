@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.6",
+  "schemaVersion": "1.7",
   "sceneType": "ocean",
   "sceneName": "The Lantern Trench",
   "archetype": "Tidekeeper",
@@ -145,7 +145,7 @@
       "meaning": "A meaningful place in the sea.",
       "kind": "kelpCathedral",
       "angleRadians": -0.22,
-      "radiusFromCenter": 49.96,
+      "radiusFromCenter": 43.56,
       "heightAboveFloor": -0.3,
       "accentColor": "#06B6D4",
       "energy": 60
@@ -156,7 +156,7 @@
       "meaning": "A meaningful place in the sea.",
       "kind": "sunkenRelic",
       "angleRadians": 1.61,
-      "radiusFromCenter": 44.39,
+      "radiusFromCenter": 39.47,
       "heightAboveFloor": -0.66,
       "accentColor": "#FACC15",
       "energy": 65
@@ -167,7 +167,7 @@
       "meaning": "A meaningful place in the sea.",
       "kind": "abyssalTrench",
       "angleRadians": 3.33,
-      "radiusFromCenter": 28.27,
+      "radiusFromCenter": 27.61,
       "heightAboveFloor": -0.41,
       "accentColor": "#8B5CF6",
       "energy": 70
@@ -178,7 +178,7 @@
       "meaning": "A meaningful place in the sea.",
       "kind": "whaleFall",
       "angleRadians": 4.79,
-      "radiusFromCenter": 30.08,
+      "radiusFromCenter": 28.94,
       "heightAboveFloor": -0.59,
       "accentColor": "#06B6D4",
       "energy": 75
