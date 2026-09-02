@@ -13,7 +13,7 @@
  * the same production bundle a visitor gets, or the test is proving something
  * about a build nobody runs.
  *
- * The cost is one write of ten numbers into a pre-allocated object per frame:
+ * The cost is one write of eleven numbers into a pre-allocated object per frame:
  * the object is created once and mutated afterwards, so a published pose
  * allocates nothing after the first frame.
  */
@@ -47,6 +47,12 @@ export type CameraPoseMeasurement = {
    * is testing its own arithmetic.
    */
   ceilingMetres: number | null;
+  /**
+   * The height the rig has been told the lens may not fall below, or `null`
+   * where the family sets none. An above-water ocean world is the one that sets
+   * it — see `oceanCameraFloorMetres`.
+   */
+  floorMetres: number | null;
 };
 
 /**
@@ -94,6 +100,7 @@ export function publishCameraPose(host: CameraPoseHost, measurement: CameraPoseM
   publishedPose.polarAngleRadians = measurement.polarAngleRadians;
   publishedPose.azimuthAngleRadians = measurement.azimuthAngleRadians;
   publishedPose.ceilingMetres = measurement.ceilingMetres;
+  publishedPose.floorMetres = measurement.floorMetres;
   publishedPose.publishedFrameCount += 1;
 }
 

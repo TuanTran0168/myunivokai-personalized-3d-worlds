@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
-import { AdditiveBlending, Color, MeshStandardMaterial, Vector3 } from "three";
-import type { ThreeEvent } from "@react-three/fiber";
+import { Suspense, useEffect, useMemo, useRef } from "react";
+import { AdditiveBlending, Color, MeshStandardMaterial, Vector3, type SpriteMaterial } from "three";
+import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import type { OceanLandmarkConfig, OceanWaterConfig, PlanetSceneConfig } from "@/lib/types";
 import { randomFromSeed } from "@/lib/scene";
 import { rarityFeature } from "@/lib/rarity";
@@ -12,10 +12,13 @@ import { getSoftCircleTexture } from "@/features/scene-renderers/shared/softCirc
 import { applyCaustics, type CausticsUniforms } from "./oceanCaustics";
 import {
   LANDMARK_BASE_COLORS,
+  LANDMARK_HEIGHT_METRES,
   landmarkFootprintRadiusMetres,
   landmarkGeometry
 } from "./oceanLandmarkGeometry";
+import { OceanSunkenRelicModel } from "./OceanSunkenRelicModel";
 import {
+  hydrothermalFlickerIntensity,
   lowestSeafloorUnderFootprint,
   mixHexColors,
   type SeafloorHeightSampler
@@ -48,6 +51,37 @@ const SELECTION_RING_CLEARANCE = 0.1;
 // The vent's plume and the relic's glow are what make those two landmarks read
 // at a distance in water that swallows detail.
 const VENT_PLUME_HEIGHT = 6.5;
+/**
+ * Where the chimney ends and the fluid leaves it, which is the landmark's own
+ * height (`LANDMARK_HEIGHT_METRES.hydrothermalVent`). The plume used to start
+ * at a hardcoded 3 m, a metre and a half INSIDE the stack it is supposed to be
+ * coming out of.
+ */
+const VENT_MOUTH_HEIGHT_METRES = LANDMARK_HEIGHT_METRES.hydrothermalVent;
+/**
+ * Vent fluid leaves a black smoker at 300-400 C and radiates a dull red-orange
+ * — the one thing on a real seabed that genuinely glows. Deliberately dim: this
+ * is a hot object seen through water, not a lamp, and the abyss is the darkest
+ * frame this family draws, so a little of it goes a long way.
+ */
+const VENT_MOUTH_GLOW_COLOR = "#FF4A14";
+const VENT_MOUTH_GLOW_SCALE = 1.35;
+const VENT_MOUTH_GLOW_OPACITY = 0.34;
+/**
+ * The precipitation front sits just above the mouth: it is where 350 C fluid
+ * meets 2 C seawater and sulphides crystallise out. That is where the
+ * blue-white flashes happen, not at the mouth itself.
+ */
+const VENT_FLICKER_HEIGHT_ABOVE_MOUTH_METRES = 0.9;
+const VENT_FLICKER_COLOR = "#CFE4FF";
+const VENT_FLICKER_SCALE = 1.9;
+const VENT_FLICKER_PEAK_OPACITY = 0.55;
+/**
+ * How much the thermal glow itself moves. The fluid is turbulent, so the mouth
+ * breathes; it does not flash. The flashes are the other sprite's job.
+ */
+const VENT_MOUTH_BREATH_AMOUNT = 0.22;
+const VENT_MOUTH_BREATH_RATE = 1.7;
 
 type OceanLandmarksProps = {
   landmarks?: OceanLandmarkConfig[];
@@ -328,22 +362,44 @@ function OceanLandmark({
 
   return (
     <group position={landmarkPosition}>
-      <LandmarkFormation
-        kind={kind}
-        worldSeed={worldSeed}
-        landmarkIndex={landmarkIndex}
-        bodyColor={bodyColor}
-        accentColor={accentColor}
-        emissiveIntensity={isSelected || isHovered ? 0.30 : 0}
-        causticsUniforms={causticsUniforms}
-      />
+      {/* The lottery wreck is the one landmark that is a loaded model, and the
+          procedural formation is its fallback rather than a spinner: a download
+          in flight has to look like a wreck too. See OceanSunkenRelicModel. */}
+      {forceRelic ? (
+        <Suspense
+          fallback={
+            <LandmarkFormation
+              kind={kind}
+              worldSeed={worldSeed}
+              landmarkIndex={landmarkIndex}
+              bodyColor={bodyColor}
+              accentColor={accentColor}
+              emissiveIntensity={isSelected || isHovered ? 0.3 : 0}
+              causticsUniforms={causticsUniforms}
+            />
+          }
+        >
+          <OceanSunkenRelicModel
+            causticsUniforms={causticsUniforms}
+            fogColor={fogColor}
+            tintStrength={tintStrength}
+          />
+        </Suspense>
+      ) : (
+        <LandmarkFormation
+          kind={kind}
+          worldSeed={worldSeed}
+          landmarkIndex={landmarkIndex}
+          bodyColor={bodyColor}
+          accentColor={accentColor}
+          emissiveIntensity={isSelected || isHovered ? 0.3 : 0}
+          causticsUniforms={causticsUniforms}
+        />
+      )}
 
       {/* A hydrothermal vent without its plume is a rock. */}
       {kind === "hydrothermalVent" ? (
-        <mesh position={[0, VENT_PLUME_HEIGHT / 2 + 3, 0]}>
-          <coneGeometry args={[1.3, VENT_PLUME_HEIGHT, 10, 1, true]} />
-          <meshBasicMaterial color="#1A1714" transparent opacity={0.5} depthWrite={false} />
-        </mesh>
+        <HydrothermalVentPlume phaseSeed={landmarkIndex} softCircleTexture={softCircleTexture} />
       ) : null}
 
       {/* A whale fall runs an ecosystem for decades: the bacterial mat is the
@@ -395,6 +451,97 @@ function OceanLandmark({
       >
         <sphereGeometry args={[LANDMARK_HIT_SPHERE_RADIUS, 8, 6]} />
       </mesh>
+    </group>
+  );
+}
+
+/**
+ * A black smoker's plume, and the two lights that make it one.
+ *
+ * The smoke was already here and the glow was not, which left the abyss's
+ * signature formation reading as a rock with a grey cone over it. What a real
+ * vent does, and what this now draws:
+ *
+ *   - the mouth radiates a dull red-orange, continuously, because the fluid
+ *     leaving it is 300-400 C. It breathes with the turbulence rather than
+ *     holding a fixed brightness, and that is all it does.
+ *   - the precipitation front, about a metre higher, throws short blue-white
+ *     flashes as sulphides crystallise out of the fluid and bubbles collapse in
+ *     it. Stochastic, roughly two every three seconds — see
+ *     `hydrothermalFlickerIntensity`, which is where the behaviour lives and
+ *     where it is tested.
+ *
+ * Both are additive sprites rather than real lights. A point light per vent
+ * would light the chimney properly and cost a forward-rendered light per
+ * fragment in the family's most expensive frame; the sprites carry the read at
+ * the distance the abyss's water allows anything to be seen at anyway.
+ */
+function HydrothermalVentPlume({
+  phaseSeed,
+  softCircleTexture
+}: {
+  phaseSeed: number;
+  softCircleTexture: ReturnType<typeof getSoftCircleTexture>;
+}) {
+  const mouthMaterialReference = useRef<SpriteMaterial>(null);
+  const flickerMaterialReference = useRef<SpriteMaterial>(null);
+
+  useFrame((state) => {
+    const elapsedSeconds = state.clock.elapsedTime;
+    const mouthMaterial = mouthMaterialReference.current;
+    if (mouthMaterial) {
+      const breath = Math.sin(elapsedSeconds * VENT_MOUTH_BREATH_RATE + phaseSeed) * 0.5 + 0.5;
+      mouthMaterial.opacity =
+        VENT_MOUTH_GLOW_OPACITY * (1 - VENT_MOUTH_BREATH_AMOUNT + VENT_MOUTH_BREATH_AMOUNT * 2 * breath);
+    }
+    const flickerMaterial = flickerMaterialReference.current;
+    if (flickerMaterial) {
+      flickerMaterial.opacity =
+        hydrothermalFlickerIntensity(elapsedSeconds, phaseSeed) * VENT_FLICKER_PEAK_OPACITY;
+    }
+  });
+
+  return (
+    <group>
+      {/* The smoke itself: the mineral load that gives a black smoker its name.
+          Anchored ON the mouth rather than inside the stack. */}
+      <mesh position={[0, VENT_MOUTH_HEIGHT_METRES + VENT_PLUME_HEIGHT / 2, 0]}>
+        <coneGeometry args={[1.3, VENT_PLUME_HEIGHT, 10, 1, true]} />
+        <meshBasicMaterial color="#1A1714" transparent opacity={0.5} depthWrite={false} />
+      </mesh>
+
+      {softCircleTexture ? (
+        <>
+          <sprite
+            position={[0, VENT_MOUTH_HEIGHT_METRES, 0]}
+            scale={[VENT_MOUTH_GLOW_SCALE, VENT_MOUTH_GLOW_SCALE, 1]}
+          >
+            <spriteMaterial
+              ref={mouthMaterialReference}
+              map={softCircleTexture}
+              color={VENT_MOUTH_GLOW_COLOR}
+              transparent
+              opacity={VENT_MOUTH_GLOW_OPACITY}
+              blending={AdditiveBlending}
+              depthWrite={false}
+            />
+          </sprite>
+          <sprite
+            position={[0, VENT_MOUTH_HEIGHT_METRES + VENT_FLICKER_HEIGHT_ABOVE_MOUTH_METRES, 0]}
+            scale={[VENT_FLICKER_SCALE, VENT_FLICKER_SCALE, 1]}
+          >
+            <spriteMaterial
+              ref={flickerMaterialReference}
+              map={softCircleTexture}
+              color={VENT_FLICKER_COLOR}
+              transparent
+              opacity={0}
+              blending={AdditiveBlending}
+              depthWrite={false}
+            />
+          </sprite>
+        </>
+      ) : null}
     </group>
   );
 }

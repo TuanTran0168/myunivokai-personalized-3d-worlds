@@ -16,6 +16,7 @@ import {
   cameraIntroProgress,
   cameraIntroStartOffset,
   cameraIntroPoseForDuration,
+  maximumPolarAngleOverFloor,
   minimumPolarAngleUnderCeiling,
   NO_POLAR_FLOOR,
   pickCameraIntroPose,
@@ -79,6 +80,18 @@ type CameraRigProps = {
    * puts the lens through the surface.
    */
   maximumCameraHeightMetres?: number;
+  /**
+   * The height the lens may not fall below, for a family whose camera is
+   * OUTSIDE something it must not get into.
+   *
+   * The mirror of `maximumCameraHeightMetres`, and only the ocean sets it, only
+   * above water: those worlds' rigs are built for air — no seabed, no water
+   * fog, no god rays, the surface drawn as a sheet seen from the sky — so an
+   * orbit that dives under their sea arrives in a scene with no water in it,
+   * looking up at the back of a wave mesh. Same enforcement as the ceiling, on
+   * the other end of the polar range and against the same live radius.
+   */
+  minimumCameraHeightMetres?: number;
   /** Decorative canvases (gallery backdrop) opt out of keyboard movement. */
   keyboardMoveEnabled?: boolean;
   /**
@@ -132,6 +145,7 @@ export function CameraRig({
   maximumDistance = ORBIT_CONTROLS_MAXIMUM_DISTANCE,
   maximumPolarAngleRadians = ORBIT_CONTROLS_MAXIMUM_POLAR_ANGLE,
   maximumCameraHeightMetres,
+  minimumCameraHeightMetres,
   keyboardMoveEnabled = true,
   restingTarget,
   introDurationSeconds = 0,
@@ -298,6 +312,61 @@ export function CameraRig({
     );
   }
 
+  /**
+   * The height the lens may not fall below THIS FRAME, or null where nothing is
+   * under it. Two sources, and the higher of them binds: the family's own floor
+   * (an above-water world's sea) and the ground the terrain sampler reports
+   * beneath the camera's current position.
+   *
+   * Capped by the ceiling for the same reason `clampCameraAboveTerrain` caps
+   * its own: where the corridor is too thin to hold both, the ceiling wins. A
+   * lens in the sand is a dark frame, a lens through the surface is a white one
+   * with the whole world hidden behind it — and a floor above the ceiling would
+   * cross the two polar bounds and hand `OrbitControls` an empty range.
+   */
+  function cameraFloorHeightMetres(): number | null {
+    const sampleTerrainHeight = terrainHeightSampler.current;
+    const seabedFloor = sampleTerrainHeight
+      ? sampleTerrainHeight(camera.position.x, camera.position.z) + MINIMUM_HEIGHT_ABOVE_TERRAIN_METRES
+      : null;
+    if (minimumCameraHeightMetres === undefined && seabedFloor === null) {
+      return null;
+    }
+    const floor = Math.max(minimumCameraHeightMetres ?? -Infinity, seabedFloor ?? -Infinity);
+    return maximumCameraHeightMetres === undefined ? floor : Math.min(floor, maximumCameraHeightMetres);
+  }
+
+  /**
+   * The floor, in the same language as the ceiling and applied at the same
+   * three moments. It narrows `maxPolarAngle` rather than replacing it, so a
+   * family that already has a tilt limit of its own keeps whichever of the two
+   * is stricter.
+   *
+   * THE SEABED HALF OF THIS IS A FIX, NOT A TIDY-UP. `clampCameraAboveTerrain`
+   * corrects the camera AFTER the controls have moved it, by lifting camera and
+   * target together — which preserves the offset, as intended. But the idle
+   * re-centre then puts the target back on the family's framing, and
+   * `OrbitControls.update()` re-derives the radius from wherever the target now
+   * is. Lift, restore, re-derive: each frame shortens the orbit a little, and
+   * dragging to the seabed measured the radius ratcheting from 26 m to 4.3 m
+   * with the visitor's own zoom silently gone. Expressed as a polar bound, the
+   * drag simply STOPS at the sand at the radius it already had.
+   */
+  function applyCameraFloor(orbitControls: OrbitControlsImplementation, orbitRadius?: number) {
+    const floorHeight = cameraFloorHeightMetres();
+    if (floorHeight === null) {
+      return;
+    }
+    orbitControls.maxPolarAngle = Math.min(
+      maximumPolarAngleRadians,
+      maximumPolarAngleOverFloor(
+        floorHeight,
+        orbitControls.target.y,
+        orbitRadius ?? camera.position.distanceTo(orbitControls.target)
+      )
+    );
+  }
+
   useFrame((_, deltaTimeSeconds) => {
     const orbitControls = orbitControlsReference.current;
     if (!orbitControls) {
@@ -319,6 +388,7 @@ export function CameraRig({
     // and the first frame moves that height from the scene centre to wherever
     // the family aimed it.
     applyCameraCeiling(orbitControls);
+    applyCameraFloor(orbitControls);
 
     // Opening move, ahead of everything else and returning while it runs: a
     // focus glide or a WASD glide fighting the entrance for the same camera
@@ -373,6 +443,7 @@ export function CameraRig({
         // Against the radius THIS frame of the move is posing at, not the one
         // the frame began with: the move travels along the radius axis too.
         applyCameraCeiling(orbitControls, offset.radius);
+        applyCameraFloor(orbitControls, offset.radius);
         orbitControls.update();
         if (progress >= 1) {
           isIntroSpentReference.current = true;
@@ -449,6 +520,7 @@ export function CameraRig({
     // frame of white water, so it is re-solved and re-enforced here rather than
     // left to the next tick.
     applyCameraCeiling(orbitControls);
+    applyCameraFloor(orbitControls);
     orbitControls.update();
 
     // Terrain clamp, last, so it corrects whatever this frame's zoom/orbit/pan
@@ -479,7 +551,8 @@ export function CameraRig({
       orbitRadiusMetres: probeSpherical.radius,
       polarAngleRadians: probeSpherical.phi,
       azimuthAngleRadians: probeSpherical.theta,
-      ceilingMetres: maximumCameraHeightMetres ?? null
+      ceilingMetres: maximumCameraHeightMetres ?? null,
+      floorMetres: minimumCameraHeightMetres ?? null
     });
   });
 

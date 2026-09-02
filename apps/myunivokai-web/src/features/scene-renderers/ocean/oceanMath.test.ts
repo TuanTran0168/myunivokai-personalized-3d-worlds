@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { buildPreviewOceanSceneConfig } from "@/lib/oceanScene";
 import type { PreviewSceneInput } from "@/lib/scene";
-import { minimumPolarAngleUnderCeiling } from "../shared/cameraIntro";
+import { maximumPolarAngleOverFloor, minimumPolarAngleUnderCeiling } from "../shared/cameraIntro";
 import {
   HIGH_SUN_ELEVATION_THRESHOLD_RADIANS,
   lowestSeafloorUnderFootprint,
+  hydrothermalFlickerIntensity,
   oceanCameraCeilingMetres,
+  oceanCameraFloorMetres,
   oceanCameraFraming,
   oceanSurfaceClearanceMetres
 } from "./oceanMath";
@@ -239,6 +241,129 @@ describe("the ocean camera envelope, across worlds the generator can make", () =
   });
 });
 
+describe("oceanCameraFloorMetres", () => {
+  it("has no floor for a world seen from under the waterline", () => {
+    // A submerged world's problem is the sheet overhead, not the one below.
+    expect(oceanCameraFloorMetres(18, WINDIEST_METRES_PER_SECOND)).toBeNull();
+    expect(oceanCameraFloorMetres(0, WINDIEST_METRES_PER_SECOND)).toBeNull();
+  });
+
+  it("sits above the waterline by the whole clearance", () => {
+    // The surface of an above-water world is drawn at the signed depth itself
+    // (`seaTop.mesh.position.y = viewerDepthMetres`), so the floor is that
+    // plane lifted clear of its own crests.
+    const floor = oceanCameraFloorMetres(-6, 9);
+    expect(floor).not.toBeNull();
+    expect(floor as number).toBeCloseTo(-6 + oceanSurfaceClearanceMetres(9), 10);
+  });
+
+  it("is the ceiling's mirror about the waterline", () => {
+    // One clearance, one waterline, two signs. Stated as an equality so a
+    // change to either function has to be made to both.
+    const submergedHeadroom = 12 - (oceanCameraCeilingMetres(12, 8) as number);
+    const airborneHeadroom = (oceanCameraFloorMetres(-12, 8) as number) - -12;
+    expect(airborneHeadroom).toBeCloseTo(submergedHeadroom, 12);
+  });
+});
+
+describe("the above-water camera envelope, across worlds the generator can make", () => {
+  // Measured 2026-09-02: 24 of the 120 worlds this sweep builds come out above
+  // the waterline, all of them the `focused` mood, 4.05 m to 23.61 m over their
+  // own sea. Asserted below so a generator change that stops making them turns
+  // this suite red rather than quietly reducing it to nothing.
+  function aboveWaterPreviews() {
+    return previewsAcrossMoodsAndNicknames(30).filter((scene) => (scene.depth?.metres ?? 0) < 0);
+  }
+
+  it("is exercising worlds that actually exist", () => {
+    expect(aboveWaterPreviews().length).toBeGreaterThan(0);
+  });
+
+  it("opens every above-water shot clear of its own sea", () => {
+    // The lens rests at height zero. A floor at or above zero would mean the
+    // world is lower over its water than that water's own crests are tall —
+    // the shot would open inside the sea it is a shot of.
+    for (const scene of aboveWaterPreviews()) {
+      const floor = oceanCameraFloorMetres(
+        scene.depth?.metres ?? 0,
+        scene.water?.windSpeedMetresPerSecond ?? WINDIEST_METRES_PER_SECOND
+      );
+      expect(floor).not.toBeNull();
+      expect(floor as number).toBeLessThan(0);
+    }
+  });
+
+  it("holds the lens above the surface at every zoom, in every above-water world", () => {
+    for (const scene of aboveWaterPreviews()) {
+      const depthMetres = scene.depth?.metres ?? 0;
+      const floor = oceanCameraFloorMetres(
+        depthMetres,
+        scene.water?.windSpeedMetresPerSecond ?? WINDIEST_METRES_PER_SECOND
+      ) as number;
+      const framing = oceanCameraFraming(
+        scene.camera?.distance ?? 20,
+        depthMetres,
+        scene.water?.visibilityMetres ?? 30,
+        scene.lighting?.surfaceAzimuthRadians,
+        scene.depth?.seafloorMetres
+      );
+      for (let radius = ORBIT_MINIMUM_DISTANCE; radius <= ORBIT_MAXIMUM_DISTANCE; radius += 0.5) {
+        const polar = maximumPolarAngleOverFloor(floor, framing.target.y, radius);
+        const lowestCamera = framing.target.y + radius * Math.cos(polar);
+        expect(lowestCamera).toBeGreaterThanOrEqual(floor - 1e-9);
+      }
+    }
+  });
+
+  it("does not disturb a single above-water shot the family composed", () => {
+    for (const scene of aboveWaterPreviews()) {
+      const depthMetres = scene.depth?.metres ?? 0;
+      const floor = oceanCameraFloorMetres(
+        depthMetres,
+        scene.water?.windSpeedMetresPerSecond ?? WINDIEST_METRES_PER_SECOND
+      ) as number;
+      const framing = oceanCameraFraming(
+        scene.camera?.distance ?? 20,
+        depthMetres,
+        scene.water?.visibilityMetres ?? 30,
+        scene.lighting?.surfaceAzimuthRadians,
+        scene.depth?.seafloorMetres
+      );
+      const restingRadius = Math.hypot(
+        framing.x - framing.target.x,
+        framing.y - framing.target.y,
+        framing.z - framing.target.z
+      );
+      const restingPolar = Math.acos((framing.y - framing.target.y) / restingRadius);
+      expect(restingPolar).toBeLessThan(
+        maximumPolarAngleOverFloor(floor, framing.target.y, restingRadius)
+      );
+    }
+  });
+
+  it("is doing work — unclamped, the wide end of the zoom dives under the sea", () => {
+    // The mirror of the ceiling suite's own "is doing work" case, and the
+    // reason this bound is not decoration: at the widest orbit, straight down
+    // from the aim point is metres under the water in these worlds.
+    const submerged = aboveWaterPreviews().filter((scene) => {
+      const depthMetres = scene.depth?.metres ?? 0;
+      const floor = oceanCameraFloorMetres(
+        depthMetres,
+        scene.water?.windSpeedMetresPerSecond ?? WINDIEST_METRES_PER_SECOND
+      ) as number;
+      const framing = oceanCameraFraming(
+        scene.camera?.distance ?? 20,
+        depthMetres,
+        scene.water?.visibilityMetres ?? 30,
+        scene.lighting?.surfaceAzimuthRadians,
+        scene.depth?.seafloorMetres
+      );
+      return framing.target.y - ORBIT_MAXIMUM_DISTANCE < floor;
+    });
+    expect(submerged.length).toBeGreaterThan(0);
+  });
+});
+
 /**
  * Where a landmark's foot ends up.
  *
@@ -422,5 +547,70 @@ describe("where the service puts a landmark, across worlds the generator can mak
         expect(-(landmark.heightAboveFloor ?? 0)).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+/**
+ * The black smoker's flicker. Measured behaviour rather than a look: a vent
+ * flashes blue-white at its precipitation front a couple of times every few
+ * seconds, each flash about a tenth of a second, and two vents in the same
+ * field do not flash together.
+ */
+describe("hydrothermalFlickerIntensity", () => {
+  const SAMPLE_SECONDS = 120;
+  const SAMPLE_STEP_SECONDS = 1 / 90;
+
+  function samples(phaseSeed: number): number[] {
+    const values: number[] = [];
+    for (let time = 0; time < SAMPLE_SECONDS; time += SAMPLE_STEP_SECONDS) {
+      values.push(hydrothermalFlickerIntensity(time, phaseSeed));
+    }
+    return values;
+  }
+
+  it("stays inside 0..1, so it can drive an opacity directly", () => {
+    for (const value of samples(3)) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("is dark most of the time — a vent that glows continuously is a lamp", () => {
+    const lit = samples(3).filter((value) => value > 0).length;
+    expect(lit / samples(3).length).toBeLessThan(0.15);
+  });
+
+  it("actually flashes, several times a minute", () => {
+    // Counted as rising edges rather than lit frames, so a long dim stretch
+    // cannot pass for a burst.
+    const values = samples(3);
+    let flashes = 0;
+    for (let index = 1; index < values.length; index += 1) {
+      if (values[index] > 0 && values[index - 1] === 0) {
+        flashes += 1;
+      }
+    }
+    expect(flashes).toBeGreaterThan(SAMPLE_SECONDS / 4);
+  });
+
+  it("reaches full brightness, so a flash reads as a flash", () => {
+    expect(Math.max(...samples(3))).toBeGreaterThan(0.9);
+  });
+
+  it("gives two vents in one field their own clock", () => {
+    const first = samples(3);
+    const second = samples(11);
+    const together = first.filter((value, index) => value > 0 && second[index] > 0).length;
+    const eitherLit = first.filter((value, index) => value > 0 || second[index] > 0).length;
+    expect(together / eitherLit).toBeLessThan(0.2);
+  });
+
+  it("is deterministic — the same vent at the same second looks the same", () => {
+    expect(hydrothermalFlickerIntensity(41.37, 7)).toBe(hydrothermalFlickerIntensity(41.37, 7));
+  });
+
+  it("is dark for a clock that has not started, or has gone backwards", () => {
+    expect(hydrothermalFlickerIntensity(Number.NaN, 3)).toBe(0);
+    expect(hydrothermalFlickerIntensity(-2, 3)).toBe(0);
   });
 });

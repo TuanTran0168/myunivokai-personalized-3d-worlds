@@ -22,7 +22,8 @@ const FIRST_POSE: CameraPoseMeasurement = {
   orbitRadiusMetres: 20.4,
   polarAngleRadians: 1.31,
   azimuthAngleRadians: -0.82,
-  ceilingMetres: 14.53
+  ceilingMetres: 14.53,
+  floorMetres: null
 };
 
 const SECOND_POSE: CameraPoseMeasurement = {
@@ -35,7 +36,8 @@ const SECOND_POSE: CameraPoseMeasurement = {
   orbitRadiusMetres: 26,
   polarAngleRadians: 0.42,
   azimuthAngleRadians: -0.8,
-  ceilingMetres: 14.53
+  ceilingMetres: 14.53,
+  floorMetres: null
 };
 
 describe("publishCameraPose", () => {

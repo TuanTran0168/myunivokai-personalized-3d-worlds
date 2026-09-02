@@ -14,6 +14,7 @@ actually found. Where the two disagree, these win.
 
 | Document | What it records |
 | --- | --- |
+| [ocean-realism-roadmap.md](execution-records/ocean-realism-roadmap.md) | The ocean roadmap, now closed. Four contradictions: a test's input path was blamed for a bug it never had, an open plan item's premise had been made false by a change two sections above it, three correct camera behaviours composed into a silent zoom loss, and the wreck's bytes were in a texture rather than in its triangles. |
 | [frontend-deferred-work.md](execution-records/frontend-deferred-work.md) | Dynamic family chunks and forest fidelity metrics, both shipped — including what each plan predicted wrongly. Part B's measurement found a real mesh fold on the landmark ponds. |
 | [frontend-refactor-plan.md](execution-records/frontend-refactor-plan.md) | The historical FE refactor sequence. Its checkboxes are stale — several unchecked items already exist in source, so never read its status table as a backlog. |
 | [backend-refactor-plan.md](execution-records/backend-refactor-plan.md) | The historical Universe-only refactor sequence. |

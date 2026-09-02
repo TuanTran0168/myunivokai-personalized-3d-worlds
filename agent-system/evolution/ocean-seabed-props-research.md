@@ -95,6 +95,38 @@ twenty-minute experiment (`gltf-transform simplify` + `resize`, render it at
 the landmark's 2.6 m height in the abyss fixture, look at it) and it must happen
 before any of this is planned, not after.
 
+### The experiment ran. A survives, at 609 KB rather than 400
+
+Measured 2026-09-02, and the pipeline is committed as
+`apps/myunivokai-web/scripts/fetch-ocean-wreck.mjs`:
+
+| step | size | triangles |
+|---|---|---|
+| raw GLB | 14.54 MB | 250 k |
+| `simplify --ratio 0.02` | 3.43 MB | 11 k |
+| `resize 512` | 1.39 MB | |
+| `prune --keep-attributes false` | 1.39 MB | |
+| `quantize` | 1.01 MB | |
+| `jpeg`, `normalTexture` only | **608.66 KB** | |
+
+Three things this estimate got wrong, all of them worth knowing next time:
+
+- **The textures were the budget, not the triangles.** After quantizing, 55 % of
+  what was left was ONE lossless 512² PNG normal map (493 KB) against a 60 KB
+  base colour JPEG. Re-encoding it was the single biggest win in the chain, and
+  it was nowhere in the plan.
+- **`--ratio 0.02`, not 0.01.** The model is three primitives, so the ratio is
+  applied per-primitive; 0.02 lands at 11 k triangles, where the plate seams and
+  the broken stern edge still read. The 150 KB that costs over 5 k is spent only
+  when the lottery hits.
+- **The abyss fixture was the wrong place to look.** It is black — visibility
+  ~12 m, brightness ~0 — so the wreck is invisible there for reasons that have
+  nothing to do with decimation. The reef fixture is where the read was judged,
+  and there it is a hull: gunwale, plating, a stern settled into the sand.
+
+Shipped as recommended: only on the `rarityFeature("ocean-sunken-relic")` hit,
+with `buildSunkenRelic` as both the ordinary case and the Suspense fallback.
+
 ### The rules that still bind
 
 From [`threejs-assets.md`](../knowledge/references/threejs-assets.md) and work

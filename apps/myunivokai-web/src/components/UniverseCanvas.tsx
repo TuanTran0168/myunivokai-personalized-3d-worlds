@@ -11,7 +11,8 @@ import { resolveSceneRenderer, resolveSceneTypeRenderer } from "@/features/scene
 import { FallbackUniverseRenderer } from "@/features/scene-renderers/fallback/FallbackUniverseRenderer";
 import {
   oceanCameraFraming as oceanCameraFramingFor,
-  oceanCameraCeilingMetres
+  oceanCameraCeilingMetres,
+  oceanCameraFloorMetres
 } from "@/features/scene-renderers/ocean/oceanMath";
 import { forestShoreCameraFraming } from "@/features/scene-renderers/forest/forestMath";
 import {
@@ -342,6 +343,16 @@ export function UniverseCanvas({
         scene?.water?.windSpeedMetresPerSecond ?? OCEAN_FALLBACK_WIND_SPEED_METRES_PER_SECOND,
       )
     : null;
+  // And the mirror of it: how low the lens may go before it is INSIDE a sea its
+  // rig was built to stand on. Only an above-water ocean world has one — see
+  // oceanCameraFloorMetres for why arriving under that surface is not the same
+  // as being underwater.
+  const oceanCameraFloor = isOceanFamilyScene
+    ? oceanCameraFloorMetres(
+        scene?.depth?.metres ?? 20,
+        scene?.water?.windSpeedMetresPerSecond ?? OCEAN_FALLBACK_WIND_SPEED_METRES_PER_SECOND,
+      )
+    : null;
   const cameraPosition: [number, number, number] = forestCameraFraming
     ? [0, forestCameraFraming.height, forestCameraFraming.distance]
     : oceanCameraFraming
@@ -509,6 +520,7 @@ export function UniverseCanvas({
               maximumDistance={isForestFamilyScene ? FOREST_MAXIMUM_CAMERA_DISTANCE : undefined}
               maximumPolarAngleRadians={isForestFamilyScene ? FOREST_MAXIMUM_POLAR_ANGLE_RADIANS : undefined}
               maximumCameraHeightMetres={oceanCameraCeiling ?? undefined}
+              minimumCameraHeightMetres={oceanCameraFloor ?? undefined}
               keyboardMoveEnabled={enableKeyboardMove}
               restingTarget={oceanCameraFraming?.target}
               introDurationSeconds={introDurationSeconds}

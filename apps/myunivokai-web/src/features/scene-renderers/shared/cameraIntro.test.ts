@@ -10,6 +10,7 @@ import {
   cameraIntroOffsetAt,
   cameraIntroProgress,
   cameraIntroStartOffset,
+  maximumPolarAngleOverFloor,
   minimumPolarAngleUnderCeiling,
   NO_POLAR_FLOOR,
   pickCameraIntroPose,
@@ -365,6 +366,50 @@ describe("minimumPolarAngleUnderCeiling", () => {
 
   it("returns no restriction for a degenerate radius", () => {
     expect(minimumPolarAngleUnderCeiling(CEILING_HEIGHT, TARGET_HEIGHT, 0)).toBe(0);
+  });
+});
+
+describe("maximumPolarAngleOverFloor", () => {
+  // The other family of ocean world: the lens four metres over a sea whose
+  // crests reach 2.4 m, aiming two metres below itself at the water.
+  const FLOOR_HEIGHT = -1.68;
+  const TARGET_HEIGHT = -2;
+
+  it("does not restrict a camera that cannot reach the floor anyway", () => {
+    // Zoomed in on an aim point that is already below the floor, the orbit is
+    // still long enough to swing under it, so this one IS restricted — the
+    // unrestricted case is a floor far below the target.
+    expect(maximumPolarAngleOverFloor(-40, TARGET_HEIGHT, 20)).toBe(Math.PI);
+  });
+
+  it("tightens as the camera zooms out", () => {
+    const closeIn = maximumPolarAngleOverFloor(-12, TARGET_HEIGHT, 6);
+    const restingRadius = maximumPolarAngleOverFloor(-12, TARGET_HEIGHT, 20);
+    const pulledBack = maximumPolarAngleOverFloor(-12, TARGET_HEIGHT, 26);
+    // The mirror of the ceiling's inequality: a bigger polar angle is a lower
+    // camera, so the bound comes DOWN as the orbit widens.
+    expect(closeIn).toBeGreaterThan(restingRadius);
+    expect(restingRadius).toBeGreaterThan(pulledBack);
+  });
+
+  it("holds the camera over the floor at every radius the envelope allows", () => {
+    for (let radius = 2.5; radius <= 26; radius += 0.5) {
+      const polar = maximumPolarAngleOverFloor(FLOOR_HEIGHT, TARGET_HEIGHT, radius);
+      const lowestCamera = TARGET_HEIGHT + radius * Math.cos(polar);
+      expect(lowestCamera).toBeGreaterThanOrEqual(FLOOR_HEIGHT - 1e-9);
+    }
+  });
+
+  it("pins the camera above its target when the floor is over the aim point", () => {
+    // Which is the ordinary case for a world sitting just above its own sea:
+    // the shot aims down at the water, and every orbit position that is still
+    // out of it is above the thing being aimed at.
+    const polar = maximumPolarAngleOverFloor(FLOOR_HEIGHT, TARGET_HEIGHT, 20);
+    expect(polar).toBeLessThan(Math.PI / 2);
+  });
+
+  it("returns no restriction for a degenerate radius", () => {
+    expect(maximumPolarAngleOverFloor(FLOOR_HEIGHT, TARGET_HEIGHT, 0)).toBe(Math.PI);
   });
 });
 
