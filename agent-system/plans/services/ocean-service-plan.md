@@ -259,7 +259,7 @@ The create form renders a **live WebGL preview before anything is generated**,
 built by a client-side mirror of the backend builder:
 `lib/scene.ts` → `buildPreviewSceneConfig` for universe, `lib/forestScene.ts` →
 `buildPreviewForestSceneConfig` for forest, selected at
-[`app/page.tsx:173`](../../../apps/myunivokai-web/src/app/page.tsx).
+[`app/page.tsx:173`](../../../apps/myunivokai-personalization/src/app/page.tsx).
 
 Ocean therefore needs **`lib/oceanScene.ts` with `buildPreviewOceanSceneConfig`
 and its own test file**, and that file is a *second implementation of the depth

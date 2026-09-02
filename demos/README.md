@@ -26,7 +26,7 @@ a copy of it. See
   the person or agent producing it is the least reliable judge of it. If a demo
   makes visual claims, it ships a script that checks them numerically.
 - **Never commit a vendored library.** three.js is 1.3 MB. Splice it in at build
-  time from `apps/myunivokai-web/node_modules`; `dist/` is gitignored.
+  time from `apps/myunivokai-personalization/node_modules`; `dist/` is gitignored.
 - **No network at runtime.** The built file must open from the filesystem with
   no CDN, no fonts, no remote assets. Textures are generated procedurally on a
   canvas.
@@ -45,7 +45,7 @@ a copy of it. See
 The bench that chose how changing world should look. Four ways to cross, played
 against the same floating form rail, with the 2.5 s cold load simulated — plus a
 loader per world family. `Genie out · hold · in` was approved from it and is what
-ships in `apps/myunivokai-web/src/features/transitions/`.
+ships in `apps/myunivokai-personalization/src/features/transitions/`.
 
 ```
 # no build step; open it directly

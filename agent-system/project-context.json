@@ -129,8 +129,8 @@
   "repository": {
     "apps": [
       {
-        "name": "myunivokai-web",
-        "path": "apps/myunivokai-web",
+        "name": "myunivokai-personalization",
+        "path": "apps/myunivokai-personalization",
         "stack": "Next.js, TypeScript, Tailwind, React Three Fiber",
         "devPort": 41300,
         "commands": {

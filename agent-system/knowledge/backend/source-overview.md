@@ -17,7 +17,7 @@ see §Telemetry Service below for why, before assuming it is an accident.
 ## Runtime topology
 
 ```text
-myunivokai-web
+myunivokai-personalization
   -> API Gateway (HTTP :41800 local, PORT on Render)
        -> JetStream MYUNIVOKAI_COMMANDS
        -> Core NATS queries

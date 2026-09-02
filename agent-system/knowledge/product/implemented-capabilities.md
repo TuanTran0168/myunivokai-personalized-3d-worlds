@@ -25,8 +25,8 @@ And no domain-service hostname is frontend configuration.
 
 Source evidence:
 
-- `apps/myunivokai-web/src/lib/gateway.ts`
-- `apps/myunivokai-web/src/lib/api.ts`
+- `apps/myunivokai-personalization/src/lib/gateway.ts`
+- `apps/myunivokai-personalization/src/lib/api.ts`
 - `services/api-gateway/internal/handlers/router.go`
 - `services/api-gateway/internal/handlers/dna_job_handler.go`
 - `services/api-gateway/internal/handlers/universe_handler.go`
@@ -52,8 +52,8 @@ And job polling leads to the matching deterministic renderer and family route.
 
 Source evidence:
 
-- `apps/myunivokai-web/src/app/page.tsx`
-- `apps/myunivokai-web/src/lib/api.ts`
+- `apps/myunivokai-personalization/src/app/page.tsx`
+- `apps/myunivokai-personalization/src/lib/api.ts`
 - `services/api-gateway/internal/handlers/world_handler.go`
 - `services/api-gateway/internal/handlers/universe_handler.go`
 - `services/api-gateway/internal/handlers/nature_handler.go`
@@ -125,7 +125,7 @@ Source evidence:
 
 - both family services' `internal/handlers/nats_handler.go`
 - both family services' `internal/models/responses.go`
-- both frontend share routes under `apps/myunivokai-web/src/app/`
+- both frontend share routes under `apps/myunivokai-personalization/src/app/`
 
 ## US-CURRENT-006 — Start the full local topology once
 

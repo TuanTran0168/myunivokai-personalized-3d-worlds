@@ -320,7 +320,7 @@ producing a silent no-op or an unexpected outbound call at request time.
 
 ## Frontend change
 
-[api.ts:57-90](../../../apps/myunivokai-web/src/lib/api.ts#L57-L90) already
+[api.ts:57-90](../../../apps/myunivokai-personalization/src/lib/api.ts#L57-L90) already
 retries idempotent GETs once on `429`, reading `Retry-After`. Extending the same
 mechanism to `503 SERVICE_WAKING` — with a larger retry budget (roughly 5–8
 attempts across 30–60s, to cover real Render cold-start duration) — is a

@@ -5,7 +5,7 @@ import "strings"
 // moodSceneProfile tunes the deterministic scene numbers by atmospheric mood so
 // the user's mood choice has a visible effect on the rendered world. The same
 // mapping is mirrored on the frontend preview builder
-// (apps/myunivokai-web/src/lib/scene.ts, buildPreviewSceneConfig) so the live
+// (apps/myunivokai-personalization/src/lib/scene.ts, buildPreviewSceneConfig) so the live
 // preview and the generated world react to mood in the same direction. Keep the
 // two in sync when changing these values.
 type moodSceneProfile struct {

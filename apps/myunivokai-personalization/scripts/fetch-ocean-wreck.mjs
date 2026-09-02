@@ -7,7 +7,7 @@
  *
  *   node scripts/fetch-ocean-wreck.mjs
  *
- * Needs `SKETCHFAB_API_TOKEN` in `apps/myunivokai-web/.env.local.secret`, which
+ * Needs `SKETCHFAB_API_TOKEN` in `apps/myunivokai-personalization/.env.local.secret`, which
  * is gitignored and stays that way. The token is a read credential for the
  * Download API; nothing here writes to Sketchfab.
  *

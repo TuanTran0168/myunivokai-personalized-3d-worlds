@@ -1,5 +1,5 @@
 services:
-  myunivokai-web:
+  myunivokai-personalization:
     build:
       context: .
       dockerfile: Dockerfile.local
@@ -12,8 +12,8 @@ services:
       - "${WEB_PORT:-41300}:41300"
     volumes:
       - .:/app
-      - myunivokai-web-node-modules:/app/node_modules
-      - myunivokai-web-next-cache:/app/.next
+      - myunivokai-personalization-node-modules:/app/node_modules
+      - myunivokai-personalization-next-cache:/app/.next
     restart: unless-stopped
     networks: [edge]
 
@@ -22,5 +22,5 @@ networks:
     name: myunivokai-local-edge
 
 volumes:
-  myunivokai-web-node-modules:
-  myunivokai-web-next-cache:
+  myunivokai-personalization-node-modules:
+  myunivokai-personalization-next-cache:

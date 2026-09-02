@@ -1,5 +1,5 @@
 // The Myunivokai mark (an M drawn as a ridge, with a disc rising behind it —
-// see apps/myunivokai-web/public/logo.svg for the full design rationale),
+// see apps/myunivokai-personalization/public/logo.svg for the full design rationale),
 // reused verbatim rather than inventing a second symbol for this app. Inline
 // rather than an <img> so it recolors with no extra asset request.
 export function BrandMark({ className }: { className?: string }) {

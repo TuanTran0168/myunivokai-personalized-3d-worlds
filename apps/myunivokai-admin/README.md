@@ -1,7 +1,7 @@
 # Myunivokai Admin
 
 The internal staff console for Myunivokai — a separate Next.js app with its
-own domain, sharing no code with `apps/myunivokai-web` (enforced by
+own domain, sharing no code with `apps/myunivokai-personalization` (enforced by
 `npm run check:boundary`) and no three.js. See
 `agent-system/plans/services/auth-and-admin-plan.md#the-admin-app` and
 `agent-system/plans/sprints/sprint-04-2026-08-06/user-stories.md` (S4-AUTH-004).
@@ -70,13 +70,13 @@ waits for nothing.
 
 ## Folder structure
 
-Mirrors `apps/myunivokai-web`'s split: one folder per domain under
+Mirrors `apps/myunivokai-personalization`'s split: one folder per domain under
 `src/features/`, not one folder per file *kind*. `src/features/accounts`,
 `src/features/roles`, `src/features/audit` and `src/features/analytics` each
 own their page component,
 dialogs and `api.ts`/`types.ts` — a route file under `src/app/(dashboard)/*`
 is a one-line re-export of the feature's page component, same as
-`apps/myunivokai-web/src/app/gallery/page.tsx` stays thin over
+`apps/myunivokai-personalization/src/app/gallery/page.tsx` stays thin over
 `src/features/gallery/*`. `src/components/layout/` holds cross-app chrome
 (sidebar, nav config, page header, the content transition) that isn't any
 one feature's; `src/components/ui/` stays the shared shadcn primitives;
@@ -210,7 +210,7 @@ Claude.ai's palette; v2 swung to a neutral light dashboard (Linear/Vercel/
 Stripe) to fix that, but a real reference review found the opposite problem —
 a translucent panel over a flat white background has nothing colorful behind
 it for the blur to reveal, so the glass itself read as invisible. This pass
-is grounded directly in `apps/myunivokai-web`'s own design system ("The
+is grounded directly in `apps/myunivokai-personalization`'s own design system ("The
 Vitrine + Liquid Glass", that app's `globals.css`) rather than inventing a
 third palette: the same void (`#08080A`), paper foreground (`#F2EEE6`) and
 brass accent (`rgb(201 163 91)`, the middle stop of the shared `BrandMark`
@@ -231,7 +231,7 @@ directly rather than staying a flat surface. `prefers-contrast: more` still
 drops every glass surface back to a flat, bordered background, since blur
 reduces text contrast against whatever scrolls underneath.
 `src/components/layout/brand-mark.tsx` reuses
-`apps/myunivokai-web/public/logo.svg`'s exact mark rather than inventing a
+`apps/myunivokai-personalization/public/logo.svg`'s exact mark rather than inventing a
 second symbol for this app.
 
 `motion` supplies animation, scoped narrowly on purpose: the first pass wrapped

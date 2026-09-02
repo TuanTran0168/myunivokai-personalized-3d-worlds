@@ -24,11 +24,11 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
-const modulesPath = resolve(repoRoot, "apps/myunivokai-web/node_modules/three");
+const modulesPath = resolve(repoRoot, "apps/myunivokai-personalization/node_modules/three");
 const threePath = resolve(modulesPath, "build/three.cjs");
 const loaderPath = resolve(modulesPath, "examples/jsm/loaders/GLTFLoader.js");
 const utilsPath = resolve(modulesPath, "examples/jsm/utils/BufferGeometryUtils.js");
-const assetsPath = resolve(repoRoot, "apps/myunivokai-web/public/assets/ocean/models");
+const assetsPath = resolve(repoRoot, "apps/myunivokai-personalization/public/assets/ocean/models");
 const outDir = resolve(here, "dist");
 const outFile = resolve(outDir, "ocean-depth-rig.html");
 
@@ -53,7 +53,7 @@ const MODELS = {
 
 const [three, loaderSource, utilsSource, shell, scene] = await Promise.all([
   readFile(threePath, "utf8").catch(() => {
-    throw new Error(`three.cjs not found at ${threePath}. Run npm install in apps/myunivokai-web first.`);
+    throw new Error(`three.cjs not found at ${threePath}. Run npm install in apps/myunivokai-personalization first.`);
   }),
   readFile(loaderPath, "utf8"),
   readFile(utilsPath, "utf8"),

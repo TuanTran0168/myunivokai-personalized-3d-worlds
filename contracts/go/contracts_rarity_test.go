@@ -11,7 +11,7 @@ import (
 //
 //	UPDATE_GOLDEN=1 npx vitest run src/lib/rarityGolden.test.ts
 //
-// in apps/myunivokai-web. It lives under fixtures/rarity/ rather than beside
+// in apps/myunivokai-personalization. It lives under fixtures/rarity/ rather than beside
 // the events because schema_conformance_test.go globs ../fixtures/*.json and
 // requires every match to be a valid event envelope, which this is not.
 const rarityFixturePath = "../fixtures/rarity/rare-feature-rolls.v1.json"
