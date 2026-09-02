@@ -4,26 +4,28 @@
 > **Sprint starts:** 2026-09-02
 > **Last source review:** 2026-09-02
 
-One epic, three phases, sixteen branch-sized stories. The phases are ordered by
-dependency and each ends in a shippable state:
+One epic, three phases, seventeen branch-sized stories. The phases are ordered
+by dependency and each ends in a shippable state:
 
 - **Phase A** (`S8-IDENTITY-001` … `006`) — a person can hold an account.
   Nothing owns anything yet.
-- **Phase B** (`007` … `013`) — a world has an owner, an owner can delete it,
-  and the AI bill has a ceiling.
-- **Phase C** (`014`, `015`) — a visitor sees their worlds on a device that has
+- **Phase B** (`007` … `014`) — a world has an owner, an owner can delete it,
+  and the AI spend has a ceiling.
+- **Phase C** (`015`, `016`) — a visitor sees their worlds on a device that has
   never seen them.
-- **The rename** (`016`) is not a phase and must land before `001` or after
-  `015`, never between them.
+- **The rename** (`017`) is not a phase and must land before `001` or after
+  `016`, never between them.
 
 Inside Phase A, `001` and `002` are sequential; `004` needs `002`'s route
 surface to exist. Inside Phase B, `007` gates everything else, and `008`
-gates `009`, `011` and `012`. `010` is deliberately separate from `009`
-because it is the half that only fails in production.
+gates `009`, `011` and `013`. `012` gates `013`, because the quota's numbers
+are settings rather than environment variables. `010` is deliberately separate
+from `009` because it is the half that only fails in production, and `014` is
+separate from `013` because its whole content is *when not to speak*.
 
 **Scope note, so it is not rebuilt from the plan's earlier sections:** the plan
 [`end-user-identity-and-ownership.md`](../../architecture/end-user-identity-and-ownership.md)
-carries nineteen decisions in §16 that supersede parts of §3.4, §5, §9, §10,
+carries twenty decisions in §16 that supersede parts of §3.4, §5, §9, §10,
 §11 and §17 in place. There is **no** account-deletion feature, **no** mail
 provider, **no** password reset, **no** passkeys and **no** `library-service`
 in this sprint. Read §16 before any story below.
@@ -508,7 +510,98 @@ Tasks:
       a one-line change that otherwise fails as a CORS preflight rejection in
       the browser and passes in every server-side test.
 
-### S8-IDENTITY-012 — A daily generation limit that never refuses a world
+### S8-IDENTITY-012 — System settings, so a policy number is not another `.env` line
+
+Status: Planned
+Priority: P0
+
+As the product owner,
+I want the platform's policy numbers editable from the admin app and audited,
+so that changing a limit is not a redeploy and `.env` stops absorbing product
+behaviour.
+
+Scenario: A limit changes without a deploy, and is attributable
+
+Given `.env` already carries 105 example lines, `render.yaml` 176 keys, and the
+seven services 170 config reads between them
+When a staff member holding `settings:manage` changes a declared setting
+Then the new value is validated against the setting's declared type and
+bounds, and rejected if outside them
+And it takes effect on the next request without any service restarting
+And the change is written to `audit_events` with the actor and the old and new
+values
+And the setting row records who changed it last and when
+And a staff member holding only `settings:read` can see the settings but not
+change one.
+
+Scenario: An empty settings table is a working platform
+
+Given a freshly provisioned environment with no `system_settings` rows and an
+empty Redis
+When the platform serves traffic
+Then every setting resolves to its **named default constant in code**, and
+behaviour is identical to the value being set explicitly
+And no request fails and no screen is blank because a settings row is absent.
+
+Scenario: Reading a setting never wakes a sleeping service
+
+Given `auth-service` is on the free tier and asleep, and the gateway enforces
+the AI quota on the create path
+When a visitor creates a world
+Then the gateway resolves the limit from Redis, or from the compiled-in
+default on a miss
+And **`auth-service` is not contacted**, so a create never waits on a
+20-60 second cold start to learn a quota number.
+
+Scenario: A key removed from the registry does not discard an operator's value
+
+Given a setting key is deleted from the code-declared registry
+When the service next starts
+Then the orphan row is left in place rather than deleted
+And the admin screen shows it as an unknown setting, so removing it is a
+deliberate act.
+
+Source evidence:
+- agent-system/plans/architecture/end-user-identity-and-ownership.md — §9.3 in full, §15 (the four settings prohibitions), §16 decision 20
+- services/api-gateway/internal/admin/auth/revocation.go — the Postgres → Redis → gateway pattern this copies, and the **one behaviour it deliberately inverts**: a miss must not fall back to a NATS request
+- services/auth-service/internal/services/permission_sync.go — the code-declared-registry shape to copy, and the `DELETE FROM permissions WHERE NOT (codename = ANY($1))` scar **not** to copy
+- .env.example — 105 lines, the reason this story exists
+- render.yaml — 176 `- key:` entries, the same reason
+
+Tasks:
+- [ ] `feat/be/system-settings`: add the `system_settings` table to
+      `auth-service` — `setting_key` primary key, `setting_value TEXT`,
+      `updated_by_account_id`, `updated_at`.
+- [ ] Add a code-declared `declaredSettings` registry with key, type
+      (`string` / `int` / `bool` / `duration` — the four the config loader
+      already has), default, bounds and a description the admin screen renders.
+      Pin it with a test, as `enforcedPermissions` is pinned.
+- [ ] Declare the two AI generation limits as its first settings, with the
+      existing named constants as their defaults.
+- [ ] Add `settings:read` and `settings:manage` to `enforcedPermissions` — not
+      to `reservedPermissions`, because their routes ship here. Choose both
+      names once: `SyncPermissions` deletes any codename that leaves the list,
+      from production and from every role holding it, on the next boot.
+- [ ] Mirror every setting into Redis on write **and on service startup**, with
+      no TTL, so a flushed Redis self-heals on the next boot.
+- [ ] Add the gateway-side reader: Redis, then the compiled-in default on a
+      miss, and **never a NATS request**. Put the reason in a comment next to
+      it — a later reader will otherwise make it consistent with
+      `RevocationChecker` and reintroduce a cold start on the create path.
+- [ ] Add a `setting_update` audit action recording `<key>: <old> -> <new>`.
+- [ ] Add `/api/admin/settings` read and write routes, permission-gated, which
+      the enumerating admin router test already requires.
+- [ ] Add the Settings screen to `apps/myunivokai-admin`, rendering the
+      declared registry rather than a hand-written form, so a new setting needs
+      no frontend change.
+- [ ] Add the empty-table test: no rows, no Redis, correct behaviour.
+- [ ] Do **not** move `AI_PROVIDER` here. It is the most valuable candidate and
+      the most expensive: `aifactory` builds the provider once at startup, so it
+      would turn provider selection per-request, and the setting would need
+      validating against which API keys exist. Plan §9.3 records it as the next
+      candidate, deliberately outside this sprint.
+
+### S8-IDENTITY-013 — A daily generation limit that never refuses a world
 
 Status: Planned
 Priority: P0
@@ -521,7 +614,8 @@ noticing.
 Scenario: Over the limit still produces a world
 
 Given an anonymous visitor has had 5 AI generations today, or an account
-holder 25
+holder 25 — both numbers resolved from the settings of `S8-IDENTITY-012`, with
+the named constants as their defaults
 When they create another world
 Then the world is still created, from the **mock** provider, and is real,
 deterministic, family-appropriate and theirs
@@ -557,8 +651,13 @@ Source evidence:
 
 Tasks:
 - [ ] `feat/be/daily-generation-quota`: increment the Redis counter in the
-      gateway **before** publishing the generate command, with both limits and
-      the key prefix as named config values.
+      gateway **before** publishing the generate command. Both limits come from
+      `S8-IDENTITY-012`'s settings reader — Redis, then the compiled-in default
+      on a miss, never a request to `auth-service`. The counter's key prefix
+      stays a named constant, because it is not policy.
+- [ ] Add a test that a limit changed in the admin app takes effect on the next
+      create with no service restart, which is the point of routing it through
+      settings at all.
 - [ ] Add the tier flag to the generate command and honour it in
       `dna-service` by serving that job from the mock provider.
 - [ ] Return a **reason code** on the job/world response —
@@ -579,7 +678,7 @@ Tasks:
       the AI tier is actually switched on, rather than carrying a rate-card
       estimate forward.
 
-### S8-IDENTITY-013 — Say so, once, when a world came from presets
+### S8-IDENTITY-014 — Say so, once, when a world came from presets
 
 Status: Planned
 Priority: P1
@@ -631,7 +730,7 @@ Tasks:
 
 ## Phase C — the gallery is real
 
-### S8-IDENTITY-014 — The account's world list, served by dna-service
+### S8-IDENTITY-015 — The account's world list, served by dna-service
 
 Status: Planned
 Priority: P0
@@ -666,7 +765,7 @@ Tasks:
 - [ ] Exclude worlds the owning family has flagged deleted, coordinating with
       `S8-IDENTITY-009` so the filter has exactly one home.
 
-### S8-IDENTITY-015 — The gallery reads the server, not the browser
+### S8-IDENTITY-016 — The gallery reads the server, not the browser
 
 Status: Planned
 Priority: P0
@@ -705,7 +804,7 @@ Tasks:
 
 ## The rename — not a phase
 
-### S8-IDENTITY-016 — `myunivokai-web` becomes `myunivokai-personalization`
+### S8-IDENTITY-017 — `myunivokai-web` becomes `myunivokai-personalization`
 
 Status: Planned
 Priority: P1
@@ -739,6 +838,6 @@ Tasks:
       every reference, in one commit, with no behaviour change alongside it.
 - [ ] Verify the renamed CI job appears in the run, not merely that CI is
       green.
-- [ ] Land this **before `S8-IDENTITY-001` or after `S8-IDENTITY-015`** —
+- [ ] Land this **before `S8-IDENTITY-001` or after `S8-IDENTITY-016`** —
       never between, because it touches almost every path in CI and none of the
       logic, so beside a feature branch it buys nothing but merge conflicts.

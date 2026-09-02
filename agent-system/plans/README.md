@@ -30,7 +30,7 @@ are cross-cutting mechanisms with the same standing.
 is the third — **proposed 2026-09-02, no code yet, scheduled as
 [Sprint 08](sprints/sprint-08-2026-09-02/README.md)** — and it is the one
 to read before touching `accounts`, the token audience, any world's owner, or
-the web app's session. Read its **§16 first**: nineteen decisions taken across
+the web app's session. Read its **§16 first**: twenty decisions taken across
 four rounds on 2026-09-02 supersede parts of six of its own sections, and most
 of them cut scope rather than adding it. The first is the one to
 read before touching gateway error handling, `/healthz`, the wake platform

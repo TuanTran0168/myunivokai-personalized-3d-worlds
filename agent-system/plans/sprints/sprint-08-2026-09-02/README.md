@@ -3,7 +3,7 @@
 > **Starts:** 2026-09-02
 > **Status:** Planned. The stories below are committed scope; they execute
 > [`end-user-identity-and-ownership.md`](../../architecture/end-user-identity-and-ownership.md),
-> whose nineteen decisions are all taken and which awaits the owner's approval.
+> whose twenty decisions are all taken and which awaits the owner's approval.
 > **Last source review:** 2026-09-02
 
 ## Sprint goal
@@ -25,7 +25,7 @@ Sprint stories: [user-stories.md](user-stories.md)
 
 Plan this sprint executes:
 [end-user-identity-and-ownership.md](../../architecture/end-user-identity-and-ownership.md)
-— **read its §16 first.** Nineteen decisions were taken on 2026-09-02 and
+— **read its §16 first.** Twenty decisions were taken on 2026-09-02 and
 several of them cut scope; §16 supersedes parts of §3.4, §5, §9, §10, §11 and
 §17 in place, and the sprint is scoped to what is left rather than to what the
 plan's earlier sections describe.
@@ -54,7 +54,8 @@ And the reason it is cheap: **the identity half was already paid for by Sprint
 already carry `audience`, the access JWT already carries an audience claim, and
 the admin edge already rejects a `web` token with a test pinning it. This
 sprint adds **no service, no database and no third-party account** — the plan's
-§3.1 removed the one service that would have.
+§3.1 removed the one service that would have. The entire schema addition is two
+nullable columns per family plus one new table in an existing database.
 
 ## Scope
 
@@ -85,6 +86,11 @@ sprint adds **no service, no database and no third-party account** — the plan'
   gateway**, because that is the half that only fails in production.
 - The anonymous claim: gateway → `dna-service` → only the families that
   visitor actually used.
+- **A `system_settings` mechanism in `auth-service`**, with the two quota
+  numbers as its first settings, so a policy number is an audited admin change
+  rather than the 106th line of `.env`. Read on the hot path from Redis with a
+  compiled-in default on a miss — **never** by asking `auth-service`, which
+  sleeps.
 - The daily quota counter, and the **degrade-to-mock** path rather than a
   `429`, plus the one toast that says so — driven by a **reason code**, never
   by a provider name, because production already runs on the mock provider and
@@ -130,6 +136,13 @@ every path in CI and none of the logic.
       code is `mock_configured` rather than `quota_exhausted`. All four reason
       values are covered by a table-driven test, because three of them cannot
       be observed in production until the AI tier is switched on.
+- [ ] A quota limit changed in the admin app takes effect on the next create
+      with **no service restart**, is audited with its old and new value, and
+      is rejected if outside its declared bounds.
+- [ ] **The platform serves correct traffic with an empty `system_settings`
+      table and an empty Redis**, every setting resolving to its named default
+      constant — and a world creation never contacts `auth-service` to learn a
+      quota number.
 - [ ] `GET /api/me/worlds` returns no DNA, no raw input and no email — the same
       response-model test the share endpoint already has.
 - [ ] No `owner_account_id` reaches `myunivokai_analytics`, checked against the

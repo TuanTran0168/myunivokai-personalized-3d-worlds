@@ -21,7 +21,7 @@ acceptance evidence live beside each dated sprint in `agent-system/sprints/*/use
 | [Sprint 5 stories](../sprints/sprint-05-2026-08-13/user-stories.md) | telemetry-service commitments — the gateway rollups, the first Rust service, the admin Telemetry screen |
 | [Sprint 6](../sprints/sprint-06-2026-08-19/README.md) | Ocean as the third family — the epic carries the acceptance, so this sprint has no separate stories file |
 | [Sprint 7 stories](../sprints/sprint-07-2026-08-28/user-stories.md) | Create-form transitions, layout/responsive fixes, gallery ambient sync, depth-driven Ocean audio, and adaptive mobile/weak-device quality tiers pulled forward ahead of City |
-| [Sprint 8 stories](../sprints/sprint-08-2026-09-02/user-stories.md) | End-user identity and world ownership — the `web` audience, ownership in three families and `dna-service`, the anonymous claim, the first AI quota, and a server-backed gallery |
+| [Sprint 8 stories](../sprints/sprint-08-2026-09-02/user-stories.md) | End-user identity and world ownership — the `web` audience, ownership in three families and `dna-service`, the anonymous claim, the first AI quota with its limits as audited admin settings rather than env vars, and a server-backed gallery |
 
 The dated delivery commitments live in [../sprints/](../sprints/README.md).
 Sprint 1 is the complete platform migration, including local and production
@@ -40,7 +40,7 @@ Approved architecture/feature plans referenced by this backlog:
   the gateway's HTTP/NATS/cache rollups and the first service written in Rust.
 - [End-user identity and world ownership](../architecture/end-user-identity-and-ownership.md)
   — Sprint 8, and the document that closed `DEFERRED-AUTH-001`. **Read its §16
-  first:** nineteen decisions taken on 2026-09-02 supersede parts of six of its
+  first:** twenty decisions taken on 2026-09-02 supersede parts of six of its
   own sections, and most of them cut scope.
 
 ## Story format

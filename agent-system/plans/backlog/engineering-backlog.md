@@ -666,12 +666,16 @@ Epic exit:
       immediately, proven by a test that goes through the gateway.
 - [ ] A replayed claim and a second device's claim each update zero rows.
 - [ ] A visitor sees their worlds on a device that has never seen them.
+- [ ] A quota limit is changed from the admin app, audited, with no service
+      restart — and the platform still behaves correctly with an empty
+      `system_settings` table, every setting resolving to its named default.
+- [ ] A world creation never contacts `auth-service` to learn a quota number.
 - [ ] No new service, no new database and no new third-party account was added.
 
-Sprint stories: [S8-IDENTITY-001 through S8-IDENTITY-016](../sprints/sprint-08-2026-09-02/user-stories.md#epic-s8-identity-001--end-user-identity-and-world-ownership)
+Sprint stories: [S8-IDENTITY-001 through S8-IDENTITY-017](../sprints/sprint-08-2026-09-02/user-stories.md#epic-s8-identity-001--end-user-identity-and-world-ownership)
 
 Source: [end-user-identity-and-ownership.md](../architecture/end-user-identity-and-ownership.md)
-— **read its §16 first.** Nineteen decisions taken on 2026-09-02 supersede
+— **read its §16 first.** Twenty decisions taken on 2026-09-02 supersede
 parts of §3.4, §5, §9, §10, §11 and §17 in place, and most of them cut scope:
 there is no account-deletion feature, no mail provider, no password reset, no
 passkeys and no `library-service` in this epic.
@@ -687,7 +691,7 @@ scenario. Answered on 2026-09-02 by
 [end-user-identity-and-ownership.md](../architecture/end-user-identity-and-ownership.md),
 which takes every clause of this story's `Then` — issuer, account mapping,
 object ownership, anonymous claim/migration, public share, deletion/export and
-service authorization — as a numbered decision. Nineteen of those decisions
+service authorization — as a numbered decision. Twenty of those decisions
 were taken across four rounds on 2026-09-02, and **one clause is deliberately
 answered "not built": deletion/export.** The owner decided there is no
 user-facing account deletion and no purge, so data erasure is discharged by a
