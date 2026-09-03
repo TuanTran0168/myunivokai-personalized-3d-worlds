@@ -513,6 +513,14 @@ export type ShareWorld = {
   publishedAt?: string;
 };
 
+// What a deletion answers with. `shareSlug` is the slug the world HAD, which the
+// gateway uses to drop its cached share response; the browser has no use for it
+// and does not read it.
+export type DeleteResult = {
+  deleted: boolean;
+  shareSlug?: string;
+};
+
 export type PublishResult = {
   shareSlug: string;
   shareUrl: string;

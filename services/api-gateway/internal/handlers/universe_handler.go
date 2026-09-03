@@ -13,6 +13,7 @@ func NewUniverseHandler(serviceConfig config.Config, generationPublisher Generat
 	return &UniverseHandler{WorldHandler: newWorldHandler(serviceConfig, contracts.WorldFamilyUniverse, worldSubjects{
 		worldList: contracts.UniverseWorldListQuerySubject, worldGet: contracts.UniverseWorldGetQuerySubject,
 		variantCreate: contracts.UniverseVariantCreateSubject, variantSelect: contracts.UniverseVariantSelectSubject,
-		worldPublish: contracts.UniverseWorldPublishSubject, shareGet: contracts.UniverseShareGetQuerySubject,
+		worldPublish: contracts.UniverseWorldPublishSubject, worldDelete: contracts.UniverseWorldDeleteSubject,
+		shareGet: contracts.UniverseShareGetQuerySubject,
 	}, generationPublisher, transport)}
 }

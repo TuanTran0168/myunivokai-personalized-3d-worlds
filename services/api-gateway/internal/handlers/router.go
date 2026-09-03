@@ -66,6 +66,12 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 	router.Use(middleware.Recover)
 	router.Use(middleware.Logging)
 	router.Use(middleware.SecurityHeaders)
+	// Built once here rather than inside the identity group, because the
+	// business group needs the same two primitives: the identity group to
+	// REQUIRE a session, the business group to notice one when it is there.
+	// Two constructions would mean two revocation caches for one rule.
+	accessTokenVerifier := auth.NewTokenVerifier(serviceConfig.AccessTokenPublicKeys)
+	revocationChecker := auth.NewRevocationChecker(edgeStore, brokerClient, serviceConfig.NATSRequestTimeout, serviceConfig.TokenVersionCacheTTL)
 	healthHandler := NewHealthHandler(serviceConfig.AppName, brokerClient, edgeStore)
 	rpcTransport := NewRPCTransport(serviceConfig, brokerClient, edgeStore, waker, collector)
 	dnaJobHandler := NewDNAJobHandler(serviceConfig, rpcTransport)
@@ -92,7 +98,7 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 		identityRouter.Use(cors.Handler(productCORSOptions(serviceConfig)))
 		identityRouter.Use(middleware.RateLimit(edgeStore, authRateLimitRouteKey, serviceConfig.AuthRateLimitRequestsPerSecond, serviceConfig.AuthRateLimitBurst))
 		identityRouter.Use(middleware.BodyLimit(serviceConfig.MaximumRequestBodyBytes))
-		registerProductAuthRoutes(identityRouter, serviceConfig, brokerClient, edgeStore, rpcTransport)
+		registerProductAuthRoutes(identityRouter, serviceConfig, edgeStore, rpcTransport, accessTokenVerifier, revocationChecker)
 	})
 
 	// The product CORS handler is scoped to this group, not global - it must
@@ -102,15 +108,21 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 		businessRouter.Use(cors.Handler(productCORSOptions(serviceConfig)))
 		businessRouter.Use(middleware.RateLimit(edgeStore, productRateLimitRouteKey, serviceConfig.RateLimitRequestsPerSecond, serviceConfig.RateLimitBurst))
 		businessRouter.Use(middleware.BodyLimit(serviceConfig.MaximumRequestBodyBytes))
+		// Attached to the WRITES only, inside registerWorldRoutes, and not to
+		// this group. Applying it here breaks the share page: it is a public
+		// URL that has to behave identically for everyone, and a visitor
+		// carrying an expired token would be answered 401 on a page that has
+		// nothing to do with their session.
+		attachProductIdentity := middleware.OptionalProductAccessToken(accessTokenVerifier, revocationChecker)
 		businessRouter.Get("/api/jobs/{jobID}", dnaJobHandler.GetJob)
 		businessRouter.Route("/api/universe", func(familyRouter chi.Router) {
-			registerWorldRoutes(familyRouter, universeHandler)
+			registerWorldRoutes(familyRouter, universeHandler, attachProductIdentity)
 		})
 		businessRouter.Route("/api/nature", func(familyRouter chi.Router) {
-			registerWorldRoutes(familyRouter, natureHandler)
+			registerWorldRoutes(familyRouter, natureHandler, attachProductIdentity)
 		})
 		businessRouter.Route("/api/ocean", func(familyRouter chi.Router) {
-			registerWorldRoutes(familyRouter, oceanHandler)
+			registerWorldRoutes(familyRouter, oceanHandler, attachProductIdentity)
 		})
 		// Every supported family must be registered ABOVE this line: chi
 		// matches in registration order, so a family mounted after the
@@ -136,17 +148,34 @@ type worldRouteHandler interface {
 	CreateVariant(http.ResponseWriter, *http.Request)
 	SelectVariant(http.ResponseWriter, *http.Request)
 	PublishWorld(http.ResponseWriter, *http.Request)
+	DeleteWorld(http.ResponseWriter, *http.Request)
 	GetShare(http.ResponseWriter, *http.Request)
 }
 
-func registerWorldRoutes(router chi.Router, handler worldRouteHandler) {
-	router.Post("/worlds", handler.CreateWorld)
+// registerWorldRoutes splits a family's routes by whether the server reads the
+// caller's identity, and the split is the point rather than a tidy-up.
+//
+// The reads are open, and one of them must be: `/share/worlds/{slug}` is the
+// URL a visitor sends to a friend, so it has to answer a stranger, a signed-in
+// stranger and somebody holding a seven-day-old token identically. Attaching
+// the identity middleware to the whole group made a public page 401 for anybody
+// whose session had gone stale — the session being irrelevant to the page is
+// exactly what made the failure invisible in every other test.
+//
+// The writes carry it, because each one either sets the owner or is checked
+// against it.
+func registerWorldRoutes(router chi.Router, handler worldRouteHandler, attachProductIdentity func(http.Handler) http.Handler) {
 	router.Get("/worlds", handler.GetWorlds)
 	router.Get("/worlds/{worldID}", handler.GetWorld)
-	router.Post("/worlds/{worldID}/variants", handler.CreateVariant)
-	router.Post("/worlds/{worldID}/variants/{variantID}/select", handler.SelectVariant)
-	router.Post("/worlds/{worldID}/publish", handler.PublishWorld)
 	router.Get("/share/worlds/{shareSlug}", handler.GetShare)
+	router.Group(func(writeRouter chi.Router) {
+		writeRouter.Use(attachProductIdentity)
+		writeRouter.Post("/worlds", handler.CreateWorld)
+		writeRouter.Post("/worlds/{worldID}/variants", handler.CreateVariant)
+		writeRouter.Post("/worlds/{worldID}/variants/{variantID}/select", handler.SelectVariant)
+		writeRouter.Post("/worlds/{worldID}/publish", handler.PublishWorld)
+		writeRouter.Post("/worlds/{worldID}/delete", handler.DeleteWorld)
+	})
 }
 
 func registerUnsupportedFamilyRoutes(router chi.Router) {
@@ -159,5 +188,6 @@ func registerUnsupportedFamilyRoutes(router chi.Router) {
 	router.Post("/worlds/{worldID}/variants", unsupported)
 	router.Post("/worlds/{worldID}/variants/{variantID}/select", unsupported)
 	router.Post("/worlds/{worldID}/publish", unsupported)
+	router.Post("/worlds/{worldID}/delete", unsupported)
 	router.Get("/share/worlds/{shareSlug}", unsupported)
 }

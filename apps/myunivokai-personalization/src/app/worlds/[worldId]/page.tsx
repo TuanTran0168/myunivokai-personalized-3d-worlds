@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { Suspense, use, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { Copy, Download, ExternalLink, Loader2, RefreshCw, Rocket } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Copy, Download, ExternalLink, Loader2, RefreshCw, Rocket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, apiErrorMessage } from "@/lib/api";
 import { exportSceneCanvasAsPng } from "@/lib/exportImage";
-import { addWorldIdentifierToGallery, recordLastViewedWorld } from "@/lib/savedWorlds";
+import {
+  addWorldIdentifierToGallery,
+  recordLastViewedWorld,
+  removeWorldIdentifierFromGallery
+} from "@/lib/savedWorlds";
 import { resolveGalleryOwnerKey } from "@/lib/galleryOwner";
 import { isForestScene, pointsOfInterestFromScene, sceneFromVariant, selectedVariant } from "@/lib/scene";
 import { sharePagePath, worldFamilyFromQueryValue, WORLD_FAMILY_QUERY_PARAMETER } from "@/lib/worldRoutes";
@@ -69,7 +73,14 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   const [activeVariantId, setActiveVariantId] = useState<string>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [action, setAction] = useState<"variant" | "publish" | "select" | "copy" | null>(null);
+  const router = useRouter();
+  const [action, setAction] = useState<"variant" | "publish" | "select" | "copy" | "delete" | null>(null);
+  // Deleting takes two clicks on the same button rather than a dialog. A world
+  // is not recoverable from this screen once it is gone - the row survives, but
+  // only staff can bring it back - and a toolbar sitting under a canvas is
+  // exactly where a stray click lands. The armed state clears itself, so a
+  // button left armed and forgotten cannot delete a world on a later visit.
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const [selectedPlanetKey, setSelectedPlanetKey] = useState<string | null>(null);
   // No errorMessage: this page reports failures as toasts, which sit outside the
   // collapsing region, so hiding the panels can never swallow one.
@@ -275,6 +286,28 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {
+      setAction(null);
+    }
+  }
+
+  async function deleteWorld() {
+    if (!deleteArmed) {
+      setDeleteArmed(true);
+      return;
+    }
+    setDeleteArmed(false);
+    setAction("delete");
+    try {
+      await api.deleteWorld(worldId, family);
+      // The gallery entry goes too. The server has stopped serving the world,
+      // so a reference left behind would be a card that loads nothing - and
+      // this browser's list is the only place that reference exists until the
+      // gallery reads the server.
+      removeWorldIdentifierFromGallery(worldId);
+      toast.success("World deleted.");
+      router.push("/gallery");
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
       setAction(null);
     }
   }
@@ -503,6 +536,21 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
             >
               <Download className="h-4 w-4" aria-hidden="true" />
               Export Image
+            </button>
+            <button
+              type="button"
+              onClick={deleteWorld}
+              onBlur={() => setDeleteArmed(false)}
+              disabled={action !== null}
+              aria-label={deleteArmed ? "Confirm deleting this world" : "Delete this world"}
+              className={`focus-ring inline-flex min-h-10 items-center gap-2 rounded-xl border px-4 py-2 text-sm tappable disabled:opacity-45 ${
+                deleteArmed
+                  ? "border-error/60 bg-error-container/80 text-on-surface"
+                  : "border-hairline bg-black/30 text-on-surface-variant hover:border-error/40 hover:text-on-surface"
+              }`}
+            >
+              {action === "delete" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+              {deleteArmed ? "Confirm delete" : "Delete"}
             </button>
             <button
               type="button"

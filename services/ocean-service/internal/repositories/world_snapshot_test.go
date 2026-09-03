@@ -35,7 +35,7 @@ func TestEveryMutationEmitsAWorldChangeEvent(t *testing.T) {
 		{
 			name: "AddVariant",
 			mutate: func() error {
-				_, err := store.AddVariant(ctx, worldID, models.WorldVariant{ID: "variant-2", VariantNo: 2, Seed: "seed-2"})
+				_, err := store.AddVariant(ctx, worldID, models.WorldVariant{ID: "variant-2", VariantNo: 2, Seed: "seed-2"}, noRequestingAccount)
 				return err
 			},
 			expectedRevision: 2,
@@ -43,7 +43,7 @@ func TestEveryMutationEmitsAWorldChangeEvent(t *testing.T) {
 		{
 			name: "SelectVariant",
 			mutate: func() error {
-				_, err := store.SelectVariant(ctx, worldID, "variant-2")
+				_, err := store.SelectVariant(ctx, worldID, "variant-2", noRequestingAccount)
 				return err
 			},
 			expectedRevision: 3,
@@ -51,7 +51,7 @@ func TestEveryMutationEmitsAWorldChangeEvent(t *testing.T) {
 		{
 			name: "PublishWorld",
 			mutate: func() error {
-				_, err := store.PublishWorld(ctx, worldID, "share-slug-1")
+				_, err := store.PublishWorld(ctx, worldID, "share-slug-1", noRequestingAccount)
 				return err
 			},
 			expectedRevision: 4,
@@ -105,7 +105,7 @@ func TestSnapshotCarriesTheSelectedVariantSeed(t *testing.T) {
 		t.Fatalf("created snapshot seed = %q, want %q", createdEnvelope.Data.Snapshot.VariantSeed, "seed-1")
 	}
 
-	if _, err := store.AddVariant(ctx, worldID, models.WorldVariant{ID: "variant-2", VariantNo: 2, Seed: "seed-2"}); err != nil {
+	if _, err := store.AddVariant(ctx, worldID, models.WorldVariant{ID: "variant-2", VariantNo: 2, Seed: "seed-2"}, noRequestingAccount); err != nil {
 		t.Fatal(err)
 	}
 	// Adding a variant does not change which one is selected, so the seed must
@@ -114,7 +114,7 @@ func TestSnapshotCarriesTheSelectedVariantSeed(t *testing.T) {
 		t.Fatalf("adding a variant moved the seed to %q", snapshot.VariantSeed)
 	}
 
-	if _, err := store.SelectVariant(ctx, worldID, "variant-2"); err != nil {
+	if _, err := store.SelectVariant(ctx, worldID, "variant-2", noRequestingAccount); err != nil {
 		t.Fatal(err)
 	}
 	if snapshot := decodeSnapshot(t, drainOutbox(t, store)[0].Payload); snapshot.VariantSeed != "seed-2" {
@@ -128,11 +128,11 @@ func TestUnchangedMutationsEmitNothing(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore()
 	bundle := createSnapshotTestWorld(t, store)
-	if _, err := store.PublishWorld(ctx, bundle.World.ID, "share-slug-1"); err != nil {
+	if _, err := store.PublishWorld(ctx, bundle.World.ID, "share-slug-1", noRequestingAccount); err != nil {
 		t.Fatal(err)
 	}
 	drainOutbox(t, store)
-	if _, err := store.PublishWorld(ctx, bundle.World.ID, "share-slug-2"); err != nil {
+	if _, err := store.PublishWorld(ctx, bundle.World.ID, "share-slug-2", noRequestingAccount); err != nil {
 		t.Fatal(err)
 	}
 	if messages := drainOutbox(t, store); len(messages) != 0 {

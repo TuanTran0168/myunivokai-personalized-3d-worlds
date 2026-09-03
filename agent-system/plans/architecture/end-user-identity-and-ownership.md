@@ -670,6 +670,19 @@ Neon-specific coupling, for no additional guarantee.
 - `POST /api/{family}/worlds/{id}/delete`: **new**, owner-only, and the first
   time a visitor can delete anything. Today only staff can unpublish.
 
+  **Amended 2026-09-03, while implementing `S8-IDENTITY-009`: "owner-only" is
+  stricter here than everywhere else on this page, and the difference had to be
+  decided rather than inherited.** The bullet above leaves an UNOWNED world
+  mutable by anyone holding its id, which is deliberate and describes every
+  world in production. Deletion does not follow it: an unowned world is
+  deletable by **nobody**. A stranger adding a variant to a world they were
+  sent a link to is annoying and reversible; a stranger deleting it takes the
+  world out of its maker's gallery and the maker cannot put it back, and nobody
+  can prove they made an unowned world — the same reasoning decision 16 uses to
+  leave a pre-plan world unclaimable. The refusal is `403 WORLD_NOT_CLAIMED`,
+  distinct from `NOT_WORLD_OWNER`, because "this is nobody's yet" has a next
+  step and "this is not yours" does not. §7's claim is that next step.
+
 ---
 
 ## 7. Anonymous → account, and the claim
@@ -707,6 +720,17 @@ Properties that matter:
   claimable exactly once, forever.
 - **No new event type.** `revision` + outbox + `world.changed` are all in
   production.
+
+  **Corrected 2026-09-03, while implementing `S8-IDENTITY-009`: the claim
+  should emit no event at all, and neither should a deletion.** Decision 4b
+  keeps `analytics-service` untouched, and §15's correction above keeps
+  ownership off the snapshot — so the `world.changed` a claim or a deletion
+  would publish is byte-identical to the last one. It would make the event stop
+  meaning "something you can see changed": a consumer added later would be woken
+  for nothing, and the read model would rewrite identical values. Deletion
+  therefore bumps no revision and stages no outbox row, and `S8-IDENTITY-011`'s
+  own transaction should do the same — the `UPDATE` and the `IS NULL` guard
+  stay exactly as written above; only the outbox line goes.
 - **The `anonymousId` is a bearer credential.** Whoever holds it owns those
   worlds, and under §4.2 it sits in a JS-readable cookie, so an XSS can take
   it. Same exposure as the refresh token, same mitigation — the CSP. 180 days
@@ -1768,13 +1792,20 @@ above are guesses at what was on it.
 ## 15. What must not happen
 
 - **No `owner_account_id` in `myunivokai_analytics`.** Staff have no business
-  reading who owns what. One event, two consumers, two allow lists. And because
-  `contracts.WorldSnapshot` gains `OwnerAccountID *uuid.UUID` (a pointer, so
-  messages already on the stream decode to `nil` rather than a misleading zero
-  UUID), the baseline's standing rule applies: **no field is added to
-  `WorldSnapshot` without the matching line in the data boundary in
-  [`analytics-service-plan.md`](../services/analytics-service-plan.md)** — and
-  here that line says *excluded*.
+  reading who owns what. One event, two consumers, two allow lists. The
+  standing rule still applies: **no field is added to `WorldSnapshot` without
+  the matching line in the data boundary in
+  [`analytics-service-plan.md`](../services/analytics-service-plan.md)**.
+
+  **Corrected 2026-09-03, while implementing `S8-IDENTITY-008`.** This bullet
+  said `WorldSnapshot` *gains* `OwnerAccountID *uuid.UUID` and that the boundary
+  line would read *excluded*. **The field was not added.** The snapshot has
+  exactly two consumers — `dna-service`, which reads `WorldID` and nothing else
+  from it, and `analytics-service`, which is required to drop the owner — so
+  adding it moves personal data across a service boundary for no reader at all.
+  "Never sent" is a stronger guarantee than "dropped on arrival", and it is
+  enforced by a reflection test in each family service rather than by a
+  sentence. The boundary line exists and says so.
 - **No authorization decision from the read model.** §6.1.
 - **No `end_user` account holding a permission row**, and no `web` token
   accepted by the admin edge — in both directions, with tests.

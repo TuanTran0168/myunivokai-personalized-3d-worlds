@@ -13,6 +13,7 @@ func NewNatureHandler(serviceConfig config.Config, generationPublisher Generatio
 	return &NatureHandler{WorldHandler: newWorldHandler(serviceConfig, contracts.WorldFamilyNature, worldSubjects{
 		worldList: contracts.NatureWorldListQuerySubject, worldGet: contracts.NatureWorldGetQuerySubject,
 		variantCreate: contracts.NatureVariantCreateSubject, variantSelect: contracts.NatureVariantSelectSubject,
-		worldPublish: contracts.NatureWorldPublishSubject, shareGet: contracts.NatureShareGetQuerySubject,
+		worldPublish: contracts.NatureWorldPublishSubject, worldDelete: contracts.NatureWorldDeleteSubject,
+		shareGet: contracts.NatureShareGetQuerySubject,
 	}, generationPublisher, transport)}
 }

@@ -5,8 +5,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
-	"github.com/myunivokai/myunivokai/services/api-gateway/internal/admin/auth"
-	"github.com/myunivokai/myunivokai/services/api-gateway/internal/broker"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/config"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/middleware"
 )
@@ -62,7 +60,7 @@ func productCORSOptions(serviceConfig config.Config) cors.Options {
 // No AllowCredentials, unlike the admin router: the browser is never asked to
 // attach anything on its own, so there is nothing to credential. That absence
 // is what leaves this design with no CSRF surface (plan §4.3).
-func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, brokerClient broker.Client, edgeStore EdgeStore, transport *RPCTransport) {
+func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, edgeStore EdgeStore, transport *RPCTransport, accessTokenVerifier middleware.AdminAccessVerifier, revocationChecker middleware.AdminRevocationChecker) {
 	authHandler := NewProductAuthHandler(serviceConfig, transport, edgeStore)
 	router.Post(productAuthRoutePrefix+"/signup", authHandler.SignUp)
 	router.Post(productAuthRoutePrefix+"/login", authHandler.LogIn)
@@ -72,11 +70,9 @@ func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, b
 	// The same two primitives the admin edge is built from, with the same
 	// public keys and the same revocation cache. Only the audience demanded
 	// differs, which is the whole of the separation at this layer - see
-	// middleware.RequireProductAccessToken.
-	requireProductAccessToken := middleware.RequireProductAccessToken(
-		auth.NewTokenVerifier(serviceConfig.AccessTokenPublicKeys),
-		auth.NewRevocationChecker(edgeStore, brokerClient, serviceConfig.NATSRequestTimeout, serviceConfig.TokenVersionCacheTTL),
-	)
+	// middleware.RequireProductAccessToken. They are constructed by NewRouter
+	// and passed in, because the business group needs the same two.
+	requireProductAccessToken := middleware.RequireProductAccessToken(accessTokenVerifier, revocationChecker)
 	router.Group(func(sessionRouter chi.Router) {
 		sessionRouter.Use(requireProductAccessToken)
 		sessionRouter.Get(productMeRoutePrefix, authHandler.Me)

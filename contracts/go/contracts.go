@@ -33,18 +33,21 @@ const (
 	UniverseVariantCreateSubject  = "myunivokai.queries.universe.variant.create.v1"
 	UniverseVariantSelectSubject  = "myunivokai.queries.universe.variant.select.v1"
 	UniverseWorldPublishSubject   = "myunivokai.queries.universe.world.publish.v1"
+	UniverseWorldDeleteSubject    = "myunivokai.queries.universe.world.delete.v1"
 	UniverseShareGetQuerySubject  = "myunivokai.queries.universe.share.get.v1"
 	NatureWorldListQuerySubject   = "myunivokai.queries.nature.world.list.v1"
 	NatureWorldGetQuerySubject    = "myunivokai.queries.nature.world.get.v1"
 	NatureVariantCreateSubject    = "myunivokai.queries.nature.variant.create.v1"
 	NatureVariantSelectSubject    = "myunivokai.queries.nature.variant.select.v1"
 	NatureWorldPublishSubject     = "myunivokai.queries.nature.world.publish.v1"
+	NatureWorldDeleteSubject      = "myunivokai.queries.nature.world.delete.v1"
 	NatureShareGetQuerySubject    = "myunivokai.queries.nature.share.get.v1"
 	OceanWorldListQuerySubject    = "myunivokai.queries.ocean.world.list.v1"
 	OceanWorldGetQuerySubject     = "myunivokai.queries.ocean.world.get.v1"
 	OceanVariantCreateSubject     = "myunivokai.queries.ocean.variant.create.v1"
 	OceanVariantSelectSubject     = "myunivokai.queries.ocean.variant.select.v1"
 	OceanWorldPublishSubject      = "myunivokai.queries.ocean.world.publish.v1"
+	OceanWorldDeleteSubject       = "myunivokai.queries.ocean.world.delete.v1"
 	OceanShareGetQuerySubject     = "myunivokai.queries.ocean.share.get.v1"
 
 	JobStatusQueued     JobStatus = "queued"
@@ -486,6 +489,15 @@ func (profileDNA ProfileDNA) Validate() error {
 type GenerateDNAData struct {
 	Family WorldFamily `json:"family"`
 	Input  WorldInput  `json:"input"`
+	// OwnerAccountID is set by the gateway from a verified access token and
+	// never from the request body, which is what makes it trustworthy
+	// downstream: NATS ACLs make the gateway the only publisher that can reach
+	// this subject, so no client and no other service can inject an owner.
+	//
+	// A pointer, so that commands already sitting in the stream when this
+	// shipped decode to nil rather than to a zero UUID that reads like a real
+	// account. nil means anonymous, which is still the common case.
+	OwnerAccountID *string `json:"ownerAccountId,omitempty"`
 }
 
 type ProfileSummary struct {
@@ -506,6 +518,12 @@ type ComposeWorldData struct {
 	Profile      ProfileSummary `json:"profile"`
 	VisualIntent VisualIntent   `json:"visualIntent"`
 	ProfileDNA   ProfileDNA     `json:"profileDNA"`
+	// OwnerAccountID is copied by dna-service from the generate command it is
+	// answering, never read from anywhere else. dna-service is the only
+	// publisher the ACLs admit on a family compose subject, so the same
+	// argument that makes the field above trustworthy makes this one
+	// trustworthy. nil for an anonymous create.
+	OwnerAccountID *string `json:"ownerAccountId,omitempty"`
 }
 
 type DNAGeneratedData struct {
@@ -565,17 +583,36 @@ type WorldListQueryData struct {
 	WorldIDs []string `json:"worldIds"`
 }
 
+// RequestingAccountID appears on all three world mutations and answers one
+// question: who is asking. It is set by the gateway from a verified token, and
+// nil means "no session", not "the owner".
+//
+// The family service compares it with the world's own owner in the same
+// transaction as the mutation. An UNOWNED world is mutable by anyone holding
+// its id, which is today's behaviour and every world in production - see
+// end-user-identity-and-ownership.md section 6.5.
 type VariantCreateData struct {
-	WorldID string `json:"worldId"`
+	WorldID             string  `json:"worldId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
 }
 
 type VariantSelectData struct {
-	WorldID   string `json:"worldId"`
-	VariantID string `json:"variantId"`
+	WorldID             string  `json:"worldId"`
+	VariantID           string  `json:"variantId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
 }
 
 type PublishWorldData struct {
-	WorldID string `json:"worldId"`
+	WorldID             string  `json:"worldId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
+}
+
+// DeleteWorldData is the one mutation with no anonymous form. Deleting is
+// owner-only, so a nil RequestingAccountID can never authorise it - unlike
+// every other mutation, where nil is how an unowned world stays usable.
+type DeleteWorldData struct {
+	WorldID             string  `json:"worldId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
 }
 
 type ShareQueryData struct {

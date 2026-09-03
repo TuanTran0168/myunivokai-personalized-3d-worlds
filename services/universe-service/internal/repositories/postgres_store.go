@@ -57,11 +57,14 @@ func (store *PostgresStore) CreateWorld(ctx context.Context, world models.World,
 	if err != nil {
 		return WorldBundle{}, fmt.Errorf("marshal scene config: %w", err)
 	}
+	// Ownership is written once, here, from what the compose command carried.
+	// Both are nil for an anonymous create, which is still the common case.
 	if err := transaction.QueryRow(ctx, `INSERT INTO worlds
-		(source_job_id, profile_id, dna_version_id, nickname, role, visual_intent, dna_snapshot, archetype, scene_name, quote)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		(source_job_id, profile_id, dna_version_id, nickname, role, visual_intent, dna_snapshot, archetype, scene_name, quote, owner_account_id, anonymous_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING id::text, created_at, updated_at`,
 		world.SourceJobID, world.ProfileID, world.DNAVersionID, world.Nickname, world.Role, visualIntentJSON, dnaJSON, world.Archetype, world.SceneName, world.Quote,
+		world.OwnerAccountID, world.AnonymousID,
 	).Scan(&world.ID, &world.CreatedAt, &world.UpdatedAt); err != nil {
 		return WorldBundle{}, mapConstraintViolation(err)
 	}
@@ -104,14 +107,46 @@ func (store *PostgresStore) GetWorld(ctx context.Context, worldID string) (World
 	return store.getWorldBundle(ctx, `w.id=$1`, worldID)
 }
 
+// getWorldBySourceJob is the ONE read that must still see a deleted world, and
+// it is not a product read: it answers a redelivered compose command with the
+// world that command already created. Filtering here would make a world deleted
+// between the create and a JetStream redelivery look like a world that was
+// never created, and the redelivery would repeat for ever against a row that is
+// not missing.
 func (store *PostgresStore) getWorldBySourceJob(ctx context.Context, sourceJobID string) (WorldBundle, error) {
-	return store.getWorldBundle(ctx, `w.source_job_id=$1`, sourceJobID)
+	return store.queryWorldBundle(ctx, `w.source_job_id=$1`, sourceJobID, deletedWorldsIncluded)
 }
 
 func (store *PostgresStore) getWorldBundle(ctx context.Context, predicate, argument string) (WorldBundle, error) {
+	return store.queryWorldBundle(ctx, predicate, argument, deletedWorldsExcluded)
+}
+
+// deletedWorldPolicy is whether a read may see a world its owner deleted.
+// Deletion is a flag on a row that stays for ever, so "gone" is entirely a
+// matter of every product read carrying the filter - which makes it worth
+// naming, so that the single read which must NOT carry it says so.
+type deletedWorldPolicy bool
+
+const (
+	deletedWorldsExcluded deletedWorldPolicy = true
+	deletedWorldsIncluded deletedWorldPolicy = false
+)
+
+const (
+	deletedWorldFilterWithAlias    = ` AND w.deleted_at IS NULL`
+	deletedWorldFilterWithoutAlias = ` AND deleted_at IS NULL`
+)
+
+func (store *PostgresStore) queryWorldBundle(ctx context.Context, predicate, argument string, deletedWorlds deletedWorldPolicy) (WorldBundle, error) {
+	worldFilter := ""
+	variantFilter := ""
+	if deletedWorlds == deletedWorldsExcluded {
+		worldFilter = deletedWorldFilterWithAlias
+		variantFilter = deletedWorldFilterWithoutAlias
+	}
 	batch := &pgx.Batch{}
-	batch.Queue(`SELECT `+worldSelectColumns+` FROM worlds w LEFT JOIN world_shares s ON s.world_id=w.id WHERE `+predicate, argument)
-	batch.Queue(`SELECT `+variantSelectColumns+` FROM world_variants WHERE world_id=(SELECT id FROM worlds WHERE `+stringsWithoutAlias(predicate)+`) ORDER BY variant_no`, argument)
+	batch.Queue(`SELECT `+worldSelectColumns+` FROM worlds w LEFT JOIN world_shares s ON s.world_id=w.id WHERE `+predicate+worldFilter, argument)
+	batch.Queue(`SELECT `+variantSelectColumns+` FROM world_variants WHERE world_id=(SELECT id FROM worlds WHERE `+stringsWithoutAlias(predicate)+variantFilter+`) ORDER BY variant_no`, argument)
 	results := store.pool.SendBatch(ctx, batch)
 	defer results.Close()
 	world, err := scanWorld(results.QueryRow())
@@ -133,7 +168,7 @@ func (store *PostgresStore) GetWorldsByIDs(ctx context.Context, worldIDs []strin
 	if len(worldIDs) == 0 {
 		return nil, nil
 	}
-	rows, err := store.pool.Query(ctx, `SELECT `+worldSelectColumns+` FROM worlds w LEFT JOIN world_shares s ON s.world_id=w.id WHERE w.id = ANY($1::uuid[])`, worldIDs)
+	rows, err := store.pool.Query(ctx, `SELECT `+worldSelectColumns+` FROM worlds w LEFT JOIN world_shares s ON s.world_id=w.id WHERE w.id = ANY($1::uuid[])`+deletedWorldFilterWithAlias, worldIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +204,7 @@ func (store *PostgresStore) GetWorldsByIDs(ctx context.Context, worldIDs []strin
 // event it produces commit together — the same atomicity CreateWorld has
 // always had. Before analytics-service this method wrote no event and needed
 // no transaction.
-func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant) (models.WorldVariant, error) {
+func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant, requestingAccountID *string) (models.WorldVariant, error) {
 	configJSON, err := json.Marshal(variant.Config)
 	if err != nil {
 		return models.WorldVariant{}, fmt.Errorf("marshal scene config: %w", err)
@@ -179,6 +214,9 @@ func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, vari
 		return models.WorldVariant{}, err
 	}
 	defer transaction.Rollback(ctx)
+	if err := assertWorldMutable(ctx, transaction, worldID, requestingAccountID); err != nil {
+		return models.WorldVariant{}, err
+	}
 	row := transaction.QueryRow(ctx, `INSERT INTO world_variants (world_id, variant_no, seed, config)
 		VALUES ($1,$2,$3,$4) RETURNING id::text, world_id::text, created_at`, worldID, variant.VariantNo, variant.Seed, configJSON)
 	if err := row.Scan(&variant.ID, &variant.WorldID, &variant.CreatedAt); err != nil {
@@ -193,12 +231,15 @@ func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, vari
 	return variant, nil
 }
 
-func (store *PostgresStore) SelectVariant(ctx context.Context, worldID, variantID string) (models.WorldVariant, error) {
+func (store *PostgresStore) SelectVariant(ctx context.Context, worldID, variantID string, requestingAccountID *string) (models.WorldVariant, error) {
 	transaction, err := store.pool.Begin(ctx)
 	if err != nil {
 		return models.WorldVariant{}, err
 	}
 	defer transaction.Rollback(ctx)
+	if err := assertWorldMutable(ctx, transaction, worldID, requestingAccountID); err != nil {
+		return models.WorldVariant{}, err
+	}
 	if _, err := transaction.Exec(ctx, `UPDATE world_variants SET is_selected=false WHERE world_id=$1`, worldID); err != nil {
 		return models.WorldVariant{}, err
 	}
@@ -222,21 +263,32 @@ func (store *PostgresStore) SelectVariant(ctx context.Context, worldID, variantI
 // returned unchanged, with no revision bump and no event. Emitting a
 // world-change snapshot for a re-publish would describe a state change that
 // did not happen.
-func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug string) (models.World, error) {
+func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug string, requestingAccountID *string) (models.World, error) {
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return models.World{}, err
+	}
+	defer transaction.Rollback(ctx)
+	// The ownership check runs BEFORE the already-published shortcut, not
+	// after it. A non-owner publishing a world that is already public would
+	// otherwise be answered with its share slug and a 200 - a refusal that
+	// looks exactly like a success, on the one mutation that has an
+	// idempotent path to hide in.
+	if err := assertWorldMutable(ctx, transaction, worldID, requestingAccountID); err != nil {
+		return models.World{}, err
+	}
 	var existingSlug string
-	err := store.pool.QueryRow(ctx, `SELECT share_slug FROM world_shares WHERE world_id=$1`, worldID).Scan(&existingSlug)
+	err = transaction.QueryRow(ctx, `SELECT share_slug FROM world_shares WHERE world_id=$1`, worldID).Scan(&existingSlug)
 	if err == nil {
+		if err := transaction.Commit(ctx); err != nil {
+			return models.World{}, err
+		}
 		bundle, getError := store.GetWorld(ctx, worldID)
 		return bundle.World, getError
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return models.World{}, err
 	}
-	transaction, err := store.pool.Begin(ctx)
-	if err != nil {
-		return models.World{}, err
-	}
-	defer transaction.Rollback(ctx)
 	if _, err := transaction.Exec(ctx, `INSERT INTO world_shares (world_id, share_slug) VALUES ($1,$2)`, worldID, shareSlug); err != nil {
 		return models.World{}, mapConstraintViolation(err)
 	}
@@ -248,6 +300,49 @@ func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug
 	}
 	bundle, err := store.GetWorld(ctx, worldID)
 	return bundle.World, err
+}
+
+// DeleteWorld sets the flag and emits nothing.
+//
+// No revision bump and no outbox row, deliberately. The snapshot a deletion
+// would produce is byte-identical to the last one, because decision 4b keeps
+// `analytics-service` untouched and adds no deleted field to the projection -
+// so the event would describe a change the read model cannot represent, and
+// `world.changed` would stop meaning "something you can see changed".
+//
+// Idempotent through COALESCE: deleting a world that is already deleted keeps
+// the first timestamp and is not an error. The second click of a button and a
+// retried request must not answer differently from the first.
+func (store *PostgresStore) DeleteWorld(ctx context.Context, worldID string, requestingAccountID *string) (models.WorldDeletion, error) {
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return models.WorldDeletion{}, err
+	}
+	defer transaction.Rollback(ctx)
+	if err := assertWorldDeletable(ctx, transaction, worldID, requestingAccountID); err != nil {
+		return models.WorldDeletion{}, err
+	}
+	if _, err := transaction.Exec(ctx, `UPDATE worlds SET deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW()
+		WHERE id = $1`, worldID); err != nil {
+		return models.WorldDeletion{}, err
+	}
+	// Read in the same transaction as the flag, and read from world_shares
+	// directly rather than through a product read - which now filters the very
+	// row being deleted. Two plain statements rather than a subquery in
+	// RETURNING: there is no Postgres in CI, so the SQL that ships is the SQL
+	// somebody has to be able to check by reading it.
+	var shareSlug string
+	err = transaction.QueryRow(ctx, `SELECT share_slug FROM world_shares WHERE world_id = $1`, worldID).Scan(&shareSlug)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return models.WorldDeletion{}, err
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		shareSlug = ""
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return models.WorldDeletion{}, err
+	}
+	return models.WorldDeletion{ShareSlug: shareSlug}, nil
 }
 
 func (store *PostgresStore) GetPublicWorld(ctx context.Context, shareSlug string) (WorldBundle, error) {
@@ -283,7 +378,7 @@ func (store *PostgresStore) Ping(ctx context.Context) error {
 const worldSelectColumns = `w.id::text, w.source_job_id, w.profile_id::text, w.dna_version_id::text,
 	w.nickname, COALESCE(w.role,''), w.visual_intent, w.dna_snapshot, w.archetype, w.scene_name, w.quote,
 	CASE WHEN s.id IS NULL THEN 'private' ELSE 'public' END, s.share_slug, w.selected_variant_id::text,
-	w.created_at, w.updated_at, w.revision`
+	w.created_at, w.updated_at, w.revision, w.owner_account_id::text, w.anonymous_id::text`
 
 const variantSelectColumns = `id::text, world_id::text, variant_no, seed, config, COALESCE(thumbnail_url,''), is_selected, created_at`
 
@@ -296,7 +391,8 @@ func scanWorld(scanner rowScanner) (models.World, error) {
 	var visualIntentJSON, dnaJSON []byte
 	if err := scanner.Scan(&world.ID, &world.SourceJobID, &world.ProfileID, &world.DNAVersionID, &world.Nickname, &world.Role,
 		&visualIntentJSON, &dnaJSON, &world.Archetype, &world.SceneName, &world.Quote, &world.Visibility, &world.ShareSlug,
-		&world.SelectedVariantID, &world.CreatedAt, &world.UpdatedAt, &world.Revision); err != nil {
+		&world.SelectedVariantID, &world.CreatedAt, &world.UpdatedAt, &world.Revision,
+		&world.OwnerAccountID, &world.AnonymousID); err != nil {
 		return models.World{}, err
 	}
 	if err := json.Unmarshal(visualIntentJSON, &world.VisualIntent); err != nil {

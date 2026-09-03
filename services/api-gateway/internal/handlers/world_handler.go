@@ -16,6 +16,7 @@ import (
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/config"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/edge"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/httpx"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/middleware"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/wake"
 	"github.com/oklog/ulid/v2"
 	"github.com/rs/zerolog/log"
@@ -33,6 +34,7 @@ type worldSubjects struct {
 	variantCreate string
 	variantSelect string
 	worldPublish  string
+	worldDelete   string
 	shareGet      string
 }
 
@@ -98,7 +100,9 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 	job := contracts.Job{JobID: jobID, Family: handler.family, Status: contracts.JobStatusQueued, CreatedAt: createdAt, UpdatedAt: createdAt}
 	publishContext, cancel := context.WithTimeout(request.Context(), handler.publishTimeout)
 	defer cancel()
-	command := contracts.NewEnvelope(jobID, contracts.GenerateDNAData{Family: handler.family, Input: input})
+	command := contracts.NewEnvelope(jobID, contracts.GenerateDNAData{
+		Family: handler.family, Input: input, OwnerAccountID: requestingAccountIdentifier(request),
+	})
 	if err := handler.generationPublisher.PublishGeneration(publishContext, command); err != nil {
 		log.Error().Err(err).Str("request_id", httpx.RequestID(request.Context())).Msg("publish generation command")
 		httpx.WriteError(responseWriter, request, http.StatusServiceUnavailable, "GENERATION_UNAVAILABLE", "Generation could not be accepted right now.")
@@ -141,7 +145,8 @@ func (handler *WorldHandler) CreateVariant(responseWriter http.ResponseWriter, r
 	if !validWorldID {
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantCreate, contracts.VariantCreateData{WorldID: worldID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantCreate,
+		contracts.VariantCreateData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
 }
 
 func (handler *WorldHandler) SelectVariant(responseWriter http.ResponseWriter, request *http.Request) {
@@ -154,7 +159,8 @@ func (handler *WorldHandler) SelectVariant(responseWriter http.ResponseWriter, r
 		httpx.WriteError(responseWriter, request, http.StatusNotFound, "NOT_FOUND", "The requested resource was not found.")
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantSelect, contracts.VariantSelectData{WorldID: worldID, VariantID: variantID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantSelect,
+		contracts.VariantSelectData{WorldID: worldID, VariantID: variantID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
 }
 
 func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, request *http.Request) {
@@ -162,7 +168,32 @@ func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, re
 	if !validWorldID {
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldPublish, contracts.PublishWorldData{WorldID: worldID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldPublish,
+		contracts.PublishWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
+}
+
+// DeleteWorld routes through proxyWorldMutation, and that is S8-IDENTITY-010's
+// recorded decision rather than an accident of reuse.
+//
+// The gateway could learn of a deletion two ways: from this response, or from
+// the `world.changed` event. The response wins, for two reasons. It is
+// SYNCHRONOUS - both cache entries are dropped before the visitor's own
+// response returns, so their very next request cannot hit a stale one, which an
+// event arriving through the outbox and JetStream could not promise. And the
+// gateway consumes no event at all today; making it one for this would add a
+// consumer, a durable, and a redelivery story to invalidate two keys it is
+// already holding the answer for.
+//
+// The share key is the half that only fails in production. It is keyed by SLUG,
+// which the gateway cannot derive from a world id - which is why the family
+// service returns it in the deletion response.
+func (handler *WorldHandler) DeleteWorld(responseWriter http.ResponseWriter, request *http.Request) {
+	worldID, validWorldID := worldIdentifierFromRequest(responseWriter, request)
+	if !validWorldID {
+		return
+	}
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldDelete,
+		contracts.DeleteWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesNoReadModelEvent)
 }
 
 func (handler *WorldHandler) GetShare(responseWriter http.ResponseWriter, request *http.Request) {
@@ -184,7 +215,18 @@ func (handler *WorldHandler) GetShare(responseWriter http.ResponseWriter, reques
 // the public share page renders, and without this the share served the previous
 // variant for a whole cache TTL — long enough for a seed-derived rare feature to
 // appear on the dashboard and be missing from the shared link.
-func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWriter, request *http.Request, worldID, subject string, data any) {
+// readModelEventPolicy says whether this mutation leaves an event behind for
+// analytics-service to consume. Every mutation did until deletion, which
+// deliberately emits nothing - so the wake below would otherwise start a
+// service to consume a message that will never arrive.
+type readModelEventPolicy bool
+
+const (
+	mutationProducesReadModelEvent   readModelEventPolicy = true
+	mutationProducesNoReadModelEvent readModelEventPolicy = false
+)
+
+func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWriter, request *http.Request, worldID, subject string, data any, readModelEvent readModelEventPolicy) {
 	handler.transport.InvalidateWorld(request.Context(), handler.family, worldID)
 	response, ok := handler.transport.Request(responseWriter, request, subject, data)
 	if !ok {
@@ -192,7 +234,9 @@ func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWrit
 	}
 	handler.transport.InvalidateWorld(request.Context(), handler.family, worldID)
 	handler.transport.InvalidateShare(request.Context(), handler.family, shareSlugFromMutationPayload(response.Data.Payload))
-	handler.wakeReadModel()
+	if readModelEvent == mutationProducesReadModelEvent {
+		handler.wakeReadModel()
+	}
 	httpx.WriteRawJSON(responseWriter, response.Data.StatusCode, response.Data.Payload)
 }
 
@@ -245,6 +289,27 @@ func shareSlugFromMutationPayload(payload []byte) string {
 		return ""
 	}
 	return mutation.ShareSlug
+}
+
+// requestingAccountIdentifier is the ONE place a world command learns who is
+// asking, and it reads the verified claims the optional identity middleware
+// attached - never the request body, never a header the client controls. That
+// is what makes the id trustworthy by the time it reaches a family service,
+// which has no way to verify it and does not try.
+//
+// nil means "no session", and on this surface that is ordinary rather than an
+// error: it produces an anonymous world, and it leaves an unowned world
+// mutable, which is every world made before ownership existed.
+func requestingAccountIdentifier(request *http.Request) *string {
+	claims, present := middleware.ProductClaims(request.Context())
+	if !present {
+		return nil
+	}
+	accountIdentifier := strings.TrimSpace(claims.Subject)
+	if accountIdentifier == "" {
+		return nil
+	}
+	return &accountIdentifier
 }
 
 func worldIdentifierFromRequest(responseWriter http.ResponseWriter, request *http.Request) (string, bool) {

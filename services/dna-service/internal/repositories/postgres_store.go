@@ -47,7 +47,12 @@ func (store *PostgresStore) EnsureJob(ctx context.Context, envelope contracts.En
 	}
 	defer transaction.Rollback(ctx)
 	var profileID string
-	if err := transaction.QueryRow(ctx, `INSERT INTO profiles (raw_input) VALUES ($1) RETURNING id::text`, inputJSON).Scan(&profileID); err != nil {
+	// The owner comes from the command the gateway published, which set it
+	// from a verified token. It is written here, on the profile, before any
+	// family service hears about the world - so a create that crashes between
+	// the two still has an owner recorded where the claim looks for it.
+	if err := transaction.QueryRow(ctx, `INSERT INTO profiles (raw_input, owner_account_id) VALUES ($1,$2) RETURNING id::text`,
+		inputJSON, envelope.Data.OwnerAccountID).Scan(&profileID); err != nil {
 		return JobRecord{}, err
 	}
 	job := contracts.Job{JobID: envelope.JobID, Family: envelope.Data.Family, Status: contracts.JobStatusQueued, ProfileID: profileID}
@@ -119,13 +124,22 @@ func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, job
 	if err != nil {
 		return contracts.Job{}, err
 	}
+	// Read from the profile row rather than carried in memory from the generate
+	// command: this method runs on a JetStream redelivery too, and a world
+	// composed on the second attempt has to end up owned by the same account as
+	// one composed on the first.
+	var ownerAccountID *string
+	if err := transaction.QueryRow(ctx, `SELECT owner_account_id::text FROM profiles WHERE id = $1`, job.ProfileID).Scan(&ownerAccountID); err != nil {
+		return contracts.Job{}, err
+	}
 	composeEnvelope := contracts.NewEnvelope(jobID, contracts.ComposeWorldData{
-		Family:       job.Family,
-		ProfileID:    job.ProfileID,
-		DNAVersionID: dnaVersionID,
-		Profile:      contracts.ProfileSummary{Nickname: input.Nickname, Role: input.Role},
-		VisualIntent: contracts.VisualIntent{Mood: input.Mood, FavoriteColors: input.FavoriteColors, PreferredWorldStyle: input.PreferredWorldStyle},
-		ProfileDNA:   profileDNA,
+		Family:         job.Family,
+		ProfileID:      job.ProfileID,
+		DNAVersionID:   dnaVersionID,
+		Profile:        contracts.ProfileSummary{Nickname: input.Nickname, Role: input.Role},
+		VisualIntent:   contracts.VisualIntent{Mood: input.Mood, FavoriteColors: input.FavoriteColors, PreferredWorldStyle: input.PreferredWorldStyle},
+		ProfileDNA:     profileDNA,
+		OwnerAccountID: ownerAccountID,
 	})
 	dnaGeneratedEnvelope := contracts.NewEnvelope(jobID, contracts.DNAGeneratedData{Family: job.Family, ProfileID: job.ProfileID, DNAVersionID: dnaVersionID})
 	if err := insertOutbox(ctx, transaction, jobID+composeMessageIDSuffix, composeSubject, composeEnvelope); err != nil {

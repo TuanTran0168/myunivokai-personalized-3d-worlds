@@ -14,7 +14,7 @@ func TestSelectUnknownVariantPreservesCurrentSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SelectVariant(context.Background(), bundle.World.ID, "unknown-variant"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.SelectVariant(context.Background(), bundle.World.ID, "unknown-variant", noRequestingAccount); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("select error = %v, want ErrNotFound", err)
 	}
 	unchangedBundle, err := store.GetWorld(context.Background(), bundle.World.ID)

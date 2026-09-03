@@ -90,20 +90,20 @@ type conflictOnFirstCallStore struct {
 	publishConflictsRemaining int
 }
 
-func (store *conflictOnFirstCallStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant) (models.WorldVariant, error) {
+func (store *conflictOnFirstCallStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant, requestingAccountID *string) (models.WorldVariant, error) {
 	if store.variantConflictsRemaining > 0 {
 		store.variantConflictsRemaining--
 		return models.WorldVariant{}, repositories.ErrConflict
 	}
-	return store.Store.AddVariant(ctx, worldID, variant)
+	return store.Store.AddVariant(ctx, worldID, variant, requestingAccountID)
 }
 
-func (store *conflictOnFirstCallStore) PublishWorld(ctx context.Context, worldID, shareSlug string) (models.World, error) {
+func (store *conflictOnFirstCallStore) PublishWorld(ctx context.Context, worldID, shareSlug string, requestingAccountID *string) (models.World, error) {
 	if store.publishConflictsRemaining > 0 {
 		store.publishConflictsRemaining--
 		return models.World{}, repositories.ErrConflict
 	}
-	return store.Store.PublishWorld(ctx, worldID, shareSlug)
+	return store.Store.PublishWorld(ctx, worldID, shareSlug, requestingAccountID)
 }
 
 func TestRegenerateVariantRetriesWithoutAI(t *testing.T) {
@@ -113,7 +113,7 @@ func TestRegenerateVariantRetriesWithoutAI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose world: %v", err)
 	}
-	response, err := service.RegenerateVariant(context.Background(), created.World.ID)
+	response, err := service.RegenerateVariant(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("regenerate variant: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestPublishWorldRetriesOnSlugConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose world: %v", err)
 	}
-	response, err := service.PublishWorld(context.Background(), created.World.ID)
+	response, err := service.PublishWorld(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("publish world: %v", err)
 	}
@@ -148,18 +148,18 @@ func TestVariantMutationsReturnTheShareSlugForCacheInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose world: %v", err)
 	}
-	regenerated, err := service.RegenerateVariant(context.Background(), created.World.ID)
+	regenerated, err := service.RegenerateVariant(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("regenerate variant: %v", err)
 	}
 	if regenerated.ShareSlug != "" {
 		t.Fatalf("unpublished world should report no slug, got %q", regenerated.ShareSlug)
 	}
-	published, err := service.PublishWorld(context.Background(), created.World.ID)
+	published, err := service.PublishWorld(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("publish world: %v", err)
 	}
-	selected, err := service.SelectVariant(context.Background(), created.World.ID, regenerated.Variant.ID)
+	selected, err := service.SelectVariant(context.Background(), created.World.ID, regenerated.Variant.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("select variant: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestVariantMutationsReturnTheShareSlugForCacheInvalidation(t *testing.T) {
 	if !selected.Variant.IsSelected {
 		t.Fatalf("selected variant %q is not marked selected", selected.Variant.ID)
 	}
-	regeneratedAfterPublish, err := service.RegenerateVariant(context.Background(), created.World.ID)
+	regeneratedAfterPublish, err := service.RegenerateVariant(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("regenerate variant after publish: %v", err)
 	}
@@ -177,3 +177,9 @@ func TestVariantMutationsReturnTheShareSlugForCacheInvalidation(t *testing.T) {
 		t.Fatalf("regenerate returned slug %q, want %q", regeneratedAfterPublish.ShareSlug, published.ShareSlug)
 	}
 }
+
+// noRequestingAccount is the anonymous caller: nil means "no session", and an
+// unowned world is mutable by one. Named rather than written as a bare nil so
+// a reader of these calls does not have to count parameters to see which one
+// it is.
+var noRequestingAccount *string

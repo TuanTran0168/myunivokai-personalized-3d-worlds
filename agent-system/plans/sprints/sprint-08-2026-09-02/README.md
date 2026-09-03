@@ -4,7 +4,19 @@
 > **Status:** **Phase A implemented** on
 > `feat/fe-be/end-user-identity-phase-a` (one branch per phase, by the owner's
 > grouping — the plan's one-story-per-branch task lines are superseded by it).
-> Phases B and C are committed scope and not started. The stories execute
+> **Phase B is half implemented** on `feat/be/end-user-identity-phase-b`:
+> `S8-IDENTITY-007` … `010` are done — a world has an owner, the owner travels
+> on the commands and is enforced inside each mutation's own transaction, and an
+> owner can delete a world whose caches drop before the response returns.
+> `011` … `014` (the claim, system settings, the quota and its one toast) and
+> Phase C are committed scope and not started. **Read
+> [user-stories.md](user-stories.md)'s Phase B corrections section** before any
+> of them: seven entries, three of which change what is left to build — the
+> plan's `WorldSnapshot` field was deliberately not added and the same reasoning
+> applies to `011`, the ACL lines `008` asked for were already in the file, and
+> deletion turned out to be stricter than any story said, which is what makes
+> `011` the story that lets a pre-existing world be deleted at all.
+> The stories execute
 > [`end-user-identity-and-ownership.md`](../../architecture/end-user-identity-and-ownership.md),
 > whose twenty decisions are all taken.
 > **Read [user-stories.md](user-stories.md)'s Phase A corrections section**
