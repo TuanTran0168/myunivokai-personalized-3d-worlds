@@ -1,4 +1,4 @@
-import { ApiError, requestGatewayJson, type GatewayRequestHooks } from "./api";
+import { ApiError, requestGatewayJson, type GatewayRequestHooks } from "./gatewayRequest";
 import {
   clearProductSession,
   readProductAccessToken,
