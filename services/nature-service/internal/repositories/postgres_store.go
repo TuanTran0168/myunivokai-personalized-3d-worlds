@@ -57,11 +57,14 @@ func (store *PostgresStore) CreateWorld(ctx context.Context, world models.World,
 	if err != nil {
 		return WorldBundle{}, fmt.Errorf("marshal scene config: %w", err)
 	}
+	// Ownership is written once, here, from what the compose command carried.
+	// Both are nil for an anonymous create, which is still the common case.
 	if err := transaction.QueryRow(ctx, `INSERT INTO worlds
-		(source_job_id, profile_id, dna_version_id, nickname, role, visual_intent, dna_snapshot, archetype, scene_name, quote)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		(source_job_id, profile_id, dna_version_id, nickname, role, visual_intent, dna_snapshot, archetype, scene_name, quote, owner_account_id, anonymous_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING id::text, created_at, updated_at`,
 		world.SourceJobID, world.ProfileID, world.DNAVersionID, world.Nickname, world.Role, visualIntentJSON, dnaJSON, world.Archetype, world.SceneName, world.Quote,
+		world.OwnerAccountID, world.AnonymousID,
 	).Scan(&world.ID, &world.CreatedAt, &world.UpdatedAt); err != nil {
 		return WorldBundle{}, mapConstraintViolation(err)
 	}
@@ -283,7 +286,7 @@ func (store *PostgresStore) Ping(ctx context.Context) error {
 const worldSelectColumns = `w.id::text, w.source_job_id, w.profile_id::text, w.dna_version_id::text,
 	w.nickname, COALESCE(w.role,''), w.visual_intent, w.dna_snapshot, w.archetype, w.scene_name, w.quote,
 	CASE WHEN s.id IS NULL THEN 'private' ELSE 'public' END, s.share_slug, w.selected_variant_id::text,
-	w.created_at, w.updated_at, w.revision`
+	w.created_at, w.updated_at, w.revision, w.owner_account_id::text, w.anonymous_id::text`
 
 const variantSelectColumns = `id::text, world_id::text, variant_no, seed, config, COALESCE(thumbnail_url,''), is_selected, created_at`
 
@@ -296,7 +299,8 @@ func scanWorld(scanner rowScanner) (models.World, error) {
 	var visualIntentJSON, dnaJSON []byte
 	if err := scanner.Scan(&world.ID, &world.SourceJobID, &world.ProfileID, &world.DNAVersionID, &world.Nickname, &world.Role,
 		&visualIntentJSON, &dnaJSON, &world.Archetype, &world.SceneName, &world.Quote, &world.Visibility, &world.ShareSlug,
-		&world.SelectedVariantID, &world.CreatedAt, &world.UpdatedAt, &world.Revision); err != nil {
+		&world.SelectedVariantID, &world.CreatedAt, &world.UpdatedAt, &world.Revision,
+		&world.OwnerAccountID, &world.AnonymousID); err != nil {
 		return models.World{}, err
 	}
 	if err := json.Unmarshal(visualIntentJSON, &world.VisualIntent); err != nil {
