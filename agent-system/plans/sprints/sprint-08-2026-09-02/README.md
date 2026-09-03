@@ -11,14 +11,17 @@
 > before that phase's own stories: five of its claims turned out to be wrong,
 > and one requirement — a signup response that hides whether an address is
 > already registered — is not achievable before email exists.
-> Phase A also gained **two stories after it was implemented**, both asked for
-> by the owner on 2026-09-02 and both on the same branch: `S8-IDENTITY-018`
-> (the gallery shows the signed-in account's worlds rather than the browser's)
-> and `S8-IDENTITY-019` (an account page, and a create form that starts filled
-> in). `019` spent this sprint's first migration, and
+> Phase A also gained **three stories after it was implemented**, all asked for
+> by the owner and all on the same branch: `S8-IDENTITY-018` (the gallery shows
+> the signed-in account's worlds rather than the browser's), `S8-IDENTITY-019`
+> (an account page, and a create form that starts filled in) and
+> `S8-IDENTITY-020` (a saved preference that changes the world rather than only
+> the form). `019` spent this sprint's first migration, and
 > [decision 21](../../architecture/end-user-identity-and-ownership.md#19-the-accounts-own-page-decision-21)
-> is where it is argued.
-> **Last source review:** 2026-09-02
+> is where it is argued; `020` spent nothing but is the one to read first, for
+> correction 8 — a preference the profile page saved and the create page's
+> canvas ignored.
+> **Last source review:** 2026-09-03
 
 ## Sprint goal
 
@@ -89,6 +92,10 @@ nullable columns per family plus one new table in an existing database.
 - A login button that tells the truth about a cold `auth-service`.
 - The admin account list showing `kind = 'end_user'` rows, so a staff member
   can mark one inactive. The service side of that already works.
+- Added after the fact, on the owner's word: an account's own gallery, its own
+  profile page, a create form that opens already filled from it, and — the
+  correction to that — a canvas that actually renders the family the profile
+  prefers, on both pages.
 
 **Phase B — worlds are owned.**
 

@@ -391,6 +391,65 @@ Tasks:
 
 ---
 
+### S8-IDENTITY-020 — A saved preference changes the world, not just the form
+
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
+Priority: P1
+
+Added to Phase A on 2026-09-03, by the owner, after using `S8-IDENTITY-019`:
+"picking a preferred world family fills the picker when I go back out, but the
+world does not change — choosing ocean still loads the universe. The settings
+chosen in the form have to apply and load the right world on the demo, not just
+be filled in. And the profile page should have a universe background like the
+gallery."
+
+As an account holder,
+I want the world in front of me to be the world my profile makes,
+so that a preference I saved is one I can see rather than one I have to trust.
+
+Scenario: The create page opens on the family I chose
+
+Given a saved profile whose preferred world family is the ocean
+When the create page is opened while signed in
+Then the picker shows Ocean AND the canvas renders an ocean
+And it arrives through the same departure the picker itself plays, so the
+incoming family's shader compile stays inside an animation that can afford it
+And the profile's saved style is applied rather than replaced by the family's
+neutral one
+And "start from a blank form" carries the canvas back to the universe with it.
+
+Scenario: The profile page shows what it is about to save
+
+Given the profile page
+When a preferred world family is chosen
+Then the world behind the page becomes that family's
+And that world is exactly what the create form would open with, built from the
+fields as they stand on screen rather than as they were last saved
+And it is shown whether or not the autofill toggle is on, because the toggle
+governs the FORM and this is a preview of the setting.
+
+Source evidence:
+- apps/myunivokai-personalization/src/app/page.tsx — `renderedWorldFamily`, the second family state the canvas follows, and `worldChangeStages.ts` for why it deliberately lags the form
+- apps/myunivokai-personalization/src/features/gallery/AmbientWorld.tsx — the gallery backdrop the account page now shares
+- agent-system/knowledge/frontend/source-overview.md — the routes table this adds a world to
+
+Tasks:
+- [x] `showWorldFamilyOnCanvas` as the ONLY caller of `setWorldFamily`, so no
+      path can move the form's family without moving the canvas.
+- [x] The autofill reads the form's values from a ref at the moment the profile
+      answers, not from the render that sent the request.
+- [x] `buildPreviewSceneForFamily` and `buildCreateFormPreviewScene`: one place
+      that decides which family's builder runs.
+- [x] `AmbientBackdrop` extracted from the gallery; the account page renders the
+      world its own fields describe.
+- [x] The create form's field limits and `maxLength` values named once, in
+      `worldFormOptions.ts`, rather than as bare numbers in two files.
+
+No migration, no contract change, no new route: this story is entirely about
+what the browser already had and was not showing.
+
+---
+
 ## Phase A — corrected during execution, 2026-09-02
 
 Written after the work, and read before the sections above. Five of Phase A's
@@ -503,18 +562,50 @@ shelf is still per-browser, and the page now says so in as many words. What
 changed is that it is per-browser AND per-account rather than per-browser and
 attributed to whoever happens to be signed in.
 
-### 7. Two stories were added to Phase A after it was implemented
+### 7. Three stories were added to Phase A after it was implemented
 
-`S8-IDENTITY-018` and `S8-IDENTITY-019` were not in the committed scope; the
-owner asked for them on 2026-09-02, after Phase A's six stories were done and
-on the same branch. They are recorded as Phase A stories rather than as a new
-phase because that is where they landed, and pretending the plan predicted them
-would be the more dishonest bookkeeping.
+`S8-IDENTITY-018`, `019` and `020` were not in the committed scope; the owner
+asked for the first two on 2026-09-02 and the third on 2026-09-03, after Phase
+A's six stories were done and on the same branch. They are recorded as Phase A
+stories rather than as a new phase because that is where they landed, and
+pretending the plan predicted them would be the more dishonest bookkeeping.
 
 `019` also spent the first migration this service has taken since the sprint
 began. `TestAuthServiceGainsNoUnplannedMigration` is the ratchet that made that
 a decision rather than a drift: it failed, and raising it to 4 in the same
 commit is the protocol the test asks for in its own failure message.
+
+### 8. A preference that filled a field and moved nothing
+
+`S8-IDENTITY-019` shipped a preferred world family that worked exactly as
+written and was useless: choosing the ocean on the profile page filled the
+create form's picker with Ocean and left the canvas rendering a universe. The
+owner found it within a day, and the sentence worth keeping is theirs — the
+saved settings have to "apply and load the right world on the demo, not just be
+filled in."
+
+The mechanism is worth writing down because it is a shape rather than a typo.
+The create page keeps TWO family states: `worldFamily`, what the form says, and
+`renderedWorldFamily`, what the canvas shows. The second deliberately lags the
+first by the length of the departure animation, because mounting a family for
+the first time blocks the main thread for up to ~2.5 seconds compiling shaders
+and that block has to happen inside an animation that can absorb it (see
+`worldChangeStages.ts`). The picker's handler moved both. The autofill added by
+`019` called `setWorldFamily` directly, and so did the "start from a blank
+form" button — two writers to one half of a two-part invariant.
+
+The fix is not a third state or a reconciling effect: `showWorldFamilyOnCanvas`
+is now the only caller of `setWorldFamily` anywhere on the page, so a family
+that cannot be shown cannot be set. **A piece of state mirrored by a second
+piece of state has an invariant, and an invariant with more than one writer is
+a bug waiting for its second writer** — which arrived one story later, from the
+same pair of hands.
+
+`S8-IDENTITY-020` is the fix, and it also answers the owner's second request in
+the same message: the profile page now stands in front of the world its own
+fields describe, so the setting is confirmed by the thing it changes rather
+than by a select that agrees with you and moves nothing. It spends no
+migration, adds no route and changes no contract.
 
 ### What Phase A deliberately did NOT do, so it is not mistaken for an omission
 

@@ -1,7 +1,7 @@
 # FE Source Overview — apps/myunivokai-personalization
 
 > **Document status:** Active
-> **Last source review:** 2026-09-02
+> **Last source review:** 2026-09-03
 
 Next.js 15 App Router + React 19 + TypeScript + Tailwind + React Three Fiber v9.
 Every page is a client component because of WebGL and localStorage.
@@ -27,9 +27,9 @@ itself.
 | --- | --- | --- |
 | `/` | `src/app/page.tsx` | Landing + family picker. Submit -> `202 + jobId` -> queued/processing polling -> completed world redirect; pending polling resumes after refresh |
 | `/worlds/[worldId]` | `src/app/worlds/[worldId]/page.tsx` | Dashboard: 3D canvas, POI panel, variants, publish/share, PNG export. Reads `?family=` to pick the API + renderer |
-| `/gallery` | `src/app/gallery/page.tsx` | Worlds saved on this device, **scoped to whoever is signed in** — see `lib/savedWorlds.ts`. Family-aware, loaded in parallel |
+| `/gallery` | `src/app/gallery/page.tsx` | Worlds saved on this device, **scoped to whoever is signed in** — see `lib/savedWorlds.ts`. Family-aware, loaded in parallel. Backdrop via `components/AmbientBackdrop` |
 | `/sign-in`, `/sign-up` | `src/app/sign-in/page.tsx`, `src/app/sign-up/page.tsx` | Both render `features/identity/AuthCredentialsForm`. Sign-up also takes a display name |
-| `/account` | `src/app/account/page.tsx` | The account's own page: name, full name, gender, and the defaults the create form is filled from. Renders `features/identity/AccountProfileForm` |
+| `/account` | `src/app/account/page.tsx` | The account's own page: name, full name, gender, and the defaults the create form is filled from. `AccountProfileForm` owns the whole layout, heading included, because it also renders the world behind it — the scene the create form would open with, rebuilt as the fields change |
 | `/share/worlds/[shareSlug]` | `src/app/share/worlds/[shareSlug]/page.tsx` | Public **universe** share page |
 | `/nature/share/worlds/[shareSlug]` | `src/app/nature/share/worlds/[shareSlug]/page.tsx` | Public **nature** share page (twin route; nature-service prints share URLs with the `/nature` prefix) |
 | `/ocean/share/worlds/[shareSlug]` | `src/app/ocean/share/worlds/[shareSlug]/page.tsx` | Public **ocean** share page, same twin-route reason |
@@ -122,6 +122,25 @@ build and the unit tests all passed against a policy that produced fourteen
   storage before the profile answers. `createFormValuesFromProfile` overrides
   only where the profile has an answer — an empty saved field stops overriding
   rather than clearing the form's own default.
+- `features/world-form/createWorldPayload.ts` — `buildCreateWorldPayload`, the
+  form's ten values as the request the backend receives, fallbacks and all. The
+  live preview is built from THIS rather than from the raw fields, so the scene
+  on screen has the planet count and names the generated world will have; that
+  coupling is why the sanitising is one function and not two.
+- `features/world-form/previewScene.ts` — which family's scene builder runs.
+  `buildPreviewSceneForFamily` is the create page's live preview (keyed on the
+  canvas's lagging family, not the form's), and `buildCreateFormPreviewScene`
+  is the whole account-page backdrop: the world the create form would open with,
+  from the profile on screen.
+- `components/AmbientBackdrop.tsx` — the fixed z-0 world behind a page, with the
+  dpr cap, parked entry, dim and vignette. Shared by `/gallery` and `/account`;
+  its content column carries `relative z-10` and the backdrop is its SIBLING,
+  never its child, or the fixed layer paints over the heading. Ambient sound is
+  opt-in and off by default, because a backdrop rebuilt as somebody types would
+  restart its soundscape on every rebuild.
+- `lib/useDebouncedValue.ts` — the hook and
+  `PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS`, shared by both previews so they
+  cannot drift apart.
 - `lib/exportImage.ts` — downloads the WebGL canvas as PNG
   (requires `preserveDrawingBuffer`, already set on the Canvas).
 - `lib/formRailCollapse.ts` + `components/WorldChromeToggle.tsx` — the one-button
@@ -153,6 +172,14 @@ build and the unit tests all passed against a policy that produced fourteen
 No Redux/Zustand. Each page owns its state with `useState`/`useMemo`; planet
 selection syncs between canvas and panel via props (`selectedPlanetKey` +
 `onSelectPlanet`). Reach for a store only if state starts spanning pages.
+
+The create page has the one piece of state worth knowing before editing it:
+`worldFamily` is what the form says and `renderedWorldFamily` is what the
+canvas shows, and the second lags the first by the length of the departure
+animation on purpose (`features/transitions/worldChangeStages.ts`). They are
+two halves of one invariant, so **`showWorldFamilyOnCanvas` is the only place
+`setWorldFamily` is called** — a second writer is exactly how a profile's
+preferred family came to fill the picker while the canvas stayed a universe.
 
 ## Known upgrade boundaries
 

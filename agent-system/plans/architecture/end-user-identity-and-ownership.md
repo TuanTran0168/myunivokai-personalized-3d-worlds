@@ -6,11 +6,13 @@
 > header carried until 2026-09-02 is no longer true, and
 > [the sprint's Phase A corrections section](../sprints/sprint-08-2026-09-02/user-stories.md#phase-a--corrected-during-execution-2026-09-02)
 > is the record of which of this document's claims survived contact — read it
-> before acting on §5 or §12. One decision was ADDED after Phase A shipped, by
-> the owner: 21, in §19.
-> Twenty-one numbered decisions
-> (26 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
-> were taken on 2026-09-02 across **eight rounds plus one after implementation** — most by the owner, five
+> before acting on §5 or §12. Two decisions were ADDED after Phase A shipped,
+> both by the owner and both in §19: 21 (the account's page) on 2026-09-02, and
+> 22 (a preference is shown in the thing it changes) on 2026-09-03, after using
+> what 21 built.
+> Twenty-two numbered decisions
+> (27 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
+> were taken on 2026-09-02 across **eight rounds plus two after implementation** — most by the owner, five
 > delegated to me and argued in place — and all of them are recorded in §16,
 > where **nothing is left open**. Four of the last five rounds exist because
 > the owner read a decision back and found it wrong, too broad, or badly
@@ -24,7 +26,7 @@
 > The sprint covers Phases A-C; Phase D and Phase E are explicitly out of its
 > scope.
 > **Raised:** 2026-09-02 by the owner
-> **Last source review:** 2026-09-02
+> **Last source review:** 2026-09-03
 > **Answers:** [`DEFERRED-AUTH-001`](../backlog/engineering-backlog.md#deferred-auth-001--define-identity-before-authentication),
 > deferred by owner decision on 2026-07-22 and never revisited.
 > **Graduates:** [`evolution/platform-evolution-research.md` Track A](../../evolution/platform-evolution-research.md#track-a--end-user-identity-and-world-ownership),
@@ -1880,11 +1882,12 @@ because deciding them now would be deciding them wrongly:
    per-create cost being *measured* from `ai_generation_attempts` rather than
    read off a rate card (§9.2).
 
-### Added 2026-09-02, after Phase A was implemented
+### Added after Phase A was implemented (2026-09-02, 2026-09-03)
 
 | # | Decision | Consequence, recorded on purpose |
 | --- | --- | --- |
 | 21 | **The account gets a page of its own** — full name, gender, and the create-form fields as saved defaults — **in `auth-service`, in one new table** (§19) | The first migration this plan has cost. Buys a second visit that does not mean retyping everything, and one place where the display name lives. Costs a table in `auth-service` that is not about authentication, which §19 argues is still the least-bad home |
+| 22 | **A saved preference is shown in the thing it changes** (§19): the create page's canvas follows the profile's family, and the profile page's backdrop IS the world the create form would open with | Costs one more WebGL context, on a form page, and makes the create page's two family states a single-writer invariant. Buys a setting somebody can confirm by looking rather than by trusting — which is what `S8-IDENTITY-020` exists to fix |
 
 ## 17. Renaming `myunivokai-web`
 
@@ -2061,6 +2064,38 @@ logic in it.
 - **Nothing authorizes on it**, per §15. Gender, full name and every default
   are display data; the only field with any behaviour behind it is
   `autofill_create_form`, and its behaviour is entirely in the browser.
+
+### The preview is part of the page, not decoration (decision 22)
+
+Added 2026-09-03, after the owner used the page: choosing a preferred world
+family filled the create form's picker and left its canvas rendering a
+universe. The setting was saved, read back and applied — and there was no way
+to see that from either screen.
+
+**A saved preference has to be visible in the thing it changes.** Two rules
+follow, and both are cheap because the browser already knows how to build every
+family's scene locally — that mirror exists for the create page's live preview
+and predates accounts entirely.
+
+- **The create page's canvas follows the profile.** It keeps two family states
+  on purpose: what the form says, and what the canvas shows, the second lagging
+  the first by the length of the departure animation so that a family's ~2.5s
+  first-mount shader compile happens inside an animation that can absorb it.
+  The autofill wrote only the first. One function now owns both, and it is the
+  only writer of either.
+- **The profile page stands in front of the world it describes.** The backdrop
+  is not a decorative scene chosen for the route; it is the world the create
+  form would open with, built from the fields as they stand on screen. Picking
+  Ocean turns the page into an ocean before it is saved.
+
+The cost is one more WebGL context on a form page, held down by the same
+low-dpr, parked-entry, no-audio backdrop the gallery already uses. The audio is
+the one deliberate difference: this backdrop is REBUILT as somebody types, and
+a soundscape that restarts on every rebuild is worse than none.
+
+What this does not become is a second create form. The profile page has no
+generate button and posts nothing to a family service; the preview is local,
+and the only thing it proves is what the create form will do next time.
 
 ### What it does not do
 
