@@ -263,6 +263,31 @@ func (s *MemoryStore) isDeleted(worldID string) bool {
 	return deleted
 }
 
+// The mirror of the Postgres claim, guard included. Written as an explicit
+// skip rather than as a filtered helper for the same reason deletedAt is a
+// separate map: a mirror that made the guard impossible to forget would prove
+// nothing about the store that ships.
+func (s *MemoryStore) ClaimWorlds(ctx context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var claimedWorldCount int64
+	for worldID, world := range s.worlds {
+		if world.OwnerAccountID != nil {
+			continue
+		}
+		if world.AnonymousID == nil || *world.AnonymousID != envelope.Data.AnonymousID {
+			continue
+		}
+		claimedAccountID := envelope.Data.AccountID
+		world.OwnerAccountID = &claimedAccountID
+		world.AnonymousID = nil
+		world.UpdatedAt = time.Now().UTC()
+		s.worlds[worldID] = world
+		claimedWorldCount++
+	}
+	return claimedWorldCount, nil
+}
+
 func (s *MemoryStore) GetPublicWorld(ctx context.Context, slug string) (WorldBundle, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

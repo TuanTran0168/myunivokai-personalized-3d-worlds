@@ -26,16 +26,21 @@ type fakeBroker struct {
 	// was asked. A test that the account id comes from the access token rather
 	// than from the request body cannot be written without it.
 	requestedPayloadsBySubject map[string]any
-	response          contracts.Envelope[contracts.RPCResponseData]
+	response                   contracts.Envelope[contracts.RPCResponseData]
 	// responsesBySubject lets a test answer two different NATS subjects
 	// differently in one request (e.g. RequireAdminPermission's
 	// AuthAccountPermissionsQuerySubject vs. the route's own subject) — a
 	// subject missing from this map falls back to `response`, so every
 	// existing single-response test keeps working unchanged.
 	responsesBySubject map[string]contracts.Envelope[contracts.RPCResponseData]
-	publishError       error
-	requestError       error
-	pingError          error
+	// claimedEnvelopes is a slice, not a single value like publishedEnvelope
+	// above: the claim's own tests assert that a repeated request publishes a
+	// second command rather than being swallowed, which a single field cannot
+	// show.
+	claimedEnvelopes []contracts.Envelope[contracts.WorldClaimData]
+	publishError     error
+	requestError     error
+	pingError        error
 }
 
 func (brokerClient *fakeBroker) PublishGeneration(_ context.Context, envelope contracts.Envelope[contracts.GenerateDNAData]) error {
@@ -43,6 +48,16 @@ func (brokerClient *fakeBroker) PublishGeneration(_ context.Context, envelope co
 	defer brokerClient.mutex.Unlock()
 	brokerClient.publishedEnvelope = envelope
 	return brokerClient.publishError
+}
+
+func (brokerClient *fakeBroker) PublishWorldClaim(_ context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) error {
+	brokerClient.mutex.Lock()
+	defer brokerClient.mutex.Unlock()
+	if brokerClient.publishError != nil {
+		return brokerClient.publishError
+	}
+	brokerClient.claimedEnvelopes = append(brokerClient.claimedEnvelopes, envelope)
+	return nil
 }
 
 func (brokerClient *fakeBroker) Request(_ context.Context, subject string, payload any) (contracts.Envelope[contracts.RPCResponseData], error) {
@@ -85,6 +100,11 @@ type fakeEdgeStore struct {
 	identityFailuresError error
 
 	rateLimitRouteKeys map[string]int
+
+	// mirroredSettings is the settings mirror auth-service writes and
+	// settings.Reader reads. Empty by default, which is the state a fresh
+	// environment is in and therefore the one every route must work in.
+	mirroredSettings map[contracts.SettingKey]string
 }
 
 func newFakeEdgeStore() *fakeEdgeStore {
@@ -92,7 +112,31 @@ func newFakeEdgeStore() *fakeEdgeStore {
 		values: make(map[string][]byte), timeToLives: make(map[string]time.Duration),
 		deleteCounts: make(map[string]int), tokenVersions: make(map[string]int),
 		identityFailures: make(map[string]int),
+		mirroredSettings: make(map[contracts.SettingKey]string),
 	}
+}
+
+// GetSetting answers the settings mirror. A miss is the DEFAULT state of this
+// fake on purpose: settings.Reader must resolve every value from its
+// compiled-in default without asking anything, so a fake that pre-populated
+// the mirror would hide the case every environment starts in.
+func (store *fakeEdgeStore) GetSetting(_ context.Context, key contracts.SettingKey) (string, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.getError != nil {
+		return "", store.getError
+	}
+	value, found := store.mirroredSettings[key]
+	if !found {
+		return "", edge.ErrCacheMiss
+	}
+	return value, nil
+}
+
+func (store *fakeEdgeStore) setMirroredSetting(key contracts.SettingKey, value string) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	store.mirroredSettings[key] = value
 }
 
 func (store *fakeEdgeStore) GetTokenVersion(_ context.Context, accountID string) (int, error) {

@@ -59,6 +59,15 @@ const (
 	AuthWebProfileGetQuerySubject    = "myunivokai.queries.auth.web.profile.get.v1"
 	AuthWebProfileUpdateQuerySubject = "myunivokai.queries.auth.web.profile.update.v1"
 
+	// The settings control plane. Admin audience only, and deliberately the
+	// ONLY way a setting is written: the gateway's own settings reader is
+	// read-only and answers a Redis miss from the compiled-in default rather
+	// than by asking anything, so these two subjects carry every write and no
+	// read on the create path — see §9.3 of
+	// agent-system/plans/architecture/end-user-identity-and-ownership.md.
+	AuthSettingListQuerySubject   = "myunivokai.queries.auth.setting.list.v1"
+	AuthSettingUpdateQuerySubject = "myunivokai.queries.auth.setting.update.v1"
+
 	AccountAudienceAdmin AccountAudience = "admin"
 	AccountAudienceWeb   AccountAudience = "web"
 
@@ -78,6 +87,17 @@ const (
 	PermissionAuditRead      PermissionCode = "audit:read"
 	PermissionRoleRead       PermissionCode = "role:read"
 	PermissionRoleManage     PermissionCode = "role:manage"
+	// The settings screen's pair. Enforced by a route from the day they are
+	// declared, unlike the five reserved codenames in auth-service's
+	// permission_sync.go — which is why they belong in enforcedPermissions and
+	// not beside those.
+	//
+	// Two codes rather than one because reading a policy number and changing
+	// it are genuinely different acts: settings:read is a dashboard, and
+	// settings:manage can shorten every session on the platform from a web
+	// form.
+	PermissionSettingsRead   PermissionCode = "settings:read"
+	PermissionSettingsManage PermissionCode = "settings:manage"
 
 	// MaximumAccountDisplayNameLength bounds WebSignupData.Name, and therefore
 	// accounts.name for a self-registered account.
@@ -182,9 +202,9 @@ type AccountProfileGetData struct {
 // AccountProfileGetData. SourceAddress is carried for the audit row, the same
 // way every other mutation in this file carries it.
 type AccountProfileUpdateData struct {
-	AccountID     string        `json:"accountId"`
-	FullName      string        `json:"fullName,omitempty"`
-	Gender        AccountGender `json:"gender,omitempty"`
+	AccountID string        `json:"accountId"`
+	FullName  string        `json:"fullName,omitempty"`
+	Gender    AccountGender `json:"gender,omitempty"`
 	// DisplayName writes accounts.name. Named for what it is rather than
 	// `name`, because AccountProfileData projects it into
 	// CreationDefaults.Nickname and a reader of this struct needs to know

@@ -13,6 +13,7 @@ import (
 type generationServiceSpy struct {
 	generateCalls int
 	failureCalls  int
+	claimedData   []contracts.WorldClaimData
 }
 
 func (service *generationServiceSpy) Generate(context.Context, contracts.Envelope[contracts.GenerateDNAData]) error {
@@ -52,6 +53,11 @@ func (*generationServiceSpy) CompleteFamily(context.Context, string, string, con
 }
 
 func (*generationServiceSpy) FailFamily(context.Context, string, string, contracts.Envelope[contracts.FamilyFailedData]) error {
+	return nil
+}
+
+func (service *generationServiceSpy) ClaimWorlds(_ context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) error {
+	service.claimedData = append(service.claimedData, envelope.Data)
 	return nil
 }
 

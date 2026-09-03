@@ -260,13 +260,23 @@ var worldMutations = []struct {
 // ratchet below can tell a classified mutation from an unclassified one.
 var ownerOnlyMutations = []string{"DeleteWorld"}
 
+// ownershipAssigningWrites is the fourth category, and the one it is easiest
+// to file a method into by mistake. These writes SET ownership rather than
+// testing it, so there is no requestingAccountID in their signature and
+// nothing for the table above to say about them.
+//
+// What makes them safe is not an ownership check but the absence of a prior
+// owner to disagree with: CreateWorld writes what the compose command carried,
+// and ClaimWorlds writes only where `owner_account_id IS NULL`. That guard is
+// the whole of the claim's safety, and it is asserted in world_claim_test.go
+// rather than here - a method landing in this list without one would be a
+// transfer endpoint, which v1 deliberately does not have.
+var ownershipAssigningWrites = []string{"CreateWorld", "ClaimWorlds"}
+
 // nonMutatingStoreMethods is the rest of the Store, listed so that the ratchet
 // below can tell "a read was added" from "a mutation was added and nobody
-// noticed". CreateWorld is here despite being a write: it SETS ownership from
-// the command rather than testing it, and there is no prior owner for it to
-// disagree with.
+// noticed".
 var nonMutatingStoreMethods = []string{
-	"CreateWorld",
 	"GetWorld",
 	"GetWorldsByIDs",
 	"GetPublicWorld",
@@ -335,6 +345,9 @@ func TestTheStoreGainsNoMethodWithoutClassifyingIt(t *testing.T) {
 		classified[mutation.methodName] = true
 	}
 	for _, methodName := range ownerOnlyMutations {
+		classified[methodName] = true
+	}
+	for _, methodName := range ownershipAssigningWrites {
 		classified[methodName] = true
 	}
 

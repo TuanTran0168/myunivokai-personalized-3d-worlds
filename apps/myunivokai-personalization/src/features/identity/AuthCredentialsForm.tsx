@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { LogIn, UserPlus } from "lucide-react";
 import { StatusMessage } from "@/components/StatusMessage";
 import { signIn, signUp } from "@/lib/productAuth";
+import { claimAnonymousWorldsForAccount } from "@/lib/anonymousWorldClaim";
 import {
   MAXIMUM_DISPLAY_NAME_LENGTH,
   MINIMUM_PASSWORD_LENGTH,
@@ -79,10 +80,30 @@ export function AuthCredentialsForm({ mode }: { mode: AuthCredentialsFormMode })
         onServiceWaking: (attemptNumber: number) => setStatus({ kind: "waking", attemptNumber })
       };
       try {
-        if (mode === "sign-up") {
-          await signUp({ ...credentials, name: displayName.trim() }, hooks);
-        } else {
-          await signIn(credentials, hooks);
+        const session =
+          mode === "sign-up"
+            ? await signUp({ ...credentials, name: displayName.trim() }, hooks)
+            : await signIn(credentials, hooks);
+        // The claim runs on BOTH sign-up and sign-in, and it is attempted on
+        // every one of them rather than only the first.
+        //
+        // Sign-in matters as much as sign-up: a visitor who signs up on their
+        // phone and later signs in on the laptop they actually made their
+        // worlds on is claiming for the first time on that device. And a claim
+        // that failed leaves the anonymous cookie in place, so the next
+        // sign-in is the retry - the server's own guard makes a claim that
+        // already succeeded a no-op.
+        //
+        // Its failure never becomes the form's failure. The visitor IS signed
+        // in by this point; refusing to navigate would strand them on a
+        // sign-in page reporting an error about something else entirely, and
+        // nothing is lost by trying again later.
+        try {
+          await claimAnonymousWorldsForAccount(session.account.accountId, hooks);
+        } catch {
+          // Deliberately silent for now. S8-IDENTITY-014 is where a visitor is
+          // told, once, keyed on a reason code - and it needs the quota's
+          // codes to be worth writing.
         }
         announceProductSessionChanged();
         router.push(DESTINATION_AFTER_AUTHENTICATION);

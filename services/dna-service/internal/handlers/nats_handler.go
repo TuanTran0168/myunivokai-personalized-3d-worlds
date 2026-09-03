@@ -19,11 +19,23 @@ const invalidRequestJobID = "invalid-request"
 
 var ErrInvalidGenerateCommand = errors.New("invalid DNA generation command")
 
+// ErrInvalidWorldClaimCommand marks a claim that can never be applied, as
+// distinct from one that failed this time.
+//
+// The distinction has to exist because the claim's consumer has no delivery
+// limit: a claim must keep retrying until the database answers, since giving up
+// would leave somebody's worlds anonymous for ever with nothing anywhere saying
+// so. That same unlimited retry turns an unreadable message into one the
+// consumer chews on for as long as the stream keeps it, so the two failures are
+// told apart here rather than by a delivery count.
+var ErrInvalidWorldClaimCommand = errors.New("invalid world claim command")
+
 type GenerationService interface {
 	Generate(context.Context, contracts.Envelope[contracts.GenerateDNAData]) error
 	FailGeneration(context.Context, contracts.Envelope[contracts.GenerateDNAData]) error
 	CompleteFamily(context.Context, string, string, contracts.Envelope[contracts.FamilyCompletedData]) error
 	FailFamily(context.Context, string, string, contracts.Envelope[contracts.FamilyFailedData]) error
+	ClaimWorlds(context.Context, contracts.Envelope[contracts.WorldClaimData]) error
 	GetJob(context.Context, string) (contracts.Job, error)
 }
 
@@ -53,6 +65,29 @@ func (handler *NATSHandler) HandleGenerate(ctx context.Context, message *nats.Ms
 		return fmt.Errorf("decode DNA command: %w", err)
 	}
 	return handler.generationService.Generate(ctx, envelope)
+}
+
+// HandleWorldClaim decodes the gateway's one claim command.
+//
+// No terminal handler is wired for this subject, unlike HandleGenerate's, and
+// that is the right shape rather than an omission: a generation failure has a
+// visitor watching a job and so has to be recorded as failed somewhere they
+// can see it, while a claim has nobody waiting. A claim that cannot be applied
+// should keep retrying until the database is reachable, which is what a plain
+// error return gets from the consumer loop.
+func (handler *NATSHandler) HandleWorldClaim(ctx context.Context, message *nats.Msg) error {
+	var envelope contracts.Envelope[contracts.WorldClaimData]
+	if err := decodeEnvelope(message.Data, &envelope); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidWorldClaimCommand, err)
+	}
+	// Validated here, in the transport, and validated again in the service.
+	// Not duplication for its own sake: this is the only layer that can say
+	// "this message is unreadable and always will be", and the service is the
+	// only layer that would be right to say it about a call from anywhere else.
+	if err := envelope.Data.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidWorldClaimCommand, err)
+	}
+	return handler.generationService.ClaimWorlds(ctx, envelope)
 }
 
 func (handler *NATSHandler) HandleGenerationFailure(ctx context.Context, message *nats.Msg) error {

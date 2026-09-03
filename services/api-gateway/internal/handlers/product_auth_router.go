@@ -23,6 +23,11 @@ const (
 	// is not swallowed by /api/{family}, asserted in
 	// product_auth_router_test.go.
 	productProfileRoutePath = productMeRoutePrefix + "/profile"
+	// The claim. A static two-segment path under /api/me, and the plural is
+	// deliberate: it claims every world one anonymous visitor made, and there
+	// is no single-world form of it. Claiming one world would mean naming it,
+	// and a world id is the URL a visitor sends to a friend.
+	productWorldClaimRoutePath = productMeRoutePrefix + "/worlds/claim"
 )
 
 // productCORSOptions is the product surface's CORS policy, shared by the
@@ -42,7 +47,11 @@ func productCORSOptions(serviceConfig config.Config) cors.Options {
 		// no route: chi answers 405 for a PATCH at any path that has not
 		// declared one.
 		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodOptions},
-		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
+		// X-Anonymous-Id is here for the claim and for an anonymous create.
+		// Without it the browser refuses the preflight and both fail with no
+		// server-side error at all - every Go test in this repository would
+		// still pass, which is why it is called out rather than just added.
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Anonymous-Id", "X-Request-Id"},
 		ExposedHeaders: []string{"Cache-Control", "Retry-After", "X-Cache", "X-Request-Id"},
 		MaxAge:         corsMaximumAgeSeconds,
 	}
@@ -60,8 +69,9 @@ func productCORSOptions(serviceConfig config.Config) cors.Options {
 // No AllowCredentials, unlike the admin router: the browser is never asked to
 // attach anything on its own, so there is nothing to credential. That absence
 // is what leaves this design with no CSRF surface (plan §4.3).
-func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, edgeStore EdgeStore, transport *RPCTransport, accessTokenVerifier middleware.AdminAccessVerifier, revocationChecker middleware.AdminRevocationChecker) {
+func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, edgeStore EdgeStore, transport *RPCTransport, claimPublisher WorldClaimPublisher, accessTokenVerifier middleware.AdminAccessVerifier, revocationChecker middleware.AdminRevocationChecker) {
 	authHandler := NewProductAuthHandler(serviceConfig, transport, edgeStore)
+	worldClaimHandler := NewProductWorldClaimHandler(serviceConfig, claimPublisher, transport)
 	router.Post(productAuthRoutePrefix+"/signup", authHandler.SignUp)
 	router.Post(productAuthRoutePrefix+"/login", authHandler.LogIn)
 	router.Post(productAuthRoutePrefix+"/refresh", authHandler.Refresh)
@@ -78,5 +88,6 @@ func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, e
 		sessionRouter.Get(productMeRoutePrefix, authHandler.Me)
 		sessionRouter.Get(productProfileRoutePath, authHandler.Profile)
 		sessionRouter.Patch(productProfileRoutePath, authHandler.UpdateProfile)
+		sessionRouter.Post(productWorldClaimRoutePath, worldClaimHandler.ClaimWorlds)
 	})
 }

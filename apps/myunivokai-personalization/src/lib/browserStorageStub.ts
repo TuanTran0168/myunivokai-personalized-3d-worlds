@@ -86,7 +86,13 @@ export function installBrowserStorageStub(protocol: "http:" | "https:" = "http:"
 
   const windowStub = {
     location: { protocol },
-    localStorage: createMemoryLocalStorage()
+    localStorage: createMemoryLocalStorage(),
+    // sessionStorage too, because lib/api.ts keeps the in-flight generation
+    // there. Without it a test that reaches `api.createWorld` fails inside
+    // savePendingGeneration with a TypeError, which a test awaiting a
+    // rejection cannot tell apart from the rejection it was expecting - so it
+    // passes for the wrong reason.
+    sessionStorage: createMemoryLocalStorage()
   };
 
   globalObject.document = documentStub;

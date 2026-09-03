@@ -10,6 +10,7 @@ import (
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/seed"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -64,6 +65,11 @@ func (service *WorldService) ComposeWorld(ctx context.Context, envelope contract
 		// generate command, which the gateway stamped from a verified token.
 		// Nothing on this path reads it from a request body.
 		OwnerAccountID: envelope.Data.OwnerAccountID,
+		// Exactly one of the two is ever set: the gateway drops a visitor's
+		// anonymous id the moment there is a verified account to name instead.
+		// This service does not re-check that, because the check belongs where
+		// the token is verified - it stores what the command carried.
+		AnonymousID: envelope.Data.AnonymousID,
 	}
 	variant := models.WorldVariant{VariantNo: 1, Seed: worldSeed, Config: sceneConfig, IsSelected: true}
 	bundle, err := service.store.CreateWorld(ctx, world, variant)
@@ -71,6 +77,31 @@ func (service *WorldService) ComposeWorld(ctx context.Context, envelope contract
 		return models.CreateWorldResponse{}, err
 	}
 	return models.CreateWorldResponse{World: bundle.World, Variant: selectedVariant(bundle.Variants), PersonalityDNA: personalityDNA}, nil
+}
+
+// ClaimWorlds applies one account's claim to this family's worlds.
+//
+// The identifiers are validated again here, having been validated at the
+// gateway and again in dna-service, and that is not belt-and-braces: this is
+// the layer that hands them to a `WHERE` clause in this database. The other
+// two validations protect other databases.
+func (service *WorldService) ClaimWorlds(ctx context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) error {
+	if err := envelope.Validate(); err != nil {
+		return err
+	}
+	if err := envelope.Data.Validate(); err != nil {
+		return err
+	}
+	claimedWorldCount, err := service.store.ClaimWorlds(ctx, envelope)
+	if err != nil {
+		return err
+	}
+	// The only observability a claim has - nobody is waiting for the answer,
+	// so a claim that matched nothing and one that moved five worlds are
+	// otherwise the same silent success. Neither identifier is logged: those
+	// two values together are exactly what would tie a person to their worlds.
+	log.Info().Int64("claimed_worlds", claimedWorldCount).Msg("anonymous worlds claimed")
+	return nil
 }
 
 func (service *WorldService) GetWorld(ctx context.Context, worldID string) (models.WorldResponse, error) {

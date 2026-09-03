@@ -15,23 +15,65 @@ import (
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/security"
 )
 
-// fakeTokenVersionCache stands in for Redis so the business logic under test
+// fakeGatewayMirrorCache stands in for Redis so the business logic under test
 // has no network dependency, exactly why AuthService depends on the
-// TokenVersionCache interface rather than the concrete Redis client.
-type fakeTokenVersionCache struct {
+// GatewayMirrorCache interface rather than the concrete Redis client.
+//
+// It holds both halves of the mirror. The settings map is what makes "the
+// gateway would now read the new value" assertable without a Redis — and that
+// write is the one part of a settings change no database assertion covers.
+type fakeGatewayMirrorCache struct {
 	mu       sync.Mutex
 	versions map[string]int
+	settings map[contracts.SettingKey]string
+	// settingWriteError makes every mirror write fail, which is how a Redis
+	// outage looks from this service during a settings write.
+	settingWriteError error
 }
 
-func newFakeTokenVersionCache() *fakeTokenVersionCache {
-	return &fakeTokenVersionCache{versions: map[string]int{}}
+func newFakeGatewayMirrorCache() *fakeGatewayMirrorCache {
+	return &fakeGatewayMirrorCache{versions: map[string]int{}, settings: map[contracts.SettingKey]string{}}
 }
 
-func (cache *fakeTokenVersionCache) SetTokenVersion(_ context.Context, accountID string, tokenVersion int, _ time.Duration) error {
+func (cache *fakeGatewayMirrorCache) SetTokenVersion(_ context.Context, accountID string, tokenVersion int, _ time.Duration) error {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	cache.versions[accountID] = tokenVersion
 	return nil
+}
+
+func (cache *fakeGatewayMirrorCache) SetSetting(_ context.Context, key contracts.SettingKey, value string) error {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.settingWriteError != nil {
+		return cache.settingWriteError
+	}
+	cache.settings[key] = value
+	return nil
+}
+
+func (cache *fakeGatewayMirrorCache) mirroredSetting(key contracts.SettingKey) (string, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	value, found := cache.settings[key]
+	return value, found
+}
+
+// declaredSettingDuration is the compiled-in default for a duration setting,
+// read from the registry rather than restated. The four token lifetimes used
+// to be Go constants a test could name; they are settings now, and the
+// registry is the one place that says what they are worth with no row.
+func declaredSettingDuration(t *testing.T, key contracts.SettingKey) time.Duration {
+	t.Helper()
+	definition, declared := contracts.SettingDefinitionFor(key)
+	if !declared {
+		t.Fatalf("%q is not a declared setting", key)
+	}
+	value, err := definition.DurationValue(definition.DefaultValue)
+	if err != nil {
+		t.Fatalf("the declared default for %q is not a valid duration: %v", key, err)
+	}
+	return value
 }
 
 func testConfig() config.Config {
@@ -54,13 +96,13 @@ func testPasswordPolicy() PasswordPolicy {
 	return NewPasswordPolicy(checkers.NewMockChecker(testBreachedPassword))
 }
 
-func newTestAuthService(t *testing.T) (*AuthService, *repositories.MemoryStore, *fakeTokenVersionCache) {
+func newTestAuthService(t *testing.T) (*AuthService, *repositories.MemoryStore, *fakeGatewayMirrorCache) {
 	t.Helper()
 	store := repositories.NewMemoryStore()
 	cfg := testConfig()
 	passwordHasher := security.NewPasswordHasher(64*1024, 1, 1, 16, 32)
-	tokenIssuer := security.NewTokenIssuer(cfg.AccessTokenPrivateKey, cfg.AccessTokenTTL, config.WebAccessTokenTTL)
-	cache := newFakeTokenVersionCache()
+	tokenIssuer := security.NewTokenIssuer(cfg.AccessTokenPrivateKey)
+	cache := newFakeGatewayMirrorCache()
 	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, cache, testPasswordPolicy(), cfg)
 	if err != nil {
 		t.Fatalf("construct auth service: %v", err)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 )
 
@@ -43,6 +44,12 @@ type Store interface {
 	// the gateway can drop a cache entry keyed by a slug only this service can
 	// map a world id to. Owner-only, unlike the three above.
 	DeleteWorld(ctx context.Context, worldID string, requestingAccountID *string) (models.WorldDeletion, error)
+	// ClaimWorlds turns every world one anonymous visitor made into one
+	// account's, and returns how many it moved. Not a mutation in the sense
+	// the four above are: there is no requestingAccountID to check, because
+	// the caller is dna-service acting on a command the gateway stamped from
+	// a verified token - see world_ownership.go for why that is trustworthy.
+	ClaimWorlds(ctx context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) (int64, error)
 	GetPublicWorld(ctx context.Context, slug string) (WorldBundle, error)
 	PendingOutbox(ctx context.Context, maximumMessages int) ([]OutboxMessage, error)
 	MarkOutboxPublished(ctx context.Context, outboxID string) error

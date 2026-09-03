@@ -12,10 +12,14 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const dnaGenerateMessageSuffix = ":dna-generate"
+const (
+	dnaGenerateMessageSuffix = ":dna-generate"
+	worldClaimMessageSuffix  = ":world-claim"
+)
 
 type Client interface {
 	PublishGeneration(context.Context, contracts.Envelope[contracts.GenerateDNAData]) error
+	PublishWorldClaim(context.Context, contracts.Envelope[contracts.WorldClaimData]) error
 	Request(context.Context, string, any) (contracts.Envelope[contracts.RPCResponseData], error)
 	Ping(context.Context) error
 	Close()
@@ -60,6 +64,33 @@ func (client *NATSClient) PublishGeneration(ctx context.Context, envelope contra
 	message.Data = payload
 	if _, err := client.jetStream.PublishMsg(message, nats.Context(ctx)); err != nil {
 		return fmt.Errorf("publish generation command: %w", err)
+	}
+	return nil
+}
+
+// PublishWorldClaim sends the one claim command the gateway is allowed to
+// publish. dna-service fans it out to the families the visitor actually used.
+//
+// JetStream rather than Core NATS request-reply, unlike everything else the
+// gateway sends on behalf of a signed-in visitor. Both dna-service and the
+// family services sleep on the free tier, so a Core request would time out on
+// a cold start and a claim would be lost precisely when it matters most - the
+// minute after somebody signs up. Nobody is waiting for the answer, so
+// durability is worth more than latency here.
+//
+// On the Client interface, unlike PublishServiceStarted and PublishHTTPRollup,
+// because a request handler is exactly who publishes this: a visitor asked for
+// it.
+func (client *NATSClient) PublishWorldClaim(ctx context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) error {
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("marshal world claim command: %w", err)
+	}
+	message := nats.NewMsg(contracts.ClaimDNAWorldsCommandSubject)
+	message.Header.Set(nats.MsgIdHdr, envelope.JobID+worldClaimMessageSuffix)
+	message.Data = payload
+	if _, err := client.jetStream.PublishMsg(message, nats.Context(ctx)); err != nil {
+		return fmt.Errorf("publish world claim command: %w", err)
 	}
 	return nil
 }

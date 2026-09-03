@@ -164,6 +164,13 @@ Each family's `worlds` table carries `owner_account_id`, `anonymous_id` and
 `deleted_at`, all nullable, none backfilled. A world with no owner is the
 normal case and describes every world made before 2026-09-03.
 
+**Exactly one of the two identity columns is ever set on a new world.** The
+gateway drops the visitor's `X-Anonymous-Id` the moment a verified token gives
+it an account to name instead, because a world that has an owner can never be
+claimed. `owner_account_id IS NULL` answers "is this anonymous"; `anonymous_id`
+answers "*which* anonymous visitor", and only the second can be turned into
+ownership later.
+
 `internal/repositories/world_ownership.go` holds the rules, and there are two
 of them because deletion does not follow the others:
 
@@ -188,6 +195,48 @@ clause.
 A deletion bumps no revision and stages no outbox row: `analytics-service` is
 deliberately untouched, so the snapshot it would emit is identical to the last
 one.
+
+### The claim
+
+One command in, one to three out. The gateway is admitted on exactly one
+command subject and it is DNA's, and `dna-service` is the only service that
+knows which FAMILIES a visitor used — its own `generation_jobs` rows name one
+each. So `POST /api/me/worlds/claim` publishes
+`commands.dna.world.claim.v1`, and `dna-service` publishes
+`commands.<family>.world.claim.v1` only for the families that visitor actually
+used.
+
+`dna-service`'s `ClaimWorlds` reads those families **before** the `UPDATE`,
+while `anonymous_id` still points at the rows, and discards them if the update
+claimed nothing — that last line is the concurrent loser's path, and without it
+a claim that took no rows would still fan out.
+
+Each family's `ClaimWorlds` is one statement:
+`SET owner_account_id = $1, anonymous_id = NULL WHERE anonymous_id = $2 AND
+owner_account_id IS NULL`. The guard is the whole of the idempotency and of the
+two-device race, and clearing `anonymous_id` is not tidiness — it is a bearer
+credential in a JS-readable cookie, useless once an account owns the worlds it
+named. No revision bump and no outbox row, for the same reason a deletion has
+none.
+
+**The claim consumers carry no delivery limit**, because a claim that gave up
+would leave somebody's worlds anonymous for ever with nothing anywhere saying
+so. That makes a message which can never be applied a message the fleet retries
+until the stream drops it, so a transport-level failure is told apart by its
+error: `ErrInvalidWorldClaimCommand` is `Term()`ed, everything else nacked. The
+gateway also refuses to publish an unapplicable one, including when the fault is
+its own — a verified token whose subject is not an account id is a 500 there.
+
+Only `dna-service` is woken. The gateway owns the only waker and cannot know
+which families were used; the family claim commands wait in
+`MYUNIVOKAI_COMMANDS` until each service next runs. The bound that leaves is the
+stream's 168-hour retention.
+
+`nats_publish_permissions_test.go` in the gateway is where the whole command
+boundary is checked: `commandSubjectRoutes` names every command subject with its
+one permitted publisher and its one permitted subscriber, and the tests fail on
+an extra publisher, a missing subscriber, a subject in the config the table does
+not name, and any command wildcard.
 
 The runtime owns connection lifecycle, deterministic subscription registration,
 pull/ack/retry policy, and outbox polling. Fetch size/wait, retry delay,
@@ -221,6 +270,60 @@ per-request round trip.
 (`PostgresStore`, `MemoryStore`) like every other service; what is split per
 concern is the *file* (`postgres_accounts.go`, `postgres_audit.go`, …), not
 the type.
+
+### System settings
+
+Nine operator-changeable policy numbers — two quota ceilings, four token
+lifetimes, an invite lifetime and the lockout pair. Design: §9.3 of
+`agent-system/plans/architecture/end-user-identity-and-ownership.md`.
+
+**The registry is `contracts.DeclaredSettings()`, not anything in this
+service.** It declares each setting's key, type, description, bounds and
+default, and it lives in `contracts` because both sides read it: this service
+validates every write against it, and the gateway needs the two `quota.*`
+defaults to answer a cache miss. A registry inside `auth-service` would mean
+the gateway declaring its own copy of the number 5.
+
+`system_settings` holds only OVERRIDES. Every setting has a default in code and
+the platform is required to boot and behave correctly with the table empty and
+Redis flushed, which is what `TestAnEmptySettingsTableIsAWorkingPlatform`
+asserts — the screen AND a real sign-up, because a list assertion alone would
+not notice a zero-length session. Defaults are held as text so that a default
+and an operator's value go through the same parser and the same bounds check.
+
+Bounds are code and are enforced on write. Two of them are load-bearing rather
+than tidy: `auth.lockout.max_failed_attempts` has a floor of 1, because 0 locks
+every account on its zeroth failed attempt including the one that would put the
+value back; and each audience's access-lifetime range ends exactly where its
+refresh range begins, so no pair of values anybody can write leaves an access
+token outliving its refresh token.
+
+**The two sides read different sources, deliberately.** This service reads
+Postgres at the moment of use — it owns the table, and going through its own
+Redis mirror would let a flushed cache silently revert its policy to the
+defaults while the rows said otherwise. The gateway reads the mirror only, and
+a miss uses its compiled-in default rather than a NATS request: see
+`services/api-gateway/internal/settings/reader.go`, which is the one place this
+repository inverts `RevocationChecker` and the one place a reflection test
+guards the shape of a type rather than its behaviour.
+
+A write goes row → audit → mirror, in that order. The audit line is
+`<key>: <old> -> <new>` with `default` for an absent previous row, and it is
+written before the mirror so the transition it records survives a Redis
+failure. A failed mirror write is reported to the operator rather than
+swallowed: the row is committed, but the gateway is still enforcing the old
+value.
+
+An orphan row — one whose key has left the registry — is listed and never
+deleted, which is the deliberate opposite of `SyncPermissions`' trailing
+`DELETE FROM permissions WHERE NOT (codename = ANY($1))`. It reaches the admin
+screen with no type, no default and no bounds, because there is no declaration
+left to take them from.
+
+Two permissions gate the two routes (`settings:read`, `settings:manage`), both
+in `enforcedPermissions`, and the admin screen renders the registry rather than
+a hand-written form — so a tenth setting is a backend-only change, in a new
+section of its own if its key prefix is new.
 
 ## Analytics Service
 
@@ -397,8 +500,14 @@ never do.
 
 ## Internal access boundary
 
-The product API still has no end-user accounts; `auth-service` is staff-only
-identity for the admin console (`agent-system/plans/services/auth-and-admin-plan.md`).
+`auth-service` serves BOTH audiences as of Sprint 8: staff identity for the
+admin console (`agent-system/plans/services/auth-and-admin-plan.md`) and
+end-user identity for the product (`aud=web`, decision 1 of
+`agent-system/plans/architecture/end-user-identity-and-ownership.md`). One
+`accounts` table, two audiences, and the separation between them is therefore
+not a table boundary: it is the audience claim on the token plus the repository
+refusing a role to a non-staff account.
+
 Direct browser-to-domain access is prevented structurally:
 
 - domain services have no HTTP listener or published host port;

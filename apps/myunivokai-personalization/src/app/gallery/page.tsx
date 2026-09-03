@@ -53,15 +53,20 @@ export default function GalleryPage() {
 
       {/* The note that stops an empty shelf reading as a loss. A new account
           on a browser with anonymous worlds sees nothing, which is correct and
-          alarming; saying where those worlds are costs one sentence. Claiming
-          them is S8-IDENTITY-011, and until it lands signing out is the way to
-          them. */}
+          alarming; saying where those worlds are costs one sentence.
+
+          Rare since the claim landed (S8-IDENTITY-011): signing in moves the
+          anonymous shelf onto the account, so this appears only when the claim
+          could not run - the anonymous-id cookie was cleared, or its 180 days
+          have passed, while these localStorage entries survived. Those worlds
+          are unclaimable for ever, because nobody can prove they made them
+          (decision 16), which is why the copy no longer promises anything. */}
       {isSignedIn && otherOwnerWorldCount > 0 ? (
         <div className="mb-6 rounded-xl border border-hairline bg-black/30 px-4 py-3 text-sm text-on-surface-variant">
           {otherOwnerWorldCount === 1
             ? "1 world on this device was created without an account, so it is not part of your account. "
             : `${otherOwnerWorldCount} worlds on this device were created without an account, so they are not part of your account. `}
-          Sign out to see them. Moving them into your account is coming.
+          Sign out to see them.
         </div>
       ) : null}
 

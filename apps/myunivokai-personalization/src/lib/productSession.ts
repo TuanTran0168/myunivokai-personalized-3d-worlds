@@ -261,10 +261,39 @@ export function readAnonymousIdentifier(): string | null {
 }
 
 /**
+ * Forgets the anonymous id, which happens exactly once in this app's life: the
+ * moment a claim has succeeded.
+ *
+ * Not on sign-out — `clearProductSession` says why it deliberately leaves this
+ * cookie alone. Here it is right, and it is the last step rather than the
+ * first: once the server has moved those worlds to an account, this value is a
+ * bearer credential that unlocks nothing, sitting in a JS-readable cookie for
+ * another 180 days.
+ *
+ * The next anonymous create mints a fresh one, which is what should happen —
+ * worlds made after signing out belong to a different, later anonymous
+ * visitor as far as any future claim is concerned.
+ */
+export function clearAnonymousIdentifier(): void {
+  deleteCookie(ANONYMOUS_IDENTIFIER_COOKIE_NAME);
+}
+
+/**
  * Exported for the tests and for the CSP's own documentation. Cookie NAMES are
  * not secrets and are part of this app's contract with itself; hard-coding one
  * in a second place is how the writer and the reader drift apart.
  */
+/**
+ * The header the anonymous id travels in, named here because this module owns
+ * the value: its cookie, its 180-day window, and its one deletion.
+ *
+ * It must also appear in the gateway's product CORS `AllowedHeaders`, or the
+ * browser refuses the preflight and every request carrying it fails before it
+ * is sent — with no server-side error at all, because the request the gateway
+ * would have answered never arrives.
+ */
+export const ANONYMOUS_IDENTIFIER_HEADER_NAME = "X-Anonymous-Id";
+
 export const PRODUCT_SESSION_COOKIE_NAMES = {
   accessToken: PRODUCT_ACCESS_TOKEN_COOKIE_NAME,
   refreshToken: PRODUCT_REFRESH_TOKEN_COOKIE_NAME,

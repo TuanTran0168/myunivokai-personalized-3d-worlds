@@ -49,6 +49,23 @@ func TestTheWebAudienceNeedsNoMigration(t *testing.T) {
 			description: "refresh_tokens carries a family_id, which is what family-wide reuse detection revokes (plan section 4.2)",
 			pattern:     `family_id\s+`,
 		},
+		{
+			// The column is nullable BECAUSE of this clause, and the pair is
+			// the decision: a policy number outlives the staff member who set
+			// it. account_profiles cascades from the same parent table, so the
+			// difference here is a choice rather than a default, and a
+			// CASCADE would let removing a staff account silently revert the
+			// platform's quota.
+			description: "system_settings.updated_by_account_id sets itself to NULL rather than cascading, so deleting a staff account cannot delete a policy value",
+			pattern:     `updated_by_account_id\s+UUID\s+REFERENCES\s+accounts\(id\)\s+ON DELETE SET NULL`,
+		},
+		{
+			// One row per key, enforced by the database rather than by the
+			// upsert being careful: two rows for one setting would make the
+			// effective value depend on which one was read.
+			description: "system_settings.setting_key is the primary key, so a setting cannot have two values",
+			pattern:     `setting_key\s+TEXT\s+PRIMARY KEY`,
+		},
 	}
 	for _, required := range requiredPatterns {
 		matcher := regexp.MustCompile(required.pattern)
@@ -64,12 +81,19 @@ func TestTheWebAudienceNeedsNoMigration(t *testing.T) {
 // therefore a deliberate ratchet rather than a description - raising it is the
 // commit where somebody chose to pay for a table.
 //
-// It has been raised once. 000004_account_profiles.sql is the account's own
-// page (owner request, 2026-09-02), and the raise happened in the commit that
-// added it, which is exactly the protocol this test asks for. `system_settings`
-// is still ahead in S8-IDENTITY-012 and will raise it to 5 the same way.
+// It has been raised twice.
+//
+//   - 000004_account_profiles.sql is the account's own page (owner request,
+//     2026-09-02).
+//   - 000005_system_settings.sql is S8-IDENTITY-012's settings table, which
+//     this comment predicted by name. It bought nine policy numbers an
+//     operator can change without a deploy, and it is the last table §9.3
+//     asks for: batch 2 adds ROWS to it, not tables.
+//
+// Both raises happened in the commit that added the migration, which is
+// exactly the protocol this test asks for.
 func TestAuthServiceGainsNoUnplannedMigration(t *testing.T) {
-	const expectedMigrationFileCount = 4
+	const expectedMigrationFileCount = 5
 
 	entries, err := os.ReadDir(migrationsDirectory)
 	if err != nil {

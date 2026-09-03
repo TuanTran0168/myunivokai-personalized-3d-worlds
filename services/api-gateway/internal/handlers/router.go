@@ -11,6 +11,7 @@ import (
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/config"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/httpx"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/middleware"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/settings"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/telemetry"
 )
 
@@ -21,6 +22,7 @@ type EdgeStore interface {
 	wakeStatsReader
 	middleware.DistributedLimiter
 	auth.TokenVersionCache
+	settings.SettingCache
 	IdentityFailureCounter
 	Ping(context.Context) error
 	Close() error
@@ -98,7 +100,7 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 		identityRouter.Use(cors.Handler(productCORSOptions(serviceConfig)))
 		identityRouter.Use(middleware.RateLimit(edgeStore, authRateLimitRouteKey, serviceConfig.AuthRateLimitRequestsPerSecond, serviceConfig.AuthRateLimitBurst))
 		identityRouter.Use(middleware.BodyLimit(serviceConfig.MaximumRequestBodyBytes))
-		registerProductAuthRoutes(identityRouter, serviceConfig, edgeStore, rpcTransport, accessTokenVerifier, revocationChecker)
+		registerProductAuthRoutes(identityRouter, serviceConfig, edgeStore, rpcTransport, brokerClient, accessTokenVerifier, revocationChecker)
 	})
 
 	// The product CORS handler is scoped to this group, not global - it must

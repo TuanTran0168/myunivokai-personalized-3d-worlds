@@ -8,7 +8,6 @@ import (
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/breach/checkers"
-	"github.com/myunivokai/myunivokai/services/auth-service/internal/config"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/security"
 )
@@ -33,8 +32,8 @@ func newTestAuthServiceWithIssuer(t *testing.T) (*AuthService, *repositories.Mem
 	store := repositories.NewMemoryStore()
 	serviceConfig := testConfig()
 	passwordHasher := security.NewPasswordHasher(64*1024, 1, 1, 16, 32)
-	tokenIssuer := security.NewTokenIssuer(serviceConfig.AccessTokenPrivateKey, serviceConfig.AccessTokenTTL, config.WebAccessTokenTTL)
-	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, newFakeTokenVersionCache(), testPasswordPolicy(), serviceConfig)
+	tokenIssuer := security.NewTokenIssuer(serviceConfig.AccessTokenPrivateKey)
+	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, newFakeGatewayMirrorCache(), testPasswordPolicy(), serviceConfig)
 	if err != nil {
 		t.Fatalf("construct auth service: %v", err)
 	}
@@ -90,8 +89,8 @@ func TestSignUpEndUser_UsesTheWebAudienceTokenLifetimes(t *testing.T) {
 
 	session := signUpTestEndUser(t, authService, "lifetimes@example.com")
 
-	assertLifetimeWithin(t, "access", session.AccessExpiresAt, config.WebAccessTokenTTL)
-	assertLifetimeWithin(t, "refresh", session.RefreshExpiresAt, config.WebRefreshTokenTTL)
+	assertLifetimeWithin(t, "access", session.AccessExpiresAt, declaredSettingDuration(t, contracts.SettingKeyAuthTokenWebAccessTTL))
+	assertLifetimeWithin(t, "refresh", session.RefreshExpiresAt, declaredSettingDuration(t, contracts.SettingKeyAuthTokenWebRefreshTTL))
 }
 
 // assertLifetimeWithin allows a second of slack for the time spent hashing a
@@ -161,8 +160,8 @@ func TestSignUpEndUser_AllowsThePasswordWhenTheBreachCorpusIsUnavailable(t *test
 	store := repositories.NewMemoryStore()
 	serviceConfig := testConfig()
 	passwordHasher := security.NewPasswordHasher(64*1024, 1, 1, 16, 32)
-	tokenIssuer := security.NewTokenIssuer(serviceConfig.AccessTokenPrivateKey, serviceConfig.AccessTokenTTL, config.WebAccessTokenTTL)
-	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, newFakeTokenVersionCache(),
+	tokenIssuer := security.NewTokenIssuer(serviceConfig.AccessTokenPrivateKey)
+	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, newFakeGatewayMirrorCache(),
 		NewPasswordPolicy(checkers.NewUnavailableMockChecker()), serviceConfig)
 	if err != nil {
 		t.Fatalf("construct auth service: %v", err)

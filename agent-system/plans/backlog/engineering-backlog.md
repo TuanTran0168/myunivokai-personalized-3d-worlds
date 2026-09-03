@@ -669,7 +669,14 @@ Epic exit:
 - [ ] A quota limit is changed from the admin app, audited, with no service
       restart — and the platform still behaves correctly with an empty
       `system_settings` table, every setting resolving to its named default.
-- [ ] A world creation never contacts `auth-service` to learn a quota number.
+      The mechanism and the empty-table invariant landed with
+      `S8-IDENTITY-012`; this stays open until `S8-IDENTITY-013` gives the
+      limit a reader on the create path, because a number nothing enforces is
+      not a quota.
+- [x] A world creation never contacts `auth-service` to learn a quota number.
+      Guaranteed by the shape of `settings.Reader` rather than by observation
+      — it holds one field, a one-method cache interface, so it has nothing to
+      ask with. See `S8-IDENTITY-012`'s correction 20.
 - [ ] No new service, no new database and no new third-party account was added.
 
 Sprint stories: [S8-IDENTITY-001 through S8-IDENTITY-017](../sprints/sprint-08-2026-09-02/user-stories.md#epic-s8-identity-001--end-user-identity-and-world-ownership)

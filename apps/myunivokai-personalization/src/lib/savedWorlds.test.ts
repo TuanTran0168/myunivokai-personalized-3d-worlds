@@ -7,6 +7,7 @@ import {
   anonymousOwnerKey,
   countSavedWorldsForOtherOwners,
   currentOwnerKey,
+  moveAnonymousWorldsToOwner,
   readSavedWorldReferences,
   removeWorldIdentifierFromGallery
 } from "./savedWorlds";
@@ -174,5 +175,80 @@ describe("the count that explains an empty shelf", () => {
     addWorldIdentifierToGallery("first", "universe", anonymousOwnerKey());
 
     expect(countSavedWorldsForOtherOwners(null)).toBe(0);
+  });
+});
+
+// The local half of the claim (`S8-IDENTITY-011`). Storage only: whether the
+// server agreed is anonymousWorldClaim.test.ts's question, and this module has
+// no network in it on purpose.
+describe("moving the anonymous shelf onto an account", () => {
+  it("moves every anonymous entry and leaves the families alone", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("made-first", "universe", anonymousOwnerKey());
+    addWorldIdentifierToGallery("made-second", "ocean", anonymousOwnerKey());
+
+    expect(moveAnonymousWorldsToOwner(accountOwnerKey("account-1"))).toBe(2);
+    expect(readSavedWorldReferences(accountOwnerKey("account-1"))).toEqual([
+      { worldIdentifier: "made-second", family: "ocean", ownerKey: accountOwnerKey("account-1") },
+      { worldIdentifier: "made-first", family: "universe", ownerKey: accountOwnerKey("account-1") }
+    ]);
+    expect(readSavedWorldReferences(anonymousOwnerKey())).toEqual([]);
+  });
+
+  // The order is a creation-time fact visitors rely on to find things, and the
+  // claim is not a reason for the grid to reshuffle.
+  it("keeps the newest-first order it found", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("oldest", "universe", anonymousOwnerKey());
+    addWorldIdentifierToGallery("newest", "universe", anonymousOwnerKey());
+
+    moveAnonymousWorldsToOwner(accountOwnerKey("account-1"));
+
+    expect(readSavedWorldReferences(accountOwnerKey("account-1")).map((entry) => entry.worldIdentifier)).toEqual([
+      "newest",
+      "oldest"
+    ]);
+  });
+
+  // An entry stored before owners existed has no ownerKey and is read as
+  // anonymous, which is what it is. It has to move too, or the visitors with
+  // the longest history are the ones the claim does least for.
+  it("moves an entry saved before owners existed", () => {
+    stub = installBrowserStorageStub();
+    window.localStorage.setItem(
+      SAVED_WORLD_IDENTIFIERS_STORAGE_KEY,
+      JSON.stringify([{ worldIdentifier: "from-before-accounts", family: "nature" }, "an-even-older-string-entry"])
+    );
+
+    expect(moveAnonymousWorldsToOwner(accountOwnerKey("account-1"))).toBe(2);
+    expect(readSavedWorldReferences(accountOwnerKey("account-1")).map((entry) => entry.worldIdentifier)).toEqual([
+      "from-before-accounts",
+      "an-even-older-string-entry"
+    ]);
+  });
+
+  it("leaves another account's shelf untouched", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("somebody-elses", "universe", accountOwnerKey("account-2"));
+    addWorldIdentifierToGallery("nobodys-yet", "universe", anonymousOwnerKey());
+
+    expect(moveAnonymousWorldsToOwner(accountOwnerKey("account-1"))).toBe(1);
+    expect(readSavedWorldReferences(accountOwnerKey("account-2")).map((entry) => entry.worldIdentifier)).toEqual([
+      "somebody-elses"
+    ]);
+  });
+
+  // Two shapes of "there is nothing to do", both of which must not write.
+  // The anonymous key itself is the one worth naming: it would be a move onto
+  // the shelf the entries are already on, dressed up as a claim.
+  it("writes nothing when there is nothing to move", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("mine-already", "universe", accountOwnerKey("account-1"));
+    const storedBefore = window.localStorage.getItem(SAVED_WORLD_IDENTIFIERS_STORAGE_KEY);
+
+    expect(moveAnonymousWorldsToOwner(accountOwnerKey("account-1"))).toBe(0);
+    expect(moveAnonymousWorldsToOwner(anonymousOwnerKey())).toBe(0);
+    expect(moveAnonymousWorldsToOwner(null)).toBe(0);
+    expect(window.localStorage.getItem(SAVED_WORLD_IDENTIFIERS_STORAGE_KEY)).toBe(storedBefore);
   });
 });

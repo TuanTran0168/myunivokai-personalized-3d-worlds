@@ -57,6 +57,13 @@ type AuthService interface {
 
 	ListPermissions(ctx context.Context) (contracts.PermissionListResponseData, error)
 	ListAuditEvents(ctx context.Context, cursor string, pageSize int, since, until *time.Time, search string) (contracts.AuditListResponseData, error)
+
+	// The settings control plane. These two subjects carry every write to
+	// system_settings; there is no read subject on the create path, because
+	// the gateway resolves a setting from Redis or its compiled-in default and
+	// never asks this service — §9.3.
+	ListSettings(ctx context.Context) (contracts.SettingListResponseData, error)
+	UpdateSetting(ctx context.Context, data contracts.SettingUpdateData) (contracts.SettingSummary, error)
 }
 
 type ResponsePublisher interface {
@@ -385,6 +392,28 @@ func (handler *NATSHandler) HandleAuditListQuery(message *nats.Msg) {
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
 
+func (handler *NATSHandler) HandleSettingListQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[struct{}]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.SettingListResponseData, error) {
+		return handler.authService.ListSettings(ctx)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
+func (handler *NATSHandler) HandleSettingUpdateQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.SettingUpdateData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.SettingSummary, error) {
+		return handler.authService.UpdateSetting(ctx, envelope.Data)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
 func asRoleInUseError(err error) *services.RoleInUseError {
 	var roleInUseError *services.RoleInUseError
 	if errors.As(err, &roleInUseError) {
@@ -456,6 +485,19 @@ func (handler *NATSHandler) respondWithResult(message *nats.Msg, jobID string, s
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "VALIDATION_ERROR", fmt.Sprintf("A display name can be at most %d characters.", contracts.MaximumAccountDisplayNameLength)))
 	case errors.Is(err, services.ErrEmailUnavailable):
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusConflict, "EMAIL_UNAVAILABLE", "That email address cannot be used. If you already have an account, sign in instead."))
+	case errors.Is(err, contracts.ErrSettingNotDeclared):
+		// A 404 rather than a 400: the key names nothing that exists, which is
+		// a different thing from naming something that exists and giving it a
+		// value it will not take. An operator seeing this has a stale screen
+		// or a hand-written request, not a bad number.
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusNotFound, "SETTING_NOT_DECLARED", "That setting does not exist."))
+	case errors.Is(err, services.ErrSettingValueInvalid):
+		// Deliberately without the bound it broke, exactly as ErrProfileInvalid
+		// is. The gateway validates against the SAME registry before publishing
+		// and answers the operator with the specific bound; this is the
+		// invariant behind that check, reached only by something publishing the
+		// subject directly.
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "VALIDATION_ERROR", "That value is outside what this setting allows."))
 	case errors.Is(err, services.ErrSystemRoleImmutable):
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "SYSTEM_ROLE_IMMUTABLE", "System roles cannot be edited or deleted."))
 	case errors.Is(err, services.ErrSelfRevokeForbidden):

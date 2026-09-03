@@ -4,18 +4,28 @@
 > **Status:** **Phase A implemented** on
 > `feat/fe-be/end-user-identity-phase-a` (one branch per phase, by the owner's
 > grouping — the plan's one-story-per-branch task lines are superseded by it).
-> **Phase B is half implemented** on `feat/be/end-user-identity-phase-b`:
-> `S8-IDENTITY-007` … `010` are done — a world has an owner, the owner travels
-> on the commands and is enforced inside each mutation's own transaction, and an
-> owner can delete a world whose caches drop before the response returns.
-> `011` … `014` (the claim, system settings, the quota and its one toast) and
-> Phase C are committed scope and not started. **Read
+> **Phase B is all but done.** `S8-IDENTITY-007` … `010` are on
+> `feat/be/end-user-identity-phase-b` (merged): a world has an owner, the owner
+> travels on the commands and is enforced inside each mutation's own
+> transaction, and an owner can delete a world whose caches drop before the
+> response returns. `011` and `012` are on
+> `feat/be/end-user-identity-phase-b-continued` — signing in turns every world
+> a browser made anonymously into that account's, in one to three services
+> rather than blindly in all of them; and nine policy numbers moved out of
+> `.env` into a settings table an operator changes without a deploy, with the
+> admin screen rendering the code-declared registry rather than a form.
+> `013` and `014` (the quota and its one toast) and Phase C are committed scope
+> and not started. **Read
 > [user-stories.md](user-stories.md)'s Phase B corrections section** before any
-> of them: seven entries, three of which change what is left to build — the
-> plan's `WorldSnapshot` field was deliberately not added and the same reasoning
-> applies to `011`, the ACL lines `008` asked for were already in the file, and
-> deletion turned out to be stricter than any story said, which is what makes
-> `011` the story that lets a pre-existing world be deleted at all.
+> of them: twenty-one entries, and entry 8 first — a single struct literal in
+> `dna-service` dropped the owner that `007` and `008` existed to establish, so
+> both stories shipped inert with every test in the repository passing. Three
+> more change what is left to build: the plan's `WorldSnapshot` field was
+> deliberately not added, deletion is stricter than any story said, and neither
+> a deletion nor a claim emits an event. Entries 13 to 21 are the settings
+> story's, and 20 is the one that generalises: §9.3 asked for a comment to stop
+> a later reader reintroducing a cold start on the create path, and a comment
+> cannot — so the reader's SHAPE is asserted instead.
 > The stories execute
 > [`end-user-identity-and-ownership.md`](../../architecture/end-user-identity-and-ownership.md),
 > whose twenty decisions are all taken.
@@ -95,6 +105,9 @@ nullable columns per family plus one new table in an existing database.
   composition rules, the Have I Been Pwned range check on signup only, and one
   new `register` audit action. **Zero migrations** — `system_settings` arrives
   in Phase B, not here, and identity itself needs no schema change at all.
+  (Phase A did spend one migration in the end, for `S8-IDENTITY-019`'s account
+  profiles; `system_settings` is Phase B's, as written. Both raises are
+  recorded in `auth-service`'s own migration-count ratchet.)
 - The gateway's `/api/auth` + `/api/me` route group as a **bearer-token** flow:
   a `RequireProductAccessToken` middleware mirroring `admin_auth.go`, its own
   third rate-limit bucket, per-email failure counters in Redis.
@@ -114,12 +127,17 @@ nullable columns per family plus one new table in an existing database.
 - Two nullable columns and two partial indexes in each of `universe`, `nature`,
   `ocean` and `dna-service`. **No backfill** (decision 16).
 - Identity fields on the two commands, the ~3 NATS ACL lines, and write-path
-  authorization inside the same transaction as each mutation.
+  authorization inside the same transaction as each mutation. **The ACL lines
+  turned out to be already there** for the commands that existed; the four the
+  claim needed are the ones that were actually added, and the test that reads
+  the config is now a table naming every command subject's one publisher and
+  its one subscriber.
 - The owner-only world delete as a flag, filtered server-side — and **its Redis
   cache invalidation as a separate story with its own test through the
   gateway**, because that is the half that only fails in production.
 - The anonymous claim: gateway → `dna-service` → only the families that
-  visitor actually used.
+  visitor actually used. **And the browser's own gallery shelf, without which
+  the claim changes four databases and nothing a visitor can see.**
 - **A `system_settings` mechanism in `auth-service`**, with **nine settings —
   `auth-service`'s own values only** (the two quota limits, the two new web
   token TTLs, the two lockout values, and three token TTLs), so a policy number
@@ -191,10 +209,23 @@ every path in CI and none of the logic.
 - [ ] A quota limit changed in the admin app takes effect on the next create
       with **no service restart**, is audited with its old and new value, and
       is rejected if outside its declared bounds.
-- [ ] **The platform serves correct traffic with an empty `system_settings`
+      **The settings half is done** (`S8-IDENTITY-012`): the change is audited
+      as `<key>: <old> -> <new>`, refused outside its declared bounds by the
+      gateway and again by `auth-service`, and
+      `TestASettingTakesEffectOnTheNextRequestWithoutARestart` proves the
+      no-restart clause on a token lifetime. What is left is the CREATE half —
+      nothing on the create path reads a quota yet, which is
+      `S8-IDENTITY-013`.
+- [x] **The platform serves correct traffic with an empty `system_settings`
       table and an empty Redis**, every setting resolving to its named default
       constant — and a world creation never contacts `auth-service` to learn a
       quota number.
+      `TestAnEmptySettingsTableIsAWorkingPlatform` asserts both halves of the
+      first clause, the screen and a real sign-up. The second is structural
+      rather than tested-by-observation: `settings.Reader` holds one field, a
+      one-method cache interface, so there is nothing in it to ask with —
+      correction 20 explains why a behavioural test could not have carried
+      that.
 - [ ] `GET /api/me/worlds` returns no DNA, no raw input and no email — the same
       response-model test the share endpoint already has.
 - [ ] No `owner_account_id` reaches `myunivokai_analytics`, checked against the

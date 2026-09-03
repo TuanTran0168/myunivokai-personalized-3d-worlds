@@ -349,6 +349,34 @@ func (store *PostgresStore) GetPublicWorld(ctx context.Context, shareSlug string
 	return store.getWorldBundle(ctx, `s.share_slug=$1`, shareSlug)
 }
 
+// ClaimWorlds gives one account every world an anonymous visitor made here.
+//
+// One statement, which is one transaction: there is nothing else to keep
+// atomic with it. No revision bump and no outbox row, unlike every other write
+// in this file, and that is the correction Phase B made to plan section 7 -
+// the snapshot analytics reads carries no owner at all (decision 4b), so the
+// `world.changed` a claim would publish is byte-identical to the last one. It
+// would make the event stop meaning "something you can see changed", waking a
+// consumer added later for nothing.
+//
+// `owner_account_id IS NULL` is the whole of the idempotency: a replayed claim,
+// and the second of two devices claiming one anonymous id, both update zero
+// rows. A world is claimable exactly once, for ever.
+//
+// deleted_at is deliberately NOT filtered here, and the reason is that the
+// question cannot arise: deleting is owner-only, so a deleted world always has
+// an owner and the guard above already excludes it. Were that ever to change,
+// claiming a deleted world would still be the right answer - a staff restore
+// has to land in somebody's gallery.
+func (store *PostgresStore) ClaimWorlds(ctx context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) (int64, error) {
+	commandTag, err := store.pool.Exec(ctx, `UPDATE worlds SET owner_account_id = $1, anonymous_id = NULL, updated_at = NOW()
+		WHERE anonymous_id = $2 AND owner_account_id IS NULL`, envelope.Data.AccountID, envelope.Data.AnonymousID)
+	if err != nil {
+		return 0, err
+	}
+	return commandTag.RowsAffected(), nil
+}
+
 func (store *PostgresStore) PendingOutbox(ctx context.Context, maximumMessages int) ([]OutboxMessage, error) {
 	rows, err := store.pool.Query(ctx, `SELECT id::text, message_id, subject, payload FROM outbox_messages WHERE published_at IS NULL ORDER BY created_at LIMIT $1`, maximumMessages)
 	if err != nil {

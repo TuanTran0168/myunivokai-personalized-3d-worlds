@@ -24,6 +24,16 @@ import (
 
 const maximumBatchWorldIdentifiers = 50
 
+// anonymousIdentifierHeaderName carries the id the browser minted for itself
+// and keeps in its own cookie. A header rather than a body field, because it is
+// a credential the browser holds rather than data about this particular
+// request - the same reason Authorization is a header.
+//
+// It must also be listed in the product CORS policy's AllowedHeaders, or the
+// browser refuses the preflight and every server-side test still passes. See
+// productCORSOptions.
+const anonymousIdentifierHeaderName = "X-Anonymous-Id"
+
 type GenerationPublisher interface {
 	PublishGeneration(context.Context, contracts.Envelope[contracts.GenerateDNAData]) error
 }
@@ -100,8 +110,14 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 	job := contracts.Job{JobID: jobID, Family: handler.family, Status: contracts.JobStatusQueued, CreatedAt: createdAt, UpdatedAt: createdAt}
 	publishContext, cancel := context.WithTimeout(request.Context(), handler.publishTimeout)
 	defer cancel()
+	ownerAccountIdentifier := requestingAccountIdentifier(request)
+	anonymousIdentifier, anonymousIdentifierAcceptable := anonymousIdentifierFromRequest(responseWriter, request, ownerAccountIdentifier)
+	if !anonymousIdentifierAcceptable {
+		return
+	}
 	command := contracts.NewEnvelope(jobID, contracts.GenerateDNAData{
-		Family: handler.family, Input: input, OwnerAccountID: requestingAccountIdentifier(request),
+		Family: handler.family, Input: input,
+		OwnerAccountID: ownerAccountIdentifier, AnonymousID: anonymousIdentifier,
 	})
 	if err := handler.generationPublisher.PublishGeneration(publishContext, command); err != nil {
 		log.Error().Err(err).Str("request_id", httpx.RequestID(request.Context())).Msg("publish generation command")
@@ -110,6 +126,40 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 	}
 	handler.wakeReadModel()
 	httpx.WriteJSON(responseWriter, http.StatusAccepted, job)
+}
+
+// anonymousIdentifierFromRequest reads X-Anonymous-Id, and returns nil in two
+// situations that are worth telling apart even though the caller treats them
+// the same.
+//
+// There is a SESSION, so the header is ignored without even being looked at.
+// Exactly one of the two identity fields is ever set: a world that has an owner
+// can never be claimed, so an anonymous id stored beside one would be a
+// personal-data trail with no reader — and a signed-in visitor whose 180-day
+// cookie has gone stale must not have their create rejected over a value
+// nothing will use.
+//
+// There is no header, which is an ordinary anonymous create from a browser
+// with cookies disabled, or any non-browser caller. That world is anonymous and
+// unclaimable, which is what it was before this shipped.
+//
+// A header that is present and NOT a UUID is refused, rather than ignored. The
+// world would otherwise be created with no anonymous id and be unclaimable for
+// ever, silently — a permanent loss reported as a 202.
+func anonymousIdentifierFromRequest(responseWriter http.ResponseWriter, request *http.Request, ownerAccountIdentifier *string) (*string, bool) {
+	if ownerAccountIdentifier != nil {
+		return nil, true
+	}
+	anonymousIdentifier := strings.TrimSpace(request.Header.Get(anonymousIdentifierHeaderName))
+	if anonymousIdentifier == "" {
+		return nil, true
+	}
+	if !contracts.IsUUID(anonymousIdentifier) {
+		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "INVALID_ANONYMOUS_ID",
+			"The anonymous identifier is not in the expected format.")
+		return nil, false
+	}
+	return &anonymousIdentifier, true
 }
 
 func (handler *WorldHandler) GetWorlds(responseWriter http.ResponseWriter, request *http.Request) {
