@@ -16,6 +16,26 @@ export type ApiErrorPayload = {
  */
 export type WorldFamily = "universe" | "nature" | "ocean";
 
+/**
+ * One row of the account's own world list, from GET /api/me/worlds.
+ *
+ * Mirrors contracts.LibraryWorldSummary, which is deliberately three fields:
+ * the response leaves the service that owns the personal data, so it carries
+ * no DNA, no raw input and no email. It is exactly enough to ask the family
+ * service for a card.
+ */
+export type OwnedWorldSummary = {
+  worldId: string;
+  family: WorldFamily;
+  createdAt: string;
+};
+
+/** One keyset page of that list. `nextCursor` is absent on the last page. */
+export type OwnedWorldPage = {
+  worlds: OwnedWorldSummary[];
+  nextCursor?: string;
+};
+
 export type GenerationJobStatus = "queued" | "processing" | "completed" | "failed";
 
 /**

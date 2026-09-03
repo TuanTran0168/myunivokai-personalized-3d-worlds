@@ -299,10 +299,13 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     setAction("delete");
     try {
       await api.deleteWorld(worldId, family);
-      // The gallery entry goes too. The server has stopped serving the world,
-      // so a reference left behind would be a card that loads nothing - and
-      // this browser's list is the only place that reference exists until the
-      // gallery reads the server.
+      // The cached gallery entry goes too. The server has stopped serving the
+      // world, so a reference left behind would be a card that loads nothing.
+      //
+      // Since S8-IDENTITY-016 this is a cache rather than the only record: the
+      // gallery replaces it from /api/me/worlds on its next visit, which would
+      // drop this entry anyway. Doing it here is what keeps the grid correct
+      // for a visitor who navigates back before that happens.
       removeWorldIdentifierFromGallery(worldId);
       toast.success("World deleted.");
       router.push("/gallery");

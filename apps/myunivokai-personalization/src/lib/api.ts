@@ -3,6 +3,7 @@ import type {
   CreateWorldInput,
   DeleteResult,
   GenerationJob,
+  OwnedWorldPage,
   PublishResult,
   ShareWorld,
   World,
@@ -35,6 +36,16 @@ const GENERATION_POLL_INITIAL_DELAY_MILLISECONDS = 500;
 const GENERATION_POLL_MAXIMUM_DELAY_MILLISECONDS = 2500;
 const GENERATION_POLL_DEADLINE_MILLISECONDS = 120_000;
 const GENERATION_POLL_BACKOFF_MULTIPLIER = 1.5;
+
+/**
+ * The page size asked for by the world list, and it is the server's MAXIMUM
+ * rather than its default of 25.
+ *
+ * The gallery is one grid with no paging control, so a smaller page would mean
+ * more round trips for the same screen - and the server caps this at 50
+ * anyway, because that is what one `?ids=` batch can hydrate.
+ */
+const OWNED_WORLD_PAGE_SIZE = 50;
 
 type PendingGeneration = {
   jobId: string;
@@ -371,6 +382,30 @@ export const api = {
   // rather than pretending the world is not there.
   async deleteWorld(worldId: string, family: WorldFamily = DEFAULT_WORLD_FAMILY): Promise<DeleteResult> {
     return request<DeleteResult>(family, `/worlds/${worldId}/delete`, { method: "POST" });
+  },
+
+  /**
+   * One keyset page of the signed-in account's own worlds.
+   *
+   * Not scoped to a family, unlike every other call in this object: the list
+   * spans all three, and which family each world belongs to is what the
+   * response is for - the gallery hydrates each one from its own backend
+   * afterwards.
+   *
+   * The account is never a parameter. It comes off the access token the
+   * gateway verifies, so there is no shape of this call that asks for
+   * somebody else's worlds. Requires a session, and `authorizedGatewayRequest`
+   * refreshes one transparently: a seven-day access token is expired at a fair
+   * share of visits, and without the refresh the gallery would fall back to
+   * its cache while a perfectly good session sat in the browser.
+   */
+  async getOwnedWorlds(cursor?: string, signal?: AbortSignal): Promise<OwnedWorldPage> {
+    const query = new URLSearchParams({ limit: String(OWNED_WORLD_PAGE_SIZE) });
+    if (cursor) {
+      query.set("cursor", cursor);
+    }
+    const page = await authorizedGatewayRequest<OwnedWorldPage>(`/api/me/worlds?${query.toString()}`, { signal });
+    return { worlds: Array.isArray(page.worlds) ? page.worlds : [], nextCursor: page.nextCursor };
   },
 
   async getShareWorld(shareSlug: string, family: WorldFamily = DEFAULT_WORLD_FAMILY): Promise<ShareWorld> {
