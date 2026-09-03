@@ -61,6 +61,7 @@ type Store interface {
 	ApplyFamilyFailed(context.Context, string, string, contracts.Envelope[contracts.FamilyFailedData]) error
 	ClaimWorlds(context.Context, contracts.Envelope[contracts.WorldClaimData]) (ClaimResult, error)
 	GetJob(context.Context, string) (contracts.Job, error)
+	ListOwnedWorlds(context.Context, contracts.LibraryListQueryData) (contracts.LibraryListResponseData, error)
 	PendingOutbox(context.Context, int) ([]OutboxMessage, error)
 	MarkOutboxPublished(context.Context, string) error
 	Ping(context.Context) error

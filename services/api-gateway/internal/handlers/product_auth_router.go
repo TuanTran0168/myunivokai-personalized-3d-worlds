@@ -28,6 +28,11 @@ const (
 	// is no single-world form of it. Claiming one world would mean naming it,
 	// and a world id is the URL a visitor sends to a friend.
 	productWorldClaimRoutePath = productMeRoutePrefix + "/worlds/claim"
+	// The account's own world list. Registered BELOW the claim path in this
+	// file and matched by chi on its own two segments, so "/worlds/claim" and
+	// "/worlds" cannot shadow each other - they differ in segment count as
+	// well as in method.
+	productWorldListRoutePath = productMeRoutePrefix + "/worlds"
 )
 
 // productCORSOptions is the product surface's CORS policy, shared by the
@@ -72,6 +77,7 @@ func productCORSOptions(serviceConfig config.Config) cors.Options {
 func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, edgeStore EdgeStore, transport *RPCTransport, claimPublisher WorldClaimPublisher, accessTokenVerifier middleware.AdminAccessVerifier, revocationChecker middleware.AdminRevocationChecker) {
 	authHandler := NewProductAuthHandler(serviceConfig, transport, edgeStore)
 	worldClaimHandler := NewProductWorldClaimHandler(serviceConfig, claimPublisher, transport)
+	worldListHandler := NewProductWorldListHandler(transport)
 	router.Post(productAuthRoutePrefix+"/signup", authHandler.SignUp)
 	router.Post(productAuthRoutePrefix+"/login", authHandler.LogIn)
 	router.Post(productAuthRoutePrefix+"/refresh", authHandler.Refresh)
@@ -89,5 +95,6 @@ func registerProductAuthRoutes(router chi.Router, serviceConfig config.Config, e
 		sessionRouter.Get(productProfileRoutePath, authHandler.Profile)
 		sessionRouter.Patch(productProfileRoutePath, authHandler.UpdateProfile)
 		sessionRouter.Post(productWorldClaimRoutePath, worldClaimHandler.ClaimWorlds)
+		sessionRouter.Get(productWorldListRoutePath, worldListHandler.List)
 	})
 }

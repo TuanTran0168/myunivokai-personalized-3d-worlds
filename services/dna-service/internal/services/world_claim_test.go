@@ -56,6 +56,13 @@ func (spy *storeSpy) ClaimWorlds(_ context.Context, envelope contracts.Envelope[
 
 func (spy *storeSpy) MarkJobProcessing(context.Context, string) error { return nil }
 
+// The world list is answered straight from Postgres, so the spy has nothing to
+// record: no test in this file reaches it, and a spy method that returned
+// invented rows would be a place for one to start.
+func (spy *storeSpy) ListOwnedWorlds(context.Context, contracts.LibraryListQueryData) (contracts.LibraryListResponseData, error) {
+	return contracts.LibraryListResponseData{}, nil
+}
+
 func (spy *storeSpy) StoreDNAAndQueueComposition(context.Context, string, contracts.WorldInput, contracts.ProfileDNA, []ai.Attempt, repositories.GenerationOutcome) (contracts.Job, error) {
 	return contracts.Job{}, nil
 }

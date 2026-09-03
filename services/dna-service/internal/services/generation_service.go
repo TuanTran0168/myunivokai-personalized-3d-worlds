@@ -222,3 +222,17 @@ func (service *GenerationService) ClaimWorlds(ctx context.Context, envelope cont
 func (service *GenerationService) GetJob(ctx context.Context, jobID string) (contracts.Job, error) {
 	return service.store.GetJob(ctx, jobID)
 }
+
+// ListOwnedWorlds answers one page of the account's own world list.
+//
+// The owner is not read from anywhere in this service: it arrives on the query
+// the gateway published, which set it from a verified access token. That is
+// the same trust argument every other identity field on this surface rests on,
+// and it is why this method has no way to be asked for somebody else's worlds
+// — there is no parameter for one.
+func (service *GenerationService) ListOwnedWorlds(ctx context.Context, query contracts.LibraryListQueryData) (contracts.LibraryListResponseData, error) {
+	if err := query.Validate(); err != nil {
+		return contracts.LibraryListResponseData{}, err
+	}
+	return service.store.ListOwnedWorlds(ctx, query)
+}
