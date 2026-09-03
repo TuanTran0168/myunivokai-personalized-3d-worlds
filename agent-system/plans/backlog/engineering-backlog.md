@@ -660,26 +660,54 @@ generation was withheld.
 
 Epic exit:
 
-- [ ] Every Sprint 8 `S8-IDENTITY-*` story is Verified.
-- [ ] The audience separation is proven in **both** directions, not one.
-- [ ] A deleted world's share URL stops resolving **through the gateway**
+- [x] Every Sprint 8 `S8-IDENTITY-*` story is Implemented. **Not Verified**:
+      the two remain different words here, and what separates them is a
+      deployment — nothing in this epic has run against Postgres, because CI
+      has none. Read both corrections sections in
+      [user-stories.md](../sprints/sprint-08-2026-09-02/user-stories.md) before
+      calling any of it verified.
+- [x] The audience separation is proven in **both** directions, not one.
+- [x] A deleted world's share URL stops resolving **through the gateway**
       immediately, proven by a test that goes through the gateway.
-- [ ] A replayed claim and a second device's claim each update zero rows.
-- [ ] A visitor sees their worlds on a device that has never seen them.
-- [ ] A quota limit is changed from the admin app, audited, with no service
+- [x] A replayed claim and a second device's claim each update zero rows.
+      Structural rather than observed: every SQL literal assigning
+      `owner_account_id` is scanned for its `WHERE owner_account_id IS NULL`
+      guard, which is the whole of the idempotency and the only thing checkable
+      without a database.
+- [x] A visitor sees their worlds on a device that has never seen them.
+- [x] A quota limit is changed from the admin app, audited, with no service
       restart — and the platform still behaves correctly with an empty
       `system_settings` table, every setting resolving to its named default.
-      The mechanism and the empty-table invariant landed with
-      `S8-IDENTITY-012`; this stays open until `S8-IDENTITY-013` gives the
-      limit a reader on the create path, because a number nothing enforces is
-      not a quota.
+      Both halves are in: the mechanism and the empty-table invariant from
+      `S8-IDENTITY-012`, and the reader on the create path from
+      `S8-IDENTITY-013`. A number nothing enforces is not a quota, and now
+      something enforces it.
 - [x] A world creation never contacts `auth-service` to learn a quota number.
       Guaranteed by the shape of `settings.Reader` rather than by observation
       — it holds one field, a one-method cache interface, so it has nothing to
       ask with. See `S8-IDENTITY-012`'s correction 20.
-- [ ] No new service, no new database and no new third-party account was added.
+- [x] No new service, no new database and no new third-party account was
+      added. Two migrations were: `system_settings` in `auth-service` and the
+      two generation-reason columns in `dna-service`, both additive over
+      existing databases.
 
-Sprint stories: [S8-IDENTITY-001 through S8-IDENTITY-017](../sprints/sprint-08-2026-09-02/user-stories.md#epic-s8-identity-001--end-user-identity-and-world-ownership)
+**What this epic did NOT do, so it is not mistaken for finished:**
+
+- **`AI_PROVIDER` is still `mock` in production.** The ceiling exists, which
+  makes flipping it safe, and §9.2's per-create cost is meant to be measured
+  from `ai_generation_attempts` AFTER the flip rather than read off a rate
+  card. That is the one open task in the sprint and it is open by design.
+- **Nothing has run against Postgres.** Every SQL guarantee in this epic is a
+  ratchet over the statement text, which is what CI can check. The first
+  deployment is the first execution.
+- **A caller minting a fresh anonymous id per request defeats the quota.** §9's
+  "never on the address" rule makes that unfixable at this layer; the per-IP
+  token bucket is what still stands against it. Named in Phase B correction 24
+  rather than worked around.
+
+Sprint stories: [S8-IDENTITY-001 through S8-IDENTITY-020](../sprints/sprint-08-2026-09-02/user-stories.md#epic-s8-identity-001--end-user-identity-and-world-ownership)
+— seventeen planned, plus `018`, `019` and `020`, which the owner added to
+Phase A after using it.
 
 Source: [end-user-identity-and-ownership.md](../architecture/end-user-identity-and-ownership.md)
 — **read its §16 first.** Twenty decisions taken on 2026-09-02 supersede

@@ -1,29 +1,36 @@
 # Sprint 08 user stories — end-user identity and world ownership
 
-> **Document status:** Phase A implemented; Phase B implemented except
-> `013` and `014`; Phase C planned
+> **Document status:** Every story implemented. Phase A, B and C, plus the
+> rename — twenty stories, of which one task remains open by design
+> (`013`'s per-create cost, which needs `AI_PROVIDER` flipped first)
 > **Sprint starts:** 2026-09-02
 > **Last source review:** 2026-09-03
 > **Read the Phase A corrections section before Phase A's own stories** — five
 > of its claims turned out to be wrong, including one requirement that is not
 > achievable before email exists.
-> **Read the Phase B corrections section before `013` and `014`.**
-> Twenty-one entries. The one to read first is 8: a single struct literal in
-> `dna-service` dropped the owner `007` and `008` had just gone to the trouble
-> of establishing, so both stories shipped inert with every test passing. Of
-> the rest, three change what is left to build — the plan's `WorldSnapshot`
-> field was not added, deletion is stricter than any story said, and neither a
-> deletion nor a claim emits an event — and three record decisions the stories
-> do not state: who mints the anonymous id, what happens to a malformed one,
-> and why a claim that can never apply must never be published.
-> Entries 13 to 21 are `012`'s, and two of them are worth reading before
-> writing any settings code: 13, because the registry is in `contracts` rather
-> than in `auth-service` and the reason is a number that must not exist twice,
-> and 20, because the comment §9.3 asks for cannot protect the rule it
-> describes and a shape test does.
+> **Read the two corrections sections before changing any of this.**
+> Phase B has twenty-four entries and Phase C has three. The one to read first
+> is 8: a single struct literal in `dna-service` dropped the owner `007` and
+> `008` had just gone to the trouble of establishing, so both stories shipped
+> inert with every test passing — and entry 22 is its second copy, eleven
+> lines away in the same file, which entry 8 did not find.
+> Four more change what the code now is rather than what was built: the plan's
+> `WorldSnapshot` field was not added, deletion is stricter than any story
+> said, neither a deletion nor a claim emits an event, and `dna-service`
+> therefore **cannot** exclude a deleted world from the account's list (25).
+> Three record decisions no story states: who mints the anonymous id, what
+> happens to a malformed one, and why a claim that can never apply must never
+> be published.
+> Of `012`'s nine (13 to 21), two matter before writing any settings code: 13,
+> because the registry is in `contracts` rather than in `auth-service` and the
+> reason is a number that must not exist twice, and 20, because the comment
+> §9.3 asks for cannot protect the rule it describes and a shape test does.
+> **And 26 before touching the gallery**: implementing §8's own merge sentence
+> literally brings deleted worlds back for ever.
 
-One epic, three phases, seventeen branch-sized stories. The phases are ordered
-by dependency and each ends in a shippable state:
+One epic, three phases, twenty branch-sized stories — seventeen planned, plus
+`018`, `019` and `020`, which the owner added to Phase A after using it. The
+phases are ordered by dependency and each ends in a shippable state:
 
 - **Phase A** (`S8-IDENTITY-001` … `006`) — a person can hold an account.
   Nothing owns anything yet.
@@ -1014,7 +1021,7 @@ Tasks:
 
 ### S8-IDENTITY-013 — A daily generation limit that never refuses a world
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-quota-and-server-gallery`
 Priority: P0
 
 As the product owner,
@@ -1063,37 +1070,41 @@ Source evidence:
 - services/dna-service/internal/ai/providers/mock_presets.go — the mock already produces usable DNA; it is how the test suite runs
 
 Tasks:
-- [ ] `feat/be/daily-generation-quota`: increment the Redis counter in the
-      gateway **before** publishing the generate command. Both limits come from
-      `S8-IDENTITY-012`'s settings reader — Redis, then the compiled-in default
-      on a miss, never a request to `auth-service`. The counter's key prefix
-      stays a named constant, because it is not policy.
-- [ ] Add a test that a limit changed in the admin app takes effect on the next
-      create with no service restart, which is the point of routing it through
-      settings at all.
-- [ ] Add the tier flag to the generate command and honour it in
-      `dna-service` by serving that job from the mock provider.
-- [ ] Return a **reason code** on the job/world response —
-      `ai_generated` / `quota_exhausted` / `mock_configured` /
-      `ai_failed_fallback` — computed in `dna-service`, which is the only place
-      all three facts exist at once. Not a provider name: a provider name makes
-      the frontend guess why, and it cannot.
-- [ ] Implement the precedence explicitly: `mock_configured` **outranks**
-      `quota_exhausted`. Put the reason in a comment, because reversing this
-      is what produces a limit warning on a deployment that has no AI tier.
-- [ ] Add the guardrail test: the 6th anonymous creation of a day is served by
-      the mock provider and still yields a valid world.
-- [ ] Add the table-driven reason test covering all four values, including a
-      stubbed failing primary. **Three of the four cannot be observed in
-      production today**, because production runs on mock — this test is the
-      only thing standing between them and the day `AI_PROVIDER` is flipped.
+- [x] `internal/quota/daily_ai_quota.go` and `internal/edge/redis.go`:
+      increment the Redis counter in the gateway **before** publishing the
+      generate command. Both limits come from `S8-IDENTITY-012`'s settings
+      reader — `settings.NewReader(edgeStore)` in `NewRouter`, which is the
+      gateway's first settings reader. The key prefix `quota:ai:daily` is a
+      named constant, and the key names its own UTC day so nothing has to clean
+      it up.
+- [x] `TestALimitChangedInTheAdminAppBindsOnTheNextCreate` (gateway) and
+      `TestALimitChangedInTheMirrorAppliesToTheNextCreate` (quota package) —
+      through the router and in isolation.
+- [x] `contracts.AIQuotaState` on the generate command, honoured by
+      `ai.AITierWithheld` in the orchestrator. It is a THIRD provider rather
+      than the fallback: see correction 23.
+- [x] `contracts.GenerationReason` on the JOB response.
+      `TestNoWorldTableLearnsTheGenerationReason` holds the other half of §9.1
+      — no world table learns it, so the friend who opens the share link is
+      shown nothing.
+- [x] Four ordered branches in `Orchestrator.GenerateProfileDNA`, with the
+      failure named in the comment above them.
+- [x] `TestTheSixthAnonymousCreateOfADayIsWithheldAndStillAccepted` (gateway),
+      `TestAWithheldJobStillProducesValidatedDNA` (dna-service) — the second
+      is the half that proves it is a WORLD and not a shrug.
+- [x] `TestTheGenerationReasonCoversAllFourRoutesToAWorld`, six rows including
+      a stubbed unreachable primary with and without a distinct fallback.
+      Mutation-tested by inverting the precedence: it fails naming both wrong
+      answers.
 - [ ] Record the measured per-create cost from `ai_generation_attempts` once
       the AI tier is actually switched on, rather than carrying a rate-card
-      estimate forward.
+      estimate forward. **Still open, and not blocked by this story**: it needs
+      `AI_PROVIDER` flipped to a real provider, which this story is the
+      precondition for rather than the occasion of.
 
 ### S8-IDENTITY-014 — Say so, once, when a world came from presets
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-quota-and-server-gallery`
 Priority: P1
 
 As a visitor who has hit today's limit,
@@ -1132,26 +1143,32 @@ Source evidence:
 - apps/myunivokai-personalization/src/app/globals.css — `.lg-toast` is already the Liquid-Glass material, including the inset specular top edge
 
 Tasks:
-- [ ] `feat/fe/mock-tier-toast`: one `toast()` call on the existing stack,
-      fired for `quota_exhausted` and for nothing else, with the copy assembled
-      from the limit constants.
-- [ ] Write next to that check, in the code, that keying on a provider name
-      instead re-merges three different situations at the last possible moment.
-- [ ] Add a test per reason code: one fires, three stay silent.
+- [x] `src/lib/generationNotice.ts` decides, `src/app/page.tsx` speaks: one
+      `toast()` on the mounted `sonner` stack, for `quota_exhausted` and
+      nothing else. The copy is assembled from the limit the SERVER enforced
+      and carried on the job — not from a constant in this app, which would be
+      a second declaration of a settings value.
+- [x] Written at the top of `generationNotice.ts`, and asserted rather than
+      only written: `it("reads nothing but the reason code")` hands the
+      function a job carrying `provider: "mock"` and requires silence.
+- [x] A table typed `Record<GenerationReason, "speaks" | "stays silent">`, so
+      a fifth reason added to the contract without a decision here is a compile
+      error rather than a fourth kind of silence.
 
 ---
 
 ## Phase B — corrected during execution, 2026-09-03
 
-Written after `S8-IDENTITY-007` … `012` were implemented, and read before the
-stories that are left. Nine of the plan's or the stories' own instructions
-turned out to be wrong, unnecessary or insufficient, and three defects were
-found by reading the code rather than by a test — entries 7, 8 and 12. The
-record of those is worth more than the tidy version, and entry 8 is the one to
-read first: it is two merged stories that did nothing at all.
+Written after `S8-IDENTITY-007` … `014` were implemented. Eleven of the plan's
+or the stories' own instructions turned out to be wrong, unnecessary or
+insufficient, and four defects were found by reading the code rather than by a
+test — entries 7, 8, 12 and 22. The record of those is worth more than the tidy
+version, and entry 8 is the one to read first: it is two merged stories that
+did nothing at all.
 
 Entries 1 to 7 were written after `010`; 8 to 12 after `011`; 13 to 21 after
-`012`.
+`012`; 22 to 24 after `013` and `014`. Phase C's own corrections (25 to 27) are
+in its section further down.
 
 ### 1. The plan asked for `OwnerAccountID` on `WorldSnapshot`, and it was not added
 
@@ -1523,27 +1540,88 @@ tightening a bound can make a test's SETUP impossible while leaving its
 assertion looking healthy, and a resolver that falls back to a default rather
 than failing is what turns that into a silent pass.
 
-### What Phase B has NOT done yet, so it is not mistaken for an omission
+### 22. `FailGeneration` was the second copy of correction 8's defect, and correction 8 missed it
 
-`S8-IDENTITY-013` and `014` are not started. Concretely, that means:
+Found while adding the quota field to the generate command, which is the same
+way correction 8 was found: a new field on a message is what makes a literal
+that re-lists its fields visible.
+
+`GenerationService.FailGeneration` still rebuilt its envelope as a literal
+naming `Family` and `Input`, so a generate command that exhausted its
+deliveries reached `EnsureJob` with **no owner and no anonymous id**, and wrote
+a profile row that does not say whose it is.
+
+It is the cheaper half of that bug — a failed job has no world, so nothing
+became unclaimable and no gallery lost anything. It is still a real one: the
+raw input a visitor typed is stored on that row, and a personal-data row that
+has forgotten whose it is cannot be answered for.
+
+The lesson is narrower than correction 8's and worth adding to it: **fixing a
+struct-literal dropper means finding the OTHER ones in the same file.** There
+were two, both rebuilding the same message type, eleven lines apart.
+
+### 23. The quota degrade needed a third provider, because the fallback does not exist in production
+
+`S8-IDENTITY-013`'s task says to serve a withheld job "from the mock provider",
+which reads as though one is available. `aifactory` only constructs a fallback
+when `AIEnableFallback && AIFallbackProvider != AIProvider`, and production
+sets both to `mock` — so **today there is no fallback provider at all**, and a
+degrade that reached for it would have failed the job instead of degrading it.
+
+The orchestrator therefore holds three providers, and the preset one is built
+from no configuration whatsoever. That is deliberate rather than lazy: a quota
+whose degrade depends on a provider somebody has to configure is a quota that
+stops enforcing itself in exactly the environment nobody configured. It is
+also why there is no `AI_PRESET_PROVIDER` variable — the value would have one
+legal setting.
+
+`TestTheQuotaDegradeDoesNotDependOnAFallbackBeingConfigured` is what fails if
+somebody removes it as redundant.
+
+### 24. Two decisions about which way to fail, and they point in opposite directions
+
+Neither story says what happens when the counter cannot be read, or when there
+is nothing to count against. Both answers are the same — no AI tier — and the
+reasons are different enough to write down.
+
+**A caller with no identity at all gets no AI tier.** No account and no
+anonymous id means no key, so a counter would never rise and the allowance
+would be unlimited: precisely the script §9.2 says the quota exists to bound.
+A browser always sends one of the two, so this is a non-browser caller, and it
+costs them a preset world — which the design already decided is acceptable for
+everybody.
+
+**A counter that cannot be read also gets no AI tier**, and this one is the
+**inverse of `settings.Reader`**, which answers the same Redis outage from its
+compiled-in default. The asymmetry is the decision: a setting has a
+known-good default, and a spent allowance has none. A ceiling that fails open
+is not a ceiling, and failing closed is affordable only because the visitor
+still gets a real world.
+
+**And the bound this leaves, named rather than discovered.** A caller that
+mints a fresh anonymous id per request is counted as a new visitor every time.
+§9's "never on the address" rule is what makes that unfixable at this layer,
+and the per-IP token bucket is what still stands against it. Closing it would
+mean a per-IP counter shared by everyone behind one NAT, which is the thing
+§9 rejected on purpose.
+
+### What Phase B has NOT done yet, so it is not mistaken for an omission
 
 - **No world made before the claim shipped has an owner**, and there is still
   no way for a visitor to give one to it. Decision 16 stands: an anonymous id
   is what a claim matches on, worlds created before one was ever sent carry
   none, and nobody can prove they made them. `WORLD_NOT_CLAIMED` is the honest
   answer to deleting one, permanently, not a temporary limitation.
-- **No quota, and `AI_PROVIDER` therefore stays `mock` in production.** The
-  ceiling is what makes a real provider safe to switch on, and it is
-  `S8-IDENTITY-013`. The two limits it enforces are now settings with a
-  reader in front of them — `013` is the counter and the degrade, not the
-  numbers.
-- **Nothing tells a visitor their worlds were claimed.** The claim is silent by
-  design for now; `S8-IDENTITY-014` is the one toast, and it waits for the
-  quota's reason codes to have something to say.
-- **Nothing in the gateway reads a setting yet.** The reader exists, is tested,
-  and has one caller as of `013`. That is deliberate: §9.3's batch 2 moves the
-  three gateway cache TTLs here, and each needs its handler restructured
-  first.
+- **`AI_PROVIDER` is still `mock` in production, and that is now a choice
+  rather than a constraint.** The ceiling exists, so flipping it is safe; the
+  per-create cost §9.2 wants measured from `ai_generation_attempts` is the one
+  thing still waiting on the flip, which is why `013`'s last task stays open.
+- **Nothing tells a visitor their worlds were claimed.** The claim is still
+  silent by design. `014` speaks for exactly one reason code and the claim is
+  not one of them.
+- **The gateway reads exactly two settings**, both quota limits, and every
+  other value it uses is still an environment variable. That is §9.3's batch 2
+  and each one needs its handler restructured first.
 
 ---
 
@@ -1551,7 +1629,7 @@ than failing is what turns that into a silent pass.
 
 ### S8-IDENTITY-015 — The account's world list, served by dna-service
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-quota-and-server-gallery`
 Priority: P0
 
 As an account holder,
@@ -1575,18 +1653,26 @@ Source evidence:
 - services/analytics-service/migrations/000001_init.sql — the keyset index comment explaining why every page costs the same as the first
 
 Tasks:
-- [ ] `feat/be/account-world-library`: add
-      `myunivokai.queries.dna.library.list.v1` as one keyset query in
-      `dna-service`.
-- [ ] Add `GET /api/me/worlds` behind the product middleware, with the page
-      size as a named constant.
-- [ ] Add the response-model test, mirroring the existing share-response test.
-- [ ] Exclude worlds the owning family has flagged deleted, coordinating with
-      `S8-IDENTITY-009` so the filter has exactly one home.
+- [x] `contracts.DNALibraryListQuerySubject`, answered by
+      `HandleLibraryListQuery` over `PostgresStore.ListOwnedWorlds`. No ACL
+      change: the config already grants `myunivokai.queries.>`. No migration
+      either — the keyset index `S8-IDENTITY-007` added was written for this
+      query and says so.
+- [x] `GET /api/me/worlds`, in the identity group behind
+      `RequireProductAccessToken`, with `DefaultLibraryPageSize` and
+      `MaximumLibraryPageSize` in `contracts`.
+- [x] `TestTheWorldListRowCarriesNothingSensitive` — on the TYPE rather than
+      on a sample response, so a fourth field fails the build instead of
+      shipping unset.
+- [ ] Exclude worlds the owning family has flagged deleted. **Not done, and it
+      cannot be done here — see correction 25.** The flag lives in the family
+      service's own database and a deletion emits no event, so `dna-service` is
+      never told. The filter's one home is the family service's read, which
+      already has it: a deleted world is absent from the `?ids=` hydration.
 
 ### S8-IDENTITY-016 — The gallery reads the server, not the browser
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-quota-and-server-gallery`
 Priority: P0
 
 As an account holder,
@@ -1610,14 +1696,95 @@ Source evidence:
 - apps/myunivokai-personalization/src/app/gallery/page.tsx — the page that changes source
 
 Tasks:
-- [ ] `feat/fe/account-gallery`: read `/api/me/worlds` when signed in, and keep
-      the `localStorage` path for anonymous visitors.
-- [ ] Demote the stored ids to a cache with an explicit invalidation rule, and
-      keep the existing 50-id cap honest against a server list that can be
-      longer.
-- [ ] Add the owner-only delete control, wired to `S8-IDENTITY-009`.
-- [ ] Add a test for the empty-storage signed-in case, which is the whole point
-      of the story.
+- [x] `src/lib/galleryWorldSources.ts` decides the source; the hook supplies
+      its IO. Signed out is unchanged, including the copy.
+- [x] `replaceCachedWorldReferences` — the invalidation rule is one sentence: a
+      successful server read replaces this owner's entries and nothing else
+      ever does. It **replaces rather than merges**, against §8's wording, for
+      the reason in correction 26. And `splitIntoHydrationBatches` keeps the
+      50-id cap honest, which was a latent 400 the story was right to name.
+- [x] Delete replaces "Remove from gallery" on a server-backed card, two
+      clicks, on `S8-IDENTITY-009`'s own pattern. The card goes only once the
+      server agrees — see correction 27 for why the old button had to go rather
+      than gain a sibling.
+- [x] `it("finds an account's worlds on a device whose storage is empty")`.
+      Reachable as a unit test only because the decision was pulled out of the
+      hook: this app's vitest runs `environment: "node"` with no React testing
+      library.
+
+---
+
+## Phase C — corrected during execution, 2026-09-03
+
+Written after `S8-IDENTITY-015` and `016`. Three entries, and 26 is the one to
+read before touching the gallery: implementing §8's own sentence literally
+brings deleted worlds back for ever.
+
+### 25. `dna-service` cannot exclude a deleted world, and the story asks it to
+
+`S8-IDENTITY-015`'s last task says to "exclude worlds the owning family has
+flagged deleted, coordinating with `S8-IDENTITY-009` so the filter has exactly
+one home". The coordination is right and the location is not: **there is no
+data in `dna-service` to filter on.** The deleted flag lives in the FAMILY
+service's own database, and by Phase B correction 6 a deletion emits no event
+at all — so nothing ever tells `dna-service` that a world is gone.
+
+The filter's one home is therefore the family service's own read, where it
+already is. The web app hydrates every card through
+`GET /api/{family}/worlds?ids=`, and a deleted world is simply absent from
+that response, so a page of 25 can render 24 cards. The gallery has always had
+to handle that: a batch response has never been required to return every id it
+was asked for.
+
+Making `dna-service` able to do this would mean a deletion event and a
+projection — a second copy of a fact, kept in step across two databases, to
+save one card's worth of layout. Recorded as refused rather than as forgotten.
+
+### 26. §8's merge rule resurrects deleted worlds, so the cache is REPLACED
+
+§8 says `localStorage` "becomes the anonymous-visitor path and a cache, and the
+two lists are merged newest-first with the server list winning on conflict."
+The second half cannot do what it is for. **Winning a conflict only decides ids
+present in BOTH lists**; an id present only in the cache survives the merge —
+and that id is exactly a world its owner deleted, on this device or another
+one. So a merge brings deleted worlds back, and brings them back permanently,
+because the cache is then the only thing that still remembers them.
+
+`replaceCachedWorldReferences` replaces this owner's entries instead, which is
+what makes the stored list a cache rather than a second opinion. The
+invalidation rule the story asked for is one sentence: **a successful server
+read replaces this owner's entries, and nothing else ever does.**
+
+The obvious way to get replacing wrong has its own test: **the anonymous shelf
+is never touched.** Those worlds have no owner anywhere on the server, so no
+server answer can speak about them, and the only thing that may ever move them
+is the claim.
+
+### 27. "Remove from gallery" became a lie, so it was replaced rather than joined
+
+`S8-IDENTITY-016`'s third task says to ADD an owner-only delete control, which
+reads as a second button beside the existing one. It is a replacement.
+
+On a list the server serves, "remove from gallery" drops a cache entry and the
+world is back on the next reload. That button was honest while the list was
+this browser's own and stopped being honest the moment the source changed — so
+a server-backed card gets Delete, on `S8-IDENTITY-009`'s two-click pattern,
+and the card is removed only once the server agrees. An unowned world refuses
+deletion outright (`WORLD_NOT_CLAIMED`), and removing the card first would
+have hidden that refusal behind an optimistic update.
+
+The anonymous shelf keeps "Remove from gallery", because there it is still
+exactly true: nobody can delete those worlds and this list is all there is of
+them.
+
+**One latent defect came out of the same change.** The gallery has always sent
+one `?ids=` request per family with however many ids that family held, and the
+gateway answers 400 above fifty. That was unreachable while the list was capped
+by what one browser happened to hold; a server list has no such accidental
+ceiling, so a visitor with sixty worlds of one family would have got a 400,
+fallen into the per-id fallback, and fetched sixty worlds one at a time against
+a rate limit. Hydration is batched now, and the story was right to name the cap
+even though the reason it named it was the wrong one.
 
 ---
 

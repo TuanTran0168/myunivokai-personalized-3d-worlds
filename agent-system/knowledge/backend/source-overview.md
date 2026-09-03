@@ -131,6 +131,97 @@ random-index strategy is injected in tests, preserving deterministic assertions
 without removing runtime variety. Variant regeneration remains inside family
 services and does not call AI.
 
+### The daily AI quota, and how a world says it was built
+
+Design: §9 and §9.1 of
+`agent-system/plans/architecture/end-user-identity-and-ownership.md`, and
+decisions 8, 17 and 17b.
+
+**The counter is the gateway's and the reason is this service's**, because
+those are the two places the facts live. The gateway increments
+`<REDIS_KEY_PREFIX>:quota:ai:daily:<utc day>:<caller>` before publishing the
+generate command, compares it against a settings row, and puts the verdict on
+the command as `contracts.AIQuotaState`. This service computes the reason,
+because it is the only place all three facts exist at once: the verdict
+arrived on the command, the configured primary is its own config, and the
+fallback is its own runtime outcome.
+
+**Over the limit never refuses.** The world is still created, from the preset
+provider, and it is real, deterministic and the visitor's. There is no 429 on
+the create path.
+
+The orchestrator holds THREE providers. The preset one is `providers.NewMock()`
+built from no configuration at all, and it is not the fallback: `aifactory`
+constructs a fallback only when it differs from the primary, so production —
+with `AI_PROVIDER` and `AI_FALLBACK_PROVIDER` both `mock` — has none, and a
+degrade that reached for it would fail the job rather than degrade it.
+
+`Orchestrator.GenerateProfileDNA` is four ordered branches, and **the order is
+the decision**:
+
+| # | Condition | Reason |
+| --- | --- | --- |
+| 1 | the primary is not an AI provider | `mock_configured` |
+| 2 | the AI tier was withheld | `quota_exhausted` |
+| 3 | the primary answered | `ai_generated` |
+| 4 | the primary failed, a distinct fallback answered | `ai_failed_fallback` |
+
+Swapping 1 and 2 announces a limit on an AI tier that is switched off, on every
+sixth create, in the only environment that currently exists — production runs
+`AI_PROVIDER: mock`. A primary failure with no distinct fallback stays a FAILED
+job and carries no reason: a reason describes how a world was produced, so a
+job with no world has none.
+
+`primaryProviderCallsAI()` is written as "is not the mock" rather than as a list
+of the paid providers, so a provider added later counts as AI on the day it is
+added rather than being silently free.
+
+The reason and the limit it was measured against are stored on
+`generation_jobs`, in the SAME statement as the DNA version — two statements
+could lose the reason to a crash between them. Both columns are nullable with
+no default: NULL is the honest value for every job that predates the quota and
+for every failed one. **No world table learns the reason**, which is §9.1's
+rule: the truth is owed once, to the person who hit the limit, not permanently
+to the friend who opens their share link.
+
+The enum is declared in Go (`contracts.DeclaredGenerationReasons`), in a CHECK
+constraint, and in a TypeScript union.
+`TestTheGenerationReasonCheckAdmitsEveryDeclaredReason` reads the first and
+fails in both directions against the second — the same trap a new world family
+has, where the code compiles and the CHECK is the thing nobody edits.
+
+### The account's own world list
+
+`myunivokai.queries.dna.library.list.v1`, one keyset page, answered from
+`generation_jobs` joined to `profiles`. §3.1 is why this is a query here rather
+than a `library-service`: the link it would own already exists.
+
+The owner arrives on the query and there is no other parameter for whose worlds
+to list, so no request shape asks for a stranger's. The response is three
+fields — world id, family, creation time — asserted on the TYPE by
+`TestTheWorldListRowCarriesNothingSensitive`, so a fourth fails the build
+rather than shipping unset.
+
+Two things about this query that read as omissions and are decisions:
+
+- **It cannot exclude a deleted world.** The flag lives in the family service's
+  own database and a deletion emits no event, so nothing here is ever told. The
+  filter's one home is the family service's read, which the web app already
+  goes through to hydrate each card.
+- **It is keyset but not constant-cost.** The filter is on
+  `profiles.owner_account_id` and the order on `generation_jobs.created_at`, so
+  no single index serves both and Postgres sorts the account's matching jobs.
+  Never `OFFSET`, so a page boundary is stable; affordable because one create
+  makes one profile. The threshold where that stops holding, and the
+  denormalisation that would fix it, are in `postgres_library.go`.
+
+The cursor is base64 of `<unix nanoseconds>:<job id>`, and the job id is not
+redundant: two jobs can share a `created_at` because a retry writes its row
+with the same statement's clock, so the tie-break has to be part of the cursor.
+The first page uses a SEPARATE statement, because `(created_at, job_id) <
+(NULL, NULL)` is NULL in Postgres and would answer every first request with an
+empty page.
+
 ## Universe, Nature and Ocean services
 
 Sources: `services/universe-service`, `services/nature-service` and
