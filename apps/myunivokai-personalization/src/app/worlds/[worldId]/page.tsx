@@ -52,7 +52,7 @@ export default function WorldPage({ params }: PageProps) {
   return (
     <Suspense
       fallback={
-        <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-[57px] pt-[57px]">
+        <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-footer-height pt-header-height">
           <StatusMessage tone="loading">Loading world...</StatusMessage>
         </main>
       }
@@ -342,7 +342,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
 
   if (loading) {
     return (
-      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-[57px] pt-[57px]">
+      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-footer-height pt-header-height">
         <StatusMessage tone="loading">Loading world...</StatusMessage>
       </main>
     );
@@ -350,7 +350,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
 
   if (!world) {
     return (
-      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-[57px] pt-[57px]">
+      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-footer-height pt-header-height">
         <StatusMessage tone="error">{error || "World not found"}</StatusMessage>
       </main>
     );
