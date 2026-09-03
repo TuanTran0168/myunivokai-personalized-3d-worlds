@@ -60,6 +60,10 @@ func (service *WorldService) ComposeWorld(ctx context.Context, envelope contract
 		Quote:          oceanDNA.Quote,
 		ShortNarrative: oceanDNA.ShortNarrative,
 		Visibility:     "private",
+		// Straight from the compose command, which dna-service copied from the
+		// generate command, which the gateway stamped from a verified token.
+		// Nothing on this path reads it from a request body.
+		OwnerAccountID: envelope.Data.OwnerAccountID,
 	}
 	variant := models.WorldVariant{VariantNo: 1, Seed: worldSeed, Config: sceneConfig, IsSelected: true}
 	bundle, err := service.store.CreateWorld(ctx, world, variant)
@@ -89,7 +93,7 @@ func (service *WorldService) GetWorlds(ctx context.Context, worldIDs []string) (
 	return models.WorldListResponse{Worlds: worlds}, nil
 }
 
-func (service *WorldService) RegenerateVariant(ctx context.Context, worldID string) (models.VariantResponse, error) {
+func (service *WorldService) RegenerateVariant(ctx context.Context, worldID string, requestingAccountID *string) (models.VariantResponse, error) {
 	var lastConflictError error
 	for attempt := 0; attempt < maximumVariantCreateAttempts; attempt++ {
 		bundle, err := service.store.GetWorld(ctx, worldID)
@@ -102,7 +106,7 @@ func (service *WorldService) RegenerateVariant(ctx context.Context, worldID stri
 			return models.VariantResponse{}, err
 		}
 		sceneConfig := service.builder.Build(BuildOceanConfigInput{DNA: bundle.World.OceanDNA, Seed: variantSeed, VariantNo: nextVariantNumber, Input: bundle.World.VisualIntent})
-		variant, err := service.store.AddVariant(ctx, worldID, models.WorldVariant{VariantNo: nextVariantNumber, Seed: variantSeed, Config: sceneConfig})
+		variant, err := service.store.AddVariant(ctx, worldID, models.WorldVariant{VariantNo: nextVariantNumber, Seed: variantSeed, Config: sceneConfig}, requestingAccountID)
 		if err == nil {
 			return models.VariantResponse{Variant: variant, ShareSlug: shareSlugValue(bundle.World.ShareSlug)}, nil
 		}
@@ -114,7 +118,7 @@ func (service *WorldService) RegenerateVariant(ctx context.Context, worldID stri
 	return models.VariantResponse{}, lastConflictError
 }
 
-func (service *WorldService) SelectVariant(ctx context.Context, worldID, variantID string) (models.VariantResponse, error) {
+func (service *WorldService) SelectVariant(ctx context.Context, worldID, variantID string, requestingAccountID *string) (models.VariantResponse, error) {
 	// The share slug is read BEFORE the selection, not after: the gateway needs it
 	// to drop the stale public share response, and reading first means a failed
 	// lookup can never report a selection that already committed as an error.
@@ -123,14 +127,14 @@ func (service *WorldService) SelectVariant(ctx context.Context, worldID, variant
 	if err != nil {
 		return models.VariantResponse{}, err
 	}
-	variant, err := service.store.SelectVariant(ctx, worldID, variantID)
+	variant, err := service.store.SelectVariant(ctx, worldID, variantID, requestingAccountID)
 	if err != nil {
 		return models.VariantResponse{}, err
 	}
 	return models.VariantResponse{Variant: variant, ShareSlug: shareSlugValue(bundle.World.ShareSlug)}, nil
 }
 
-func (service *WorldService) PublishWorld(ctx context.Context, worldID string) (models.PublishResponse, error) {
+func (service *WorldService) PublishWorld(ctx context.Context, worldID string, requestingAccountID *string) (models.PublishResponse, error) {
 	bundle, err := service.store.GetWorld(ctx, worldID)
 	if err != nil {
 		return models.PublishResponse{}, err
@@ -145,7 +149,7 @@ func (service *WorldService) PublishWorld(ctx context.Context, worldID string) (
 		if err != nil {
 			return models.PublishResponse{}, err
 		}
-		world, err := service.store.PublishWorld(ctx, worldID, slugBase+"-"+slugSuffix)
+		world, err := service.store.PublishWorld(ctx, worldID, slugBase+"-"+slugSuffix, requestingAccountID)
 		if err == nil {
 			if world.ShareSlug == nil {
 				return models.PublishResponse{}, errors.New("share slug was not created")

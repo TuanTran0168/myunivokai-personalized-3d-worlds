@@ -486,6 +486,15 @@ func (profileDNA ProfileDNA) Validate() error {
 type GenerateDNAData struct {
 	Family WorldFamily `json:"family"`
 	Input  WorldInput  `json:"input"`
+	// OwnerAccountID is set by the gateway from a verified access token and
+	// never from the request body, which is what makes it trustworthy
+	// downstream: NATS ACLs make the gateway the only publisher that can reach
+	// this subject, so no client and no other service can inject an owner.
+	//
+	// A pointer, so that commands already sitting in the stream when this
+	// shipped decode to nil rather than to a zero UUID that reads like a real
+	// account. nil means anonymous, which is still the common case.
+	OwnerAccountID *string `json:"ownerAccountId,omitempty"`
 }
 
 type ProfileSummary struct {
@@ -506,6 +515,12 @@ type ComposeWorldData struct {
 	Profile      ProfileSummary `json:"profile"`
 	VisualIntent VisualIntent   `json:"visualIntent"`
 	ProfileDNA   ProfileDNA     `json:"profileDNA"`
+	// OwnerAccountID is copied by dna-service from the generate command it is
+	// answering, never read from anywhere else. dna-service is the only
+	// publisher the ACLs admit on a family compose subject, so the same
+	// argument that makes the field above trustworthy makes this one
+	// trustworthy. nil for an anonymous create.
+	OwnerAccountID *string `json:"ownerAccountId,omitempty"`
 }
 
 type DNAGeneratedData struct {
@@ -565,17 +580,28 @@ type WorldListQueryData struct {
 	WorldIDs []string `json:"worldIds"`
 }
 
+// RequestingAccountID appears on all three world mutations and answers one
+// question: who is asking. It is set by the gateway from a verified token, and
+// nil means "no session", not "the owner".
+//
+// The family service compares it with the world's own owner in the same
+// transaction as the mutation. An UNOWNED world is mutable by anyone holding
+// its id, which is today's behaviour and every world in production - see
+// end-user-identity-and-ownership.md section 6.5.
 type VariantCreateData struct {
-	WorldID string `json:"worldId"`
+	WorldID             string  `json:"worldId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
 }
 
 type VariantSelectData struct {
-	WorldID   string `json:"worldId"`
-	VariantID string `json:"variantId"`
+	WorldID             string  `json:"worldId"`
+	VariantID           string  `json:"variantId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
 }
 
 type PublishWorldData struct {
-	WorldID string `json:"worldId"`
+	WorldID             string  `json:"worldId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
 }
 
 type ShareQueryData struct {

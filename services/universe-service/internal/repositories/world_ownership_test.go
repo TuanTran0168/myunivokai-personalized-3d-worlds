@@ -2,12 +2,15 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
+	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 )
 
@@ -128,14 +131,14 @@ func TestAWorldWithNoOwnerStaysMutable(t *testing.T) {
 		t.Fatalf("a world created with no identity gained one: owner=%v anonymous=%v", bundle.World.OwnerAccountID, bundle.World.AnonymousID)
 	}
 
-	addedVariant, err := store.AddVariant(ctx, bundle.World.ID, models.WorldVariant{ID: "variant-2", VariantNo: 2, Seed: "seed-2"})
+	addedVariant, err := store.AddVariant(ctx, bundle.World.ID, models.WorldVariant{ID: "variant-2", VariantNo: 2, Seed: "seed-2"}, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("add a variant to an unowned world: %v", err)
 	}
-	if _, err := store.SelectVariant(ctx, bundle.World.ID, addedVariant.ID); err != nil {
+	if _, err := store.SelectVariant(ctx, bundle.World.ID, addedVariant.ID, noRequestingAccount); err != nil {
 		t.Fatalf("select a variant on an unowned world: %v", err)
 	}
-	if _, err := store.PublishWorld(ctx, bundle.World.ID, "share-slug-1"); err != nil {
+	if _, err := store.PublishWorld(ctx, bundle.World.ID, "share-slug-1", noRequestingAccount); err != nil {
 		t.Fatalf("publish an unowned world: %v", err)
 	}
 }
@@ -207,4 +210,154 @@ func readAllMigrations(t *testing.T) string {
 		combined.WriteString("\n")
 	}
 	return combined.String()
+}
+
+// noRequestingAccount is the anonymous caller: nil means "no session", and an
+// unowned world is mutable by one. Named rather than written as a bare nil so
+// a reader of these calls does not have to count parameters to see which one
+// it is.
+var noRequestingAccount *string
+
+// worldMutations is the write path, enumerated once and used twice: by the
+// table test below that proves each one honours ownership, and by the ratchet
+// under it that fails when the Store grows a method nobody classified.
+//
+// Each entry mutates a world that already exists and has exactly one variant,
+// so the mutation itself is always legitimate and the only thing under test is
+// who is allowed to perform it.
+var worldMutations = []struct {
+	methodName string
+	mutate     func(store *MemoryStore, worldID, existingVariantID string, requestingAccountID *string) error
+}{
+	{
+		methodName: "AddVariant",
+		mutate: func(store *MemoryStore, worldID, existingVariantID string, requestingAccountID *string) error {
+			_, err := store.AddVariant(context.Background(), worldID,
+				models.WorldVariant{VariantNo: 2, Seed: "seed-2"}, requestingAccountID)
+			return err
+		},
+	},
+	{
+		methodName: "SelectVariant",
+		mutate: func(store *MemoryStore, worldID, existingVariantID string, requestingAccountID *string) error {
+			_, err := store.SelectVariant(context.Background(), worldID, existingVariantID, requestingAccountID)
+			return err
+		},
+	},
+	{
+		methodName: "PublishWorld",
+		mutate: func(store *MemoryStore, worldID, existingVariantID string, requestingAccountID *string) error {
+			_, err := store.PublishWorld(context.Background(), worldID, "share-slug-1", requestingAccountID)
+			return err
+		},
+	},
+}
+
+// nonMutatingStoreMethods is the rest of the Store, listed so that the ratchet
+// below can tell "a read was added" from "a mutation was added and nobody
+// noticed". CreateWorld is here despite being a write: it SETS ownership from
+// the command rather than testing it, and there is no prior owner for it to
+// disagree with.
+var nonMutatingStoreMethods = []string{
+	"CreateWorld",
+	"GetWorld",
+	"GetWorldsByIDs",
+	"GetPublicWorld",
+	"PendingOutbox",
+	"MarkOutboxPublished",
+	"Ping",
+}
+
+// The write path's whole rule, as a table, because "every mutation checks
+// ownership" is a claim about a SET of methods.
+//
+// The two cases worth reading twice are the ones a check written from the
+// happy path gets wrong. An UNOWNED world is mutable by a signed-in stranger,
+// because that is every world in production and refusing them would break the
+// product on the day ownership shipped. And an OWNED world is not mutable by a
+// caller with no session at all - nil means "no session", never "the owner".
+func TestEveryWorldMutationHonoursOwnership(t *testing.T) {
+	const ownerAccountID = "11111111-1111-1111-1111-111111111111"
+	const strangerAccountID = "33333333-3333-3333-3333-333333333333"
+	owner := ownerAccountID
+	stranger := strangerAccountID
+
+	callers := []struct {
+		description         string
+		worldOwnerAccountID *string
+		requestingAccountID *string
+		expectedError       error
+	}{
+		{description: "an unowned world, and nobody signed in", worldOwnerAccountID: nil, requestingAccountID: nil, expectedError: nil},
+		{description: "an unowned world, and a signed-in stranger", worldOwnerAccountID: nil, requestingAccountID: &stranger, expectedError: nil},
+		{description: "an owned world, and its owner", worldOwnerAccountID: &owner, requestingAccountID: &owner, expectedError: nil},
+		{description: "an owned world, and a stranger", worldOwnerAccountID: &owner, requestingAccountID: &stranger, expectedError: ErrNotWorldOwner},
+		{description: "an owned world, and nobody signed in", worldOwnerAccountID: &owner, requestingAccountID: nil, expectedError: ErrNotWorldOwner},
+	}
+
+	for _, mutation := range worldMutations {
+		for _, caller := range callers {
+			t.Run(mutation.methodName+"/"+caller.description, func(t *testing.T) {
+				store := NewMemoryStore()
+				bundle, err := store.CreateWorld(context.Background(),
+					models.World{SourceJobID: "job-1", Visibility: "private", OwnerAccountID: caller.worldOwnerAccountID},
+					models.WorldVariant{ID: "variant-1", VariantNo: 1, Seed: "seed-1"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				mutationError := mutation.mutate(store, bundle.World.ID, "variant-1", caller.requestingAccountID)
+				if !errors.Is(mutationError, caller.expectedError) {
+					t.Fatalf("%s with %s: error = %v, want %v", mutation.methodName, caller.description, mutationError, caller.expectedError)
+				}
+			})
+		}
+	}
+}
+
+// The ratchet the table needs to stay honest. A hand-written list of mutations
+// is only as good as the thing that notices when it has fallen behind, and the
+// way this rule fails in practice is a fourth mutation arriving - a delete, a
+// rename - written by somebody reading the three that came before it, none of
+// which mention ownership in their own signature.
+func TestTheStoreGainsNoMethodWithoutClassifyingIt(t *testing.T) {
+	classified := map[string]bool{}
+	for _, methodName := range nonMutatingStoreMethods {
+		classified[methodName] = true
+	}
+	for _, mutation := range worldMutations {
+		classified[mutation.methodName] = true
+	}
+
+	storeType := reflect.TypeOf((*Store)(nil)).Elem()
+	for methodIndex := 0; methodIndex < storeType.NumMethod(); methodIndex++ {
+		methodName := storeType.Method(methodIndex).Name
+		if !classified[methodName] {
+			t.Errorf("Store.%s is neither in worldMutations nor in nonMutatingStoreMethods. If it mutates a world, add it to the table so its ownership check is proven; if it only reads, say so in the list.", methodName)
+		}
+	}
+	if storeType.NumMethod() != len(classified) {
+		t.Errorf("Store has %d methods but %d are classified; a name in one of the two lists no longer exists on the interface", storeType.NumMethod(), len(classified))
+	}
+}
+
+// The data boundary, checked rather than described.
+//
+// The plan's §15 said `contracts.WorldSnapshot` would gain `OwnerAccountID` and
+// that analytics-service would be required to drop it. It was not added, and
+// this is the enforcement of that decision: the snapshot has exactly two
+// consumers, `dna-service` (which reads the world id and nothing else) and
+// analytics-service (which must not keep the owner), so a field added here
+// would move personal data across a service boundary for no reader at all.
+//
+// "Never sent" is a stronger guarantee than "dropped on arrival", and it is
+// the one this asserts. See
+// agent-system/plans/services/analytics-service-plan.md#data-boundary.
+func TestTheAnalyticsSnapshotCarriesNoOwnership(t *testing.T) {
+	snapshotType := reflect.TypeOf(contracts.WorldSnapshot{})
+	for fieldIndex := 0; fieldIndex < snapshotType.NumField(); fieldIndex++ {
+		fieldName := snapshotType.Field(fieldIndex).Name
+		if strings.Contains(fieldName, "Owner") || strings.Contains(fieldName, "Anonymous") {
+			t.Errorf("WorldSnapshot.%s puts ownership on an event analytics-service consumes. The boundary is an allow list: argue the field in analytics-service-plan.md's data boundary before adding it here", fieldName)
+		}
+	}
 }

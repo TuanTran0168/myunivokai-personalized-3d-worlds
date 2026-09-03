@@ -36,9 +36,12 @@ type Store interface {
 	// order as the requested ids; unknown ids are skipped rather than failing
 	// the whole batch. Backs the gallery's single-request load.
 	GetWorldsByIDs(ctx context.Context, worldIDs []string) ([]WorldBundle, error)
-	AddVariant(ctx context.Context, worldID string, variant models.WorldVariant) (models.WorldVariant, error)
-	SelectVariant(ctx context.Context, worldID, variantID string) (models.WorldVariant, error)
-	PublishWorld(ctx context.Context, worldID, slug string) (models.World, error)
+	// The three mutations, and the one parameter they all gained: who is
+	// asking. nil means "no session", never "the owner" - see
+	// worldMutationPermitted, which is where the rule lives.
+	AddVariant(ctx context.Context, worldID string, variant models.WorldVariant, requestingAccountID *string) (models.WorldVariant, error)
+	SelectVariant(ctx context.Context, worldID, variantID string, requestingAccountID *string) (models.WorldVariant, error)
+	PublishWorld(ctx context.Context, worldID, slug string, requestingAccountID *string) (models.World, error)
 	GetPublicWorld(ctx context.Context, slug string) (WorldBundle, error)
 	PendingOutbox(ctx context.Context, maximumMessages int) ([]OutboxMessage, error)
 	MarkOutboxPublished(ctx context.Context, outboxID string) error

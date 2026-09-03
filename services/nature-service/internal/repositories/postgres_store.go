@@ -172,7 +172,7 @@ func (store *PostgresStore) GetWorldsByIDs(ctx context.Context, worldIDs []strin
 // event it produces commit together — the same atomicity CreateWorld has
 // always had. Before analytics-service this method wrote no event and needed
 // no transaction.
-func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant) (models.WorldVariant, error) {
+func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant, requestingAccountID *string) (models.WorldVariant, error) {
 	configJSON, err := json.Marshal(variant.Config)
 	if err != nil {
 		return models.WorldVariant{}, fmt.Errorf("marshal scene config: %w", err)
@@ -182,6 +182,9 @@ func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, vari
 		return models.WorldVariant{}, err
 	}
 	defer transaction.Rollback(ctx)
+	if err := assertWorldMutable(ctx, transaction, worldID, requestingAccountID); err != nil {
+		return models.WorldVariant{}, err
+	}
 	row := transaction.QueryRow(ctx, `INSERT INTO world_variants (world_id, variant_no, seed, config)
 		VALUES ($1,$2,$3,$4) RETURNING id::text, world_id::text, created_at`, worldID, variant.VariantNo, variant.Seed, configJSON)
 	if err := row.Scan(&variant.ID, &variant.WorldID, &variant.CreatedAt); err != nil {
@@ -196,12 +199,15 @@ func (store *PostgresStore) AddVariant(ctx context.Context, worldID string, vari
 	return variant, nil
 }
 
-func (store *PostgresStore) SelectVariant(ctx context.Context, worldID, variantID string) (models.WorldVariant, error) {
+func (store *PostgresStore) SelectVariant(ctx context.Context, worldID, variantID string, requestingAccountID *string) (models.WorldVariant, error) {
 	transaction, err := store.pool.Begin(ctx)
 	if err != nil {
 		return models.WorldVariant{}, err
 	}
 	defer transaction.Rollback(ctx)
+	if err := assertWorldMutable(ctx, transaction, worldID, requestingAccountID); err != nil {
+		return models.WorldVariant{}, err
+	}
 	if _, err := transaction.Exec(ctx, `UPDATE world_variants SET is_selected=false WHERE world_id=$1`, worldID); err != nil {
 		return models.WorldVariant{}, err
 	}
@@ -225,21 +231,32 @@ func (store *PostgresStore) SelectVariant(ctx context.Context, worldID, variantI
 // returned unchanged, with no revision bump and no event. Emitting a
 // world-change snapshot for a re-publish would describe a state change that
 // did not happen.
-func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug string) (models.World, error) {
+func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug string, requestingAccountID *string) (models.World, error) {
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return models.World{}, err
+	}
+	defer transaction.Rollback(ctx)
+	// The ownership check runs BEFORE the already-published shortcut, not
+	// after it. A non-owner publishing a world that is already public would
+	// otherwise be answered with its share slug and a 200 - a refusal that
+	// looks exactly like a success, on the one mutation that has an
+	// idempotent path to hide in.
+	if err := assertWorldMutable(ctx, transaction, worldID, requestingAccountID); err != nil {
+		return models.World{}, err
+	}
 	var existingSlug string
-	err := store.pool.QueryRow(ctx, `SELECT share_slug FROM world_shares WHERE world_id=$1`, worldID).Scan(&existingSlug)
+	err = transaction.QueryRow(ctx, `SELECT share_slug FROM world_shares WHERE world_id=$1`, worldID).Scan(&existingSlug)
 	if err == nil {
+		if err := transaction.Commit(ctx); err != nil {
+			return models.World{}, err
+		}
 		bundle, getError := store.GetWorld(ctx, worldID)
 		return bundle.World, getError
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return models.World{}, err
 	}
-	transaction, err := store.pool.Begin(ctx)
-	if err != nil {
-		return models.World{}, err
-	}
-	defer transaction.Rollback(ctx)
 	if _, err := transaction.Exec(ctx, `INSERT INTO world_shares (world_id, share_slug) VALUES ($1,$2)`, worldID, shareSlug); err != nil {
 		return models.World{}, mapConstraintViolation(err)
 	}

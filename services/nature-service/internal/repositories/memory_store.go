@@ -94,11 +94,15 @@ func (s *MemoryStore) GetWorldsByIDs(ctx context.Context, worldIDs []string) ([]
 	return bundles, nil
 }
 
-func (s *MemoryStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant) (models.WorldVariant, error) {
+func (s *MemoryStore) AddVariant(ctx context.Context, worldID string, variant models.WorldVariant, requestingAccountID *string) (models.WorldVariant, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.worlds[worldID]; !ok {
+	world, ok := s.worlds[worldID]
+	if !ok {
 		return models.WorldVariant{}, ErrNotFound
+	}
+	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
+		return models.WorldVariant{}, err
 	}
 	for _, existingVariant := range s.variants[worldID] {
 		if existingVariant.VariantNo == variant.VariantNo || existingVariant.Seed == variant.Seed {
@@ -117,12 +121,15 @@ func (s *MemoryStore) AddVariant(ctx context.Context, worldID string, variant mo
 	return variant, nil
 }
 
-func (s *MemoryStore) SelectVariant(ctx context.Context, worldID, variantID string) (models.WorldVariant, error) {
+func (s *MemoryStore) SelectVariant(ctx context.Context, worldID, variantID string, requestingAccountID *string) (models.WorldVariant, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	world, ok := s.worlds[worldID]
 	if !ok {
 		return models.WorldVariant{}, ErrNotFound
+	}
+	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
+		return models.WorldVariant{}, err
 	}
 	selectedVariantIndex := -1
 	for i := range s.variants[worldID] {
@@ -147,12 +154,15 @@ func (s *MemoryStore) SelectVariant(ctx context.Context, worldID, variantID stri
 	return selected, nil
 }
 
-func (s *MemoryStore) PublishWorld(ctx context.Context, worldID, slug string) (models.World, error) {
+func (s *MemoryStore) PublishWorld(ctx context.Context, worldID, slug string, requestingAccountID *string) (models.World, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	world, ok := s.worlds[worldID]
 	if !ok {
 		return models.World{}, ErrNotFound
+	}
+	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
+		return models.World{}, err
 	}
 	alreadyPublished := world.ShareSlug != nil
 	if !alreadyPublished {

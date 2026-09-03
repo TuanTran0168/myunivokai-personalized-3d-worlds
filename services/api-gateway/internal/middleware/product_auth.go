@@ -89,6 +89,52 @@ func RequireProductAccessToken(verifier AdminAccessVerifier, revocation AdminRev
 	}
 }
 
+// OptionalProductAccessToken attaches the same verified claims
+// RequireProductAccessToken does, on a surface where a session is allowed to be
+// absent. It is what lets a world know who made it without closing the door on
+// the visitor who has not signed up yet.
+//
+// The four cases, and the two that are decisions rather than consequences:
+//
+//  1. No Authorization header at all - proceed anonymously. This is the create
+//     path's normal case and it costs no Redis read and no round trip.
+//  2. A header that does not verify, or verifies with the wrong audience -
+//     rejected with a 401. NOT anonymous, which is the decision. A stale
+//     seven-day token
+//     silently producing an ownerless world would give somebody a world their
+//     own account can never claim, with no error anywhere to explain it, and
+//     the web app already answers a 401 with one transparent refresh.
+//  3. The revocation check is unavailable - 503, exactly as on the required
+//     path. A disabled account must not get a free write because Redis
+//     blinked.
+//  4. Revoked - 401.
+func OptionalProductAccessToken(verifier AdminAccessVerifier, revocation AdminRevocationChecker) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+			presentedToken, present := bearerToken(request)
+			if !present {
+				next.ServeHTTP(responseWriter, request)
+				return
+			}
+			claims, err := verifier.Verify(presentedToken)
+			if err != nil || claims.Audience != contracts.AccountAudienceWeb {
+				writeProductUnauthenticated(responseWriter, request)
+				return
+			}
+			revoked, err := revocation.IsRevoked(request.Context(), claims.Subject, claims.TokenVersion)
+			if err != nil {
+				httpx.WriteError(responseWriter, request, http.StatusServiceUnavailable, "SESSION_CHECK_UNAVAILABLE", "Could not verify the session right now.")
+				return
+			}
+			if revoked {
+				httpx.WriteError(responseWriter, request, http.StatusUnauthorized, "SESSION_REVOKED", "This session is no longer valid. Please sign in again.")
+				return
+			}
+			next.ServeHTTP(responseWriter, request.WithContext(WithProductClaims(request.Context(), claims)))
+		})
+	}
+}
+
 // bearerToken reads the Authorization header, case-insensitively on the
 // scheme because RFC 7235 makes it so and a client sending "bearer" is not
 // making a mistake worth a 401 over.

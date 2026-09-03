@@ -16,6 +16,7 @@ import (
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/config"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/edge"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/httpx"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/middleware"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/wake"
 	"github.com/oklog/ulid/v2"
 	"github.com/rs/zerolog/log"
@@ -98,7 +99,9 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 	job := contracts.Job{JobID: jobID, Family: handler.family, Status: contracts.JobStatusQueued, CreatedAt: createdAt, UpdatedAt: createdAt}
 	publishContext, cancel := context.WithTimeout(request.Context(), handler.publishTimeout)
 	defer cancel()
-	command := contracts.NewEnvelope(jobID, contracts.GenerateDNAData{Family: handler.family, Input: input})
+	command := contracts.NewEnvelope(jobID, contracts.GenerateDNAData{
+		Family: handler.family, Input: input, OwnerAccountID: requestingAccountIdentifier(request),
+	})
 	if err := handler.generationPublisher.PublishGeneration(publishContext, command); err != nil {
 		log.Error().Err(err).Str("request_id", httpx.RequestID(request.Context())).Msg("publish generation command")
 		httpx.WriteError(responseWriter, request, http.StatusServiceUnavailable, "GENERATION_UNAVAILABLE", "Generation could not be accepted right now.")
@@ -141,7 +144,8 @@ func (handler *WorldHandler) CreateVariant(responseWriter http.ResponseWriter, r
 	if !validWorldID {
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantCreate, contracts.VariantCreateData{WorldID: worldID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantCreate,
+		contracts.VariantCreateData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)})
 }
 
 func (handler *WorldHandler) SelectVariant(responseWriter http.ResponseWriter, request *http.Request) {
@@ -154,7 +158,8 @@ func (handler *WorldHandler) SelectVariant(responseWriter http.ResponseWriter, r
 		httpx.WriteError(responseWriter, request, http.StatusNotFound, "NOT_FOUND", "The requested resource was not found.")
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantSelect, contracts.VariantSelectData{WorldID: worldID, VariantID: variantID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantSelect,
+		contracts.VariantSelectData{WorldID: worldID, VariantID: variantID, RequestingAccountID: requestingAccountIdentifier(request)})
 }
 
 func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, request *http.Request) {
@@ -162,7 +167,8 @@ func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, re
 	if !validWorldID {
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldPublish, contracts.PublishWorldData{WorldID: worldID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldPublish,
+		contracts.PublishWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)})
 }
 
 func (handler *WorldHandler) GetShare(responseWriter http.ResponseWriter, request *http.Request) {
@@ -245,6 +251,27 @@ func shareSlugFromMutationPayload(payload []byte) string {
 		return ""
 	}
 	return mutation.ShareSlug
+}
+
+// requestingAccountIdentifier is the ONE place a world command learns who is
+// asking, and it reads the verified claims the optional identity middleware
+// attached - never the request body, never a header the client controls. That
+// is what makes the id trustworthy by the time it reaches a family service,
+// which has no way to verify it and does not try.
+//
+// nil means "no session", and on this surface that is ordinary rather than an
+// error: it produces an anonymous world, and it leaves an unowned world
+// mutable, which is every world made before ownership existed.
+func requestingAccountIdentifier(request *http.Request) *string {
+	claims, present := middleware.ProductClaims(request.Context())
+	if !present {
+		return nil
+	}
+	accountIdentifier := strings.TrimSpace(claims.Subject)
+	if accountIdentifier == "" {
+		return nil
+	}
+	return &accountIdentifier
 }
 
 func worldIdentifierFromRequest(responseWriter http.ResponseWriter, request *http.Request) (string, bool) {

@@ -66,6 +66,12 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 	router.Use(middleware.Recover)
 	router.Use(middleware.Logging)
 	router.Use(middleware.SecurityHeaders)
+	// Built once here rather than inside the identity group, because the
+	// business group needs the same two primitives: the identity group to
+	// REQUIRE a session, the business group to notice one when it is there.
+	// Two constructions would mean two revocation caches for one rule.
+	accessTokenVerifier := auth.NewTokenVerifier(serviceConfig.AccessTokenPublicKeys)
+	revocationChecker := auth.NewRevocationChecker(edgeStore, brokerClient, serviceConfig.NATSRequestTimeout, serviceConfig.TokenVersionCacheTTL)
 	healthHandler := NewHealthHandler(serviceConfig.AppName, brokerClient, edgeStore)
 	rpcTransport := NewRPCTransport(serviceConfig, brokerClient, edgeStore, waker, collector)
 	dnaJobHandler := NewDNAJobHandler(serviceConfig, rpcTransport)
@@ -92,7 +98,7 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 		identityRouter.Use(cors.Handler(productCORSOptions(serviceConfig)))
 		identityRouter.Use(middleware.RateLimit(edgeStore, authRateLimitRouteKey, serviceConfig.AuthRateLimitRequestsPerSecond, serviceConfig.AuthRateLimitBurst))
 		identityRouter.Use(middleware.BodyLimit(serviceConfig.MaximumRequestBodyBytes))
-		registerProductAuthRoutes(identityRouter, serviceConfig, brokerClient, edgeStore, rpcTransport)
+		registerProductAuthRoutes(identityRouter, serviceConfig, edgeStore, rpcTransport, accessTokenVerifier, revocationChecker)
 	})
 
 	// The product CORS handler is scoped to this group, not global - it must
@@ -102,6 +108,13 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 		businessRouter.Use(cors.Handler(productCORSOptions(serviceConfig)))
 		businessRouter.Use(middleware.RateLimit(edgeStore, productRateLimitRouteKey, serviceConfig.RateLimitRequestsPerSecond, serviceConfig.RateLimitBurst))
 		businessRouter.Use(middleware.BodyLimit(serviceConfig.MaximumRequestBodyBytes))
+		// Optional, not required: every route in this group has to keep
+		// working for a visitor with no account, because anonymous creation is
+		// the product's first impression and every world in production was
+		// made that way. What the middleware buys is that a world made by
+		// somebody signed in gets an owner without the client being trusted to
+		// say who that is.
+		businessRouter.Use(middleware.OptionalProductAccessToken(accessTokenVerifier, revocationChecker))
 		businessRouter.Get("/api/jobs/{jobID}", dnaJobHandler.GetJob)
 		businessRouter.Route("/api/universe", func(familyRouter chi.Router) {
 			registerWorldRoutes(familyRouter, universeHandler)

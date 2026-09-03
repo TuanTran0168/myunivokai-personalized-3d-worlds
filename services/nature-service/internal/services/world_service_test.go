@@ -91,7 +91,7 @@ func TestRegenerateVariantIsDeterministicFromStoredDNA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose world: %v", err)
 	}
-	regenerated, err := service.RegenerateVariant(context.Background(), created.World.ID)
+	regenerated, err := service.RegenerateVariant(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("regenerate variant: %v", err)
 	}
@@ -112,15 +112,15 @@ func TestSelectPublishAndGetPublicWorld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose world: %v", err)
 	}
-	regenerated, err := service.RegenerateVariant(context.Background(), created.World.ID)
+	regenerated, err := service.RegenerateVariant(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("regenerate variant: %v", err)
 	}
-	selected, err := service.SelectVariant(context.Background(), created.World.ID, regenerated.Variant.ID)
+	selected, err := service.SelectVariant(context.Background(), created.World.ID, regenerated.Variant.ID, noRequestingAccount)
 	if err != nil || !selected.Variant.IsSelected {
 		t.Fatalf("select variant: %#v, %v", selected, err)
 	}
-	published, err := service.PublishWorld(context.Background(), created.World.ID)
+	published, err := service.PublishWorld(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil || !strings.HasPrefix(published.ShareSlug, "tuan-") {
 		t.Fatalf("publish world: %#v, %v", published, err)
 	}
@@ -139,25 +139,25 @@ func TestVariantMutationsReturnTheShareSlugForCacheInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose world: %v", err)
 	}
-	regenerated, err := service.RegenerateVariant(context.Background(), created.World.ID)
+	regenerated, err := service.RegenerateVariant(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("regenerate variant: %v", err)
 	}
 	if regenerated.ShareSlug != "" {
 		t.Fatalf("unpublished world should report no slug, got %q", regenerated.ShareSlug)
 	}
-	published, err := service.PublishWorld(context.Background(), created.World.ID)
+	published, err := service.PublishWorld(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("publish world: %v", err)
 	}
-	selected, err := service.SelectVariant(context.Background(), created.World.ID, regenerated.Variant.ID)
+	selected, err := service.SelectVariant(context.Background(), created.World.ID, regenerated.Variant.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("select variant: %v", err)
 	}
 	if selected.ShareSlug != published.ShareSlug {
 		t.Fatalf("select returned slug %q, want %q", selected.ShareSlug, published.ShareSlug)
 	}
-	regeneratedAfterPublish, err := service.RegenerateVariant(context.Background(), created.World.ID)
+	regeneratedAfterPublish, err := service.RegenerateVariant(context.Background(), created.World.ID, noRequestingAccount)
 	if err != nil {
 		t.Fatalf("regenerate variant after publish: %v", err)
 	}
@@ -165,3 +165,9 @@ func TestVariantMutationsReturnTheShareSlugForCacheInvalidation(t *testing.T) {
 		t.Fatalf("regenerate returned slug %q, want %q", regeneratedAfterPublish.ShareSlug, published.ShareSlug)
 	}
 }
+
+// noRequestingAccount is the anonymous caller: nil means "no session", and an
+// unowned world is mutable by one. Named rather than written as a bare nil so
+// a reader of these calls does not have to count parameters to see which one
+// it is.
+var noRequestingAccount *string
