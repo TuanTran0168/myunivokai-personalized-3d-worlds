@@ -11,6 +11,7 @@ import (
 	"github.com/myunivokai/myunivokai/services/dna-service/internal/config"
 	"github.com/myunivokai/myunivokai/services/dna-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/dna-service/internal/validation"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -46,10 +47,16 @@ func (service *GenerationService) Generate(ctx context.Context, envelope contrac
 	if validationDetails := input.Validate(envelope.Data.Family); len(validationDetails) > 0 {
 		return fmt.Errorf("invalid world input: %s", validationDetails[0].Message)
 	}
-	normalizedEnvelope := contracts.Envelope[contracts.GenerateDNAData]{
-		JobID: envelope.JobID, Timestamp: envelope.Timestamp,
-		Data: contracts.GenerateDNAData{Family: envelope.Data.Family, Input: input},
-	}
+	// A copy with ONE field replaced, never a rebuilt literal.
+	//
+	// It was a rebuilt literal, and that silently dropped OwnerAccountID: the
+	// gateway stamped the owner onto the generate command, this line dropped
+	// it, and EnsureJob wrote NULL — so every world created by a signed-in
+	// visitor was stored as anonymous while every test still passed. A literal
+	// that has to name each field is a literal that forgets the next one too;
+	// this form cannot.
+	normalizedEnvelope := envelope
+	normalizedEnvelope.Data.Input = input
 	jobRecord, err := service.store.EnsureJob(ctx, normalizedEnvelope)
 	if err != nil {
 		return err
@@ -127,6 +134,37 @@ func (service *GenerationService) FailFamily(ctx context.Context, messageID, sub
 		return err
 	}
 	return service.store.ApplyFamilyFailed(ctx, messageID, subject, envelope)
+}
+
+// ClaimWorlds is the fan-in half of the claim: one command from the gateway,
+// one transaction here, and one command out to each family the visitor used.
+//
+// The data is validated even though the gateway already validated it, and the
+// reason is not distrust of the gateway - the ACLs make it the only publisher
+// that can reach this subject. It is that both values reach a `WHERE` clause,
+// and a malformed one would fail the transaction halfway through a fan-out
+// rather than being refused whole.
+func (service *GenerationService) ClaimWorlds(ctx context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) error {
+	if err := envelope.Validate(); err != nil {
+		return err
+	}
+	if err := envelope.Data.Validate(); err != nil {
+		return err
+	}
+	claimResult, err := service.store.ClaimWorlds(ctx, envelope)
+	if err != nil {
+		return err
+	}
+	// The only observability a claim has. Nobody is waiting for the answer, so
+	// a claim that matched nothing and a claim that moved five worlds are
+	// otherwise the same silent success. Neither identifier is logged: the
+	// account id and the anonymous id are exactly the two values that would
+	// turn this line into a way of tying a person to their worlds.
+	log.Info().
+		Int64("claimed_profiles", claimResult.ClaimedProfileCount).
+		Int("notified_families", len(claimResult.NotifiedFamilies)).
+		Msg("anonymous worlds claimed")
+	return nil
 }
 
 func (service *GenerationService) GetJob(ctx context.Context, jobID string) (contracts.Job, error) {

@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	dnaGenerateDurableName  = "dna-generate-v1"
-	dnaResultsDurableName   = "dna-family-results-v1"
-	dnaGenerateMessageStage = ":dna-generate"
-	requestQueueName        = "dna-service-v1"
+	dnaGenerateDurableName   = "dna-generate-v1"
+	dnaWorldClaimDurableName = "dna-world-claim-v1"
+	dnaResultsDurableName    = "dna-family-results-v1"
+	dnaGenerateMessageStage  = ":dna-generate"
+	requestQueueName         = "dna-service-v1"
 )
 
 type Runtime struct {
@@ -75,6 +76,30 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		return fmt.Errorf("subscribe dna commands: %w", err)
 	}
 	runtime.subscriptions = append(runtime.subscriptions, generateSubscription)
+	// Its own durable rather than a second filter on the generate consumer.
+	// MYUNIVOKAI_COMMANDS is a WorkQueue stream, so one subject may be served
+	// by exactly one consumer, and a claim retrying behind a slow AI call
+	// would be a claim waiting on something it has nothing to do with.
+	claimSubscription, err := runtime.jetStream.PullSubscribe(
+		contracts.ClaimDNAWorldsCommandSubject,
+		dnaWorldClaimDurableName,
+		nats.BindStream(contracts.CommandsStream),
+		nats.ManualAck(),
+		nats.AckWait(runtime.config.ConsumerAckWait),
+		// Unlimited deliveries, unlike the generate consumer's bounded count.
+		// A claim has no visitor waiting and no failed state to record, so
+		// there is nowhere for a terminal failure to be reported to - and a
+		// claim that gave up would leave a person's worlds anonymous for ever
+		// with nothing anywhere saying so. It is idempotent, so retrying until
+		// the database answers is safe.
+		nats.MaxDeliver(-1),
+		nats.MaxAckPending(1000),
+	)
+	if err != nil {
+		runtime.unsubscribeAll()
+		return fmt.Errorf("subscribe dna world claims: %w", err)
+	}
+	runtime.subscriptions = append(runtime.subscriptions, claimSubscription)
 	resultsSubscription, err := runtime.jetStream.PullSubscribe(
 		"",
 		dnaResultsDurableName,
@@ -107,8 +132,9 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		runtime.unsubscribeAll()
 		return fmt.Errorf("flush DNA subscriptions: %w", err)
 	}
-	runtime.waitGroup.Add(3)
+	runtime.waitGroup.Add(4)
 	go runtime.consume(ctx, generateSubscription, runtime.natsHandler.HandleGenerate, runtime.handleTerminalGenerationFailure)
+	go runtime.consume(ctx, claimSubscription, runtime.natsHandler.HandleWorldClaim, nil)
 	go runtime.consume(ctx, resultsSubscription, runtime.natsHandler.HandleFamilyResult, nil)
 	go runtime.publishOutbox(ctx)
 	return nil
@@ -152,6 +178,16 @@ func (runtime *Runtime) consume(
 		for _, message := range messages {
 			messageStartTime := time.Now()
 			if err := handler(ctx, message); err != nil {
+				// A message that can never succeed is discarded rather than
+				// retried, and it is told apart by the error rather than by a
+				// delivery count. The claim consumer has no delivery limit at
+				// all, so without this an unreadable claim would be redelivered
+				// for as long as the stream keeps it.
+				if errors.Is(err, handlers.ErrInvalidWorldClaimCommand) {
+					log.Error().Err(err).Str("subject", message.Subject).Msg("discard invalid world claim command")
+					_ = message.Term()
+					continue
+				}
 				metadata, metadataError := message.Metadata()
 				if terminalHandler != nil && metadataError == nil && int(metadata.NumDelivered) >= runtime.config.ConsumerMaximumDeliveries {
 					log.Error().Err(err).Str("subject", message.Subject).Msg("NATS message reached maximum deliveries")

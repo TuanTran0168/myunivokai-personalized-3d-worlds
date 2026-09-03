@@ -26,16 +26,21 @@ type fakeBroker struct {
 	// was asked. A test that the account id comes from the access token rather
 	// than from the request body cannot be written without it.
 	requestedPayloadsBySubject map[string]any
-	response          contracts.Envelope[contracts.RPCResponseData]
+	response                   contracts.Envelope[contracts.RPCResponseData]
 	// responsesBySubject lets a test answer two different NATS subjects
 	// differently in one request (e.g. RequireAdminPermission's
 	// AuthAccountPermissionsQuerySubject vs. the route's own subject) — a
 	// subject missing from this map falls back to `response`, so every
 	// existing single-response test keeps working unchanged.
 	responsesBySubject map[string]contracts.Envelope[contracts.RPCResponseData]
-	publishError       error
-	requestError       error
-	pingError          error
+	// claimedEnvelopes is a slice, not a single value like publishedEnvelope
+	// above: the claim's own tests assert that a repeated request publishes a
+	// second command rather than being swallowed, which a single field cannot
+	// show.
+	claimedEnvelopes []contracts.Envelope[contracts.WorldClaimData]
+	publishError     error
+	requestError     error
+	pingError        error
 }
 
 func (brokerClient *fakeBroker) PublishGeneration(_ context.Context, envelope contracts.Envelope[contracts.GenerateDNAData]) error {
@@ -43,6 +48,16 @@ func (brokerClient *fakeBroker) PublishGeneration(_ context.Context, envelope co
 	defer brokerClient.mutex.Unlock()
 	brokerClient.publishedEnvelope = envelope
 	return brokerClient.publishError
+}
+
+func (brokerClient *fakeBroker) PublishWorldClaim(_ context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) error {
+	brokerClient.mutex.Lock()
+	defer brokerClient.mutex.Unlock()
+	if brokerClient.publishError != nil {
+		return brokerClient.publishError
+	}
+	brokerClient.claimedEnvelopes = append(brokerClient.claimedEnvelopes, envelope)
+	return nil
 }
 
 func (brokerClient *fakeBroker) Request(_ context.Context, subject string, payload any) (contracts.Envelope[contracts.RPCResponseData], error) {

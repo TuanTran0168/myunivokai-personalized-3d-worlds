@@ -25,6 +25,12 @@ const (
 
 var ErrInvalidCompositionCommand = errors.New("invalid ocean composition command")
 
+// ErrInvalidWorldClaimCommand marks a claim that can never be applied, as
+// distinct from one that failed this time. The claim consumer has no delivery
+// limit - a claim must keep retrying until the database answers - so an
+// unreadable message needs a way to be discarded that is not a delivery count.
+var ErrInvalidWorldClaimCommand = errors.New("invalid ocean world claim command")
+
 type WorldService interface {
 	ComposeWorld(context.Context, contracts.Envelope[contracts.ComposeWorldData]) (models.CreateWorldResponse, error)
 	GetWorlds(context.Context, []string) (models.WorldListResponse, error)
@@ -33,6 +39,7 @@ type WorldService interface {
 	SelectVariant(context.Context, string, string, *string) (models.VariantResponse, error)
 	PublishWorld(context.Context, string, *string) (models.PublishResponse, error)
 	DeleteWorld(context.Context, string, *string) (models.DeleteResponse, error)
+	ClaimWorlds(context.Context, contracts.Envelope[contracts.WorldClaimData]) error
 	GetPublicWorld(context.Context, string) (models.PublicWorldResponse, error)
 }
 
@@ -59,6 +66,25 @@ func NewNATSHandler(worldService WorldService, responsePublisher ResponsePublish
 		eventPublisher:    eventPublisher,
 		queryTimeout:      queryTimeout,
 	}
+}
+
+// HandleWorldClaim applies the claim dna-service fanned out to this family.
+//
+// No terminal-failure path, unlike HandleComposition's: a composition has a
+// visitor watching a job and so has to be recorded as failed somewhere they
+// can see it, while a claim has nobody waiting and nowhere to report to. A
+// plain error return keeps the message on the stream, which is what should
+// happen - the claim is idempotent, and a claim that gave up would leave
+// somebody's worlds anonymous for ever with nothing anywhere saying so.
+func (handler *NATSHandler) HandleWorldClaim(ctx context.Context, message *nats.Msg) error {
+	var envelope contracts.Envelope[contracts.WorldClaimData]
+	if err := decodeEnvelope(message.Data, &envelope); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidWorldClaimCommand, err)
+	}
+	if err := envelope.Data.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidWorldClaimCommand, err)
+	}
+	return handler.worldService.ClaimWorlds(ctx, envelope)
 }
 
 func (handler *NATSHandler) HandleComposition(ctx context.Context, message *nats.Msg) error {
