@@ -18,11 +18,30 @@ export type WorldFamily = "universe" | "nature" | "ocean";
 
 export type GenerationJobStatus = "queued" | "processing" | "completed" | "failed";
 
+/**
+ * How a world was built. Mirrors contracts.GenerationReason (contracts/go/contracts_quota.go)
+ * and the CHECK constraint on generation_jobs.generation_reason, which a Go
+ * ratchet keeps in step with the first of those.
+ *
+ * A REASON and never a provider name: three of these four routes end in a
+ * world built from presets, and only `quota_exhausted` is a fact about the
+ * visitor. See lib/generationNotice.ts, which is the only place this is read.
+ */
+export type GenerationReason = "ai_generated" | "quota_exhausted" | "mock_configured" | "ai_failed_fallback";
+
 export type GenerationJob = {
   jobId: string;
   family: WorldFamily;
   status: GenerationJobStatus;
   worldId?: string;
+  /** Absent on every job created before the quota shipped, and on every failure. */
+  generationReason?: GenerationReason;
+  /**
+   * The limit `quota_exhausted` was measured against, so the one sentence this
+   * app shows names the number the platform enforced rather than a copy of it
+   * here. Absent means the server named none; 0 is a real policy.
+   */
+  dailyAiGenerationLimit?: number;
   error?: {
     code?: string;
     message?: string;
