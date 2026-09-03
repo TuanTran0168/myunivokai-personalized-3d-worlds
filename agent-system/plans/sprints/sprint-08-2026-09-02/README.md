@@ -1,10 +1,27 @@
 # Sprint 08 — End-user identity and world ownership
 
 > **Starts:** 2026-09-02
-> **Status:** Planned. The stories below are committed scope; they execute
+> **Status:** **Phase A implemented** on
+> `feat/fe-be/end-user-identity-phase-a` (one branch per phase, by the owner's
+> grouping — the plan's one-story-per-branch task lines are superseded by it).
+> Phases B and C are committed scope and not started. The stories execute
 > [`end-user-identity-and-ownership.md`](../../architecture/end-user-identity-and-ownership.md),
-> whose twenty decisions are all taken and which awaits the owner's approval.
-> **Last source review:** 2026-09-02
+> whose twenty decisions are all taken.
+> **Read [user-stories.md](user-stories.md)'s Phase A corrections section**
+> before that phase's own stories: five of its claims turned out to be wrong,
+> and one requirement — a signup response that hides whether an address is
+> already registered — is not achievable before email exists.
+> Phase A also gained **three stories after it was implemented**, all asked for
+> by the owner and all on the same branch: `S8-IDENTITY-018` (the gallery shows
+> the signed-in account's worlds rather than the browser's), `S8-IDENTITY-019`
+> (an account page, and a create form that starts filled in) and
+> `S8-IDENTITY-020` (a saved preference that changes the world rather than only
+> the form). `019` spent this sprint's first migration, and
+> [decision 21](../../architecture/end-user-identity-and-ownership.md#19-the-accounts-own-page-decision-21)
+> is where it is argued; `020` spent nothing but is the one to read first, for
+> correction 8 — a preference the profile page saved and the create page's
+> canvas ignored.
+> **Last source review:** 2026-09-03
 
 ## Sprint goal
 
@@ -75,6 +92,10 @@ nullable columns per family plus one new table in an existing database.
 - A login button that tells the truth about a cold `auth-service`.
 - The admin account list showing `kind = 'end_user'` rows, so a staff member
   can mark one inactive. The service side of that already works.
+- Added after the fact, on the owner's word: an account's own gallery, its own
+  profile page, a create form that opens already filled from it, and — the
+  correction to that — a canvas that actually renders the family the profile
+  prefers, on both pages.
 
 **Phase B — worlds are owned.**
 
@@ -119,17 +140,27 @@ every path in CI and none of the logic.
 
 ## Definition of Done
 
-- [ ] A person can sign up, log in, refresh and log out, and a staff member can
+- [x] A person can sign up, log in, refresh and log out, and a staff member can
       mark that account inactive — after which the account's next request fails
       within the stated Redis `tokenVersion` window.
-- [ ] Every route under `/api/me` and `/api/auth` is proven to carry its
+- [x] Every route under `/api/me` and `/api/auth` is proven to carry its
       middleware by an enumerating router test, in the shape
-      `admin_router_test.go` already uses.
-- [ ] **The audience separation is proven in both directions**: a `web` token
+      `admin_router_test.go` already uses. **Plus one the plan did not ask
+      for:** the four PUBLIC identity routes carry no auth middleware by
+      design, so each is asserted to charge the identity rate-limit bucket —
+      without it, a route registered in the wrong group passes every other
+      assertion in the file.
+- [x] **The audience separation is proven in both directions**: a `web` token
       is rejected by the admin edge (exists) and an `admin` token is rejected
       by the product edge (new). Either both, or the separation is not proven.
-- [ ] An `end_user` account cannot hold a permission row, enforced at the
-      repository level with a test.
+      Both are asserted across every registered route, not only against the
+      middleware in isolation — and beneath both,
+      `contracts.AudienceForAccountKind` makes the audience a function of
+      `accounts.kind` rather than of the endpoint reached or a field in the
+      request, so it cannot be asked for.
+- [x] An `end_user` account cannot hold a permission row, enforced at the
+      repository level with a test — `ErrRoleNotGrantableToAccountKind`, in
+      both stores, with the memory store mirroring Postgres deliberately.
 - [ ] A non-owner is rejected for every world mutation, table-driven so that a
       mutation added later without a check fails the build.
 - [ ] An **unowned** world stays mutable by anyone holding its id — the

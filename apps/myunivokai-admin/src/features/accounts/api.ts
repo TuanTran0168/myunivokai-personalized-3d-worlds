@@ -1,5 +1,5 @@
 import { adminRequest } from "@/lib/admin-http";
-import type { AccountSummary } from "./types";
+import { ALL_ACCOUNT_KINDS, type AccountKindFilter, type AccountSummary } from "./types";
 
 export interface AccountListResponse {
   accounts: AccountSummary[];
@@ -22,9 +22,16 @@ function buildQuery(parameters: Record<string, string | undefined>): string {
 }
 
 export const accountsApi = {
-  // search matches an account's email or name, case-insensitively.
-  list: (search?: string, cursor?: string) =>
-    adminRequest<AccountListResponse>(`/accounts${buildQuery({ q: search, cursor })}`),
+  // search matches an account's email or name, case-insensitively. kind is
+  // applied by auth-service, not here, and that matters: this list is
+  // cursor-paginated, so filtering the received page would report "no end
+  // users" whenever the newest twenty accounts happened to be staff. The
+  // ALL_ACCOUNT_KINDS sentinel is dropped by buildQuery, so "any kind" sends
+  // no parameter at all.
+  list: (search?: string, kind?: AccountKindFilter, cursor?: string) =>
+    adminRequest<AccountListResponse>(
+      `/accounts${buildQuery({ q: search, kind: kind === ALL_ACCOUNT_KINDS ? "" : kind, cursor })}`
+    ),
   get: (accountId: string) => adminRequest<AccountSummary>(`/accounts/${accountId}`),
   // Creates an account with a password set right now — active immediately,
   // with no invite token to relay. See auth-service's

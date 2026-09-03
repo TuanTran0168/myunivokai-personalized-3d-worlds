@@ -11,6 +11,19 @@ import (
 var (
 	ErrNotFound = errors.New("not found")
 	ErrConflict = errors.New("conflict")
+	// ErrRoleNotGrantableToAccountKind refuses a role assignment to an account
+	// that is not staff.
+	//
+	// This is the structural half of decision 1, enforced at the only layer
+	// that can enforce it: one `accounts` table serves both audiences, so
+	// "an end_user account holds no permission row" cannot be a convention
+	// somebody remembers. Store is documented as the sole path to
+	// myunivokai_auth and nothing outside this package touches SQL, which is
+	// what makes a check here a boundary rather than a suggestion.
+	//
+	// The failure it prevents is specific and severe: an end-user account with
+	// a role is staff access reachable through the product's own signup form.
+	ErrRoleNotGrantableToAccountKind = errors.New("a role can only be granted to a staff account")
 )
 
 type Account struct {
@@ -32,6 +45,35 @@ type Account struct {
 	InviteExpiresAt *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+// AccountProfile is one row of account_profiles: what an account holder
+// recorded about themselves, and the defaults their create-world form is
+// filled from.
+//
+// There is no Nickname field, and the migration has no column for one. The
+// nickname is Account.Name — see 000004_account_profiles.sql, and
+// contracts.AccountProfileData, which projects it.
+//
+// Interests, Traits and FavoriteColors are never nil after a read: an absent
+// row and an empty list are the same thing to every caller, and a nil slice
+// would make the difference visible for no reason.
+type AccountProfile struct {
+	AccountID            string
+	FullName             string
+	Gender               contracts.AccountGender
+	PreferredWorldFamily contracts.WorldFamily
+	PreferredWorldStyle  string
+	PrimaryRole          string
+	Goal                 string
+	Challenge            string
+	Mood                 string
+	Interests            []string
+	Traits               []string
+	FavoriteColors       []string
+	AutofillCreateForm   bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type RefreshToken struct {
@@ -113,10 +155,31 @@ type Store interface {
 	GetAccountByEmail(ctx context.Context, email string) (Account, error)
 	GetAccountByID(ctx context.Context, accountID string) (Account, error)
 	// ListAccounts's search, when non-empty, matches email or name
-	// case-insensitively as a substring — see PostgresStore.ListAccounts.
-	ListAccounts(ctx context.Context, cursor string, pageSize int, search string) (accounts []Account, nextCursor string, err error)
+	// case-insensitively as a substring — see PostgresStore.ListAccounts. kind,
+	// when non-empty, restricts the page to that account kind; empty means
+	// every kind, so the filter is additive for callers that send nothing.
+	ListAccounts(ctx context.Context, cursor string, pageSize int, search string, kind contracts.AccountKind) (accounts []Account, nextCursor string, err error)
 	AccountRolesAndPermissions(ctx context.Context, accountID string) (roles []string, permissions []string, err error)
 	CountSuperAdmins(ctx context.Context) (int, error)
+
+	// GetAccountProfile returns ErrNotFound when the account has never saved
+	// a profile. The service turns that into an empty profile rather than an
+	// error - see AccountProfile in internal/services/account_profile_service.go
+	// for why "not saved yet" must not read as a failure on a page whose whole
+	// job is to be opened for the first time.
+	GetAccountProfile(ctx context.Context, accountID string) (AccountProfile, error)
+	// UpsertAccountProfile writes the profile whole, creating the row on first
+	// save. Whole rather than field-by-field because the page sends every
+	// field it renders: a merge would make a field somebody cleared
+	// indistinguishable from one the request did not mention.
+	UpsertAccountProfile(ctx context.Context, profile AccountProfile) (AccountProfile, error)
+	// SetAccountDisplayName changes accounts.name and nothing else.
+	//
+	// Deliberately not UpdateAccount, which also takes an email: the account's
+	// own page must not be a path to changing the address somebody signs in
+	// with, and passing the current email back in to keep it unchanged would
+	// make that one dropped field away from being exactly that.
+	SetAccountDisplayName(ctx context.Context, accountID, name string) (Account, error)
 
 	RecordFailedLoginAttempt(ctx context.Context, accountID string, lockThreshold int, lockDuration time.Duration) error
 	ResetFailedLoginAttempts(ctx context.Context, accountID string) error
@@ -146,6 +209,8 @@ type Store interface {
 	UpdateRole(ctx context.Context, roleID, description string, permissionCodenames []string) (Role, error)
 	DeleteRole(ctx context.Context, roleID string) error
 	CountAccountsWithRole(ctx context.Context, roleID string) (int, error)
+	// AssignRole returns ErrRoleNotGrantableToAccountKind for any account
+	// whose kind is not staff - see that error for why the check lives here.
 	AssignRole(ctx context.Context, accountID, roleID string) error
 	RevokeRole(ctx context.Context, accountID, roleID string) error
 	// AccountPermissionsExcludingRole computes what an account's permission

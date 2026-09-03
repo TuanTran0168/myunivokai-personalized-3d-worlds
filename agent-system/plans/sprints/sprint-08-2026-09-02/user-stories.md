@@ -1,8 +1,11 @@
 # Sprint 08 user stories — end-user identity and world ownership
 
-> **Document status:** Planned
+> **Document status:** Phase A implemented; Phases B and C planned
 > **Sprint starts:** 2026-09-02
 > **Last source review:** 2026-09-02
+> **Read the Phase A corrections section before Phase A's own stories** — five
+> of its claims turned out to be wrong, including one requirement that is not
+> achievable before email exists.
 
 One epic, three phases, seventeen branch-sized stories. The phases are ordered
 by dependency and each ends in a shippable state:
@@ -41,7 +44,7 @@ Backlog epic:
 
 ### S8-IDENTITY-001 — Turn on the `web` audience in auth-service
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a visitor,
@@ -80,30 +83,30 @@ Source evidence:
 - contracts/go/contracts_auth.go — `AccountAudienceWeb`
 
 Tasks:
-- [ ] `feat/be/web-audience-auth`: add the product signup/login/refresh/logout
+- [x] `feat/be/web-audience-auth`: add the product signup/login/refresh/logout
       handlers for `audience = "web"`, reusing the existing Argon2id hasher,
       refresh rotation, family reuse detection and lockout paths without
       copying them.
-- [ ] Add the two web token lifetimes as **named Go constants only — no `.env`
+- [x] Add the two web token lifetimes as **named Go constants only — no `.env`
       entry, no `render.yaml` key**. They are born as settings in
       `S8-IDENTITY-012` (`auth.token.web.access_ttl` = 7d,
       `auth.token.web.refresh_ttl` = 3mo), and a value that starts life as a
       setting needs a code default rather than an environment variable. Never
       literals either way.
-- [ ] Add the minimum-length rule and the Have I Been Pwned range check
+- [x] Add the minimum-length rule and the Have I Been Pwned range check
       (k-anonymity: first 5 SHA-1 hex characters out, suffix matched locally)
       as a signup/change-password validator, with a test that no password
       leaves the process.
-- [ ] Add a `register` action to the audit constants, which is the whole of the
+- [x] Add a `register` action to the audit constants, which is the whole of the
       registration metric (plan §14.2).
-- [ ] Add a test that a product signup can never produce an account holding a
+- [x] Add a test that a product signup can never produce an account holding a
       permission row.
-- [ ] Confirm in a test that **no migration** is needed: `kind`, `audience` and
+- [x] Confirm in a test that **no migration** is needed: `kind`, `audience` and
       `token_version` are asserted present against the existing schema.
 
 ### S8-IDENTITY-002 — The gateway's product auth edge
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a visitor,
@@ -133,20 +136,20 @@ Source evidence:
 - services/api-gateway/internal/handlers/admin_router.go — the route-group shape to follow
 
 Tasks:
-- [ ] `feat/be/product-auth-edge`: add `middleware.RequireProductAccessToken`,
+- [x] `feat/be/product-auth-edge`: add `middleware.RequireProductAccessToken`,
       mirroring `admin_auth.go` — local Ed25519 verification, then the Redis
       `tokenVersion` check, then the audience check against
       `AccountAudienceWeb`.
-- [ ] Add the `/api/auth` and `/api/me` route groups with a third
+- [x] Add the `/api/auth` and `/api/me` route groups with a third
       `authRateLimitRouteKey = "auth"` bucket and its own named limits.
-- [ ] Add per-email Redis failure counters for login, keyed separately from the
+- [x] Add per-email Redis failure counters for login, keyed separately from the
       per-IP bucket.
-- [ ] Extend `contracts/openapi.yaml` with the auth and `/api/me` route
+- [x] Extend `contracts/openapi.yaml` with the auth and `/api/me` route
       surface, and keep the admin surface out of it.
 
 ### S8-IDENTITY-003 — Prove the two audiences cannot cross, in both directions
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a service developer,
@@ -171,19 +174,19 @@ Source evidence:
 - services/api-gateway/internal/handlers/admin_router_test.go — the enumerating pattern to copy
 
 Tasks:
-- [ ] `feat/be/identity-separation-guardrails`: add
+- [x] `feat/be/identity-separation-guardrails`: add
       `product_router_test.go`, enumerating every `/api/me` and `/api/auth`
       route and asserting its middleware.
-- [ ] Add the missing direction: an `admin`-audience token rejected by the
+- [x] Add the missing direction: an `admin`-audience token rejected by the
       product edge.
-- [ ] Add the repository-level invariant test that an `end_user` account holds
+- [x] Add the repository-level invariant test that an `end_user` account holds
       no permission row.
-- [ ] Add the bootstrap-command test asserting it still cannot create an
+- [x] Add the bootstrap-command test asserting it still cannot create an
       `end_user`.
 
 ### S8-IDENTITY-004 — The web app's session, and its first CSP
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a visitor,
@@ -217,23 +220,23 @@ Source evidence:
 - apps/myunivokai-personalization/src/lib/api.ts — the client that gains the header and the refresh-once behaviour
 
 Tasks:
-- [ ] `feat/fe/product-session-and-csp`: add a session module that writes, reads
+- [x] `feat/fe/product-session-and-csp`: add a session module that writes, reads
       and clears the three cookies, with every name, path and lifetime a named
       constant.
-- [ ] Add signup, login and account-menu screens using the app's existing glass
+- [x] Add signup, login and account-menu screens using the app's existing glass
       surfaces rather than a new visual language.
-- [ ] Add single-flight transparent refresh to the API client so N concurrent
+- [x] Add single-flight transparent refresh to the API client so N concurrent
       401s cause one refresh, not N.
-- [ ] Add the Content-Security-Policy in `next.config`/middleware and verify
+- [x] Add the Content-Security-Policy in `next.config`/middleware and verify
       all three renderers against it.
-- [ ] Record in the code, next to the cookie writer, that a JS-written cookie
+- [x] Record in the code, next to the cookie writer, that a JS-written cookie
       **cannot** be `httpOnly`, so the exposure equals `localStorage` and the
       CSP is the control — otherwise a later reader will assume protection that
       is not there.
 
 ### S8-IDENTITY-005 — Tell the truth about a cold sign-in
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P0
 
 As a visitor,
@@ -256,17 +259,17 @@ Source evidence:
 - agent-system/plans/architecture/service-wake-mechanism.md — the `503 SERVICE_WAKING` contract and the frontend wait both frontends already implement
 
 Tasks:
-- [ ] `feat/fe/auth-cold-start-honesty`: reuse the existing
+- [x] `feat/fe/auth-cold-start-honesty`: reuse the existing
       `SERVICE_WAKING` wait behaviour on the auth calls rather than writing a
       second one.
-- [ ] Distinguish a wake wait from a credential rejection in the UI, with a
+- [x] Distinguish a wake wait from a credential rejection in the UI, with a
       test for each.
-- [ ] Add `auth-service` to the wake platform adapters if it is absent, so the
+- [x] Add `auth-service` to the wake platform adapters if it is absent, so the
       gateway can actually start it.
 
 ### S8-IDENTITY-006 — Staff can see and disable an end-user account
 
-Status: Planned
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
 Priority: P1
 
 As a staff member,
@@ -290,10 +293,362 @@ Source evidence:
 - apps/myunivokai-admin/src/lib/session.ts — `AccountKind = "staff" | "end_user"` is already in the frontend types
 
 Tasks:
-- [ ] `feat/fe/admin-end-user-accounts`: show `kind` in the account list and
+- [x] `feat/fe/admin-end-user-accounts`: show `kind` in the account list and
       allow filtering by it.
-- [ ] Ensure the role-assignment UI is unreachable for an `end_user` row,
+- [x] Ensure the role-assignment UI is unreachable for an `end_user` row,
       matching the server-side invariant from `S8-IDENTITY-003`.
+
+### S8-IDENTITY-018 — The gallery shows my worlds, not this browser's
+
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
+Priority: P0
+
+Added to Phase A on 2026-09-02, by the owner, after signing up on a browser
+that already held worlds.
+
+As an account holder,
+I want the gallery to show the worlds that are mine,
+so that signing up does not appear to hand me somebody else's collection.
+
+Scenario: An account created on a browser that already has worlds
+
+Given a browser holding several worlds created without an account
+When an account is created and the gallery is opened
+Then none of those worlds is listed
+And the gallery says how many are on this device but not part of the account
+And signing out lists them again
+And two accounts on one browser never see each other's worlds
+And a world already on any shelf is not moved onto another by being opened,
+because claiming a world by its id is what `S8-IDENTITY-011` refuses.
+
+Source evidence:
+- apps/myunivokai-personalization/src/lib/savedWorlds.ts — `SAVED_WORLD_IDENTIFIERS_STORAGE_KEY`, which was the entire notion of ownership before this
+- agent-system/plans/architecture/end-user-identity-and-ownership.md — §8, §14.1, §18, and decision 9 on what deleting means
+- agent-system/plans/sprints/sprint-08-2026-09-02/user-stories.md — `S8-IDENTITY-011` (claim by anonymous id) and `S8-IDENTITY-016` (the server-served list this is NOT)
+
+Tasks:
+- [x] Give every stored entry an `ownerKey`, reading a missing one as the
+      anonymous shelf so no existing world is lost.
+- [x] Filter every read to one owner, and answer `null` — show nothing — when
+      the owner cannot be determined, rather than falling back.
+- [x] Say on the page how many worlds belong to the other shelf, so an empty
+      grid does not read as a loss.
+- [x] Cover it with `savedWorlds.test.ts`, including both legacy storage
+      shapes.
+
+### S8-IDENTITY-019 — An account page, and a create form that starts filled in
+
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
+Priority: P1
+
+Added to Phase A on 2026-09-02, by the owner: "a profile page of its own, not
+just Your Gallery — full name, gender and the fields from the 3D form, with a
+button that fills them into it. The name fills by default."
+
+As an account holder,
+I want a page for who I am and how my worlds should start,
+so that creating my second world does not mean typing everything again.
+
+Scenario: A profile that is saveable before it is finished
+
+Given a signed-in account that has never opened its profile
+When the page is opened
+Then it shows an empty profile rather than an error
+And saving a name and one interest succeeds, though neither would be enough to
+generate a world
+And the display name is the SAME value the create form's Nickname field is
+filled with, stored once in `accounts.name`
+And a mood, style or family outside the contracts vocabulary is refused with
+the field named
+And the account id is taken from the access token, never from the request.
+
+Scenario: The create form on the next visit
+
+Given a saved profile with the autofill toggle on
+When the create page is opened while signed in
+Then the name is filled in whether or not the toggle is on
+And the other fields are filled from the profile
+And nothing is filled over a field already typed into
+And the page says it was filled from the profile, with one action to empty it
+for this world only.
+
+Source evidence:
+- contracts/go/contracts.go — `WorldInput`, `allowedMoods`, `allowedWorldStylesByFamily`, and `Validate`'s minimums, which are exactly what a draft must not enforce
+- services/auth-service/migrations/000003_account_name.sql — `accounts.name`, already there, which is why the display name cost no column
+- agent-system/plans/architecture/end-user-identity-and-ownership.md — §3.1 (why this is not a new service), §12 (the response-model rule), §15 (never authorize on a read model)
+
+Tasks:
+- [x] `account_profiles` in auth-service, keyed on the account, cascading, with
+      NO nickname column — the nickname is `accounts.name`, projected.
+- [x] `WorldInput.ValidateAsCreationDefaults`: every ceiling and vocabulary,
+      not one minimum.
+- [x] Two product-audience subjects and `GET`/`PATCH /api/me/profile`, with the
+      account id read from the token's subject.
+- [x] The page, the toggle, and the create form's autofill as two pure
+      functions rather than an effect nobody can test.
+- [x] Raise the migration-count guard in the same commit, per that test's own
+      instruction.
+
+---
+
+### S8-IDENTITY-020 — A saved preference changes the world, not just the form
+
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
+Priority: P1
+
+Added to Phase A on 2026-09-03, by the owner, after using `S8-IDENTITY-019`:
+"picking a preferred world family fills the picker when I go back out, but the
+world does not change — choosing ocean still loads the universe. The settings
+chosen in the form have to apply and load the right world on the demo, not just
+be filled in. And the profile page should have a universe background like the
+gallery."
+
+As an account holder,
+I want the world in front of me to be the world my profile makes,
+so that a preference I saved is one I can see rather than one I have to trust.
+
+Scenario: The create page opens on the family I chose
+
+Given a saved profile whose preferred world family is the ocean
+When the create page is opened while signed in
+Then the picker shows Ocean AND the canvas renders an ocean
+And it arrives through the same departure the picker itself plays, so the
+incoming family's shader compile stays inside an animation that can afford it
+And the profile's saved style is applied rather than replaced by the family's
+neutral one
+And "start from a blank form" carries the canvas back to the universe with it.
+
+Scenario: The profile page shows what it is about to save
+
+Given the profile page
+When a preferred world family is chosen
+Then the world behind the page becomes that family's
+And that world is exactly what the create form would open with, built from the
+fields as they stand on screen rather than as they were last saved
+And it is shown whether or not the autofill toggle is on, because the toggle
+governs the FORM and this is a preview of the setting.
+
+Source evidence:
+- apps/myunivokai-personalization/src/app/page.tsx — `renderedWorldFamily`, the second family state the canvas follows, and `worldChangeStages.ts` for why it deliberately lags the form
+- apps/myunivokai-personalization/src/features/gallery/AmbientWorld.tsx — the gallery backdrop the account page now shares
+- agent-system/knowledge/frontend/source-overview.md — the routes table this adds a world to
+
+Tasks:
+- [x] `showWorldFamilyOnCanvas` as the ONLY caller of `setWorldFamily`, so no
+      path can move the form's family without moving the canvas.
+- [x] The autofill reads the form's values from a ref at the moment the profile
+      answers, not from the render that sent the request.
+- [x] `buildPreviewSceneForFamily` and `buildCreateFormPreviewScene`: one place
+      that decides which family's builder runs.
+- [x] `AmbientBackdrop` extracted from the gallery; the account page renders the
+      world its own fields describe.
+- [x] The create form's field limits and `maxLength` values named once, in
+      `worldFormOptions.ts`, rather than as bare numbers in two files.
+- [x] The profile page mirrors the create form's minimums, and
+      `profileWithCreateFormDefaults` makes them reachable on a first visit.
+- [x] A `Toast` on save, whose lifetime rule is the tested part: a success
+      leaves on its own, a failure waits to be read.
+
+Scenario: The page holds itself to the rules the create form holds
+
+Given the profile page
+When the world defaults are edited
+Then Core interests keeps a minimum of three, Traits a minimum of three and the
+palette a minimum of one — the same floors the create form enforces
+And a profile that has never been saved opens with those fields already holding
+what the create form itself opens with, so the floor is met on the first visit
+And the server keeps accepting less, because it bounds what may be STORED and a
+row written before this rule still has to load.
+
+Scenario: A save says so, and offers the way out
+
+Given a profile being saved
+When the save succeeds
+Then a toast says so, and says which of the two things was agreed to — the
+create form filled from this, or only the name, per the toggle's own state
+And it carries a link back to the worlds
+And it leaves on its own, while a FAILURE toast stays until it is dismissed
+And a "Back to your worlds" button sits beside Save whether or not anything was
+saved, because a page reached from the header menu has no back of its own.
+
+No migration, no contract change, no new route: this story is entirely about
+what the browser already had and was not showing.
+
+---
+
+## Phase A — corrected during execution, 2026-09-02
+
+Written after the work, and read before the sections above. Five of Phase A's
+own claims about the repository or about what was achievable turned out to be
+wrong, and a sixth thing was wrong that no story had claimed at all — the
+record is worth more than the tidy version.
+
+### 1. `S8-IDENTITY-001` asks for a uniform signup response, and that is not achievable before email exists
+
+The story's scenario says "a signup for an email that already exists is
+indistinguishable in the response from one that does not". Every arrangement
+was checked and none of them delivers it:
+
+- **Return a session on a collision.** That requires verifying the submitted
+  password against the existing account, so a wrong password answers
+  differently from a brand-new address — the address is disclosed anyway, now
+  with a password oracle attached to the disclosure.
+- **Return success with no session**, the way a product with mail does ("check
+  your inbox"). That needs an inbox. Decision 12 puts mail in Phase D.
+- **Return the same error for both.** Then a new address cannot register.
+
+Uniform signup responses require email verification; there is no arrangement of
+a create-and-sign-in endpoint that hides the collision. `EMAIL_UNAVAILABLE` is
+returned, the disclosure is accepted, and the argument is written into
+`SignUpEndUser`'s doc comment rather than papered over. What bounds it: the
+dedicated `auth` rate-limit bucket, the per-email counter, and an audit row per
+attempt.
+
+**LOGIN is uniform and stays uniform** — the decoy-hash path, plus the new
+wrong-kind branch that pays the same Argon2id cost. That is the half of §5.1's
+requirement that is both achievable and load-bearing, because login is what an
+attacker probes to find live accounts.
+
+### 2. The gateway's access-token public key was validated only when the admin surface was on
+
+`ADMIN_ACCESS_PUBLIC_KEYS` was checked inside `if AdminRoutesEnabled`, whose
+shipped default is `false`. The product edge is not gated by that flag, so a
+deployment with admin routes off and no key would have mounted `/api/me`,
+rejected every valid session with a 401, and said nothing about why. It is now
+required unconditionally, with an error naming the variable at boot.
+
+Not a new burden on local development: `.env.example` ships
+`ADMIN_ROUTES_ENABLED=true`, so the admin block already demanded it. Two Go
+fields lost their `Admin` prefix as a consequence (`AccessTokenPublicKeys`,
+`TokenVersionCacheTTL`) while the environment variables kept their names — they
+are live secrets in a Render environment group.
+
+### 3. The web app already depended on a Google host at runtime, and `S8-IDENTITY-004` would have broken the forest
+
+Most of this app's `.glb` models carry `KHR_draco_mesh_compression`, and
+`@react-three/drei` points its DRACO decoder at
+`https://www.gstatic.com/draco/` by default. So a CSP that blocks third-party
+script — which is what the story asks for — would have stopped the nature
+family rendering trees, animals and ground decor, silently.
+
+The decoder is now committed under
+`apps/myunivokai-personalization/public/vendor/draco/` from three 0.171.0, and
+`useGLTF.setDecoderPath` points at it, so `script-src` names no third-party
+origin at all. This was not scope creep: it is what the story's own acceptance
+criterion required.
+
+### 4. The CSP had a hole no check in this repo could see, and a browser found it
+
+`tsc`, `next lint`, `next build` and all 700 unit tests passed against a policy
+that produced **fourteen `connect-src blocked blob` violations per scene**:
+`GLTFLoader` turns a model's embedded buffers and textures into Blob URLs and
+reads them back through an ordinary fetch, which `connect-src` governs and not
+`img-src`.
+
+`e2e/content-security-policy.spec.ts` (`npm run check:csp`) is the instrument —
+the one assertion suite in that folder rather than an artefact to eye, because
+a `securitypolicyviolation` event names the directive it refused. It is not run
+in CI, for the reason the Playwright config already gives about that folder.
+After the fix: 6/6, with all three renderers mounting at zero violations and
+the decoder fetched from `/vendor/draco/`.
+
+### 5. Two task lines described work that did not exist, and one described a frontend change that was a backend one
+
+- **`S8-IDENTITY-005`'s "add `auth-service` to the wake platform adapters if it
+  is absent" was already done.** `wake.ServiceForSubject` cuts a subject at its
+  first segment, so `myunivokai.queries.auth.web.login.v1` already resolves to
+  `auth`, and `ServiceAuth` was already in the gateway's wake URL map. Verified
+  rather than assumed, since the story listed it as work.
+- **`S8-IDENTITY-006`'s kind filter is a backend change**, not a frontend one.
+  The account list is cursor-paginated, so a client-side filter would filter
+  the page it received and report "there are no end users" whenever the newest
+  twenty accounts were staff. `kind` now travels `AccountListQueryData` →
+  `Store.ListAccounts` → an equality predicate applied before pagination in
+  both stores. The story sits in Phase A's frontend half and its task list did
+  not anticipate touching `contracts/`.
+
+### 6. Phase A shipped an account and left the gallery with no idea what one was
+
+Nobody wrote this down as a claim, which is why it took the owner five minutes
+of using the thing to find: Phase A gave the app an identity and gave worlds no
+owner, so `/gallery` went on rendering `myunivokai.savedWorldIds` — a
+per-BROWSER list — under the heading "Your Gallery". Signing up on a browser
+that already held worlds therefore appeared to hand the new account somebody
+else's collection.
+
+It is worth being precise about whose gap it was. Ownership of worlds is Phase
+B (`S8-IDENTITY-007`, `008`) and the server-served list is Phase C
+(`S8-IDENTITY-015`, `016`), so no Phase A story was unfinished. What Phase A
+did was make a page that had been HONEST ("worlds you created on this device")
+into one that was not, by introducing the account the heading now implied. A
+phase that adds an identity owes every screen that says "your" a look.
+
+`S8-IDENTITY-018` is the fix, and it is deliberately not an early Phase C: the
+shelf is still per-browser, and the page now says so in as many words. What
+changed is that it is per-browser AND per-account rather than per-browser and
+attributed to whoever happens to be signed in.
+
+### 7. Three stories were added to Phase A after it was implemented
+
+`S8-IDENTITY-018`, `019` and `020` were not in the committed scope; the owner
+asked for the first two on 2026-09-02 and the third on 2026-09-03, after Phase
+A's six stories were done and on the same branch. They are recorded as Phase A
+stories rather than as a new phase because that is where they landed, and
+pretending the plan predicted them would be the more dishonest bookkeeping.
+
+`019` also spent the first migration this service has taken since the sprint
+began. `TestAuthServiceGainsNoUnplannedMigration` is the ratchet that made that
+a decision rather than a drift: it failed, and raising it to 4 in the same
+commit is the protocol the test asks for in its own failure message.
+
+### 8. A preference that filled a field and moved nothing
+
+`S8-IDENTITY-019` shipped a preferred world family that worked exactly as
+written and was useless: choosing the ocean on the profile page filled the
+create form's picker with Ocean and left the canvas rendering a universe. The
+owner found it within a day, and the sentence worth keeping is theirs — the
+saved settings have to "apply and load the right world on the demo, not just be
+filled in."
+
+The mechanism is worth writing down because it is a shape rather than a typo.
+The create page keeps TWO family states: `worldFamily`, what the form says, and
+`renderedWorldFamily`, what the canvas shows. The second deliberately lags the
+first by the length of the departure animation, because mounting a family for
+the first time blocks the main thread for up to ~2.5 seconds compiling shaders
+and that block has to happen inside an animation that can absorb it (see
+`worldChangeStages.ts`). The picker's handler moved both. The autofill added by
+`019` called `setWorldFamily` directly, and so did the "start from a blank
+form" button — two writers to one half of a two-part invariant.
+
+The fix is not a third state or a reconciling effect: `showWorldFamilyOnCanvas`
+is now the only caller of `setWorldFamily` anywhere on the page, so a family
+that cannot be shown cannot be set. **A piece of state mirrored by a second
+piece of state has an invariant, and an invariant with more than one writer is
+a bug waiting for its second writer** — which arrived one story later, from the
+same pair of hands.
+
+`S8-IDENTITY-020` is the fix, and it also answers the owner's second request in
+the same message: the profile page now stands in front of the world its own
+fields describe, so the setting is confirmed by the thing it changes rather
+than by a select that agrees with you and moves nothing. It spends no
+migration, adds no route and changes no contract.
+
+### What Phase A deliberately did NOT do, so it is not mistaken for an omission
+
+- **No migration for identity itself.** `internal/db/web_audience_schema_test.go`
+  reads the committed SQL and asserts the four facts the "zero migrations"
+  claim rests on. The counterpart test is a ratchet on the file COUNT, and
+  `S8-IDENTITY-019` raised it from 3 to 4 for `account_profiles` — in the same
+  commit, which is what that test asks for. `S8-IDENTITY-012`'s
+  `system_settings` will raise it to 5 the same way.
+- **The four existing `auth.*` subjects were not renamed** to say `admin`,
+  even though they now silently mean it. A rename costs a coordinated
+  two-service deploy plus a NATS ACL change to buy what a comment buys for
+  nothing — the same call §17 made about `aud=web`.
+- **`contracts/openapi-admin.yaml` is unchanged.** It documents the auth and
+  analytics-read surface; the account-management routes were never in it, so
+  the new `?kind=` parameter has nothing to be added to. Documenting that
+  surface is its own change.
 
 ---
 

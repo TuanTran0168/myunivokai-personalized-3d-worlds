@@ -165,8 +165,8 @@ func generateInviteToken() (raw, hash string, err error) {
 	return raw, security.HashRefreshToken(raw), nil
 }
 
-func (service *AuthService) ListAccounts(ctx context.Context, cursor string, pageSize int, search string) (contracts.AccountListResponseData, error) {
-	accounts, nextCursor, err := service.store.ListAccounts(ctx, cursor, clampListPageSize(pageSize), search)
+func (service *AuthService) ListAccounts(ctx context.Context, cursor string, pageSize int, search string, kind contracts.AccountKind) (contracts.AccountListResponseData, error) {
+	accounts, nextCursor, err := service.store.ListAccounts(ctx, cursor, clampListPageSize(pageSize), search, kind)
 	if err != nil {
 		return contracts.AccountListResponseData{}, err
 	}

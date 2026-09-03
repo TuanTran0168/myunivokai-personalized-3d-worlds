@@ -1,8 +1,18 @@
 # End-user identity and world ownership
 
-> **Document status:** Proposed. **No code exists.** Twenty numbered decisions
-> (25 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
-> were taken on 2026-09-02 across **eight rounds** — most by the owner, five
+> **Document status:** **Phase A is implemented** on
+> `feat/fe-be/end-user-identity-phase-a`; Phases B and C are proposed, and
+> Phases D and E are out of the sprint's scope. The "no code exists" this
+> header carried until 2026-09-02 is no longer true, and
+> [the sprint's Phase A corrections section](../sprints/sprint-08-2026-09-02/user-stories.md#phase-a--corrected-during-execution-2026-09-02)
+> is the record of which of this document's claims survived contact — read it
+> before acting on §5 or §12. Two decisions were ADDED after Phase A shipped,
+> both by the owner and both in §19: 21 (the account's page) on 2026-09-02, and
+> 22 (a preference is shown in the thing it changes) on 2026-09-03, after using
+> what 21 built.
+> Twenty-two numbered decisions
+> (27 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
+> were taken on 2026-09-02 across **eight rounds plus two after implementation** — most by the owner, five
 > delegated to me and argued in place — and all of them are recorded in §16,
 > where **nothing is left open**. Four of the last five rounds exist because
 > the owner read a decision back and found it wrong, too broad, or badly
@@ -16,7 +26,7 @@
 > The sprint covers Phases A-C; Phase D and Phase E are explicitly out of its
 > scope.
 > **Raised:** 2026-09-02 by the owner
-> **Last source review:** 2026-09-02
+> **Last source review:** 2026-09-03
 > **Answers:** [`DEFERRED-AUTH-001`](../backlog/engineering-backlog.md#deferred-auth-001--define-identity-before-authentication),
 > deferred by owner decision on 2026-07-22 and never revisited.
 > **Graduates:** [`evolution/platform-evolution-research.md` Track A](../../evolution/platform-evolution-research.md#track-a--end-user-identity-and-world-ownership),
@@ -1872,6 +1882,13 @@ because deciding them now would be deciding them wrongly:
    per-create cost being *measured* from `ai_generation_attempts` rather than
    read off a rate card (§9.2).
 
+### Added after Phase A was implemented (2026-09-02, 2026-09-03)
+
+| # | Decision | Consequence, recorded on purpose |
+| --- | --- | --- |
+| 21 | **The account gets a page of its own** — full name, gender, and the create-form fields as saved defaults — **in `auth-service`, in one new table** (§19) | The first migration this plan has cost. Buys a second visit that does not mean retyping everything, and one place where the display name lives. Costs a table in `auth-service` that is not about authentication, which §19 argues is still the least-bad home |
+| 22 | **A saved preference is shown in the thing it changes** (§19): the create page's canvas follows the profile's family, and the profile page's backdrop IS the world the create form would open with | Costs one more WebGL context, on a form page, and makes the create page's two family states a single-writer invariant. Buys a setting somebody can confirm by looking rather than by trusting — which is what `S8-IDENTITY-020` exists to fix |
+
 ## 17. Renaming `myunivokai-web`
 
 Requested on 2026-09-02: `web` describes the runtime, not the product, and the
@@ -1996,3 +2013,111 @@ rather than luck.
 
 **The one change with a large file count and no logic in it is the rename**
 (§17). That is why it is sequenced outside the phases.
+
+## 19. The account's own page (decision 21)
+
+Added by the owner on 2026-09-02, after Phase A was implemented and on the same
+branch. It is a product feature rather than an identity one, and it is recorded
+here because it took a table, two subjects and two routes, which is the kind of
+thing this document exists to hold.
+
+### Why `auth-service` and not `dna-service`
+
+`dna-service` already has a `profiles` table holding exactly these fields, so
+reusing that shape is the obvious answer and it is the wrong one for now, for a
+reason that is about sequencing rather than taste:
+
+- `dna-service`'s profiles are **per generation** and immutable — the inputs
+  that produced one world. An account's saved defaults are neither. Putting
+  both in one table would mean a nullable `account_id` on rows that are
+  historical facts, and a second meaning for a table Phase B is about to add
+  ownership columns to.
+- More decisively: **`dna-service` does not yet know who the caller is.**
+  Identity over NATS is `S8-IDENTITY-008`, in Phase B. `auth-service` is the
+  service that mints the token, so it is the only one that can answer "my
+  profile" today without the plumbing Phase B has not built.
+
+§3.1's rule against inventing a service still holds — nothing new was created.
+The cost is honest: `auth-service` now owns a table that has nothing to do with
+authentication. If Phase E's "one evolving profile per account" (decision 6)
+lands, this table is the thing it absorbs, and the move is a migration with no
+logic in it.
+
+### The rules the page follows
+
+- **One name.** `accounts.name` is the display name, and `account_profiles` has
+  **no nickname column**. It is projected into
+  `AccountProfileData.CreationDefaults.Nickname` on read and written back on
+  update, so the header menu and the create form cannot greet the same person
+  differently. A test refuses the column outright.
+- **A draft, not a submission — at the API.**
+  `WorldInput.ValidateAsCreationDefaults` enforces every ceiling and every
+  vocabulary and **not one minimum**. The generate path's minimums are right
+  for a world and wrong for a stored row: enforcing them there would refuse a
+  profile until it was a complete world, and would make a row written before
+  the rule existed unreadable.
+  **The FORM enforces the minimums anyway** (owner's instruction, 2026-09-03),
+  and the two are not in conflict: the API bounds what may be stored, the page
+  holds itself to what the create form needs, and the page can do that only
+  because an unanswered list is shown holding the create form's own default.
+  A profile saved with one interest would otherwise produce a create form
+  sitting below its own floor with nothing on screen to explain why.
+- **The account id comes from the token.** Neither route takes an account id
+  and neither body has a field for one — and the gateway disallows unknown
+  fields, so the attempt is a 400 rather than an ignored value.
+- **The response model is re-marshalled**, not forwarded, per §12: a field
+  added to `AccountProfileData` later must not reach a browser by accident.
+- **Nothing authorizes on it**, per §15. Gender, full name and every default
+  are display data; the only field with any behaviour behind it is
+  `autofill_create_form`, and its behaviour is entirely in the browser.
+
+### The preview is part of the page, not decoration (decision 22)
+
+Added 2026-09-03, after the owner used the page: choosing a preferred world
+family filled the create form's picker and left its canvas rendering a
+universe. The setting was saved, read back and applied — and there was no way
+to see that from either screen.
+
+**A saved preference has to be visible in the thing it changes.** Two rules
+follow, and both are cheap because the browser already knows how to build every
+family's scene locally — that mirror exists for the create page's live preview
+and predates accounts entirely.
+
+- **The create page's canvas follows the profile.** It keeps two family states
+  on purpose: what the form says, and what the canvas shows, the second lagging
+  the first by the length of the departure animation so that a family's ~2.5s
+  first-mount shader compile happens inside an animation that can absorb it.
+  The autofill wrote only the first. One function now owns both, and it is the
+  only writer of either.
+- **The profile page stands in front of the world it describes.** The backdrop
+  is not a decorative scene chosen for the route; it is the world the create
+  form would open with, built from the fields as they stand on screen. Picking
+  Ocean turns the page into an ocean before it is saved.
+
+The cost is one more WebGL context on a form page, held down by the same
+low-dpr, parked-entry, no-audio backdrop the gallery already uses. The audio is
+the one deliberate difference: this backdrop is REBUILT as somebody types, and
+a soundscape that restarts on every rebuild is worse than none.
+
+What this does not become is a second create form. The profile page has no
+generate button and posts nothing to a family service; the preview is local,
+and the only thing it proves is what the create form will do next time.
+
+**A save is reported by a toast rather than by a line under the button**, and
+the rule worth keeping is the lifetime rather than the component: a success
+leaves on its own after seven seconds, a failure stays until it is dismissed.
+A confirmation nobody read still happened; an error nobody read is an error
+nobody can act on, and one that vanishes mid-sentence is worse than one that
+was never shown. The failure is ALSO left inline beside the button it belongs
+to, because that is where somebody returns to try again. The toast carries the
+way out — back to the worlds — and so does a button beside Save, permanently:
+a page reached from the header menu has no back of its own, and the toast's
+copy is gone seven seconds later.
+
+### What it does not do
+
+No avatar and no upload — that is storage, a bucket and a content-type
+allowlist, and none of it is in this sprint. No uniqueness on the display name:
+"that name is taken" would be a second failure mode on a form that already has
+one, and a name people choose to be greeted by is the wrong thing to make
+unique.

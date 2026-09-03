@@ -89,6 +89,17 @@ services:
         value: 60s
       - key: SHARE_CACHE_TTL
         value: 60s
+      # The identity endpoints' own token bucket (S8-IDENTITY-002). Far
+      # tighter than RATE_LIMIT_* above because the traffic is different: a
+      # person signs in a handful of times a day, while the product bucket has
+      # to absorb every world read. The gateway refuses to start if this is
+      # the looser of the two. The per-email failure counter that backs it up
+      # is a Go constant with no key here on purpose — see
+      # services/api-gateway/internal/config/config.go's identityFailureLimit.
+      - key: AUTH_RATE_LIMIT_REQUESTS_PER_SECOND
+        value: "1"
+      - key: AUTH_RATE_LIMIT_BURST
+        value: "10"
       # Turned on 2026-08-22 for the full production deploy. Requires BOTH
       # ADMIN_ALLOWED_ORIGIN and ADMIN_ACCESS_PUBLIC_KEYS (below, sync:false)
       # to already hold real values on the live Render dashboard — an
@@ -114,6 +125,12 @@ services:
       # private key itself. Comma-separated for key rotation (S4-AUTH-005):
       # list the new key alongside the outgoing one until every session has
       # re-authenticated, then remove the old one.
+      #
+      # No longer admin-only, despite the name. Since S8-IDENTITY-002 the same
+      # key verifies the product session on /api/auth and /api/me, so the
+      # gateway now requires it whether or not ADMIN_ROUTES_ENABLED is true.
+      # The key name is kept because it is a live secret in this account's
+      # environment; the gateway's Go field is AccessTokenPublicKeys.
       - key: ADMIN_ACCESS_PUBLIC_KEYS
         sync: false
       - key: ADMIN_TOKEN_VERSION_CACHE_TTL

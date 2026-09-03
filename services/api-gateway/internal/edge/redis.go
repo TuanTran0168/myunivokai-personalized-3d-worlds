@@ -2,6 +2,8 @@ package edge
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -18,7 +20,14 @@ const (
 	rateLimitKeySegment     = "rate"
 	cacheKeySegment         = "cache"
 	authTokenVersionSegment = "auth:tokenversion"
-	wakeKeySegment          = "wake"
+	// identityFailureSegment counts failed sign-in attempts PER EMAIL, which
+	// is a different question from the per-IP token bucket under
+	// rateLimitKeySegment and must never share a key with it: the attack this
+	// counts is one account probed from many addresses, and the attack that
+	// counts is one address probing many accounts. Both exist, and a single
+	// counter answers neither.
+	identityFailureSegment = "auth:identity:failures"
+	wakeKeySegment         = "wake"
 	// Distinct segments rather than a suffix on wakeKeySegment, so a wake
 	// lock for a service can never be mistaken for a counter or the reverse.
 	wakeCountKeySegment    = "wake:count"
@@ -144,6 +153,59 @@ func (store *RedisStore) GetTokenVersion(ctx context.Context, accountID string) 
 
 func (store *RedisStore) SetTokenVersion(ctx context.Context, accountID string, tokenVersion int, timeToLive time.Duration) error {
 	return store.client.Set(ctx, store.key(authTokenVersionSegment, accountID), strconv.Itoa(tokenVersion), timeToLive).Err()
+}
+
+// RecordIdentityFailure increments the failure count for one identity and
+// returns the new value. The window is refreshed on every failure, so a
+// steady trickle of attempts stays counted while a genuine typo ages out.
+//
+// identityKey is a HASH of the email address, never the address itself - see
+// IdentityFailureKey. The counter needs to distinguish identities, not to be
+// able to read them back, and Redis is shared infrastructure whose keyspace
+// is visible to anything holding the connection string.
+//
+// A pipeline rather than two round trips, and INCR before EXPIRE so a key
+// that already exists cannot lose its count to a race with its own refresh.
+func (store *RedisStore) RecordIdentityFailure(ctx context.Context, identityKey string, window time.Duration) (int, error) {
+	key := store.key(identityFailureSegment, sanitizeKeyPart(identityKey))
+	pipeline := store.client.Pipeline()
+	increment := pipeline.Incr(ctx, key)
+	pipeline.Expire(ctx, key, window)
+	if _, err := pipeline.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return int(increment.Val()), nil
+}
+
+// IdentityFailureCount reads the tally without touching it. A missing key is
+// zero rather than an error: never having failed and having aged out of the
+// window are the same state as far as the next attempt is concerned.
+func (store *RedisStore) IdentityFailureCount(ctx context.Context, identityKey string) (int, error) {
+	raw, err := store.client.Get(ctx, store.key(identityFailureSegment, sanitizeKeyPart(identityKey))).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(raw)
+}
+
+// ClearIdentityFailures drops the tally after a successful sign-in, so a
+// person who mistyped their password four times and then got it right is not
+// one attempt away from being throttled on their next visit.
+func (store *RedisStore) ClearIdentityFailures(ctx context.Context, identityKey string) error {
+	return store.client.Del(ctx, store.key(identityFailureSegment, sanitizeKeyPart(identityKey))).Err()
+}
+
+// IdentityFailureKey derives the counter key for an email address: lowercased
+// and trimmed to match auth-service's own normalizeEmail, so "A@b.com " and
+// "a@b.com" share one tally rather than giving an attacker two, then hashed
+// so the address itself never lands in the keyspace.
+func IdentityFailureKey(emailAddress string) string {
+	normalized := strings.ToLower(strings.TrimSpace(emailAddress))
+	digest := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(digest[:])
 }
 
 // AcquireWakeLock reports whether the caller is the one that should wake a

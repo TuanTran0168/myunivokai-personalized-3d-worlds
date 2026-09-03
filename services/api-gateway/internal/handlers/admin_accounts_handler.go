@@ -27,12 +27,32 @@ func (handler *AdminAccountsHandler) List(responseWriter http.ResponseWriter, re
 	data := contracts.AccountListQueryData{
 		PageQueryData: pageQueryFromRequest(request),
 		Search:        searchFromQuery(request),
+		Kind:          accountKindFromQuery(request),
 	}
 	response, ok := handler.transport.Request(responseWriter, request, contracts.AuthAccountListQuerySubject, data)
 	if !ok {
 		return
 	}
 	httpx.WriteRawJSON(responseWriter, response.Data.StatusCode, response.Data.Payload)
+}
+
+// accountKindFromQuery validates the filter here rather than forwarding
+// whatever arrived. An unrecognised value becomes NO filter, not an error and
+// not a pass-through: the value ends up in a SQL equality predicate, and
+// "unknown kind" must never be the shape that reaches it.
+//
+// Answering with the unfiltered list rather than a 400 is the deliberate half.
+// This is a staff filter control, and the failure it guards against is a
+// mistyped query parameter silently returning an EMPTY list that reads as
+// "there are no end users" - the least useful lie this screen could tell.
+func accountKindFromQuery(request *http.Request) contracts.AccountKind {
+	requestedKind := contracts.AccountKind(strings.TrimSpace(request.URL.Query().Get("kind")))
+	switch requestedKind {
+	case contracts.AccountKindStaff, contracts.AccountKindEndUser:
+		return requestedKind
+	default:
+		return ""
+	}
 }
 
 func (handler *AdminAccountsHandler) Get(responseWriter http.ResponseWriter, request *http.Request) {

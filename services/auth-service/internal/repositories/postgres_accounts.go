@@ -76,7 +76,7 @@ func (store *PostgresStore) scanAccount(ctx context.Context, predicate, value st
 // COUNT query. Search, when non-empty, matches email or name
 // case-insensitively as a substring — accounts are staff-scale, not
 // user-scale, so a plain ILIKE needs no trigram index to stay fast.
-func (store *PostgresStore) ListAccounts(ctx context.Context, cursor string, pageSize int, search string) ([]Account, string, error) {
+func (store *PostgresStore) ListAccounts(ctx context.Context, cursor string, pageSize int, search string, kind contracts.AccountKind) ([]Account, string, error) {
 	const selectColumns = `id::text, email, name, password_hash, kind, is_super_admin, disabled, token_version,
 			failed_attempts, locked_until, force_password_change, invited_at, invite_expires_at, created_at, updated_at`
 
@@ -85,6 +85,15 @@ func (store *PostgresStore) ListAccounts(ctx context.Context, cursor string, pag
 	if strings.TrimSpace(search) != "" {
 		arguments = append(arguments, "%"+strings.TrimSpace(search)+"%")
 		conditions = append(conditions, fmt.Sprintf("(email ILIKE $%d OR name ILIKE $%d)", len(arguments), len(arguments)))
+	}
+	// An equality match on an indexed-by-nothing column, which is correct at
+	// this scale: accounts are staff-scale plus however many end users exist,
+	// and the same reasoning the search's plain ILIKE already relies on
+	// applies. If the end-user table ever outgrows that, the index goes in
+	// with the measurement that justified it.
+	if strings.TrimSpace(string(kind)) != "" {
+		arguments = append(arguments, string(kind))
+		conditions = append(conditions, fmt.Sprintf("kind = $%d", len(arguments)))
 	}
 
 	pageArguments := append([]any(nil), arguments...)
@@ -147,6 +156,12 @@ func (store *PostgresStore) CreateInvite(ctx context.Context, params InviteAccou
 	defer transaction.Rollback(ctx)
 
 	var account Account
+	// Set from the literal the INSERT below writes, because that INSERT does
+	// not return it. Without this the returned Account carries an empty Kind,
+	// and an empty Kind is exactly the value contracts.AudienceForAccountKind
+	// resolves to the admin audience by fallback - correct here by luck, and a
+	// trap for the next caller that reads Kind off this result.
+	account.Kind = contracts.AccountKindStaff
 	err = transaction.QueryRow(ctx, `INSERT INTO accounts (email, kind, invited_at, invite_token_hash, invite_expires_at)
 			VALUES ($1, 'staff', NOW(), $2, $3)
 		RETURNING id::text, disabled, token_version, failed_attempts, force_password_change, invited_at, invite_expires_at, created_at, updated_at`,

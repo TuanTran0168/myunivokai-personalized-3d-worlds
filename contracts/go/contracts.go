@@ -72,6 +72,8 @@ const (
 	maximumTraits              = 6
 	minimumListItemCharacters  = 2
 	maximumListItemCharacters  = 32
+	minimumFavoriteColors      = 1
+	maximumFavoriteColors      = 4
 	minimumGoalCharacters      = 10
 	maximumGoalCharacters      = 220
 	maximumChallengeCharacters = 220
@@ -302,7 +304,7 @@ func (input WorldInput) Validate(family WorldFamily) []ValidationDetail {
 	if _, found := allowedMoods[normalizedInput.Mood]; !found {
 		details = append(details, ValidationDetail{Field: "mood", Message: "Mood is not supported."})
 	}
-	if len(normalizedInput.FavoriteColors) < 1 || len(normalizedInput.FavoriteColors) > 4 {
+	if len(normalizedInput.FavoriteColors) < minimumFavoriteColors || len(normalizedInput.FavoriteColors) > maximumFavoriteColors {
 		details = append(details, ValidationDetail{Field: "favoriteColors", Message: "Choose 1-4 favorite colors."})
 	}
 	for colorIndex, color := range normalizedInput.FavoriteColors {
@@ -312,6 +314,82 @@ func (input WorldInput) Validate(family WorldFamily) []ValidationDetail {
 	}
 	if !WorldStyleAllowedForFamily(family, normalizedInput.PreferredWorldStyle) {
 		details = append(details, ValidationDetail{Field: "preferredWorldStyle", Message: "World style is not supported for this world family."})
+	}
+	return details
+}
+
+// ValidateAsCreationDefaults validates the same fields as Validate, as a
+// DRAFT rather than as a submission: every ceiling and every vocabulary is
+// enforced, and not one minimum is.
+//
+// The distinction is the whole reason this method exists. Validate answers
+// "is this a world worth generating", and its minimums are right for that: a
+// two-word goal produces a portrait of nobody. An account's saved defaults
+// answer a different question — "what should the form be pre-filled with" —
+// and a person who has recorded their name and three interests and nothing
+// else has a perfectly good partial answer. Running Validate over it would
+// refuse to save a profile until it was a complete world, which is a page
+// that cannot be used the first time it is opened.
+//
+// An empty mood, an empty style and an empty family all mean "not chosen" and
+// are accepted for the same reason. Ceilings and vocabularies still apply,
+// because those are the two things a draft can get WRONG rather than merely
+// leave unfinished: an oversized field is a storage problem and an unknown
+// mood is a value the form could never render back.
+func (input WorldInput) ValidateAsCreationDefaults(family WorldFamily) []ValidationDetail {
+	normalizedInput := input.Normalize()
+	var details []ValidationDetail
+	if runeLength(normalizedInput.Nickname) > maximumNicknameCharacters {
+		details = append(details, ValidationDetail{Field: "nickname", Message: fmt.Sprintf("Nickname must be %d characters or fewer.", maximumNicknameCharacters)})
+	}
+	if runeLength(normalizedInput.Role) > maximumRoleCharacters {
+		details = append(details, ValidationDetail{Field: "role", Message: fmt.Sprintf("Role must be %d characters or fewer.", maximumRoleCharacters)})
+	}
+	if runeLength(normalizedInput.Goal) > maximumGoalCharacters {
+		details = append(details, ValidationDetail{Field: "goal", Message: fmt.Sprintf("Goal must be %d characters or fewer.", maximumGoalCharacters)})
+	}
+	if runeLength(normalizedInput.Challenge) > maximumChallengeCharacters {
+		details = append(details, ValidationDetail{Field: "challenge", Message: fmt.Sprintf("Challenge must be %d characters or fewer.", maximumChallengeCharacters)})
+	}
+	details = append(details, validateDraftStringList("interests", normalizedInput.Interests, maximumInterests)...)
+	details = append(details, validateDraftStringList("traits", normalizedInput.Traits, maximumTraits)...)
+	if normalizedInput.Mood != "" {
+		if _, found := allowedMoods[normalizedInput.Mood]; !found {
+			details = append(details, ValidationDetail{Field: "mood", Message: "Mood is not supported."})
+		}
+	}
+	if len(normalizedInput.FavoriteColors) > maximumFavoriteColors {
+		details = append(details, ValidationDetail{Field: "favoriteColors", Message: fmt.Sprintf("Choose %d favorite colors or fewer.", maximumFavoriteColors)})
+	}
+	for colorIndex, color := range normalizedInput.FavoriteColors {
+		if !hexadecimalColorPattern.MatchString(color) {
+			details = append(details, ValidationDetail{Field: fmt.Sprintf("favoriteColors.%d", colorIndex), Message: "Color must be a hex value like #8B5CF6."})
+		}
+	}
+	// An empty style is "not chosen". A non-empty one is still checked against
+	// the family's own vocabulary, since a style saved for the wrong family is
+	// exactly the 400 the generate call would return later, and finding out at
+	// generate time would be finding out on the wrong screen.
+	if normalizedInput.PreferredWorldStyle != "" && !WorldStyleAllowedForFamily(family, normalizedInput.PreferredWorldStyle) {
+		details = append(details, ValidationDetail{Field: "preferredWorldStyle", Message: "World style is not supported for this world family."})
+	}
+	return details
+}
+
+// validateDraftStringList is validateStringList without the minimum count:
+// an item that is too long is still wrong, a list that is too short is merely
+// unfinished. Items are bounded by the same per-item length the submission
+// path uses, so nothing oversized can be stored and later replayed into a
+// generate call that would refuse it.
+func validateDraftStringList(fieldName string, values []string, maximumCount int) []ValidationDetail {
+	var details []ValidationDetail
+	if len(values) > maximumCount {
+		details = append(details, ValidationDetail{Field: fieldName, Message: fmt.Sprintf("Choose %d or fewer.", maximumCount)})
+	}
+	for valueIndex, value := range values {
+		if runeLength(value) > maximumListItemCharacters {
+			details = append(details, ValidationDetail{Field: fmt.Sprintf("%s.%d", fieldName, valueIndex), Message: fmt.Sprintf("Must be %d characters or fewer.", maximumListItemCharacters)})
+		}
 	}
 	return details
 }

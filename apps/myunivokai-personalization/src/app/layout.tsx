@@ -4,6 +4,7 @@ import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import Image from "next/image";
 import Link from "next/link";
 import { Toaster } from "sonner";
+import { AccountMenu } from "@/features/identity/AccountMenu";
 import { gatewayOriginUrl } from "@/lib/gateway";
 import "./globals.css";
 
@@ -79,6 +80,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 >
                   API
                 </a>
+                {/* Renders nothing until the client has read the session
+                    cookies, which is why it sits before Create World rather
+                    than after: an element that appears late must not push a
+                    control the visitor was already aiming at. */}
+                <AccountMenu />
                 <Link
                   href="/"
                   className="focus-ring btn-gradient rounded-full px-4 py-1.5 text-sm font-semibold"

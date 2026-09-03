@@ -66,13 +66,7 @@ func main() {
 	}
 
 	store := repositories.NewPostgresStore(databasePool)
-	account, err := store.CreateAccount(runtimeContext, repositories.CreateAccountParams{
-		Email:               strings.ToLower(strings.TrimSpace(email)),
-		PasswordHash:        passwordHash,
-		Kind:                contracts.AccountKindStaff,
-		IsSuperAdmin:        true,
-		ForcePasswordChange: true,
-	})
+	account, err := store.CreateAccount(runtimeContext, bootstrapAccountParams(email, passwordHash))
 	if errors.Is(err, repositories.ErrConflict) {
 		log.Fatal().Str("email", email).Msg("an account with this email already exists; bootstrap only creates the first account")
 	}
@@ -80,6 +74,25 @@ func main() {
 		log.Fatal().Err(err).Msg("create bootstrap account")
 	}
 	fmt.Printf("Created super-admin account %s (%s). It must change its password on first login.\n", account.ID, account.Email)
+}
+
+// bootstrapAccountParams is extracted from main so that main_test.go can
+// assert what this command creates.
+//
+// The assertion that matters is Kind: this is the only way an account comes to
+// exist without another account creating it, so a `--kind` flag added here
+// would be a self-service path to a staff account with a super-admin flag on
+// it. There is no parameter for kind and there must never be one - the plan's
+// §15 puts "the bootstrap command stays staff-only" on the must-not-happen
+// list, and a test is what keeps that from being a sentence in a document.
+func bootstrapAccountParams(email, passwordHash string) repositories.CreateAccountParams {
+	return repositories.CreateAccountParams{
+		Email:               strings.ToLower(strings.TrimSpace(email)),
+		PasswordHash:        passwordHash,
+		Kind:                contracts.AccountKindStaff,
+		IsSuperAdmin:        true,
+		ForcePasswordChange: true,
+	}
 }
 
 func firstNonEmpty(values ...string) string {

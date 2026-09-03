@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { api, apiErrorMessage } from "@/lib/api";
 import { mapWithBoundedConcurrency } from "@/lib/concurrency";
-import { readSavedWorldReferences, removeWorldIdentifierFromGallery, type SavedWorldReference } from "@/lib/savedWorlds";
+import { resolveGalleryOwnerKey } from "@/lib/galleryOwner";
+import { hasProductSession } from "@/lib/productSession";
+import {
+  countSavedWorldsForOtherOwners,
+  readSavedWorldReferences,
+  removeWorldIdentifierFromGallery,
+  type SavedWorldReference
+} from "@/lib/savedWorlds";
 import type { World, WorldFamily } from "@/lib/types";
 
 export type SavedWorldEntry = {
@@ -84,21 +91,34 @@ async function loadSavedWorldEntries(references: SavedWorldReference[]): Promise
 export function useSavedWorlds() {
   const [savedWorldEntries, setSavedWorldEntries] = useState<SavedWorldEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // How many worlds this browser holds for somebody else — in practice, the
+  // anonymous shelf as seen by a freshly created account. The page says so
+  // rather than letting an empty grid read as "my worlds are gone".
+  const [otherOwnerWorldCount, setOtherOwnerWorldCount] = useState(0);
+  const [isSignedIn, setIsSignedIn] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
-    const savedWorldReferences = readSavedWorldReferences();
-    if (savedWorldReferences.length === 0) {
-      setIsLoading(false);
-      return;
-    }
 
-    loadSavedWorldEntries(savedWorldReferences).then((loadedEntries) => {
+    resolveGalleryOwnerKey().then((ownerKey) => {
       if (!isMounted) {
         return;
       }
-      setSavedWorldEntries(loadedEntries);
-      setIsLoading(false);
+      setIsSignedIn(hasProductSession());
+      setOtherOwnerWorldCount(countSavedWorldsForOtherOwners(ownerKey));
+
+      const savedWorldReferences = readSavedWorldReferences(ownerKey);
+      if (savedWorldReferences.length === 0) {
+        setIsLoading(false);
+        return;
+      }
+      loadSavedWorldEntries(savedWorldReferences).then((loadedEntries) => {
+        if (!isMounted) {
+          return;
+        }
+        setSavedWorldEntries(loadedEntries);
+        setIsLoading(false);
+      });
     });
 
     return () => {
@@ -113,5 +133,5 @@ export function useSavedWorlds() {
     );
   }
 
-  return { savedWorldEntries, isLoading, removeSavedWorld };
+  return { savedWorldEntries, isLoading, removeSavedWorld, otherOwnerWorldCount, isSignedIn };
 }

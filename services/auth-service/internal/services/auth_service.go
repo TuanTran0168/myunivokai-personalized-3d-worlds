@@ -35,11 +35,24 @@ const (
 	auditActionLogout         = "logout"
 	auditActionAccountDisable = "account_disable"
 	auditActionAccountEnable  = "account_enable"
-	auditResultSuccess        = "success"
-	auditResultInvalidCreds   = "invalid_credentials"
-	auditResultDisabled       = "account_disabled"
-	auditResultLocked         = "account_locked"
-	auditResultReuseDetected  = "refresh_reuse_detected"
+	// auditActionRegister is the whole of the registration metric: the plan's
+	// section 14.2 measures signups by counting these rows rather than by
+	// adding a projection to analytics-service, because an audit row is
+	// written on the only path that can create an end-user account and
+	// therefore cannot drift from it.
+	auditActionRegister      = "register"
+	auditResultSuccess       = "success"
+	auditResultInvalidCreds  = "invalid_credentials"
+	auditResultDisabled      = "account_disabled"
+	auditResultLocked        = "account_locked"
+	auditResultReuseDetected = "refresh_reuse_detected"
+	// auditResultAudienceMismatch records a credential presented at the wrong
+	// audience's door - a staff address at the product login, or an end-user
+	// address at the admin login. The RESPONSE for this case is identical to a
+	// wrong password (see login), so this row is the only place the
+	// distinction survives, and staff want it: it separates "somebody is
+	// guessing passwords" from "somebody is looking for the admin app".
+	auditResultAudienceMismatch = "audience_mismatch"
 )
 
 // AuthService holds every rule the plan assigns to auth-service itself:
@@ -51,25 +64,39 @@ type AuthService struct {
 	passwordHasher    security.PasswordHasher
 	tokenIssuer       security.TokenIssuer
 	tokenVersionCache TokenVersionCache
+	passwordPolicy    PasswordPolicy
 	cfg               config.Config
 	dummyPasswordHash string
 }
 
-func NewAuthService(store repositories.Store, passwordHasher security.PasswordHasher, tokenIssuer security.TokenIssuer, tokenVersionCache TokenVersionCache, cfg config.Config) (*AuthService, error) {
+func NewAuthService(store repositories.Store, passwordHasher security.PasswordHasher, tokenIssuer security.TokenIssuer, tokenVersionCache TokenVersionCache, passwordPolicy PasswordPolicy, cfg config.Config) (*AuthService, error) {
 	dummyHash, err := passwordHasher.Hash("myunivokai-constant-time-decoy")
 	if err != nil {
 		return nil, err
 	}
 	return &AuthService{
-		store: store, passwordHasher: passwordHasher, tokenIssuer: tokenIssuer, tokenVersionCache: tokenVersionCache, cfg: cfg, dummyPasswordHash: dummyHash,
+		store: store, passwordHasher: passwordHasher, tokenIssuer: tokenIssuer, tokenVersionCache: tokenVersionCache,
+		passwordPolicy: passwordPolicy, cfg: cfg, dummyPasswordHash: dummyHash,
 	}, nil
 }
 
-// Login verifies credentials with a constant-time response whether or not
-// the account exists: an unknown email still pays the full Argon2id cost
-// against a fixed decoy hash before returning the same error - see
-// agent-system/plans/services/auth-and-admin-plan.md#passwords.
+// Login verifies a STAFF credential pair with a constant-time response
+// whether or not the account exists: an unknown email still pays the full
+// Argon2id cost against a fixed decoy hash before returning the same error -
+// see agent-system/plans/services/auth-and-admin-plan.md#passwords.
 func (service *AuthService) Login(ctx context.Context, data contracts.LoginData, sourceAddress string) (contracts.LoginResponseData, error) {
+	return service.login(ctx, data, sourceAddress, contracts.AccountKindStaff)
+}
+
+// LoginEndUser is the product flow's login. It is the same verification,
+// lockout and audit path as the staff one - reused rather than copied, which
+// is the whole reason decision 1 extended auth-service instead of building a
+// second identity service - differing only in the kind of account it accepts.
+func (service *AuthService) LoginEndUser(ctx context.Context, data contracts.LoginData, sourceAddress string) (contracts.LoginResponseData, error) {
+	return service.login(ctx, data, sourceAddress, contracts.AccountKindEndUser)
+}
+
+func (service *AuthService) login(ctx context.Context, data contracts.LoginData, sourceAddress string, requiredKind contracts.AccountKind) (contracts.LoginResponseData, error) {
 	email := normalizeEmail(data.Email)
 	account, err := service.store.GetAccountByEmail(ctx, email)
 	if errors.Is(err, repositories.ErrNotFound) {
@@ -79,6 +106,16 @@ func (service *AuthService) Login(ctx context.Context, data contracts.LoginData,
 	}
 	if err != nil {
 		return contracts.LoginResponseData{}, err
+	}
+	// An account of the other kind is answered exactly as a missing one: the
+	// same decoy hash for the same Argon2id cost, and the same error. Skipping
+	// the decoy here would leak the distinction through response time, and
+	// returning a different error would leak it outright - either would let
+	// the product login enumerate which addresses belong to staff.
+	if account.Kind != requiredKind {
+		_ = service.passwordHasher.Verify(data.Password, service.dummyPasswordHash)
+		service.audit(ctx, &account.ID, auditActionLogin, email, auditResultAudienceMismatch, sourceAddress)
+		return contracts.LoginResponseData{}, ErrInvalidCredentials
 	}
 	if account.Disabled {
 		service.audit(ctx, &account.ID, auditActionLogin, email, auditResultDisabled, sourceAddress)
@@ -111,6 +148,18 @@ func (service *AuthService) Login(ctx context.Context, data contracts.LoginData,
 // whole family is revoked rather than only the reused row - see
 // agent-system/plans/services/auth-and-admin-plan.md#tokens.
 func (service *AuthService) Refresh(ctx context.Context, rawRefreshToken, sourceAddress string) (contracts.LoginResponseData, error) {
+	return service.refresh(ctx, rawRefreshToken, sourceAddress, contracts.AccountKindStaff)
+}
+
+// RefreshEndUserSession rotates a product session. It shares every rule with
+// the staff path - single use, family-wide reuse detection, disabled-account
+// rejection - and adds only the kind check, so a refresh token cannot be
+// carried from one audience's door to the other.
+func (service *AuthService) RefreshEndUserSession(ctx context.Context, rawRefreshToken, sourceAddress string) (contracts.LoginResponseData, error) {
+	return service.refresh(ctx, rawRefreshToken, sourceAddress, contracts.AccountKindEndUser)
+}
+
+func (service *AuthService) refresh(ctx context.Context, rawRefreshToken, sourceAddress string, requiredKind contracts.AccountKind) (contracts.LoginResponseData, error) {
 	tokenHash := security.HashRefreshToken(rawRefreshToken)
 	existingToken, err := service.store.GetRefreshTokenByHash(ctx, tokenHash)
 	if errors.Is(err, repositories.ErrNotFound) {
@@ -135,6 +184,13 @@ func (service *AuthService) Refresh(ctx context.Context, rawRefreshToken, source
 	}
 	if account.Disabled {
 		return contracts.LoginResponseData{}, ErrAccountDisabled
+	}
+	// Checked BEFORE the token is marked used, deliberately. A valid token
+	// presented at the wrong audience's refresh path is a client bug, not an
+	// attack on the token: consuming it would log the real session out of the
+	// real app as a side effect of a request that was never going to succeed.
+	if account.Kind != requiredKind {
+		return contracts.LoginResponseData{}, ErrInvalidRefreshToken
 	}
 	if err := service.store.MarkRefreshTokenUsed(ctx, existingToken.ID); err != nil {
 		return contracts.LoginResponseData{}, err
@@ -227,7 +283,12 @@ func (service *AuthService) issueSession(ctx context.Context, account repositori
 	if err != nil {
 		return contracts.LoginResponseData{}, err
 	}
-	accessToken, accessExpiresAt, err := service.tokenIssuer.IssueAccessToken(account.ID, roles, contracts.AccountAudienceAdmin, account.TokenVersion)
+	// The audience is read off the account, never chosen by the caller - see
+	// contracts.AudienceForAccountKind for why that is the structural half of
+	// decision 1's separation. Every session in the platform is minted here,
+	// so this one line is the whole of the rule.
+	audience := contracts.AudienceForAccountKind(account.Kind)
+	accessToken, accessExpiresAt, err := service.tokenIssuer.IssueAccessToken(account.ID, roles, audience, account.TokenVersion)
 	if err != nil {
 		return contracts.LoginResponseData{}, err
 	}
@@ -235,7 +296,7 @@ func (service *AuthService) issueSession(ctx context.Context, account repositori
 	if err != nil {
 		return contracts.LoginResponseData{}, err
 	}
-	refreshExpiresAt := time.Now().UTC().Add(service.cfg.RefreshTokenTTL)
+	refreshExpiresAt := time.Now().UTC().Add(service.refreshTokenLifetime(audience))
 	if err := service.store.CreateRefreshToken(ctx, repositories.RefreshToken{
 		ID: uuid.NewString(), AccountID: account.ID, FamilyID: familyID, TokenHash: refreshTokenHash, ExpiresAt: refreshExpiresAt,
 	}); err != nil {
@@ -248,6 +309,21 @@ func (service *AuthService) issueSession(ctx context.Context, account repositori
 		RefreshExpiresAt: refreshExpiresAt,
 		Account:          toAccountSummary(account, roles, permissions),
 	}, nil
+}
+
+// refreshTokenLifetime is the other half of TokenIssuer.accessTokenTTL: the
+// audience decides both ends of a session, so neither is a caller's choice.
+//
+// The two values come from different places on purpose. The admin lifetime is
+// a Config field because it is already a deployed environment variable; the
+// web one is a Go constant because S8-IDENTITY-012 turns it into a
+// system_settings row, and a value that starts life as a setting must not
+// arrive as an env var first (see config.WebRefreshTokenTTL).
+func (service *AuthService) refreshTokenLifetime(audience contracts.AccountAudience) time.Duration {
+	if audience == contracts.AccountAudienceWeb {
+		return config.WebRefreshTokenTTL
+	}
+	return service.cfg.RefreshTokenTTL
 }
 
 func (service *AuthService) bumpAndCacheTokenVersion(ctx context.Context, accountID string) error {

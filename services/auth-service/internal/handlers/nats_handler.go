@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +22,20 @@ type AuthService interface {
 	Login(ctx context.Context, data contracts.LoginData, sourceAddress string) (contracts.LoginResponseData, error)
 	Refresh(ctx context.Context, rawRefreshToken, sourceAddress string) (contracts.LoginResponseData, error)
 	Logout(ctx context.Context, rawRefreshToken, sourceAddress string) error
+
+	// The product audience's three own entry points. Logout is deliberately
+	// absent: revoking the presented refresh token's family is the same act
+	// for either audience, and the caller must already hold the token to ask,
+	// so a per-audience variant would buy nothing. HandleWebLogoutQuery
+	// answers its own subject and calls Logout above.
+	SignUpEndUser(ctx context.Context, data contracts.WebSignupData) (contracts.LoginResponseData, error)
+	LoginEndUser(ctx context.Context, data contracts.LoginData, sourceAddress string) (contracts.LoginResponseData, error)
+	RefreshEndUserSession(ctx context.Context, rawRefreshToken, sourceAddress string) (contracts.LoginResponseData, error)
+	// The account's own page. The account id on both is set by the gateway
+	// from the access token, never read from the request body - see
+	// contracts.AccountProfileGetData.
+	AccountProfile(ctx context.Context, accountID string) (contracts.AccountProfileData, error)
+	SaveAccountProfile(ctx context.Context, data contracts.AccountProfileUpdateData) (contracts.AccountProfileData, error)
 	TokenVersion(ctx context.Context, accountID string) (int, error)
 	DisableAccount(ctx context.Context, accountID, actorAccountID, sourceAddress string) error
 	EnableAccount(ctx context.Context, accountID, actorAccountID, sourceAddress string) error
@@ -28,7 +43,7 @@ type AuthService interface {
 	InviteAccount(ctx context.Context, data contracts.InviteCreateData) (contracts.InviteCreateResponseData, error)
 	AcceptInvite(ctx context.Context, data contracts.InviteAcceptData) (contracts.LoginResponseData, error)
 	AccountPermissions(ctx context.Context, accountID string) (contracts.AccountPermissionsResponseData, error)
-	ListAccounts(ctx context.Context, cursor string, pageSize int, search string) (contracts.AccountListResponseData, error)
+	ListAccounts(ctx context.Context, cursor string, pageSize int, search string, kind contracts.AccountKind) (contracts.AccountListResponseData, error)
 	GetAccount(ctx context.Context, accountID string) (contracts.AccountSummary, error)
 	CreateAccount(ctx context.Context, data contracts.AccountCreateData) (contracts.AccountSummary, error)
 	UpdateAccount(ctx context.Context, data contracts.AccountUpdateData) (contracts.AccountSummary, error)
@@ -90,6 +105,85 @@ func (handler *NATSHandler) HandleLogoutQuery(message *nats.Msg) {
 		return struct{}{}, handler.authService.Logout(ctx, envelope.Data.RefreshToken, envelope.Data.SourceAddress)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusNoContent, struct{}{}, err)
+}
+
+// HandleWebSignupQuery answers the one subject that can create an end-user
+// account. A separate subject rather than a field on the admin one, so the
+// staff/end-user separation is something a publisher cannot cross rather than
+// something it must be trusted not to ask for - see the comment on
+// contracts.AuthWebSignupQuerySubject.
+func (handler *NATSHandler) HandleWebSignupQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.WebSignupData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.LoginResponseData, error) {
+		return handler.authService.SignUpEndUser(ctx, envelope.Data)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusCreated, response, err)
+}
+
+func (handler *NATSHandler) HandleWebLoginQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.LoginData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.LoginResponseData, error) {
+		return handler.authService.LoginEndUser(ctx, envelope.Data, envelope.Data.SourceAddress)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
+func (handler *NATSHandler) HandleWebRefreshQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.RefreshData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.LoginResponseData, error) {
+		return handler.authService.RefreshEndUserSession(ctx, envelope.Data.RefreshToken, envelope.Data.SourceAddress)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
+// HandleWebLogoutQuery serves the product's own subject with the shared
+// Logout: see the AuthService interface for why logout has no per-audience
+// variant behind it.
+func (handler *NATSHandler) HandleWebLogoutQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.LogoutData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	_, err := withQueryTimeout(handler, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, handler.authService.Logout(ctx, envelope.Data.RefreshToken, envelope.Data.SourceAddress)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusNoContent, struct{}{}, err)
+}
+
+// HandleWebProfileGetQuery and HandleWebProfileUpdateQuery answer the
+// account's own page. Neither reads an account id from anywhere but
+// envelope.Data.AccountID, which the gateway sets from the access token's
+// subject: an id a caller could name is an id a caller could name somebody
+// else's.
+func (handler *NATSHandler) HandleWebProfileGetQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.AccountProfileGetData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.AccountProfileData, error) {
+		return handler.authService.AccountProfile(ctx, envelope.Data.AccountID)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
+func (handler *NATSHandler) HandleWebProfileUpdateQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.AccountProfileUpdateData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.AccountProfileData, error) {
+		return handler.authService.SaveAccountProfile(ctx, envelope.Data)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
 
 func (handler *NATSHandler) HandleTokenVersionQuery(message *nats.Msg) {
@@ -165,7 +259,7 @@ func (handler *NATSHandler) HandleAccountListQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.AccountListResponseData, error) {
-		return handler.authService.ListAccounts(ctx, envelope.Data.Cursor, envelope.Data.PageSize, envelope.Data.Search)
+		return handler.authService.ListAccounts(ctx, envelope.Data.Cursor, envelope.Data.PageSize, envelope.Data.Search, envelope.Data.Kind)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
@@ -348,6 +442,20 @@ func (handler *NATSHandler) respondWithResult(message *nats.Msg, jobID string, s
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusUnauthorized, "INVALID_INVITE_TOKEN", "This invite link is invalid or has expired."))
 	case errors.Is(err, services.ErrPasswordTooShort):
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "PASSWORD_TOO_SHORT", "The password must be at least 12 characters."))
+	case errors.Is(err, repositories.ErrRoleNotGrantableToAccountKind):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "ROLE_NOT_GRANTABLE", "A role can only be granted to a staff account."))
+	case errors.Is(err, services.ErrPasswordBreached):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "PASSWORD_BREACHED", "This password has appeared in a public data breach. Please choose a different one."))
+	case errors.Is(err, services.ErrEmailRequired):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "VALIDATION_ERROR", "An email address is required."))
+	case errors.Is(err, services.ErrProfileInvalid):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "VALIDATION_ERROR", "Please check the highlighted fields."))
+	case errors.Is(err, services.ErrProfileNotForStaff):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "PROFILE_NOT_AVAILABLE", "This account has no product profile."))
+	case errors.Is(err, services.ErrDisplayNameTooLong):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "VALIDATION_ERROR", fmt.Sprintf("A display name can be at most %d characters.", contracts.MaximumAccountDisplayNameLength)))
+	case errors.Is(err, services.ErrEmailUnavailable):
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusConflict, "EMAIL_UNAVAILABLE", "That email address cannot be used. If you already have an account, sign in instead."))
 	case errors.Is(err, services.ErrSystemRoleImmutable):
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "SYSTEM_ROLE_IMMUTABLE", "System roles cannot be edited or deleted."))
 	case errors.Is(err, services.ErrSelfRevokeForbidden):
