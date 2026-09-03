@@ -236,3 +236,39 @@ export const CREATE_FORM_INITIAL_VALUES: CreateFormValues = {
   preferredWorldStyle: "cosmic-galaxy",
   favoriteColors: ["#8B5CF6", "#06B6D4"]
 };
+
+/**
+ * What a world's chip fields may hold, mirrored from the backend exactly
+ * (contracts/go/contracts.go: interests 3-8 items, traits 3-6, both 2-32
+ * characters each), so a value accepted by a form is never rejected
+ * server-side.
+ *
+ * They live here rather than beside either form because there are now two —
+ * the create form and the account profile — and the same number written out
+ * twice is how one of them comes to accept a value the other refuses. The
+ * profile deliberately does NOT mirror the MINIMUMS: it saves a draft, and a
+ * profile with two interests is a legitimate thing to keep while a world with
+ * two is not.
+ */
+export const MINIMUM_INTERESTS = 3;
+export const MAXIMUM_INTERESTS = 8;
+export const MINIMUM_TRAITS = 3;
+export const MAXIMUM_TRAITS = 6;
+export const MINIMUM_CUSTOM_CHIP_CHARACTERS = 2;
+export const MAXIMUM_CUSTOM_CHIP_CHARACTERS = 32;
+export const MAXIMUM_FAVORITE_COLORS = 4;
+
+/**
+ * What a world's free-text fields may hold, mirrored from contracts.WorldInput
+ * the same way and for the same reason as the chip limits above. Until now
+ * these were four bare numbers in the create form's JSX and four named
+ * constants in the account form, which is two places to change and one of them
+ * easy to miss.
+ *
+ * The nickname's own ceiling is not here: it is MAXIMUM_DISPLAY_NAME_LENGTH in
+ * features/identity, because the display name and the nickname are one value
+ * under two names and there must be exactly one number for them.
+ */
+export const MAXIMUM_ROLE_LENGTH = 80;
+export const MAXIMUM_GOAL_LENGTH = 220;
+export const MAXIMUM_CHALLENGE_LENGTH = 220;

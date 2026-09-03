@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { Save, UserRound } from "lucide-react";
 import { StatusMessage } from "@/components/StatusMessage";
+import { AmbientBackdrop } from "@/components/AmbientBackdrop";
 import { ChipGroupWithCustom } from "@/components/ChipGroupWithCustom";
 import { SwatchChipGroup } from "@/components/SwatchChipGroup";
+import { PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS, useDebouncedValue } from "@/lib/useDebouncedValue";
 import {
   ACCOUNT_GENDERS,
   ACCOUNT_GENDER_LABELS,
@@ -18,12 +20,23 @@ import {
 import { readProductAccount, writeProductAccount } from "@/lib/productSession";
 import {
   COLOR_OPTIONS,
+  CREATE_FORM_INITIAL_VALUES,
   FAMILY_COPY,
   FAMILY_OPTIONS,
   INTEREST_OPTIONS,
+  MAXIMUM_CHALLENGE_LENGTH,
+  MAXIMUM_CUSTOM_CHIP_CHARACTERS,
+  MAXIMUM_FAVORITE_COLORS,
+  MAXIMUM_GOAL_LENGTH,
+  MAXIMUM_INTERESTS,
+  MAXIMUM_ROLE_LENGTH,
+  MAXIMUM_TRAITS,
+  MINIMUM_CUSTOM_CHIP_CHARACTERS,
   TRAIT_OPTIONS,
   defaultStyleForFamily
 } from "@/features/world-form/worldFormOptions";
+import { createFormValuesFromProfile } from "@/features/world-form/profileAutofill";
+import { buildCreateFormPreviewScene } from "@/features/world-form/previewScene";
 import type { WorldFamily } from "@/lib/types";
 import { toggleItem } from "@/lib/formSelection";
 import {
@@ -35,22 +48,17 @@ import {
 import { announceProductSessionChanged, useProductSession } from "./useProductSession";
 
 /**
- * Ceilings mirrored from the backend so a field cannot be filled past what the
- * gateway would refuse. Each one is the same number
- * contracts.WorldInput.ValidateAsCreationDefaults enforces as a maximum — and
- * NONE of its minimums are mirrored, because this page saves a draft: a
- * profile with two interests is a legitimate thing to keep, while a world with
- * two is not.
+ * The world-field ceilings are imported from worldFormOptions rather than
+ * written out again here: they are the same numbers
+ * contracts.WorldInput.ValidateAsCreationDefaults enforces as maxima, and the
+ * create form fills its own inputs from them. None of its MINIMUMS are
+ * imported, because this page saves a draft — a profile with two interests is
+ * a legitimate thing to keep, while a world with two is not.
+ *
+ * This one is an account field rather than a world field, so it has no
+ * counterpart there.
  */
 const MAXIMUM_FULL_NAME_LENGTH = 120;
-const MAXIMUM_ROLE_LENGTH = 80;
-const MAXIMUM_GOAL_LENGTH = 220;
-const MAXIMUM_CHALLENGE_LENGTH = 220;
-const MAXIMUM_INTERESTS = 8;
-const MAXIMUM_TRAITS = 6;
-const MAXIMUM_FAVORITE_COLORS = 4;
-const MINIMUM_CUSTOM_CHIP_CHARACTERS = 2;
-const MAXIMUM_CUSTOM_CHIP_CHARACTERS = 32;
 
 /**
  * Zero, deliberately, on both chip groups.
@@ -142,6 +150,28 @@ export function AccountProfileForm() {
     }));
   }, []);
 
+  /**
+   * The world behind this page: the one the create form would open with, built
+   * from the profile as it stands on screen rather than as it was last saved.
+   *
+   * This is the answer to a setting that used to do nothing visible. Choosing
+   * a preferred family filled a select and left the page exactly as it was, so
+   * there was no way to tell a saved preference from a discarded one without
+   * navigating away and back. Now the world changes as you choose.
+   *
+   * Debounced for the same reason the create page's preview is: rebuilding a
+   * WebGL scene on every keystroke in the goal field would tear the GL context
+   * down and back up per character.
+   */
+  const debouncedProfile = useDebouncedValue(profile, PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS);
+  const backdropScene = useMemo(
+    // Against CREATE_FORM_INITIAL_VALUES, so an unanswered field shows what the
+    // create form shows for it — the backdrop is a preview of that form, not of
+    // the profile row.
+    () => buildCreateFormPreviewScene(createFormValuesFromProfile(debouncedProfile, CREATE_FORM_INITIAL_VALUES)),
+    [debouncedProfile]
+  );
+
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -169,12 +199,41 @@ export function AccountProfileForm() {
     [profile]
   );
 
+  /**
+   * The page: its world, its heading, and whichever panel the session state
+   * calls for. Written once here because all four states below share every
+   * part of it but the panel.
+   *
+   * The backdrop is a SIBLING of the content column and not a child of it. Its
+   * layer is fixed at z-0, so inside the column it would paint over the
+   * heading rather than behind it — which is also why the column carries
+   * `relative z-10`. The gallery route is arranged the same way.
+   */
+  function withBackdrop(children: ReactNode) {
+    return (
+      <>
+        <AmbientBackdrop scene={backdropScene} />
+        <main className="relative z-10 mx-auto w-full max-w-2xl px-4 pb-16 pt-[76px] sm:px-6">
+          <div className="mb-8">
+            <div className="mb-2 font-mono text-xs uppercase tracking-[0.2em] text-brass">Account</div>
+            <h1 className="font-display text-4xl font-semibold tracking-normal text-paper">Your profile</h1>
+          </div>
+          {children}
+        </main>
+      </>
+    );
+  }
+
   if (sessionState.status === "unknown") {
-    return null;
+    // The page and its world, with no panel yet. The session resolves on the
+    // first effect, and the world starts on the create form's own default
+    // exactly as the create page does — an account with a saved family sees it
+    // arrive a moment later, in both places.
+    return withBackdrop(null);
   }
 
   if (sessionState.status === "signed-out") {
-    return (
+    return withBackdrop(
       <div className="glass-panel w-full rounded-2xl p-6 text-center sm:p-8">
         <p className="text-lg font-semibold text-on-surface">Your profile lives with your account</p>
         <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-on-surface-variant">
@@ -192,14 +251,16 @@ export function AccountProfileForm() {
   }
 
   if (isLoading) {
-    return <StatusMessage tone="loading">{status.kind === "waking" ? wakingMessage() : "Loading your profile…"}</StatusMessage>;
+    return withBackdrop(
+      <StatusMessage tone="loading">{status.kind === "waking" ? wakingMessage() : "Loading your profile…"}</StatusMessage>
+    );
   }
 
   const isBusy = status.kind === "submitting" || status.kind === "waking";
   const chosenFamily = profile.preferredWorldFamily;
   const familyCopy = chosenFamily === NO_PREFERRED_FAMILY ? null : FAMILY_COPY[chosenFamily];
 
-  return (
+  return withBackdrop(
     <form onSubmit={handleSubmit} className="grid gap-6" noValidate>
       <section className="glass-panel grid gap-4 rounded-2xl p-5 sm:p-6">
         <h2 className="font-display text-xl font-semibold text-paper">You</h2>

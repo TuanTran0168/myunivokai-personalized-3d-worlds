@@ -6,14 +6,15 @@ export const metadata: Metadata = {
   description: "Your name, and the defaults your create-world form is filled from."
 };
 
+/**
+ * The whole page is the form component, heading and all.
+ *
+ * It owns the layout because it owns the world behind it: that backdrop is
+ * built from the profile the form is holding, and it has to be a SIBLING of
+ * the content column rather than a child, or its fixed layer would paint over
+ * the heading. The gallery route is arranged the same way for the same reason.
+ * This file stays a server component so the route keeps its metadata.
+ */
 export default function AccountPage() {
-  return (
-    <main className="mx-auto w-full max-w-2xl px-4 pb-16 pt-[76px] sm:px-6">
-      <div className="mb-8">
-        <div className="mb-2 font-mono text-xs uppercase tracking-[0.2em] text-brass">Account</div>
-        <h1 className="font-display text-4xl font-semibold tracking-normal text-paper">Your profile</h1>
-      </div>
-      <AccountProfileForm />
-    </main>
-  );
+  return <AccountProfileForm />;
 }

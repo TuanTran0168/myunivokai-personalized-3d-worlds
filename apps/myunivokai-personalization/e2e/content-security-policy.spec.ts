@@ -102,8 +102,8 @@ test.describe("the Content-Security-Policy", () => {
   });
 
   // The sign-up form gained a display-name field (S8-IDENTITY-019), and the
-  // account page it points at is the one screen a signed-out visitor reaches
-  // that has no world in it. Both are asserted because the create page's own
+  // account page it points at now renders a world of its own behind the form
+  // (S8-IDENTITY-020). Both are asserted because the create page's own
   // hydration is proven by the renderer tests below, and these two are not.
   test("leaves the sign-up form hydrated, display name and all", async ({ page }) => {
     await listenForPolicyViolations(page);
@@ -129,6 +129,11 @@ test.describe("the Content-Security-Policy", () => {
     // Rendered by the client after it reads the session cookies, so seeing it
     // at all proves hydration ran under the policy.
     await expect(page.getByText("Your profile lives with your account")).toBeVisible();
+    // And the world behind it: this route mounts a scene renderer of its own
+    // now, which is a second thing the policy could refuse and a slower one to
+    // notice, since a missing backdrop breaks nothing visible on the panel.
+    await expect(page.locator("canvas")).toBeVisible({ timeout: 60_000 });
+    await page.waitForTimeout(SCENE_SETTLE_MILLISECONDS);
 
     expect(await readDocumentPolicyViolations(page)).toEqual([]);
     expect(observations.policyViolations).toEqual([]);

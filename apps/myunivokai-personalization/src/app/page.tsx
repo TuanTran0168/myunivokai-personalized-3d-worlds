@@ -17,13 +17,12 @@ import {
   isWorldChangeWorthPlaying,
   worldChangeDirectionBetween
 } from "@/features/transitions/worldChangeDirection";
-import { ensureRange, toggleItem } from "@/lib/formSelection";
+import { toggleItem } from "@/lib/formSelection";
 import { activeSectionIndex, isScrolledToEnd, resolveActiveSectionId } from "@/lib/formSectionProgress";
 import { FORM_RAIL_ELEMENT_ID } from "@/lib/formRailCollapse";
 import { useWorldChromeCollapse, WorldChromeToggle } from "@/components/WorldChromeToggle";
-import { buildPreviewSceneConfig, pointsOfInterestFromScene } from "@/lib/scene";
-import { buildPreviewForestSceneConfig } from "@/lib/forestScene";
-import { buildPreviewOceanSceneConfig } from "@/lib/oceanScene";
+import { PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS, useDebouncedValue } from "@/lib/useDebouncedValue";
+import { pointsOfInterestFromScene } from "@/lib/scene";
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { prefetchSceneRendererForFamily } from "@/features/scene-renderers/registry";
 import { worldPagePath } from "@/lib/worldRoutes";
@@ -35,12 +34,24 @@ import {
   FAMILY_COPY,
   FAMILY_OPTIONS,
   INTEREST_OPTIONS,
+  MAXIMUM_CHALLENGE_LENGTH,
+  MAXIMUM_CUSTOM_CHIP_CHARACTERS,
+  MAXIMUM_GOAL_LENGTH,
+  MAXIMUM_INTERESTS,
+  MAXIMUM_ROLE_LENGTH,
+  MAXIMUM_TRAITS,
+  MINIMUM_CUSTOM_CHIP_CHARACTERS,
+  MINIMUM_INTERESTS,
+  MINIMUM_TRAITS,
   TRAIT_OPTIONS,
   defaultStyleForFamily,
   type CreateFormValues
 } from "@/features/world-form/worldFormOptions";
+import { buildCreateWorldPayload } from "@/features/world-form/createWorldPayload";
+import { buildPreviewSceneForFamily } from "@/features/world-form/previewScene";
 import { createFormValuesFromProfile, isCreateFormPristine } from "@/features/world-form/profileAutofill";
 import { fetchAccountProfile } from "@/lib/accountProfile";
+import { MAXIMUM_DISPLAY_NAME_LENGTH } from "@/features/identity/authCredentialsFormState";
 import { useProductSession } from "@/features/identity/useProductSession";
 
 // One entry per scrollable field group in the rail, in DOM order — the single
@@ -59,34 +70,10 @@ const PROGRESS_SECTION_IDS = [
   "palette"
 ] as const;
 
-// The live preview rebuilds the WebGL scene whenever its inputs change. Debounce
-// so a burst of keystrokes/toggles only rebuilds the canvas once the user pauses,
-// instead of tearing down and recreating the GL context on every character.
-const PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS = 300;
-
 // The submit button is pinned in the rail footer, outside the <form> element, so
 // it stays visible while the field column scrolls; this id wires it back to the
 // form via the HTML `form` attribute.
 const CREATE_FORM_ELEMENT_ID = "create-universe-form";
-
-// Custom chip-group limits mirror the backend validation exactly
-// (contracts/go/contracts.go: interests 3-8 items, traits 3-6, both 2-32
-// characters each), so a value accepted here is never rejected server-side.
-const MINIMUM_CUSTOM_CHIP_CHARACTERS = 2;
-const MAXIMUM_CUSTOM_CHIP_CHARACTERS = 32;
-const MINIMUM_INTERESTS = 3;
-const MAXIMUM_INTERESTS = 8;
-const MINIMUM_TRAITS = 3;
-const MAXIMUM_TRAITS = 6;
-
-function useDebouncedValue<ValueType>(value: ValueType, delayMilliseconds: number): ValueType {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const timeoutId = setTimeout(() => setDebouncedValue(value), delayMilliseconds);
-    return () => clearTimeout(timeoutId);
-  }, [value, delayMilliseconds]);
-  return debouncedValue;
-}
 
 /**
  * The live-preview summary content: nickname/family title, curated-from
@@ -146,6 +133,41 @@ export default function HomePage() {
   const [worldFamily, setWorldFamily] = useState<WorldFamily>(CREATE_FORM_INITIAL_VALUES.worldFamily);
   const [preferredWorldStyle, setPreferredWorldStyle] = useState(CREATE_FORM_INITIAL_VALUES.preferredWorldStyle);
   const [favoriteColors, setFavoriteColors] = useState<string[]>(CREATE_FORM_INITIAL_VALUES.favoriteColors);
+
+  /**
+   * The ten fields as the one shape everything else takes: the payload, the
+   * preview, and the profile-autofill rule.
+   */
+  const currentFormValues: CreateFormValues = useMemo(
+    () => ({
+      nickname,
+      role,
+      goal,
+      challenge,
+      interests,
+      traits,
+      mood,
+      worldFamily,
+      preferredWorldStyle,
+      favoriteColors
+    }),
+    [challenge, favoriteColors, goal, interests, mood, nickname, preferredWorldStyle, role, traits, worldFamily]
+  );
+  /**
+   * The same values, readable from a callback created several renders ago.
+   *
+   * The account profile arrives from the network, so the effect that applies
+   * it resolves long after the render that started it — and the question it
+   * asks, "has the visitor typed anything yet", has to be answered about the
+   * form as it is NOW rather than as it was when the request went out. Reading
+   * the closed-over state instead would let a family picked while auth-service
+   * was waking up be overwritten by the profile a second later.
+   */
+  const currentFormValuesReference = useRef(currentFormValues);
+  useEffect(() => {
+    currentFormValuesReference.current = currentFormValues;
+  }, [currentFormValues]);
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [generationStatus, setGenerationStatus] = useState<GenerationJobStatus | undefined>();
@@ -208,18 +230,7 @@ export default function HomePage() {
         if (!isMounted || !accountProfile.autofillCreateForm) {
           return;
         }
-        const currentValues: CreateFormValues = {
-          nickname,
-          role,
-          goal,
-          challenge,
-          interests,
-          traits,
-          mood,
-          worldFamily,
-          preferredWorldStyle,
-          favoriteColors
-        };
+        const currentValues = currentFormValuesReference.current;
         if (!isCreateFormPristine(currentValues)) {
           return;
         }
@@ -231,7 +242,12 @@ export default function HomePage() {
         setInterests(filledValues.interests);
         setTraits(filledValues.traits);
         setMood(filledValues.mood);
-        setWorldFamily(filledValues.worldFamily);
+        // Through showWorldFamilyOnCanvas, never setWorldFamily on its own:
+        // the canvas follows a SECOND piece of state, and a family set without
+        // it leaves the form saying ocean while the world stays a universe.
+        // That was the bug — a preferred family that filled the picker and
+        // changed nothing anybody could see.
+        showWorldFamilyOnCanvas(currentValues.worldFamily, filledValues.worldFamily);
         setPreferredWorldStyle(filledValues.preferredWorldStyle);
         setFavoriteColors(filledValues.favoriteColors);
         setWasFilledFromProfile(true);
@@ -242,9 +258,9 @@ export default function HomePage() {
     return () => {
       isMounted = false;
     };
-    // Depends on the session only. The field values are READ inside, but a
-    // dependency on them would re-run this on every keystroke, and the
-    // pristine check plus the ref are what make one run correct.
+    // Depends on the session only, and now honestly so: the field values are
+    // read from currentFormValuesReference at the moment the profile answers,
+    // rather than closed over from the render that started the request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionState.status]);
 
@@ -263,7 +279,10 @@ export default function HomePage() {
     setInterests(CREATE_FORM_INITIAL_VALUES.interests);
     setTraits(CREATE_FORM_INITIAL_VALUES.traits);
     setMood(CREATE_FORM_INITIAL_VALUES.mood);
-    setWorldFamily(CREATE_FORM_INITIAL_VALUES.worldFamily);
+    // Same rule as the autofill above: emptying the form has to carry the
+    // canvas back to the family the form opens with, or the world keeps
+    // showing the profile's ocean under a blank universe form.
+    showWorldFamilyOnCanvas(worldFamily, CREATE_FORM_INITIAL_VALUES.worldFamily);
     setPreferredWorldStyle(CREATE_FORM_INITIAL_VALUES.preferredWorldStyle);
     setFavoriteColors(CREATE_FORM_INITIAL_VALUES.favoriteColors);
     setWasFilledFromProfile(false);
@@ -307,10 +326,23 @@ export default function HomePage() {
    * chrome tint — still follows `worldFamily` immediately, so the picker itself
    * never feels like it lagged.
    */
-  const [renderedWorldFamily, setRenderedWorldFamily] = useState<WorldFamily>("universe");
+  const [renderedWorldFamily, setRenderedWorldFamily] = useState<WorldFamily>(CREATE_FORM_INITIAL_VALUES.worldFamily);
 
   /**
-   * Change family, and carry the old world off to do it.
+   * Move the form to a family AND move the canvas with it, carrying the old
+   * world off on the way.
+   *
+   * THE ONLY PLACE `setWorldFamily` IS CALLED. That is the invariant this
+   * function exists to hold: `worldFamily` is what the form says and
+   * `renderedWorldFamily` is what the canvas shows, they are allowed to differ
+   * only for the length of a departure, and every path that changes the first
+   * has to be a path that eventually changes the second. Two paths were not —
+   * the profile autofill and the "start from a blank form" button — which is
+   * how an account whose preferred family was ocean got a filled-in picker
+   * over an unchanged universe.
+   *
+   * `fromFamily` is passed rather than read from state because one caller is a
+   * network callback whose closure may be several renders old.
    *
    * The still is captured HERE, before the state update, and that ordering is
    * the whole trick: one render later React may have swapped the canvas for the
@@ -318,8 +350,8 @@ export default function HomePage() {
    * comes back null (no canvas yet, a cleared GL buffer, a zero-size box)
    * simply means no transition — the family still changes, immediately.
    */
-  function handleSelectWorldFamily(nextFamily: WorldFamily) {
-    if (!isWorldChangeWorthPlaying(worldFamily, nextFamily)) {
+  function showWorldFamilyOnCanvas(fromFamily: WorldFamily, nextFamily: WorldFamily) {
+    if (!isWorldChangeWorthPlaying(fromFamily, nextFamily)) {
       return;
     }
     const still = captureSceneStill(sceneContainerReference.current);
@@ -329,7 +361,7 @@ export default function HomePage() {
       setTransitionRequest({
         still,
         direction: worldChangeDirectionBetween(
-          FAMILY_OPTIONS.findIndex((option) => option.value === worldFamily),
+          FAMILY_OPTIONS.findIndex((option) => option.value === fromFamily),
           FAMILY_OPTIONS.findIndex((option) => option.value === nextFamily)
         ),
         family: nextFamily,
@@ -340,11 +372,22 @@ export default function HomePage() {
       setRenderedWorldFamily(nextFamily);
     }
     setWorldFamily(nextFamily);
+  }
+
+  /** The picker's own handler: the family change, plus the style that goes with it. */
+  function handleSelectWorldFamily(nextFamily: WorldFamily) {
+    if (!isWorldChangeWorthPlaying(worldFamily, nextFamily)) {
+      return;
+    }
+    showWorldFamilyOnCanvas(worldFamily, nextFamily);
     // A style belongs to exactly one family now, and the gateway returns 400
     // for one family's style posted to another. Reset to the family's own
     // neutral style rather than carrying the old value across — the neutral is
     // a no-op in its builder, so this is the least surprising landing point as
     // well as the only valid one.
+    //
+    // The autofill does NOT come through here: it has a saved style of its own
+    // to apply, and this line would throw it away.
     setPreferredWorldStyle(defaultStyleForFamily(nextFamily));
   }
 
@@ -465,25 +508,7 @@ export default function HomePage() {
     return () => controller.abort();
   }, [router]);
 
-  const payload = useMemo(() => {
-    const safeInterests = ensureRange(interests, ["Technology", "Design", "AI"], MINIMUM_INTERESTS, MAXIMUM_INTERESTS);
-    const safeTraits = ensureRange(traits, ["curious", "builder", "focused"], MINIMUM_TRAITS, MAXIMUM_TRAITS);
-    const safeGoal =
-      goal.trim() ||
-      `Build a personal universe around ${safeInterests.slice(0, 3).join(", ")} with a ${safeTraits[0]} energy.`;
-
-    return {
-      nickname: nickname.trim() || "Neo",
-      role: role.trim() || "Explorer",
-      interests: safeInterests,
-      traits: safeTraits,
-      goal: safeGoal.slice(0, 220),
-      challenge: challenge.trim() || undefined,
-      mood,
-      favoriteColors: favoriteColors.length ? favoriteColors : ["#8B5CF6"],
-      preferredWorldStyle
-    };
-  }, [challenge, favoriteColors, goal, interests, mood, nickname, preferredWorldStyle, role, traits]);
+  const payload = useMemo(() => buildCreateWorldPayload(currentFormValues), [currentFormValues]);
 
   // Captured once, from the very first render, so it is exactly the payload
   // every field's own initial state produces — the "nobody has typed anything
@@ -505,31 +530,21 @@ export default function HomePage() {
     () => JSON.stringify(debouncedPayload) === JSON.stringify(initialPayloadReference.current),
     [debouncedPayload]
   );
-  const previewScene = useMemo(() => {
-    const previewInput = {
-      nickname: debouncedPayload.nickname,
-      interests: debouncedPayload.interests,
-      traits: debouncedPayload.traits,
-      mood: debouncedPayload.mood,
-      preferredWorldStyle: debouncedPayload.preferredWorldStyle,
-      favoriteColors: debouncedPayload.favoriteColors
-    };
-    // Same inputs, family-specific mirror: the preview always renders with the
-    // exact renderer the generated world will use.
-    //
-    // Keyed on renderedWorldFamily, NOT worldFamily. During a transition the
-    // two differ, and this is the seam where that matters: recomputing the
-    // scene the moment the picker is clicked would mount the destination
-    // straight into the departure animation, which is precisely what the
-    // deferred commit exists to prevent.
-    if (renderedWorldFamily === "nature") {
-      return buildPreviewForestSceneConfig(previewInput);
-    }
-    if (renderedWorldFamily === "ocean") {
-      return buildPreviewOceanSceneConfig(previewInput, { showCalmSurfaceDefault: isPreviewUncustomized });
-    }
-    return buildPreviewSceneConfig(previewInput);
-  }, [debouncedPayload, isPreviewUncustomized, renderedWorldFamily]);
+  // Same inputs, family-specific mirror: the preview always renders with the
+  // exact renderer the generated world will use.
+  //
+  // Keyed on renderedWorldFamily, NOT worldFamily. During a transition the
+  // two differ, and this is the seam where that matters: recomputing the
+  // scene the moment the picker is clicked would mount the destination
+  // straight into the departure animation, which is precisely what the
+  // deferred commit exists to prevent.
+  const previewScene = useMemo(
+    () =>
+      buildPreviewSceneForFamily(renderedWorldFamily, debouncedPayload, {
+        showCalmSurfaceDefault: isPreviewUncustomized
+      }),
+    [debouncedPayload, isPreviewUncustomized, renderedWorldFamily]
+  );
 
   // The preview mounts the selected family immediately, so that chunk is already
   // in flight. Warm the others as well: this is the one page whose whole job is
@@ -855,7 +870,7 @@ export default function HomePage() {
                     onChange={(event) => setNickname(event.target.value)}
                     className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                     placeholder="e.g. Neo"
-                    maxLength={32}
+                    maxLength={MAXIMUM_DISPLAY_NAME_LENGTH}
                   />
                 </label>
                 <label className="grid min-w-0 gap-1.5" data-form-section={PROGRESS_SECTION_IDS[2]}>
@@ -865,7 +880,7 @@ export default function HomePage() {
                     onChange={(event) => setRole(event.target.value)}
                     className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                     placeholder="e.g. Explorer"
-                    maxLength={80}
+                    maxLength={MAXIMUM_ROLE_LENGTH}
                   />
                 </label>
               </div>
@@ -912,7 +927,7 @@ export default function HomePage() {
                   onChange={(event) => setGoal(event.target.value)}
                   className="focus-ring input-dark min-h-[60px] resize-y rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                   placeholder="Build a beautiful AI product that feels personal and useful."
-                  maxLength={220}
+                  maxLength={MAXIMUM_GOAL_LENGTH}
                 />
               </label>
 
@@ -923,7 +938,7 @@ export default function HomePage() {
                   onChange={(event) => setChallenge(event.target.value)}
                   className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                   placeholder="e.g. I overthink product direction"
-                  maxLength={220}
+                  maxLength={MAXIMUM_CHALLENGE_LENGTH}
                 />
               </label>
 
