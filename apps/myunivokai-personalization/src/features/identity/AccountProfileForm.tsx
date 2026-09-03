@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft, Save, UserRound } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { Save, UserRound } from "lucide-react";
 import { StatusMessage } from "@/components/StatusMessage";
+import { ReturnDestinationLinks } from "@/components/ReturnDestinationLinks";
 import { Toast, type ToastTone } from "@/components/Toast";
 import { AmbientBackdrop } from "@/components/AmbientBackdrop";
 import { ChipGroupWithCustom } from "@/components/ChipGroupWithCustom";
@@ -80,6 +82,10 @@ const NO_PREFERRED_FAMILY = "";
 
 export function AccountProfileForm() {
   const { sessionState } = useProductSession();
+  // Passed to ReturnDestinationLinks rather than written out as "/account", so
+  // this page does not hold a second copy of its own route and the links never
+  // offer the page they are on.
+  const currentPath = usePathname();
   const [profile, setProfile] = useState<AccountProfile>(() => profileWithCreateFormDefaults(EMPTY_ACCOUNT_PROFILE));
   const [isLoading, setIsLoading] = useState(true);
   const [status, setStatus] = useState<AuthCredentialsFormStatus>({ kind: "idle" });
@@ -235,7 +241,7 @@ export function AccountProfileForm() {
     return (
       <>
         <AmbientBackdrop scene={backdropScene} />
-        <main className="relative z-10 mx-auto w-full max-w-2xl px-4 pb-16 pt-[76px] sm:px-6">
+        <main className="relative z-10 mx-auto w-full max-w-2xl px-4 pb-footer-clear pt-header-clear sm:px-6">
           <div className="mb-8">
             <div className="mb-2 font-mono text-xs uppercase tracking-[0.2em] text-brass">Account</div>
             <h1 className="font-display text-4xl font-semibold tracking-normal text-paper">Your profile</h1>
@@ -250,10 +256,11 @@ export function AccountProfileForm() {
             message={toast.message}
             onDismiss={dismissToast}
             action={
+              // Success only. A failure leaves unsaved edits on the page, and
+              // a way out offered next to "could not save" is a way to lose
+              // them - the one thing left to do there is press Save again.
               toast.tone === "success" ? (
-                <Link href="/gallery" className="focus-ring w-fit rounded font-semibold text-secondary underline">
-                  Back to your worlds
-                </Link>
+                <ReturnDestinationLinks currentPath={currentPath} presentation="notice" onNavigate={dismissToast} />
               ) : undefined
             }
           />
@@ -357,7 +364,7 @@ export function AccountProfileForm() {
           <p className="mt-1 text-sm text-on-surface-variant">
             The create-world form is filled from these, and holds them to the same rules it holds itself to —{" "}
             {MINIMUM_INTERESTS} interests, {MINIMUM_TRAITS} traits, at least one colour. The written fields are
-            optional; leave one blank and the form keeps its own.
+            optional. Leave one blank and the form keeps its own.
           </p>
         </div>
 
@@ -531,17 +538,16 @@ export function AccountProfileForm() {
           <Save className="h-4 w-4" aria-hidden="true" />
           Save profile
         </button>
-        {/* The way out, next to the way to commit, and there whether or not
+        {/* BOTH ways out, next to the way to commit, and there whether or not
             anything was saved. A page reached from the header menu has no back
-            of its own, and the toast's copy of this link is gone seven seconds
-            after a save. */}
-        <Link
-          href="/gallery"
-          className="focus-ring inline-flex items-center gap-2 rounded-md border border-hairline bg-black/30 px-4 py-2.5 font-semibold text-on-surface hover:border-white/30"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Back to your worlds
-        </Link>
+            of its own, and the toast's copy of these is gone seven seconds
+            after a save.
+
+            It used to be one link to the gallery. The create form is the other
+            place somebody who has just set their defaults wants to be — it is
+            the form those defaults fill — and it was reachable only by way of
+            the header. */}
+        <ReturnDestinationLinks currentPath={currentPath} presentation="control" />
         {status.kind === "submitting" ? <StatusMessage tone="loading">Saving…</StatusMessage> : null}
         {status.kind === "waking" ? <StatusMessage tone="loading">{wakingMessage()}</StatusMessage> : null}
         {status.kind === "failed" ? <StatusMessage tone="error">{status.message}</StatusMessage> : null}

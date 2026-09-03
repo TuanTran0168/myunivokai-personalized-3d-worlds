@@ -75,7 +75,20 @@ const config: Config = {
       spacing: {
         "margin-mobile": "16px",
         "margin-desktop": "48px",
-        gutter: "24px"
+        gutter: "24px",
+        // What a scrolling page needs so its first and last lines are not
+        // underneath the fixed chrome. Both derive from the 57px
+        // --header-height / --footer-height contract in globals.css rather than
+        // from the 76 and 12 and 16 that were written out at each call site —
+        // which is how the gallery's last row of cards ended up sitting under
+        // the footer while the profile page's did not.
+        "header-clear": "calc(var(--header-height) + 19px)",
+        "footer-clear": "calc(var(--footer-height) + 19px)",
+        // The bar heights exactly, for a screen that CENTRES one panel between
+        // the two rather than scrolling under them: there the clearance would
+        // shift the panel off centre.
+        "header-height": "var(--header-height)",
+        "footer-height": "var(--footer-height)"
       },
       borderRadius: {
         glass: "22px"

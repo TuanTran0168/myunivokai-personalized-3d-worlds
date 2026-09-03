@@ -30,6 +30,11 @@ const jetBrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jet
 // above sibling chrome no matter what z-index it asks for.
 const COPYRIGHT_YEAR = 2026;
 
+// Read from CSS rather than restated as a number, so this stack and
+// components/Toast.tsx cannot end up in two different places. sonner writes a
+// string offset straight into its own --offset-top, so a var() passes through.
+const TOAST_TOP_INSET = "var(--toast-inset-top)";
+
 export const metadata: Metadata = {
   title: "Myunivokai",
   description: "Personal 3D universe generator"
@@ -59,7 +64,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                     1KB vector has nothing to optimise anyway. Empty alt — the
                     wordmark beside it already names the link. */}
                 <Image src="/logo.svg" alt="" width={24} height={24} unoptimized priority />
-                Myunivokai
+                {/* The mark alone below `sm`, and this is a fix rather than a
+                    tidy-up: at 375px the wordmark, Gallery, the identity
+                    control and Create World needed about 440px of a 375px bar,
+                    so they overlapped each other — worst when somebody is
+                    signed in and the identity control carries a name.
+                    `sr-only` rather than `hidden`, so the link keeps its
+                    accessible name when only the 24px mark is visible. */}
+                <span className="sr-only sm:not-sr-only">Myunivokai</span>
               </Link>
               <nav className="pointer-events-auto flex items-center gap-3 sm:gap-6">
                 <Link
@@ -87,7 +99,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 <AccountMenu />
                 <Link
                   href="/"
-                  className="focus-ring btn-gradient rounded-full px-4 py-1.5 text-sm font-semibold"
+                  className="focus-ring btn-gradient whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-semibold"
                 >
                   Create World
                 </Link>
@@ -120,12 +132,21 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </div>
 
         {/* Liquid-Glass toasts: brief, auto-dismissing, cleared below the 57px
-            header. Styled in globals.css (.lg-toast). */}
+            header. Styled in globals.css (.lg-toast).
+
+            The top inset is the CSS variable and not the 72px it used to be
+            written as, because components/Toast.tsx is a second toast surface
+            and the two have to appear in the same place — a save confirmation
+            that lands somewhere a share confirmation never does reads as a
+            different kind of message. Only `top` is set: this stack is
+            centred, so its left and right insets decide nothing and are left
+            at sonner's own default. */}
         <Toaster
           position="top-center"
           theme="dark"
           duration={2600}
-          offset="72px"
+          offset={{ top: TOAST_TOP_INSET }}
+          mobileOffset={{ top: TOAST_TOP_INSET }}
           toastOptions={{ className: "lg-toast" }}
         />
       </body>

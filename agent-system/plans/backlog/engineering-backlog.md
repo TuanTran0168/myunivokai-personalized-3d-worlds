@@ -715,6 +715,54 @@ parts of §3.4, §5, §9, §10, §11 and §17 in place, and most of them cut sco
 there is no account-deletion feature, no mail provider, no password reset, no
 passkeys and no `library-service` in this epic.
 
+## DEFECT-CSP-001 — Nothing hydrates on a production build of the web app
+
+Status: Open, unfixed, PRE-EXISTING on `staging`
+Priority: P0 if the deployed app is affected, P2 if it is only latent — that is
+the first thing to establish
+Found: 2026-09-03, by the `SHOOT_PORT` override added while folding chrome work
+into [Sprint 3](../sprints/sprint-03-2026-09-09/user-stories.md#the-defect-this-work-uncovered-and-did-not-fix)
+
+As a visitor loading any page of a production build,
+I want the page to become interactive,
+so that the account menu, the 3D world and every form on it work at all.
+
+Scenario: A prerendered page carries no nonce and the policy demands one
+
+Given `next build` prerenders every route except the three share pages
+And the prerendered HTML is written with no `nonce` attribute on any of its
+twenty script tags
+When `src/middleware.ts` answers the document request with
+`script-src 'self' 'nonce-<per-request>' 'strict-dynamic'`
+Then `'strict-dynamic'` disables the `'self'` allowance
+And the browser refuses every application chunk
+And nothing on the page hydrates — no account menu, no canvas, no client-side
+validation.
+
+Reproduce, from `apps/myunivokai-personalization`:
+
+```bash
+SHOOT_PORT=41399 npm run shoot -- e2e/content-security-policy.spec.ts --project=desktop
+# 7 of 8 fail; the one that passes only reads the header
+```
+
+Why it was invisible: `playwright.config.ts` defaults to port 41300 with
+`reuseExistingServer`, which is `npm run dev`'s port and the local compose
+stack's port, so `npm run check:csp` has been measuring a development server —
+and `next dev` injects the nonce correctly.
+
+Scenario: The fix is a choice, which is why this is not a one-line commit
+
+Given Next's nonce mechanism requires dynamic rendering
+When the fix is chosen
+Then it is either opting the app out of static prerendering, or giving the
+policy something a prerender can carry
+And it is NOT `'unsafe-inline'` — `lib/contentSecurityPolicy.ts` already
+records why that would be a policy permitting the attack it exists to stop
+And the first step is establishing whether the Vercel deployment (see the note
+in `render.yaml`) serves the prerender with this header, because that decides
+whether this is a live outage or a latent one.
+
 ## DEFERRED-AUTH-001 — Define identity before authentication
 
 Status: **Closed on 2026-09-02 — superseded by

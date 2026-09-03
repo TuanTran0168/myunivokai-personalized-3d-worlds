@@ -38,7 +38,7 @@ export default function GalleryPage() {
 
   if (isLoading) {
     return (
-      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-[57px] pt-[57px]">
+      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-footer-clear pt-header-clear">
         <StatusMessage tone="loading">Loading your saved worlds...</StatusMessage>
       </main>
     );
@@ -47,7 +47,9 @@ export default function GalleryPage() {
   return (
     <>
       <AmbientWorld savedWorldEntries={savedWorldEntries} />
-      <main className="relative z-10 mx-auto w-full max-w-7xl px-4 pb-12 pt-[76px] sm:px-6">
+      {/* pb-footer-clear, not the pb-12 it was: 48px is less than the fixed
+          footer's 57px, so the last row of cards sat underneath it. */}
+      <main className="relative z-10 mx-auto w-full max-w-7xl px-4 pb-footer-clear pt-header-clear sm:px-6">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="mb-2 font-mono text-xs uppercase tracking-[0.2em] text-brass">Saved Worlds</div>
