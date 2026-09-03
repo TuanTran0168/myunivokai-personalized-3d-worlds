@@ -802,6 +802,28 @@ cache, and the two lists are merged newest-first with the server list winning
 on conflict. A logged-in visitor on a new device sees their worlds; a visitor
 with no account sees exactly what they see today.
 
+**Corrected 2026-09-03, while implementing `S8-IDENTITY-016`: the merge rule
+resurrects deleted worlds, so the cache is REPLACED.** Winning a conflict only
+decides ids present in BOTH lists. An id present only in the cache survives a
+merge — and that id is exactly a world its owner deleted, on this device or
+another one. So merging brings deleted worlds back, and brings them back
+permanently, because the cache is then the only thing that still remembers
+them. `replaceCachedWorldReferences` replaces this owner's entries instead,
+which is what makes the stored list a cache rather than a second opinion, and
+the invalidation rule is one sentence: a successful server read replaces this
+owner's entries and nothing else ever does. The anonymous shelf is untouched by
+it, because no server answer can speak about worlds the server does not know
+the owner of.
+
+**And what this list cannot exclude.** A world its owner has deleted is still
+in this response, because the deleted flag lives in the family service's
+database and (§10, and Phase B correction 6) a deletion emits no event — so
+`dna-service` is never told. The filter's one home is the `?ids=` hydration
+above, which already drops it: a page of 25 can render 24 cards, which the
+gallery has always had to handle. Giving `dna-service` the ability to filter
+would mean a deletion event and a projection, which is a second copy of a fact
+kept in step across two databases to save one card's worth of layout.
+
 ---
 
 ## 9. Quotas — the argument that is really about money
@@ -858,6 +880,38 @@ than the only copy of the value: **where those numbers are stored is §9.3**,
 and the owner decided on 2026-09-02 that it is not `.env`. The daily window
 resets at UTC midnight and the Redis key expires with it, so there is no
 cleanup job.
+
+#### Which way this fails — decided 2026-09-03, while implementing `S8-IDENTITY-013`
+
+Two cases the section above does not cover, with the same answer and different
+reasons. In both, **the AI tier is withheld and the visitor still gets a
+world**, which is the whole reason either is affordable.
+
+- **A caller with no identity at all.** No account and no anonymous id means no
+  key, so a counter would never rise and the allowance would be unlimited —
+  precisely the script §9.2 says this exists to bound. A browser always sends
+  one of the two; a caller that sends neither is not a browser.
+- **A counter that cannot be read.** If Redis is unreachable the count is
+  unknowable, and a ceiling that fails open is not a ceiling: every create
+  during the outage would be a paid call with nothing bounding it. This is the
+  **inverse of `settings.Reader`**, which answers the same outage from its
+  compiled-in default (§9.3), and the asymmetry is the decision: a setting has
+  a known-good default, a spent allowance has none.
+
+**The bound this leaves, named rather than discovered.** A caller that mints a
+fresh anonymous id per request is counted as a new visitor each time. The
+"never on the address" rule above is what makes that unfixable at this layer,
+and the per-IP token bucket is what still stands against it. Closing it would
+mean a per-IP counter shared by everyone behind one NAT — the thing this
+section rejected on purpose.
+
+**And the degrade needs its own provider.** `aifactory` builds a fallback only
+when it differs from the primary, so production — with both set to `mock` — has
+none at all. A degrade that reached for the fallback would fail the job instead
+of degrading it, so the orchestrator holds a THIRD provider, built from no
+configuration whatsoever. A quota whose degrade depends on something somebody
+has to configure stops enforcing itself in exactly the environment nobody
+configured.
 
 ### 9.1 Decided 2026-09-02: one toast, no permanent marker — and the library already exists
 
@@ -1666,14 +1720,24 @@ repo already uses:
 - **Ownership on the write path** — a non-owner is rejected for every mutation,
   table-driven so a new mutation without a check fails.
 - **The response-model test** — `GET /api/me/worlds` returns no DNA, no raw
-  input, no email. Mirrors the existing share-response test.
+  input, no email. Mirrors the existing share-response test. **Sharpened
+  2026-09-03: it asserts the TYPE, not a sample response.** A test over one
+  handler's output passes while a new field sits unset in it;
+  `TestTheWorldListRowCarriesNothingSensitive` fails the moment a fourth field
+  is declared, which is the point at which somebody should have to argue for
+  it.
 - **Cache invalidation on world delete** — flag a world, then assert its share
   slug and its `?ids=` entry are gone **through the gateway**, not through the
   service. A test that bypasses the gateway passes while the bug ships, because
   the bug *is* the Redis entry (§10).
 - **The quota tier** — the 6th anonymous creation of a day is served by the
   mock provider and still returns a world; the 26th for an account likewise; and
-  a client cannot request the AI tier by sending the flag itself.
+  a client cannot request the AI tier by sending the flag itself. **Extended
+  2026-09-03 with the half that is about money rather than about a reason
+  string:** `TestAWithheldJobNeverReachesThePaidProvider` asserts the paid
+  primary is called ZERO times. A reason of `quota_exhausted` on a world the
+  primary was still asked to generate would be a ceiling that reports itself
+  while spending.
 - **The reason code, all four values, table-driven** (§9.1). This is the
   guardrail that would have caught the mistake the owner caught by reading:
   with `AI_PROVIDER=mock` the 6th creation returns `mock_configured` and **not**

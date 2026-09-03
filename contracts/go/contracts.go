@@ -554,6 +554,19 @@ type GenerateDNAData struct {
 	// instead, because a world that already has an owner can never be claimed
 	// and the anonymous id would then be a personal-data trail with no reader.
 	AnonymousID *string `json:"anonymousId,omitempty"`
+	// AIQuota is the gateway's verdict on this caller's daily AI allowance and
+	// the limit it was measured against (section 9). Set by the gateway and by
+	// nothing else, protected by the same ACL as the owner above: the gateway
+	// is the only publisher the NATS config admits on this subject, so a
+	// client cannot ask for the AI tier by sending the flag itself.
+	//
+	// A pointer for the reason the two fields above are pointers, plus one
+	// this type's own history makes sharper: nil is a command published before
+	// the quota existed, and a zero AIQuotaState would decode it as "allowed,
+	// against a limit of nothing" - a plausible-looking value that is not what
+	// the publisher meant. nil means no quota was evaluated, which dna-service
+	// treats as the AI tier being allowed.
+	AIQuota *AIQuotaState `json:"aiQuota,omitempty"`
 }
 
 type ProfileSummary struct {
@@ -677,6 +690,32 @@ type Job struct {
 	Error        *RPCError   `json:"error,omitempty"`
 	CreatedAt    time.Time   `json:"createdAt"`
 	UpdatedAt    time.Time   `json:"updatedAt"`
+	// GenerationReason is how this job's world was built, and it is on the JOB
+	// rather than on the world on purpose (section 9.1). The truth is owed
+	// once, to the person who hit the limit, at the moment they hit it - not
+	// for ever, to everyone, including the friend they send the link to who
+	// hit no limit at all. A world carries no tier marker anywhere.
+	//
+	// Empty on every job created before the quota shipped, and on every FAILED
+	// job: a reason describes how a world was produced, so a job with no world
+	// has none to give.
+	GenerationReason GenerationReason `json:"generationReason,omitempty"`
+	// DailyAIGenerationLimit is the limit GenerationReasonQuotaExhausted was
+	// measured against, carried so that the web app's one sentence names the
+	// number the platform enforced instead of a copy of it in TypeScript.
+	//
+	// On the job rather than only in the gateway's own 202, because a visitor
+	// who reloads mid-generation resumes polling from sessionStorage and the
+	// 202 is gone by then - and a message that names no number after a reload
+	// is the same message with its content removed.
+	//
+	// A POINTER, because zero is a limit an operator can really set: writing
+	// 0 into quota.ai.daily_limit.anonymous turns the AI tier off for
+	// anonymous visitors without touching AI_PROVIDER, and its declared range
+	// starts at 0 for exactly that. As a plain int with `omitempty` that
+	// policy would encode as an absent field and read as "no limit recorded",
+	// which is the opposite of what it means.
+	DailyAIGenerationLimit *int `json:"dailyAiGenerationLimit,omitempty"`
 }
 
 type WorldQueryData struct {

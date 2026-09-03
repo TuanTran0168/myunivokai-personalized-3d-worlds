@@ -9,7 +9,8 @@ import {
   currentOwnerKey,
   moveAnonymousWorldsToOwner,
   readSavedWorldReferences,
-  removeWorldIdentifierFromGallery
+  removeWorldIdentifierFromGallery,
+  replaceCachedWorldReferences
 } from "./savedWorlds";
 
 const SAVED_WORLD_IDENTIFIERS_STORAGE_KEY = "myunivokai.savedWorldIds";
@@ -249,6 +250,72 @@ describe("moving the anonymous shelf onto an account", () => {
     expect(moveAnonymousWorldsToOwner(accountOwnerKey("account-1"))).toBe(0);
     expect(moveAnonymousWorldsToOwner(anonymousOwnerKey())).toBe(0);
     expect(moveAnonymousWorldsToOwner(null)).toBe(0);
+    expect(window.localStorage.getItem(SAVED_WORLD_IDENTIFIERS_STORAGE_KEY)).toBe(storedBefore);
+  });
+});
+
+describe("replaceCachedWorldReferences", () => {
+  it("replaces this account's entries with the server's answer", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("stale-world", "universe", accountOwnerKey("account-1"));
+
+    replaceCachedWorldReferences(accountOwnerKey("account-1"), [
+      { worldIdentifier: "from-the-server", family: "ocean", ownerKey: accountOwnerKey("account-1") }
+    ]);
+
+    expect(readSavedWorldReferences(accountOwnerKey("account-1")).map((entry) => entry.worldIdentifier)).toEqual([
+      "from-the-server"
+    ]);
+  });
+
+  // The failure this is most likely to cause if written carelessly. Those
+  // worlds have no owner anywhere on the server, so NO server answer can speak
+  // about them - and the only thing that may ever move them is the claim.
+  // Wiping them here would destroy the one record they have.
+  it("never touches the anonymous shelf", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("made-before-signing-up", "nature", anonymousOwnerKey());
+
+    replaceCachedWorldReferences(accountOwnerKey("account-1"), []);
+
+    expect(readSavedWorldReferences(anonymousOwnerKey()).map((entry) => entry.worldIdentifier)).toEqual([
+      "made-before-signing-up"
+    ]);
+  });
+
+  it("never touches another account's shelf", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("somebody-elses", "universe", accountOwnerKey("account-2"));
+
+    replaceCachedWorldReferences(accountOwnerKey("account-1"), [
+      { worldIdentifier: "mine", family: "universe", ownerKey: accountOwnerKey("account-1") }
+    ]);
+
+    expect(readSavedWorldReferences(accountOwnerKey("account-2")).map((entry) => entry.worldIdentifier)).toEqual([
+      "somebody-elses"
+    ]);
+  });
+
+  // An account with no worlds is a real state, and it has to be able to empty
+  // a cache that still holds some - otherwise deleting your last world leaves
+  // it on screen for ever.
+  it("can empty a shelf", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("deleted-since", "universe", accountOwnerKey("account-1"));
+
+    replaceCachedWorldReferences(accountOwnerKey("account-1"), []);
+
+    expect(readSavedWorldReferences(accountOwnerKey("account-1"))).toEqual([]);
+  });
+
+  it("writes nothing for an owner it cannot name", () => {
+    stub = installBrowserStorageStub();
+    addWorldIdentifierToGallery("mine", "universe", accountOwnerKey("account-1"));
+    const storedBefore = window.localStorage.getItem(SAVED_WORLD_IDENTIFIERS_STORAGE_KEY);
+
+    replaceCachedWorldReferences(null, []);
+    replaceCachedWorldReferences(anonymousOwnerKey(), []);
+
     expect(window.localStorage.getItem(SAVED_WORLD_IDENTIFIERS_STORAGE_KEY)).toBe(storedBefore);
   });
 });

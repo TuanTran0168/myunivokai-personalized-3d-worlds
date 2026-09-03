@@ -3,7 +3,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { api, apiErrorMessage } from "@/lib/api";
+import { generationNoticeFor } from "@/lib/generationNotice";
 import { addWorldIdentifierToGallery } from "@/lib/savedWorlds";
 import { resolveGalleryOwnerKey } from "@/lib/galleryOwner";
 import { UniverseCanvas } from "@/components/UniverseCanvas";
@@ -26,7 +28,7 @@ import { pointsOfInterestFromScene } from "@/lib/scene";
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { prefetchSceneRendererForFamily } from "@/features/scene-renderers/registry";
 import { worldPagePath } from "@/lib/worldRoutes";
-import type { GenerationJobStatus, PlanetSceneConfig, WorldFamily } from "@/lib/types";
+import type { GenerationJob, GenerationJobStatus, PlanetSceneConfig, WorldFamily } from "@/lib/types";
 
 import {
   COLOR_OPTIONS,
@@ -76,6 +78,37 @@ const PROGRESS_SECTION_IDS = [
 // it stays visible while the field column scrolls; this id wires it back to the
 // form via the HTML `form` attribute.
 const CREATE_FORM_ELEMENT_ID = "create-universe-form";
+
+/**
+ * Longer than the Toaster's app-wide 2600 ms, and only for this toast.
+ *
+ * That default is sized for a confirmation - "Share link copied." is read in a
+ * glance and the visitor is already looking at the button they pressed. This
+ * one is two sentences of explanation, and it arrives at the moment a new
+ * world is animating in, which is exactly where the visitor is NOT looking. A
+ * message that is owed once and missed is the same as one that was never
+ * shown.
+ */
+const GENERATION_NOTICE_DURATION_MILLISECONDS = 7000;
+
+/**
+ * One toast, on the stack that is already mounted app-wide, for exactly one of
+ * the four reasons a world can be built (lib/generationNotice.ts decides
+ * which). Zero new dependencies: `sonner` is already here and `.lg-toast` is
+ * already the Liquid-Glass material.
+ *
+ * Keyed on the JOB ID, which is what makes "a single toast" structural rather
+ * than a matter of where this is called from: both generation paths poll, both
+ * report progress, and sonner replaces a toast that shares an id instead of
+ * stacking a second one.
+ */
+function announceGenerationNotice(job: GenerationJob) {
+  const notice = generationNoticeFor(job);
+  if (!notice) {
+    return;
+  }
+  toast(notice, { id: job.jobId, duration: GENERATION_NOTICE_DURATION_MILLISECONDS });
+}
 
 /**
  * The live-preview summary content: nickname/family title, curated-from
@@ -476,6 +509,11 @@ export default function HomePage() {
         onProgress: (job) => {
           setLoading(true);
           setGenerationStatus(job.status);
+          // The resumed path speaks too. A visitor who reloaded mid-generation
+          // is exactly the one who would otherwise never be told, and the
+          // reason survives the reload because it lives on the job rather than
+          // in the 202 this page no longer has.
+          announceGenerationNotice(job);
         }
       })
       .then((result) => {
@@ -584,7 +622,10 @@ export default function HomePage() {
     setGenerationStatus("queued");
     try {
       const world = await api.createWorld(payload, worldFamily, {
-        onProgress: (job) => setGenerationStatus(job.status)
+        onProgress: (job) => {
+          setGenerationStatus(job.status);
+          announceGenerationNotice(job);
+        }
       });
       addWorldIdentifierToGallery(world.id, worldFamily, await resolveGalleryOwnerKey());
       // Keep the overlay up THROUGH the navigation. router.push is async: it

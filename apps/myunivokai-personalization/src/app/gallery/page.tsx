@@ -5,10 +5,33 @@ import { Plus } from "lucide-react";
 import { StatusMessage } from "@/components/StatusMessage";
 import { SavedWorldCard } from "@/features/gallery/SavedWorldCard";
 import { AmbientWorld } from "@/features/gallery/AmbientWorld";
-import { useSavedWorlds } from "@/features/gallery/useSavedWorlds";
+import { useSavedWorlds, type SavedWorldSource } from "@/features/gallery/useSavedWorlds";
+import type { SavedWorldCardAction } from "@/features/gallery/SavedWorldCard";
+
+const GALLERY_SOURCE_SENTENCES: Record<SavedWorldSource, string> = {
+  server: "Every world in your account, on any device you sign in from.",
+  cache: "Your worlds could not be loaded from the server just now, so this is the last list it gave. It may be out of date.",
+  browser: "Worlds you created on this device, without an account. They live in your browser storage."
+};
+
+/**
+ * A card's destructive button, decided by where the list came from.
+ *
+ * On a server list the only honest control is Delete: "remove from gallery"
+ * would drop a cache entry and the world would be back on the next reload.
+ * A CACHED list gets the same control, because those worlds are still the
+ * account's and the server is still the thing that owns them - the cache
+ * being stale changes what is shown, not who may delete it.
+ */
+const CARD_ACTION_BY_SOURCE: Record<SavedWorldSource, SavedWorldCardAction> = {
+  server: "delete-world",
+  cache: "delete-world",
+  browser: "forget-locally"
+};
 
 export default function GalleryPage() {
-  const { savedWorldEntries, isLoading, removeSavedWorld, otherOwnerWorldCount, isSignedIn } = useSavedWorlds();
+  const { savedWorldEntries, isLoading, removeSavedWorld, otherOwnerWorldCount, isSignedIn, worldSource } =
+    useSavedWorlds();
 
   const loadedWorldEntries = savedWorldEntries.filter((entry) => entry.world);
   const failedWorldEntries = savedWorldEntries.filter((entry) => !entry.world);
@@ -29,18 +52,14 @@ export default function GalleryPage() {
         <div>
           <div className="mb-2 font-mono text-xs uppercase tracking-[0.2em] text-brass">Saved Worlds</div>
           <h1 className="font-display text-4xl font-semibold tracking-normal text-paper">Your Gallery</h1>
-          {/* Two different sentences, because they are two different claims.
-              Signed out, this really is "whatever this browser made". Signed
-              in, it is the account's own worlds - which is why an account
-              created on a browser full of anonymous worlds no longer opens
-              onto a gallery of somebody else's. The second sentence still says
-              "on this device", because that is still true until the server
-              serves the list (S8-IDENTITY-015 and 016). */}
-          <p className="mt-2 text-on-surface-variant">
-            {isSignedIn
-              ? "Worlds saved to your account, from this device. They will follow your account to other devices soon."
-              : "Worlds you created on this device, without an account. They live in your browser storage."}
-          </p>
+          {/* Three sentences now, because there are three different claims.
+              The server list is the account's own worlds, wherever they were
+              made. The cached one is the last answer the server gave, which is
+              worth saying out loud: it can be missing a world made on another
+              device. And signed out it is still what it always was - whatever
+              this browser made, in this browser's storage, with nothing on the
+              server that knows whose they are. */}
+          <p className="mt-2 text-on-surface-variant">{GALLERY_SOURCE_SENTENCES[worldSource]}</p>
         </div>
         <Link
           href="/"
@@ -93,6 +112,7 @@ export default function GalleryPage() {
               key={entry.worldIdentifier}
               world={entry.world!}
               family={entry.family}
+              action={CARD_ACTION_BY_SOURCE[worldSource]}
               onRemove={removeSavedWorld}
             />
           ))}

@@ -37,6 +37,7 @@ type GenerationService interface {
 	FailFamily(context.Context, string, string, contracts.Envelope[contracts.FamilyFailedData]) error
 	ClaimWorlds(context.Context, contracts.Envelope[contracts.WorldClaimData]) error
 	GetJob(context.Context, string) (contracts.Job, error)
+	ListOwnedWorlds(context.Context, contracts.LibraryListQueryData) (contracts.LibraryListResponseData, error)
 }
 
 type ResponsePublisher interface {
@@ -176,6 +177,47 @@ func (handler *NATSHandler) HandleJobQuery(message *nats.Msg) {
 		return
 	}
 	responseEnvelope, err := contracts.SuccessRPCEnvelope(envelope.JobID, http.StatusOK, job)
+	if err != nil {
+		handler.respond(message, contracts.ErrorRPCEnvelope(envelope.JobID, http.StatusInternalServerError, "INTERNAL_ERROR", "The response could not be created."))
+		return
+	}
+	handler.respond(message, responseEnvelope)
+}
+
+// HandleLibraryListQuery answers one page of the account's own world list.
+//
+// A Core query rather than a JetStream command, because somebody is looking at
+// a gallery waiting for it - the same shape HandleJobQuery has, and the same
+// reason the claim is a command instead.
+//
+// The owner comes off the query the gateway published and from nowhere else.
+// There is no parameter for whose worlds to list other than that one, so this
+// handler has no shape in which it could be asked for a stranger's.
+func (handler *NATSHandler) HandleLibraryListQuery(message *nats.Msg) {
+	if strings.TrimSpace(message.Reply) == "" {
+		return
+	}
+	var envelope contracts.Envelope[contracts.LibraryListQueryData]
+	if err := decodeEnvelope(message.Data, &envelope); err != nil {
+		handler.respond(message, contracts.ErrorRPCEnvelope(invalidRequestJobID, http.StatusBadRequest, "INVALID_REQUEST", "The world list query is invalid."))
+		return
+	}
+	// Validated here as well as in the service, for HandleWorldClaim's reason:
+	// this is the only layer that can say the MESSAGE is unreadable, and an
+	// unreadable cursor has to become a 400 rather than a page of somebody
+	// else's worlds or an empty first page.
+	if err := envelope.Data.Validate(); err != nil {
+		handler.respond(message, contracts.ErrorRPCEnvelope(envelope.JobID, http.StatusBadRequest, "INVALID_REQUEST", "The world list query is invalid."))
+		return
+	}
+	queryContext, cancel := context.WithTimeout(context.Background(), handler.queryTimeout)
+	defer cancel()
+	page, err := handler.generationService.ListOwnedWorlds(queryContext, envelope.Data)
+	if err != nil {
+		handler.respond(message, contracts.ErrorRPCEnvelope(envelope.JobID, http.StatusServiceUnavailable, "WORLD_LIST_UNAVAILABLE", "Your worlds could not be loaded."))
+		return
+	}
+	responseEnvelope, err := contracts.SuccessRPCEnvelope(envelope.JobID, http.StatusOK, page)
 	if err != nil {
 		handler.respond(message, contracts.ErrorRPCEnvelope(envelope.JobID, http.StatusInternalServerError, "INTERNAL_ERROR", "The response could not be created."))
 		return

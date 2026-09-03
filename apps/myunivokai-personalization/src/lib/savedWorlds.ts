@@ -216,6 +216,36 @@ export function moveAnonymousWorldsToOwner(ownerKey: string | null): number {
   return movedWorldCount;
 }
 
+/**
+ * Replaces one owner's shelf with the list the server just answered with, and
+ * leaves every other shelf untouched.
+ *
+ * **This REPLACES rather than merges, and section 8 asks for a merge.** Its
+ * words are "the two lists are merged newest-first with the server list
+ * winning on conflict", and that rule cannot do what it is meant to: winning a
+ * CONFLICT only decides ids present in both lists, and an id present only in
+ * the cache survives the merge. That id is exactly a world the server has
+ * stopped listing — a world its owner deleted, on this device or another one.
+ * So a merge brings deleted worlds back, and brings them back permanently,
+ * because the cache is the only thing that still remembers them.
+ *
+ * Replacing is what makes the stored list a cache rather than a second
+ * opinion, which is the demotion the story asked for. The invalidation rule is
+ * therefore one sentence: **a successful server read replaces this owner's
+ * entries, and nothing else ever does.**
+ *
+ * The anonymous shelf is never touched by this. Those worlds have no owner
+ * anywhere on the server, so no server answer can speak about them, and the
+ * one thing that may move them is the claim (`moveAnonymousWorldsToOwner`).
+ */
+export function replaceCachedWorldReferences(ownerKey: string | null, serverReferences: SavedWorldReference[]): void {
+  if (ownerKey === null || ownerKey === ANONYMOUS_OWNER_KEY) {
+    return;
+  }
+  const otherShelves = readAllSavedWorldReferences().filter((reference) => reference.ownerKey !== ownerKey);
+  writeSavedWorldReferences([...serverReferences, ...otherShelves]);
+}
+
 function writeSavedWorldReferences(references: SavedWorldReference[]): void {
   if (!isBrowserEnvironment()) {
     return;

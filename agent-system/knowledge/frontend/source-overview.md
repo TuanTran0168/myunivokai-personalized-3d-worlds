@@ -27,7 +27,7 @@ itself.
 | --- | --- | --- |
 | `/` | `src/app/page.tsx` | Landing + family picker. Submit -> `202 + jobId` -> queued/processing polling -> completed world redirect; pending polling resumes after refresh |
 | `/worlds/[worldId]` | `src/app/worlds/[worldId]/page.tsx` | Dashboard: 3D canvas, POI panel, variants, publish/share, PNG export. Reads `?family=` to pick the API + renderer |
-| `/gallery` | `src/app/gallery/page.tsx` | Worlds saved on this device, **scoped to whoever is signed in** — see `lib/savedWorlds.ts`. Family-aware, loaded in parallel. Backdrop via `components/AmbientBackdrop` |
+| `/gallery` | `src/app/gallery/page.tsx` | Signed in: **every world the account owns**, from `GET /api/me/worlds` (`lib/galleryWorldSources.ts`). Signed out: worlds saved on this device (`lib/savedWorlds.ts`). Family-aware, loaded in parallel. Backdrop via `components/AmbientBackdrop` |
 | `/sign-in`, `/sign-up` | `src/app/sign-in/page.tsx`, `src/app/sign-up/page.tsx` | Both render `features/identity/AuthCredentialsForm`. Sign-up also takes a display name |
 | `/account` | `src/app/account/page.tsx` | The account's own page: name, full name, gender, and the defaults the create form is filled from. `AccountProfileForm` owns the whole layout, heading included, because it also renders the world behind it — the scene the create form would open with, rebuilt as the fields change |
 | `/share/worlds/[shareSlug]` | `src/app/share/worlds/[shareSlug]/page.tsx` | Public **universe** share page |
@@ -114,6 +114,43 @@ build and the unit tests all passed against a policy that produced fourteen
   `localStorage` filtered by owner, so a claim that moved five worlds in four
   databases would otherwise still show an empty grid. It runs only after the
   server accepted.
+
+  **Since `S8-IDENTITY-016` this is a CACHE for a signed-in visitor**, not the
+  list. `replaceCachedWorldReferences(ownerKey, serverReferences)` is the only
+  thing that ever writes it from a server answer, and it REPLACES that owner's
+  entries rather than merging with them — §8 asks for a merge and a merge
+  brings deleted worlds back for ever, because winning a conflict only decides
+  ids present in both lists and an id only the cache holds is exactly a
+  deleted world. The anonymous shelf is never touched by it: no server answer
+  can speak about worlds the server does not know the owner of.
+- `lib/galleryWorldSources.ts` — where the gallery's list comes from, as pure
+  functions with their IO passed in. `resolveGalleryWorldList` is the three-way
+  decision (server, cache, browser), and it is pure precisely so that the case
+  `S8-IDENTITY-016` calls its whole point — a signed-in visitor on a browser
+  whose storage was just cleared — is a unit test: this app's vitest runs
+  `environment: "node"` with no React testing library, so a decision left
+  inside the hook would have been untestable in practice.
+
+  `splitIntoHydrationBatches` keeps `?ids=` requests under the gateway's
+  fifty-identifier cap. That cap was unreachable while the list was whatever
+  one browser held; a server list has no such accidental ceiling, so a visitor
+  with sixty worlds of one family would have got a 400 and fallen into the
+  per-id fallback path. `MAXIMUM_GALLERY_SERVER_PAGES` is four, so the gallery
+  shows the newest two hundred worlds — a stated ceiling rather than a silently
+  truncated first page, since there is no paging control.
+- `lib/generationNotice.ts` — the one thing this app says about how a world
+  was built, and the three things it deliberately does not.
+  `generationNoticeFor(job)` returns a sentence for `quota_exhausted` and
+  `null` for the other three reasons: `ai_generated` (nothing happened),
+  `mock_configured` (there was no AI tier to lose — **what production returns
+  today**), and `ai_failed_fallback` (an incident, and staff's). It reads the
+  REASON CODE and never a provider name, which would arrive as `mock` in three
+  unrelated situations and force this module to guess which. Only a COMPLETED
+  job speaks: the reason is written when the DNA is stored, before composition,
+  so a `processing` job already carries it. The limit in the sentence comes off
+  the job — a `5` in TypeScript would be a second declaration of a settings
+  value. Fired from `src/app/page.tsx` on both generation paths, keyed on the
+  job id so "a single toast" is structural.
 - `lib/anonymousWorldClaim.ts` — `claimAnonymousWorldsForAccount()`, both
   halves of the claim in the one order they are safe in: ask the server, clear
   the anonymous cookie, then move the shelf. Its own module for the reason

@@ -14,6 +14,13 @@ type generationServiceSpy struct {
 	generateCalls int
 	failureCalls  int
 	claimedData   []contracts.WorldClaimData
+	// listedQueries is what the world-list handler passed through, which is
+	// the only thing worth asserting about it here: the handler's job is to
+	// decode, validate and relay, and the page itself comes from SQL this
+	// package cannot run.
+	listedQueries []contracts.LibraryListQueryData
+	listedPage    contracts.LibraryListResponseData
+	listError     error
 }
 
 func (service *generationServiceSpy) Generate(context.Context, contracts.Envelope[contracts.GenerateDNAData]) error {
@@ -24,6 +31,11 @@ func (service *generationServiceSpy) Generate(context.Context, contracts.Envelop
 func (service *generationServiceSpy) FailGeneration(context.Context, contracts.Envelope[contracts.GenerateDNAData]) error {
 	service.failureCalls++
 	return nil
+}
+
+func (service *generationServiceSpy) ListOwnedWorlds(_ context.Context, query contracts.LibraryListQueryData) (contracts.LibraryListResponseData, error) {
+	service.listedQueries = append(service.listedQueries, query)
+	return service.listedPage, service.listError
 }
 
 func TestHandleGenerationFailureDelegatesValidCommand(t *testing.T) {

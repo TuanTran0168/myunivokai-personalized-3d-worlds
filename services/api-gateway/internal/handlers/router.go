@@ -11,6 +11,7 @@ import (
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/config"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/httpx"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/middleware"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/quota"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/settings"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/telemetry"
 )
@@ -23,6 +24,7 @@ type EdgeStore interface {
 	middleware.DistributedLimiter
 	auth.TokenVersionCache
 	settings.SettingCache
+	quota.GenerationCounter
 	IdentityFailureCounter
 	Ping(context.Context) error
 	Close() error
@@ -77,9 +79,15 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 	healthHandler := NewHealthHandler(serviceConfig.AppName, brokerClient, edgeStore)
 	rpcTransport := NewRPCTransport(serviceConfig, brokerClient, edgeStore, waker, collector)
 	dnaJobHandler := NewDNAJobHandler(serviceConfig, rpcTransport)
-	universeHandler := NewUniverseHandler(serviceConfig, brokerClient, rpcTransport)
-	natureHandler := NewNatureHandler(serviceConfig, brokerClient, rpcTransport)
-	oceanHandler := NewOceanHandler(serviceConfig, brokerClient, rpcTransport)
+	// One quota for all three families, because the allowance is per caller:
+	// five worlds is five worlds whether they are oceans or forests. It is
+	// also the gateway's FIRST reader of a settings row - deliberately, since
+	// section 9.3 batch 2 leaves every existing gateway value an environment
+	// variable until its handler is restructured.
+	dailyAIQuota := quota.NewDailyAIQuota(edgeStore, settings.NewReader(edgeStore))
+	universeHandler := NewUniverseHandler(serviceConfig, brokerClient, dailyAIQuota, rpcTransport)
+	natureHandler := NewNatureHandler(serviceConfig, brokerClient, dailyAIQuota, rpcTransport)
+	oceanHandler := NewOceanHandler(serviceConfig, brokerClient, dailyAIQuota, rpcTransport)
 	landingHandler := func(responseWriter http.ResponseWriter, request *http.Request) {
 		httpx.WriteJSON(responseWriter, http.StatusOK, map[string]any{"service": serviceConfig.AppName, "status": "ok", "architecture": "nats-redis"})
 	}

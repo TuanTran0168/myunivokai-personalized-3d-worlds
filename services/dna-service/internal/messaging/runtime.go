@@ -128,6 +128,15 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		return fmt.Errorf("subscribe job query: %w", err)
 	}
 	runtime.subscriptions = append(runtime.subscriptions, jobQuerySubscription)
+	// The account's own world list. Needs no ACL change: the config grants
+	// this service and the gateway `myunivokai.queries.>`, so a new query
+	// subject is admitted by the rule that already exists.
+	libraryQuerySubscription, err := runtime.connection.QueueSubscribe(contracts.DNALibraryListQuerySubject, requestQueueName, runtime.loggedQuery(runtime.natsHandler.HandleLibraryListQuery))
+	if err != nil {
+		runtime.unsubscribeAll()
+		return fmt.Errorf("subscribe world list query: %w", err)
+	}
+	runtime.subscriptions = append(runtime.subscriptions, libraryQuerySubscription)
 	if err := runtime.connection.FlushTimeout(runtime.config.NATSConnectTimeout); err != nil {
 		runtime.unsubscribeAll()
 		return fmt.Errorf("flush DNA subscriptions: %w", err)
