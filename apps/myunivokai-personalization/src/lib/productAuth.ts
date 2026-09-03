@@ -1,6 +1,9 @@
 import { ApiError, requestGatewayJson, type GatewayRequestHooks } from "./gatewayRequest";
 import {
+  ANONYMOUS_IDENTIFIER_HEADER_NAME,
+  clearAnonymousIdentifier,
   clearProductSession,
+  readAnonymousIdentifier,
   readProductAccessToken,
   readProductRefreshToken,
   writeProductSession,
@@ -13,6 +16,7 @@ const SIGN_IN_PATH = "/api/auth/login";
 const REFRESH_PATH = "/api/auth/refresh";
 const SIGN_OUT_PATH = "/api/auth/logout";
 const ACCOUNT_PATH = "/api/me";
+const WORLD_CLAIM_PATH = "/api/me/worlds/claim";
 
 /**
  * The gateway's error codes this module has to tell apart, rather than the
@@ -27,6 +31,19 @@ const UNAUTHENTICATED_ERROR_CODES = new Set(["UNAUTHENTICATED", "SESSION_REVOKED
 export type Credentials = {
   email: string;
   password: string;
+};
+
+/**
+ * What the claim endpoint answers, and it says "accepted" rather than
+ * "claimed" because at that moment nothing has been: the command is durably
+ * queued and the services that apply it are usually asleep.
+ *
+ * Nothing here reads the field. It is typed so that the response shape is
+ * stated where a reader looks for it, and so a server that started answering
+ * something else would be a compile error rather than a silent success.
+ */
+export type WorldClaimAcceptance = {
+  accepted: boolean;
 };
 
 /**
@@ -179,6 +196,37 @@ export async function authorizedGatewayRequest<T>(
 
 export async function fetchSignedInAccount(hooks?: GatewayRequestHooks): Promise<ProductAccount> {
   return authorizedGatewayRequest<ProductAccount>(ACCOUNT_PATH, undefined, hooks);
+}
+
+/**
+ * Asks the server to give this account every world this browser made before it
+ * had one, and forgets the anonymous id afterwards.
+ *
+ * Returns false when there was nothing to claim — no anonymous id in this
+ * browser at all — so a caller can tell "no worlds to bring" apart from "the
+ * claim was accepted". Nothing is minted here: `readAnonymousIdentifier`
+ * rather than `readOrCreateAnonymousIdentifier`, because creating one in order
+ * to claim with it would be claiming worlds that cannot exist.
+ *
+ * The cookie is cleared ONLY after the server answered, and that ordering is
+ * the whole error handling. A claim that failed leaves the id in place, so the
+ * next sign-in tries again — and the server's own `owner_account_id IS NULL`
+ * guard makes the retry a no-op if it actually succeeded and the response was
+ * lost. Clearing first would throw away the only credential that could ever
+ * claim those worlds, in exchange for nothing.
+ */
+export async function claimAnonymousWorlds(hooks?: GatewayRequestHooks): Promise<boolean> {
+  const anonymousIdentifier = readAnonymousIdentifier();
+  if (!anonymousIdentifier) {
+    return false;
+  }
+  await authorizedGatewayRequest<WorldClaimAcceptance>(
+    WORLD_CLAIM_PATH,
+    { method: "POST", headers: { [ANONYMOUS_IDENTIFIER_HEADER_NAME]: anonymousIdentifier } },
+    hooks
+  );
+  clearAnonymousIdentifier();
+  return true;
 }
 
 function withBearerToken(init: RequestInit | undefined, accessToken: string | null): RequestInit {

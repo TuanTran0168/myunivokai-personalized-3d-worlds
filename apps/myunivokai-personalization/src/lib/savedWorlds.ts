@@ -167,15 +167,53 @@ export function readSavedWorldReferences(ownerKey: string | null): SavedWorldRef
  *
  * The gallery shows this as a note when a signed-in visitor has an empty shelf
  * and the anonymous one is not: "your worlds are gone" is the conclusion
- * somebody draws otherwise, and it is wrong. Until the claim flow lands
- * (`S8-IDENTITY-011`) signing out is how those worlds are reached, and a page
- * that knows that should say it.
+ * somebody draws otherwise, and it is wrong.
+ *
+ * Rare since the claim landed (`S8-IDENTITY-011`), because signing in moves
+ * the anonymous shelf. What is left is the browser that lost its anonymous-id
+ * cookie but kept this list — those worlds cannot be claimed by anybody, so
+ * signing out really is how they are reached.
  */
 export function countSavedWorldsForOtherOwners(ownerKey: string | null): number {
   if (ownerKey === null) {
     return 0;
   }
   return readAllSavedWorldReferences().filter((reference) => reference.ownerKey !== ownerKey).length;
+}
+
+/**
+ * Moves this browser's anonymous shelf onto one account's, and answers how
+ * many entries moved.
+ *
+ * The local half of `S8-IDENTITY-011`, and without it the server half is
+ * invisible: this gallery renders from `localStorage` filtered by owner, so a
+ * claim that moved five worlds in three databases would still show a signed-in
+ * visitor an empty grid and a note about worlds on another shelf.
+ *
+ * Called only AFTER the server has accepted the claim, never before or
+ * instead. The reverse order would file worlds under an account the databases
+ * do not agree belongs to them, and `addWorldIdentifierToGallery` refuses to
+ * copy an id between shelves for exactly that reason: a world id is not proof
+ * of anything, which is why the claim is by anonymous id.
+ */
+export function moveAnonymousWorldsToOwner(ownerKey: string | null): number {
+  if (ownerKey === null || ownerKey === ANONYMOUS_OWNER_KEY) {
+    return 0;
+  }
+  const savedReferences = readAllSavedWorldReferences();
+  let movedWorldCount = 0;
+  const movedReferences = savedReferences.map((reference) => {
+    if (reference.ownerKey !== ANONYMOUS_OWNER_KEY) {
+      return reference;
+    }
+    movedWorldCount += 1;
+    return { ...reference, ownerKey };
+  });
+  if (movedWorldCount === 0) {
+    return 0;
+  }
+  writeSavedWorldReferences(movedReferences);
+  return movedWorldCount;
 }
 
 function writeSavedWorldReferences(references: SavedWorldReference[]): void {

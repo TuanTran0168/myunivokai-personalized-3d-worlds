@@ -12,6 +12,11 @@ import type {
 import { apiPathPrefixForFamily, gatewayOriginUrl } from "./gateway";
 import { ApiError, requestGatewayJson, waitForDelay } from "./gatewayRequest";
 import { authorizedGatewayRequest } from "./productAuth";
+import {
+  ANONYMOUS_IDENTIFIER_HEADER_NAME,
+  hasProductSession,
+  readOrCreateAnonymousIdentifier
+} from "./productSession";
 
 // Re-exported so the transport keeps one import path for the rest of the app
 // even though it now lives beside this module rather than inside it.
@@ -80,6 +85,31 @@ async function request<T>(family: WorldFamily, path: string, init?: RequestInit)
 
 
 
+
+/**
+ * The anonymous id, sent on a create and on nothing else, and only when there
+ * is nobody signed in.
+ *
+ * Only a CREATE, because it is the only request that decides who a world
+ * belongs to. The other mutations are checked against an owner the world
+ * already has, and an unowned world is mutable by anyone holding its id
+ * anyway.
+ *
+ * Only when signed OUT, because the gateway drops the header whenever it has a
+ * verified account to name instead — exactly one of the two identity fields is
+ * ever stored. Sending it anyway would work and would be a value nothing
+ * reads.
+ *
+ * This is also where the id is first minted, by the read-or-create: the first
+ * anonymous create is precisely when a visitor first needs one. Minting it on
+ * page load instead would give an identifier to somebody who only ever looked.
+ */
+function anonymousCreateHeaders(): Record<string, string> {
+  if (hasProductSession()) {
+    return {};
+  }
+  return { [ANONYMOUS_IDENTIFIER_HEADER_NAME]: readOrCreateAnonymousIdentifier() };
+}
 
 function savePendingGeneration(pendingGeneration: PendingGeneration): void {
   if (typeof window !== "undefined") {
@@ -262,6 +292,7 @@ export const api = {
   ): Promise<World> {
     const job = await request<GenerationJob>(family, "/worlds", {
       method: "POST",
+      headers: anonymousCreateHeaders(),
       body: JSON.stringify(input),
       signal: options.signal
     });

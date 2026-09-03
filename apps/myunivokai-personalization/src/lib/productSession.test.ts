@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { installBrowserStorageStub, type BrowserStorageStub } from "./browserStorageStub";
 import {
   PRODUCT_SESSION_COOKIE_NAMES,
+  clearAnonymousIdentifier,
   clearProductSession,
   hasProductSession,
   readAnonymousIdentifier,
@@ -157,6 +158,21 @@ describe("the anonymous identifier", () => {
 
     expect(first).toBe(second);
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  // The one moment it IS cleared, stated next to the sign-out test that keeps
+  // it, because the pair is the whole rule: signing out is not becoming a
+  // different visitor, and a successful claim is.
+  it("is cleared once a claim has spent it", () => {
+    stub = installBrowserStorageStub();
+    const spentIdentifier = readOrCreateAnonymousIdentifier();
+
+    clearAnonymousIdentifier();
+
+    expect(readAnonymousIdentifier()).toBeNull();
+    // And the next anonymous create mints a DIFFERENT one, rather than
+    // resurrecting a value an account already owns the worlds of.
+    expect(readOrCreateAnonymousIdentifier()).not.toBe(spentIdentifier);
   });
 
   it("outlives both token lifetimes", () => {
