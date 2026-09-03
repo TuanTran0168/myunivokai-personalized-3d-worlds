@@ -1,8 +1,16 @@
 # End-user identity and world ownership
 
-> **Document status:** Proposed. **No code exists.** Twenty numbered decisions
-> (25 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
-> were taken on 2026-09-02 across **eight rounds** — most by the owner, five
+> **Document status:** **Phase A is implemented** on
+> `feat/fe-be/end-user-identity-phase-a`; Phases B and C are proposed, and
+> Phases D and E are out of the sprint's scope. The "no code exists" this
+> header carried until 2026-09-02 is no longer true, and
+> [the sprint's Phase A corrections section](../sprints/sprint-08-2026-09-02/user-stories.md#phase-a--corrected-during-execution-2026-09-02)
+> is the record of which of this document's claims survived contact — read it
+> before acting on §5 or §12. One decision was ADDED after Phase A shipped, by
+> the owner: 21, in §19.
+> Twenty-one numbered decisions
+> (26 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
+> were taken on 2026-09-02 across **eight rounds plus one after implementation** — most by the owner, five
 > delegated to me and argued in place — and all of them are recorded in §16,
 > where **nothing is left open**. Four of the last five rounds exist because
 > the owner read a decision back and found it wrong, too broad, or badly
@@ -1872,6 +1880,12 @@ because deciding them now would be deciding them wrongly:
    per-create cost being *measured* from `ai_generation_attempts` rather than
    read off a rate card (§9.2).
 
+### Added 2026-09-02, after Phase A was implemented
+
+| # | Decision | Consequence, recorded on purpose |
+| --- | --- | --- |
+| 21 | **The account gets a page of its own** — full name, gender, and the create-form fields as saved defaults — **in `auth-service`, in one new table** (§19) | The first migration this plan has cost. Buys a second visit that does not mean retyping everything, and one place where the display name lives. Costs a table in `auth-service` that is not about authentication, which §19 argues is still the least-bad home |
+
 ## 17. Renaming `myunivokai-web`
 
 Requested on 2026-09-02: `web` describes the runtime, not the product, and the
@@ -1996,3 +2010,62 @@ rather than luck.
 
 **The one change with a large file count and no logic in it is the rename**
 (§17). That is why it is sequenced outside the phases.
+
+## 19. The account's own page (decision 21)
+
+Added by the owner on 2026-09-02, after Phase A was implemented and on the same
+branch. It is a product feature rather than an identity one, and it is recorded
+here because it took a table, two subjects and two routes, which is the kind of
+thing this document exists to hold.
+
+### Why `auth-service` and not `dna-service`
+
+`dna-service` already has a `profiles` table holding exactly these fields, so
+reusing that shape is the obvious answer and it is the wrong one for now, for a
+reason that is about sequencing rather than taste:
+
+- `dna-service`'s profiles are **per generation** and immutable — the inputs
+  that produced one world. An account's saved defaults are neither. Putting
+  both in one table would mean a nullable `account_id` on rows that are
+  historical facts, and a second meaning for a table Phase B is about to add
+  ownership columns to.
+- More decisively: **`dna-service` does not yet know who the caller is.**
+  Identity over NATS is `S8-IDENTITY-008`, in Phase B. `auth-service` is the
+  service that mints the token, so it is the only one that can answer "my
+  profile" today without the plumbing Phase B has not built.
+
+§3.1's rule against inventing a service still holds — nothing new was created.
+The cost is honest: `auth-service` now owns a table that has nothing to do with
+authentication. If Phase E's "one evolving profile per account" (decision 6)
+lands, this table is the thing it absorbs, and the move is a migration with no
+logic in it.
+
+### The rules the page follows
+
+- **One name.** `accounts.name` is the display name, and `account_profiles` has
+  **no nickname column**. It is projected into
+  `AccountProfileData.CreationDefaults.Nickname` on read and written back on
+  update, so the header menu and the create form cannot greet the same person
+  differently. A test refuses the column outright.
+- **A draft, not a submission.** `WorldInput.ValidateAsCreationDefaults`
+  enforces every ceiling and every vocabulary and **not one minimum**. The
+  generate path's minimums are right for a world and wrong for a saved
+  preference: running them here would refuse to save a profile until it was a
+  complete world, on a page whose whole job is to be opened before it has ever
+  been filled in.
+- **The account id comes from the token.** Neither route takes an account id
+  and neither body has a field for one — and the gateway disallows unknown
+  fields, so the attempt is a 400 rather than an ignored value.
+- **The response model is re-marshalled**, not forwarded, per §12: a field
+  added to `AccountProfileData` later must not reach a browser by accident.
+- **Nothing authorizes on it**, per §15. Gender, full name and every default
+  are display data; the only field with any behaviour behind it is
+  `autofill_create_form`, and its behaviour is entirely in the browser.
+
+### What it does not do
+
+No avatar and no upload — that is storage, a bucket and a content-type
+allowlist, and none of it is in this sprint. No uniqueness on the display name:
+"that name is taken" would be a second failure mode on a form that already has
+one, and a name people choose to be greeted by is the wrong thing to make
+unique.

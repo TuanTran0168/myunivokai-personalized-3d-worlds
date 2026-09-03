@@ -298,13 +298,105 @@ Tasks:
 - [x] Ensure the role-assignment UI is unreachable for an `end_user` row,
       matching the server-side invariant from `S8-IDENTITY-003`.
 
+### S8-IDENTITY-018 — The gallery shows my worlds, not this browser's
+
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
+Priority: P0
+
+Added to Phase A on 2026-09-02, by the owner, after signing up on a browser
+that already held worlds.
+
+As an account holder,
+I want the gallery to show the worlds that are mine,
+so that signing up does not appear to hand me somebody else's collection.
+
+Scenario: An account created on a browser that already has worlds
+
+Given a browser holding several worlds created without an account
+When an account is created and the gallery is opened
+Then none of those worlds is listed
+And the gallery says how many are on this device but not part of the account
+And signing out lists them again
+And two accounts on one browser never see each other's worlds
+And a world already on any shelf is not moved onto another by being opened,
+because claiming a world by its id is what `S8-IDENTITY-011` refuses.
+
+Source evidence:
+- apps/myunivokai-personalization/src/lib/savedWorlds.ts — `SAVED_WORLD_IDENTIFIERS_STORAGE_KEY`, which was the entire notion of ownership before this
+- agent-system/plans/architecture/end-user-identity-and-ownership.md — §8, §14.1, §18, and decision 9 on what deleting means
+- agent-system/plans/sprints/sprint-08-2026-09-02/user-stories.md — `S8-IDENTITY-011` (claim by anonymous id) and `S8-IDENTITY-016` (the server-served list this is NOT)
+
+Tasks:
+- [x] Give every stored entry an `ownerKey`, reading a missing one as the
+      anonymous shelf so no existing world is lost.
+- [x] Filter every read to one owner, and answer `null` — show nothing — when
+      the owner cannot be determined, rather than falling back.
+- [x] Say on the page how many worlds belong to the other shelf, so an empty
+      grid does not read as a loss.
+- [x] Cover it with `savedWorlds.test.ts`, including both legacy storage
+      shapes.
+
+### S8-IDENTITY-019 — An account page, and a create form that starts filled in
+
+Status: Implemented — `feat/fe-be/end-user-identity-phase-a`
+Priority: P1
+
+Added to Phase A on 2026-09-02, by the owner: "a profile page of its own, not
+just Your Gallery — full name, gender and the fields from the 3D form, with a
+button that fills them into it. The name fills by default."
+
+As an account holder,
+I want a page for who I am and how my worlds should start,
+so that creating my second world does not mean typing everything again.
+
+Scenario: A profile that is saveable before it is finished
+
+Given a signed-in account that has never opened its profile
+When the page is opened
+Then it shows an empty profile rather than an error
+And saving a name and one interest succeeds, though neither would be enough to
+generate a world
+And the display name is the SAME value the create form's Nickname field is
+filled with, stored once in `accounts.name`
+And a mood, style or family outside the contracts vocabulary is refused with
+the field named
+And the account id is taken from the access token, never from the request.
+
+Scenario: The create form on the next visit
+
+Given a saved profile with the autofill toggle on
+When the create page is opened while signed in
+Then the name is filled in whether or not the toggle is on
+And the other fields are filled from the profile
+And nothing is filled over a field already typed into
+And the page says it was filled from the profile, with one action to empty it
+for this world only.
+
+Source evidence:
+- contracts/go/contracts.go — `WorldInput`, `allowedMoods`, `allowedWorldStylesByFamily`, and `Validate`'s minimums, which are exactly what a draft must not enforce
+- services/auth-service/migrations/000003_account_name.sql — `accounts.name`, already there, which is why the display name cost no column
+- agent-system/plans/architecture/end-user-identity-and-ownership.md — §3.1 (why this is not a new service), §12 (the response-model rule), §15 (never authorize on a read model)
+
+Tasks:
+- [x] `account_profiles` in auth-service, keyed on the account, cascading, with
+      NO nickname column — the nickname is `accounts.name`, projected.
+- [x] `WorldInput.ValidateAsCreationDefaults`: every ceiling and vocabulary,
+      not one minimum.
+- [x] Two product-audience subjects and `GET`/`PATCH /api/me/profile`, with the
+      account id read from the token's subject.
+- [x] The page, the toggle, and the create form's autofill as two pure
+      functions rather than an effect nobody can test.
+- [x] Raise the migration-count guard in the same commit, per that test's own
+      instruction.
+
 ---
 
 ## Phase A — corrected during execution, 2026-09-02
 
 Written after the work, and read before the sections above. Five of Phase A's
 own claims about the repository or about what was achievable turned out to be
-wrong, and the record is worth more than the tidy version.
+wrong, and a sixth thing was wrong that no story had claimed at all — the
+record is worth more than the tidy version.
 
 ### 1. `S8-IDENTITY-001` asks for a uniform signup response, and that is not achievable before email exists
 
@@ -390,13 +482,48 @@ the decoder fetched from `/vendor/draco/`.
   both stores. The story sits in Phase A's frontend half and its task list did
   not anticipate touching `contracts/`.
 
+### 6. Phase A shipped an account and left the gallery with no idea what one was
+
+Nobody wrote this down as a claim, which is why it took the owner five minutes
+of using the thing to find: Phase A gave the app an identity and gave worlds no
+owner, so `/gallery` went on rendering `myunivokai.savedWorldIds` — a
+per-BROWSER list — under the heading "Your Gallery". Signing up on a browser
+that already held worlds therefore appeared to hand the new account somebody
+else's collection.
+
+It is worth being precise about whose gap it was. Ownership of worlds is Phase
+B (`S8-IDENTITY-007`, `008`) and the server-served list is Phase C
+(`S8-IDENTITY-015`, `016`), so no Phase A story was unfinished. What Phase A
+did was make a page that had been HONEST ("worlds you created on this device")
+into one that was not, by introducing the account the heading now implied. A
+phase that adds an identity owes every screen that says "your" a look.
+
+`S8-IDENTITY-018` is the fix, and it is deliberately not an early Phase C: the
+shelf is still per-browser, and the page now says so in as many words. What
+changed is that it is per-browser AND per-account rather than per-browser and
+attributed to whoever happens to be signed in.
+
+### 7. Two stories were added to Phase A after it was implemented
+
+`S8-IDENTITY-018` and `S8-IDENTITY-019` were not in the committed scope; the
+owner asked for them on 2026-09-02, after Phase A's six stories were done and
+on the same branch. They are recorded as Phase A stories rather than as a new
+phase because that is where they landed, and pretending the plan predicted them
+would be the more dishonest bookkeeping.
+
+`019` also spent the first migration this service has taken since the sprint
+began. `TestAuthServiceGainsNoUnplannedMigration` is the ratchet that made that
+a decision rather than a drift: it failed, and raising it to 4 in the same
+commit is the protocol the test asks for in its own failure message.
+
 ### What Phase A deliberately did NOT do, so it is not mistaken for an omission
 
-- **No migration.** `internal/db/web_audience_schema_test.go` reads the
-  committed SQL and asserts the four facts the "zero migrations" claim rests
-  on, and a second test fails if a fourth migration file appears — so
-  `S8-IDENTITY-012`'s `system_settings` table has to raise a constant in the
-  same commit that adds it.
+- **No migration for identity itself.** `internal/db/web_audience_schema_test.go`
+  reads the committed SQL and asserts the four facts the "zero migrations"
+  claim rests on. The counterpart test is a ratchet on the file COUNT, and
+  `S8-IDENTITY-019` raised it from 3 to 4 for `account_profiles` — in the same
+  commit, which is what that test asks for. `S8-IDENTITY-012`'s
+  `system_settings` will raise it to 5 the same way.
 - **The four existing `auth.*` subjects were not renamed** to say `admin`,
   even though they now silently mean it. A rename costs a coordinated
   two-service deploy plus a NATS ACL change to buy what a comment buys for
