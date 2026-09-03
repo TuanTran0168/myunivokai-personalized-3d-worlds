@@ -1,6 +1,7 @@
 import type {
   ApiErrorPayload,
   CreateWorldInput,
+  DeleteResult,
   GenerationJob,
   PublishResult,
   ShareWorld,
@@ -332,6 +333,13 @@ export const api = {
       { method: "POST", body: "{}" }
     );
     return { shareSlug: payload.shareSlug ?? payload.share_slug ?? "", shareUrl: payload.shareUrl ?? "" };
+  },
+
+  // Owner-only, and the server decides that: a world nobody has claimed cannot
+  // be deleted by anybody, which the gateway answers with WORLD_NOT_CLAIMED
+  // rather than pretending the world is not there.
+  async deleteWorld(worldId: string, family: WorldFamily = DEFAULT_WORLD_FAMILY): Promise<DeleteResult> {
+    return request<DeleteResult>(family, `/worlds/${worldId}/delete`, { method: "POST" });
   },
 
   async getShareWorld(shareSlug: string, family: WorldFamily = DEFAULT_WORLD_FAMILY): Promise<ShareWorld> {
