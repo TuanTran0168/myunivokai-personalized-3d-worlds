@@ -271,6 +271,60 @@ per-request round trip.
 concern is the *file* (`postgres_accounts.go`, `postgres_audit.go`, …), not
 the type.
 
+### System settings
+
+Nine operator-changeable policy numbers — two quota ceilings, four token
+lifetimes, an invite lifetime and the lockout pair. Design: §9.3 of
+`agent-system/plans/architecture/end-user-identity-and-ownership.md`.
+
+**The registry is `contracts.DeclaredSettings()`, not anything in this
+service.** It declares each setting's key, type, description, bounds and
+default, and it lives in `contracts` because both sides read it: this service
+validates every write against it, and the gateway needs the two `quota.*`
+defaults to answer a cache miss. A registry inside `auth-service` would mean
+the gateway declaring its own copy of the number 5.
+
+`system_settings` holds only OVERRIDES. Every setting has a default in code and
+the platform is required to boot and behave correctly with the table empty and
+Redis flushed, which is what `TestAnEmptySettingsTableIsAWorkingPlatform`
+asserts — the screen AND a real sign-up, because a list assertion alone would
+not notice a zero-length session. Defaults are held as text so that a default
+and an operator's value go through the same parser and the same bounds check.
+
+Bounds are code and are enforced on write. Two of them are load-bearing rather
+than tidy: `auth.lockout.max_failed_attempts` has a floor of 1, because 0 locks
+every account on its zeroth failed attempt including the one that would put the
+value back; and each audience's access-lifetime range ends exactly where its
+refresh range begins, so no pair of values anybody can write leaves an access
+token outliving its refresh token.
+
+**The two sides read different sources, deliberately.** This service reads
+Postgres at the moment of use — it owns the table, and going through its own
+Redis mirror would let a flushed cache silently revert its policy to the
+defaults while the rows said otherwise. The gateway reads the mirror only, and
+a miss uses its compiled-in default rather than a NATS request: see
+`services/api-gateway/internal/settings/reader.go`, which is the one place this
+repository inverts `RevocationChecker` and the one place a reflection test
+guards the shape of a type rather than its behaviour.
+
+A write goes row → audit → mirror, in that order. The audit line is
+`<key>: <old> -> <new>` with `default` for an absent previous row, and it is
+written before the mirror so the transition it records survives a Redis
+failure. A failed mirror write is reported to the operator rather than
+swallowed: the row is committed, but the gateway is still enforcing the old
+value.
+
+An orphan row — one whose key has left the registry — is listed and never
+deleted, which is the deliberate opposite of `SyncPermissions`' trailing
+`DELETE FROM permissions WHERE NOT (codename = ANY($1))`. It reaches the admin
+screen with no type, no default and no bounds, because there is no declaration
+left to take them from.
+
+Two permissions gate the two routes (`settings:read`, `settings:manage`), both
+in `enforcedPermissions`, and the admin screen renders the registry rather than
+a hand-written form — so a tenth setting is a backend-only change, in a new
+section of its own if its key prefix is new.
+
 ## Analytics Service
 
 Source: `services/analytics-service`. Design:
@@ -446,8 +500,14 @@ never do.
 
 ## Internal access boundary
 
-The product API still has no end-user accounts; `auth-service` is staff-only
-identity for the admin console (`agent-system/plans/services/auth-and-admin-plan.md`).
+`auth-service` serves BOTH audiences as of Sprint 8: staff identity for the
+admin console (`agent-system/plans/services/auth-and-admin-plan.md`) and
+end-user identity for the product (`aud=web`, decision 1 of
+`agent-system/plans/architecture/end-user-identity-and-ownership.md`). One
+`accounts` table, two audiences, and the separation between them is therefore
+not a table boundary: it is the audience claim on the token plus the repository
+refusing a role to a non-staff account.
+
 Direct browser-to-domain access is prevented structurally:
 
 - domain services have no HTTP listener or published host port;

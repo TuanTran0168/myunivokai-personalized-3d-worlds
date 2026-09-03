@@ -1072,6 +1072,18 @@ and waking a service for it costs 20-60 s on the create path. **Write this
 divergence down in the code**, because a later reader will otherwise "fix" it
 into consistency with `RevocationChecker` and reintroduce the cold start.
 
+**Corrected 2026-09-03, while implementing `S8-IDENTITY-012`. The comment is
+necessary and it is not sufficient.** Every behavioural test of the reader — a
+miss answered from the default, a bad mirrored value ignored, a Redis outage
+survived — would still pass if somebody gave it a requester field and used it
+only on a miss. A test that observes a miss being answered from the default
+cannot tell "asks nobody" from "asks nobody today". So the SHAPE is asserted
+instead: `settings.Reader` has exactly one field, it is a one-method
+`SettingCache` interface, and
+`TestTheSettingsReaderHasNoWayToAskAuthService` fails on a second dependency.
+A reader with nothing to ask with cannot reintroduce the cold start, comment or
+no comment.
+
 Writes go the other way and never touch the hot path:
 
 ```txt
@@ -1086,11 +1098,38 @@ auth-service startup → re-mirror every setting into Redis
     default-constant fallback covers the window in between)
 ```
 
+#### Where the registry lives — decided 2026-09-03, while implementing `S8-IDENTITY-012`
+
+Not stated above, and the story's "pin it as `enforcedPermissions` is pinned"
+implies `auth-service`, where that list lives. **The registry is in
+`contracts/go/contracts_settings.go`**, and the reason is the number `5`.
+
+`auth-service` owns the table and validates every write, but the gateway needs
+the two `quota.*` defaults precisely because the table above forbids it from
+asking. They are separate Go modules that cannot import each other's
+internals, so a registry inside `auth-service` means the gateway declares its
+own copy of the anonymous daily limit — two declarations of one number that
+must agree, failing silently if they do not: a fresh environment would enforce
+one value while the admin screen showed another. `contracts` is already where
+this repository puts a vocabulary both sides read.
+
+What stayed in `auth-service` is what only it can do: the rows, the audit line,
+the Redis mirror, and the four call sites.
+
 #### The invariant that stops a settings table becoming the new hiding place
 
 **Every setting has a named default constant in code, and the platform must
 boot and behave correctly with an empty `system_settings` table and an empty
 Redis.** A setting is an *override*, never the only copy of a value.
+
+**Extended 2026-09-03, while implementing `S8-IDENTITY-012`: the defaults are
+held as TEXT, which is what turns this paragraph from a promise into a test.**
+Held as typed values, a default and an operator's value would travel through
+different code and the invariant would stay a sentence. Held as the text an
+operator would type, both go through one parser and one bounds check — so
+`TestEveryDefaultIsInsideItsOwnDeclaredRange` proves the shipped
+out-of-the-box behaviour is a value the platform would accept, rather than
+leaving that for the first environment with an empty table to discover.
 
 This is not bureaucracy — it is what keeps `coding-style.md` §1 satisfied (the
 default is still a named constant) and it is what stops a fresh environment
@@ -1290,7 +1329,7 @@ gateway's equivalents would each need their component restructured first.
 | `auth.token.admin.access_ttl` | duration | `10m` | `AUTH_ACCESS_TOKEN_TTL` | The only one not already per-call — see the note below, where it turns out to be free anyway |
 | `auth.token.admin.refresh_ttl` | duration | `14d` | `AUTH_REFRESH_TOKEN_TTL` | One line; already read per call |
 | `auth.token.web.access_ttl` | duration | `7d` (§4.4) | — | **New in this sprint**, and see the note below |
-| `auth.token.web.refresh_ttl` | duration | `3mo` (§4.4) | — | **New.** Free |
+| `auth.token.web.refresh_ttl` | duration | `3mo` (§4.4) — declared as `90d`, see below | — | **New.** Free |
 | `auth.token.invite_ttl` | duration | `7d` | `AUTH_INVITE_TOKEN_TTL` | One line; already read per call |
 | `auth.lockout.max_failed_attempts` | int | `5` | `AUTH_MAX_FAILED_ATTEMPTS` | One line; already read per call |
 | `auth.lockout.duration` | duration | `15m` | `AUTH_LOCKOUT_DURATION` | One line, same call site |
@@ -1304,6 +1343,25 @@ They are grouped under `auth.lockout.*` for exactly that reason.
 Two types, one service: **three `int` values and six durations**, across three
 groups. That is enough to prove a registry and to prove the grouping, which a
 single setting would not have been.
+
+**Corrected 2026-09-03: `3mo` is not a duration, and `168h` is not readable.**
+Go's duration syntax stops at hours, so the registry's accepts one unit more —
+a whole number of days, `7d` — and `3mo` is declared as `90d` for the reason
+the deleted `config.WebRefreshTokenTTL` already gave: a duration cannot express
+a calendar month, and rounding it explicitly beats leaving a reader to work out
+which month was meant. The extension is not cosmetic: an operator asked to type
+`2160h` for three months cannot check it at a glance and is one keystroke from
+`21600h`, which is the class of mistake the declared bounds then have to catch.
+Whole days only — `1.5d` is refused rather than rounded.
+
+**And a bound that no single key can express.** A 30-day web access token with
+a 1-day refresh token is two values inside their own ranges and a session that
+expires before it can be renewed. Rather than build cross-key validation for
+one case, each audience's access range ENDS where its refresh range begins
+(admin `1m…24h` against `24h…90d`; web `5m…30d` against `30d…365d`), which
+makes the violation unexpressible.
+`TestAccessLifetimeRangesCannotCrossTheirRefreshRanges` is what fails when
+somebody widens one maximum without moving the matching minimum.
 
 **The note, and it is a piece of luck.** `AccessTokenTTL` is the *only* auth
 value baked in at construction:
@@ -1868,6 +1926,14 @@ above are guesses at what was on it.
   stays as the **default**. A setting is an override, never the only copy of a
   value: the platform must boot and behave correctly with an empty settings
   table and an empty Redis.
+
+  **Refined 2026-09-03, while implementing `S8-IDENTITY-012`.** "The named
+  constant stays" holds for the five settings migrated FROM an environment
+  variable — that variable is still their default, and a test now keeps the two
+  sides agreeing. For a value BORN as a setting it would mean two copies of the
+  same number: so `internal/config/web_token_lifetimes.go` was deleted and the
+  registry's default is the only declaration. The constant did not survive; the
+  invariant did, because a registry default is a named constant in code.
 - **No settings read on the create path that can wake `auth-service`** (§9.3).
   A Redis miss uses the compiled-in default. This is the one place the plan
   deliberately diverges from `RevocationChecker`, and the divergence is

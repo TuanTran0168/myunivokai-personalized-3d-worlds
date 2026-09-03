@@ -1,14 +1,14 @@
 # Sprint 08 user stories — end-user identity and world ownership
 
-> **Document status:** Phase A implemented; Phase B half implemented
-> (`S8-IDENTITY-007` … `010`); `011` … `014` and Phase C planned
+> **Document status:** Phase A implemented; Phase B implemented except
+> `013` and `014`; Phase C planned
 > **Sprint starts:** 2026-09-02
 > **Last source review:** 2026-09-03
 > **Read the Phase A corrections section before Phase A's own stories** — five
 > of its claims turned out to be wrong, including one requirement that is not
 > achievable before email exists.
-> **Read the Phase B corrections section before `012` … `014`.** Twelve
-> entries. The one to read first is 8: a single struct literal in
+> **Read the Phase B corrections section before `013` and `014`.**
+> Twenty-one entries. The one to read first is 8: a single struct literal in
 > `dna-service` dropped the owner `007` and `008` had just gone to the trouble
 > of establishing, so both stories shipped inert with every test passing. Of
 > the rest, three change what is left to build — the plan's `WorldSnapshot`
@@ -16,6 +16,11 @@
 > deletion nor a claim emits an event — and three record decisions the stories
 > do not state: who mints the anonymous id, what happens to a malformed one,
 > and why a claim that can never apply must never be published.
+> Entries 13 to 21 are `012`'s, and two of them are worth reading before
+> writing any settings code: 13, because the registry is in `contracts` rather
+> than in `auth-service` and the reason is a number that must not exist twice,
+> and 20, because the comment §9.3 asks for cannot protect the rule it
+> describes and a shape test does.
 
 One epic, three phases, seventeen branch-sized stories. The phases are ordered
 by dependency and each ends in a shippable state:
@@ -881,7 +886,7 @@ Tasks:
 
 ### S8-IDENTITY-012 — System settings, so a policy number is not another `.env` line
 
-Status: Planned
+Status: Implemented — `feat/be/end-user-identity-phase-b-continued`
 Priority: P0
 
 As the product owner,
@@ -938,88 +943,74 @@ Source evidence:
 - render.yaml — 176 `- key:` entries, the same reason
 
 Tasks:
-- [ ] `feat/be/system-settings`: add the `system_settings` table to
+- [x] `feat/be/system-settings`: add the `system_settings` table to
       `auth-service` — `setting_key` primary key, `setting_value TEXT`,
       `updated_by_account_id`, `updated_at`.
-- [ ] Add a code-declared `declaredSettings` registry with key, type
-      (`string` / `int` / `bool` / `duration` — the four the config loader
-      already has), default, bounds and a description the admin screen renders.
-      Pin it with a test, as `enforcedPermissions` is pinned.
-- [ ] Adopt the key scheme `<domain>.<group>.<subject>.<thing>`, validated in
-      the registry against `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$` and pinned by
-      the registry test. `<domain>` names **what the setting governs, not the
-      service that stores it** — which is why the quota keys are `quota.*`
-      while living in `myunivokai_auth`.
-- [ ] Declare **batch 1's nine settings — `auth-service`'s own, by the owner's
-      narrowing** (plan §9.3):
-
-      | Setting key (database row) | Type | Default | Default read from `.env` — unchanged |
-      | --- | --- | --- | --- |
-      | `quota.ai.daily_limit.anonymous` | int | `5` | — |
-      | `quota.ai.daily_limit.account` | int | `25` | — |
-      | `auth.token.admin.access_ttl` | duration | `10m` | `AUTH_ACCESS_TOKEN_TTL` |
-      | `auth.token.admin.refresh_ttl` | duration | `14d` | `AUTH_REFRESH_TOKEN_TTL` |
-      | `auth.token.web.access_ttl` | duration | `7d` | — |
-      | `auth.token.web.refresh_ttl` | duration | `3mo` | — |
-      | `auth.token.invite_ttl` | duration | `7d` | `AUTH_INVITE_TOKEN_TTL` |
-      | `auth.lockout.max_failed_attempts` | int | `5` | `AUTH_MAX_FAILED_ATTEMPTS` |
-      | `auth.lockout.duration` | duration | `15m` | `AUTH_LOCKOUT_DURATION` |
-
-      The five with a `Replaces` value keep that environment variable as their
-      **default** — nothing is deleted from `.env`, because removing the
-      fallback breaks the empty-table invariant.
-- [ ] Give `auth.token.web.*` descriptions that say **"personalization web
-      app"** in words while the key says `web`, so the operator reads the app
-      name and the code keeps one vocabulary for `aud=web`, which §17 freezes.
-- [ ] Swap four call sites from `service.cfg.X` to a lookup. Each is **one
-      line**, because in `auth-service` — unlike the gateway — these are
-      already read at the moment of use: `auth_service.go:92` for the two
-      lockout values, `:238` for the refresh TTL,
-      `role_management_service.go:68` for the invite TTL.
-- [ ] The two `access_ttl` keys are the only auth values baked in at
-      construction (`NewTokenIssuer(key, cfg.AccessTokenTTL)`,
-      `cmd/service/main.go:95`). **`S8-IDENTITY-001` already has to restructure
-      that**, because one issuer with one TTL cannot serve a 10-minute admin
-      token and a 7-day web token — so **sequence this story after `001`** and
-      both settings cost nothing extra.
-- [ ] Take **nothing** from the gateway's existing config. The gateway gains
-      exactly one settings reader, for the two new quota limits, because it is
-      the service that enforces the quota. Nothing it reads today changes.
-- [ ] Leave `AUTH_TOKEN_VERSION_CACHE_TTL` and `NATS_QUERY_TIMEOUT` in `.env`
-      even though both are auth-read and cheap. **Each has a twin in the
-      gateway** — `ADMIN_TOKEN_VERSION_CACHE_TTL` and `NATS_REQUEST_TIMEOUT` —
-      and making one side settable makes the effective revocation window, and
-      the responder-under-requester invariant, depend on which service wrote
-      last (plan §9.3, fact three). Both sides or neither.
-- [ ] Declare each setting's permitted range **in Go**, and reject out-of-range
-      writes. Bounds are code, never data — that is what makes exposing a
-      security-relevant number safe at all.
-- [ ] Take nothing from batch 2, and do not attempt a general migration: five
-      of the seven services have **no Redis client**, so a setting read by
-      `dna-service` or a family service is a project, not a row (plan §9.3,
-      fact one).
-- [ ] Add `settings:read` and `settings:manage` to `enforcedPermissions` — not
-      to `reservedPermissions`, because their routes ship here. Choose both
-      names once: `SyncPermissions` deletes any codename that leaves the list,
-      from production and from every role holding it, on the next boot.
-- [ ] Mirror every setting into Redis on write **and on service startup**, with
-      no TTL, so a flushed Redis self-heals on the next boot.
-- [ ] Add the gateway-side reader: Redis, then the compiled-in default on a
-      miss, and **never a NATS request**. Put the reason in a comment next to
-      it — a later reader will otherwise make it consistent with
-      `RevocationChecker` and reintroduce a cold start on the create path.
-- [ ] Add a `setting_update` audit action recording `<key>: <old> -> <new>`.
-- [ ] Add `/api/admin/settings` read and write routes, permission-gated, which
-      the enumerating admin router test already requires.
-- [ ] Add the Settings screen to `apps/myunivokai-admin`, rendering the
-      declared registry rather than a hand-written form, so a new setting needs
-      no frontend change.
-- [ ] Add the empty-table test: no rows, no Redis, correct behaviour.
-- [ ] Do **not** move `AI_PROVIDER` here. It is the most valuable candidate and
-      the most expensive: `aifactory` builds the provider once at startup, so it
-      would turn provider selection per-request, and the setting would need
-      validating against which API keys exist. Plan §9.3 records it as the next
-      candidate, deliberately outside this sprint.
+      `migrations/000005_system_settings.sql`. The actor column is
+      `ON DELETE SET NULL` rather than the CASCADE `account_profiles` uses on
+      the same parent: a profile belongs to an account and dies with it, while
+      a policy number belongs to the platform — see correction 13's neighbour
+      note in the migration itself. Four columns and no `created_at`, because
+      the audit log holds the history and a second timeline here could disagree
+      with it.
+- [x] Add a code-declared `declaredSettings` registry with key, type
+      (`string` / `int` / `bool` / `duration`), default, bounds and a
+      description the admin screen renders. Pinned by
+      `TestDeclaredSettingsAreDeclaredDeliberately`.
+      **It lives in `contracts/go/contracts_settings.go`, not in
+      `auth-service` — correction 13.**
+- [x] Adopt the key scheme `<domain>.<group>.<subject>.<thing>`, validated
+      against `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$` and pinned by
+      `TestEverySettingKeyFollowsTheScheme`, which also checks the pattern's
+      rejections — a pattern nothing tests against a refusal could be `.*`.
+- [x] Declare batch 1's nine settings. All nine, with the plan's defaults, held
+      as **text** so a default and an operator's value go through one parser and
+      one bounds check — correction 14.
+- [x] Give `auth.token.web.*` descriptions that say "personalization web app"
+      while the key says `web`.
+- [x] Swap the four call sites from `service.cfg.X` to a lookup —
+      `auth_service.go`'s lockout pair and `refreshTokenLifetime`, and
+      `role_management_service.go`'s invite TTL.
+- [x] The two `access_ttl` keys. `TokenIssuer` gave up **both** its lifetimes
+      rather than gaining a resolver: the audience-to-lifetime choice moved to
+      `AuthService.accessTokenLifetime`, beside `refreshTokenLifetime`.
+      `config.WebAccessTokenTTL` and `WebRefreshTokenTTL` were **deleted** —
+      correction 17.
+- [x] Take **nothing** from the gateway's existing config. One new reader for
+      the two quota limits; nothing the gateway reads today changed.
+- [x] Leave `AUTH_TOKEN_VERSION_CACHE_TTL` and `NATS_QUERY_TIMEOUT` in `.env`.
+      Untouched.
+- [x] Declare each setting's permitted range in Go, and reject out-of-range
+      writes. Also `TestEveryDeclaredSettingBoundsItsOwnType`, because a
+      duration setting carrying integer bounds is not an error in any compiler
+      — the bounds simply enforce nothing. And the two access ranges end where
+      their refresh ranges begin, which is correction 16.
+- [x] Take nothing from batch 2, and attempt no general migration.
+- [x] Add `settings:read` and `settings:manage` to `enforcedPermissions`, both
+      names chosen once. Two codes rather than one: reading a policy number and
+      changing it are different acts, and the pair is asserted in both
+      directions (`TestSettingsReadDoesNotGrantSettingsManage` and its twin).
+- [x] Mirror every setting into Redis on write **and on service startup**, with
+      no TTL. Startup mirrors the *effective* value of every declared setting,
+      so a cache hit answers the gateway completely and the default stays a
+      last resort rather than the normal answer for eight of nine keys.
+- [x] Add the gateway-side reader: Redis, then the compiled-in default on a
+      miss, and never a NATS request. **The comment this task asks for is not
+      enough, and the shape is asserted instead — correction 20.**
+- [x] Add a `setting_update` audit action recording `<key>: <old> -> <new>`.
+      An absent previous row reads as `default`, because "there was no row" and
+      "the row said nothing" are different facts.
+- [x] Add `/api/admin/settings` read and write routes, permission-gated. The
+      key is a path segment carrying dots, which needs no encoding.
+- [x] Add the Settings screen to `apps/myunivokai-admin`, rendering the
+      declared registry rather than a hand-written form. Sections come from the
+      key prefix, so a new setting needs no frontend change and a new prefix
+      needs no mapping table.
+- [x] Add the empty-table test: no rows, no Redis, correct behaviour.
+      `TestAnEmptySettingsTableIsAWorkingPlatform` asserts both halves — the
+      screen reads correctly AND a sign-up produces a session with the declared
+      lifetimes, which is the half a list assertion alone would miss.
+- [x] Do **not** move `AI_PROVIDER` here. Not moved.
 
 ### S8-IDENTITY-013 — A daily generation limit that never refuses a world
 
@@ -1152,14 +1143,15 @@ Tasks:
 
 ## Phase B — corrected during execution, 2026-09-03
 
-Written after `S8-IDENTITY-007` … `011` were implemented, and read before the
-stories that are left. Six of the plan's or the stories' own instructions
-turned out to be wrong or unnecessary, and three defects were found by reading
-the code rather than by a test — entries 7, 8 and 12. The record of those is
-worth more than the tidy version, and entry 8 is the one to read first: it is
-two merged stories that did nothing at all.
+Written after `S8-IDENTITY-007` … `012` were implemented, and read before the
+stories that are left. Nine of the plan's or the stories' own instructions
+turned out to be wrong, unnecessary or insufficient, and three defects were
+found by reading the code rather than by a test — entries 7, 8 and 12. The
+record of those is worth more than the tidy version, and entry 8 is the one to
+read first: it is two merged stories that did nothing at all.
 
-Entries 1 to 7 were written after `010`; 8 to 12 after `011`.
+Entries 1 to 7 were written after `010`; 8 to 12 after `011`; 13 to 21 after
+`012`.
 
 ### 1. The plan asked for `OwnerAccountID` on `WorldSnapshot`, and it was not added
 
@@ -1375,9 +1367,165 @@ has been corrected: what is left of that state is a browser that lost its
 anonymous-id cookie while keeping the `localStorage` list, and those worlds are
 unclaimable for ever by decision 16.
 
+### 13. The settings registry lives in `contracts`, not in `auth-service`
+
+`S8-IDENTITY-012`'s task line says "add a code-declared `declaredSettings`
+registry … Pin it with a test, as `enforcedPermissions` is pinned", and
+`enforcedPermissions` lives in `auth-service`. Read literally, so would the
+registry.
+
+It is in `contracts/go/contracts_settings.go` instead, and the reason is a
+value: **5**.
+
+`auth-service` owns the table and validates every write, but the GATEWAY needs
+the two `quota.*` defaults, because §9.3 forbids it from asking auth-service on
+a cache miss. They are separate Go modules and neither may import the other's
+internals. So a registry inside `auth-service` means the gateway declares its
+own copy of the anonymous daily limit — two declarations of one number, in two
+services, that must agree and would fail silently if they did not: a fresh
+environment would enforce one value while the admin screen showed another.
+
+`contracts` is where this repository already puts a vocabulary both sides read
+(`PermissionCode`, `MaximumAccountDisplayNameLength`), and the same argument
+put them there. What stayed in `auth-service` is what only it can do: the rows,
+the audit line, the Redis mirror and the four call sites.
+
+### 14. Defaults are held as TEXT, which is what makes the invariant checkable
+
+The plan's central invariant is that every setting has a named default constant
+and the platform behaves correctly with an empty table. Stated that way it is a
+promise. Held as typed values — `5`, `10 * time.Minute` — it would have stayed
+one, because a default and an operator's value would then travel through
+different code.
+
+Every default in the registry is the TEXT an operator would type, so both go
+through the same parser and the same bounds check. That turns the invariant
+into `TestEveryDefaultIsInsideItsOwnDeclaredRange`: a default outside its own
+range is a test failure rather than something the first environment with an
+empty table discovers. It also means the mirror written at startup and the
+default on a cache miss are the same string in the same format, so the two
+paths cannot diverge in shape.
+
+### 15. Go cannot spell `7d`, and the plan's `3mo` is not a duration at all
+
+Every value in batch 1 is measured in days or minutes; `time.ParseDuration`
+stops at hours. So the registry's duration syntax is Go's plus one unit: a
+whole number of days, `7d`.
+
+The alternative was storing `168h` and `2160h`. An operator asked to type
+`2160h` for three months cannot check it at a glance and is one keystroke from
+`21600h` — precisely the class of mistake the declared bounds then have to
+catch. Whole days only: `1.5d` is refused rather than rounded, because a
+fractional day is expressible in hours and a settings screen must never round
+silently.
+
+The plan's `3mo` default for `auth.token.web.refresh_ttl` is written as `90d`,
+for the reason the deleted `config.WebRefreshTokenTTL` already gave: a duration
+cannot express a calendar month, and rounding it explicitly beats leaving a
+reader to work out which month was meant.
+
+### 16. A per-key bound cannot say "an access token must not outlive its refresh token"
+
+The story asks for each setting's permitted range in Go, and that is what
+shipped. It does not cover the one dangerous COMBINATION: a 30-day web access
+token with a 1-day refresh token is two values inside their own ranges and a
+session that expires before it can be renewed.
+
+Cross-key validation was not built for one case. Instead the four ranges are
+chosen so the violation cannot be expressed: each audience's access range ends
+exactly where its refresh range begins (admin `1m…24h` against `24h…90d`; web
+`5m…30d` against `30d…365d`). The invariant then lives in the choice of
+numbers, and the failure mode of that is somebody widening one maximum without
+moving the matching minimum — which nothing else would catch, so
+`TestAccessLifetimeRangesCannotCrossTheirRefreshRanges` does.
+
+### 17. The two `web` token constants were deleted, not kept as the defaults
+
+§15 says the named constant "stays as the **default**" for every value moved
+into `system_settings`, and for the five migrated ones it does — their
+environment variable is still the default, and correction 18's ratchet keeps
+the two sides agreeing.
+
+For the two born-as-settings web lifetimes it would have meant two copies of
+`7d`: `config.WebAccessTokenTTL` and the registry's default. So
+`internal/config/web_token_lifetimes.go` is **deleted**, and the registry is the
+only declaration. That file's own comment predicted this story would consume it
+— "S8-IDENTITY-012 makes both of them `system_settings` rows" — so deleting it
+is what it was written for, not a liberty taken with it.
+
+The argument it carried, that a 7-day access token is defensible only because
+the gateway rechecks `tokenVersion` on every request, moved with the value into
+the registry's comment.
+
+### 18. `auth-service` reads its own settings from Postgres, never from its own mirror
+
+The story describes "Postgres → Redis → gateway resolution", which reads as one
+chain both services walk. They do not walk the same one.
+
+The gateway reads Redis because it must not wake `auth-service` on the create
+path. `auth-service` reads **Postgres** at the moment of use, because it owns
+the table and going through its own mirror would make its behaviour depend on a
+cache it populated: a flushed Redis would silently revert this service's policy
+to the defaults while the rows still said otherwise. It has no cold-start
+constraint to trade against, and every reason to read the truth.
+
+A row that no longer satisfies its declaration is ignored in favour of the
+default on both sides. Bounds are code: a value that was legal when it was
+written is not made legal by being in a database.
+
+### 19. A failed mirror write is reported, and the audit row is written before it
+
+Nothing in the story says what happens when Postgres accepts a settings write
+and Redis refuses the mirror. The answer is that the operator is told, and it
+is not the comfortable one — the row is already committed, so the change IS live
+in `auth-service`.
+
+What is not live is the gateway, which reads the mirror. Answering success
+would tell somebody their new quota is being enforced when the old one still
+is, so the write returns the error and the retry re-mirrors; writing the same
+row and the same mirror twice changes nothing.
+
+The audit row goes in **before** the mirror, so the transition it records is
+the one that actually happened even when the caller saw a failure. Ordering it
+after would leave a committed change with no history.
+
+### 20. The comment §9.3 asks for cannot protect the rule, so the shape is asserted
+
+§9.3 says to write the divergence from `RevocationChecker` down in the code,
+"because a later reader will otherwise 'fix' it into consistency and
+reintroduce a cold start". The comment is there. It is not enough.
+
+Every behavioural test of the gateway's reader would still pass if somebody
+gave it a requester field and used it only on a cache miss — which is exactly
+the change that reader makes, because `RevocationChecker`'s shape is the one
+this repository uses everywhere else. A test that only ever observes a miss
+being answered from the default cannot tell "asks nobody" from "asks nobody
+today".
+
+So `TestTheSettingsReaderHasNoWayToAskAuthService` asserts the structure:
+`settings.Reader` has exactly one field, it is the `SettingCache` interface,
+and that interface declares exactly one method. A reader with nothing to ask
+with cannot put a 20-60 second cold start back on the create path.
+
+### 21. The bounds made an existing test's mechanism unrepresentable, which is the bounds working
+
+`TestAuthService_AcceptInvite_RejectsAnExpiredToken` set
+`InviteTokenTTL = -time.Hour`, so the invite it created was expired the instant
+it existed. `auth.token.invite_ttl` declares a floor of one hour, so that
+configuration can no longer exist — and with the setting resolved per call, a
+negative value would have been ignored in favour of the default and the test
+would have started passing or failing on a timing accident rather than on the
+behaviour it names.
+
+It now writes the past expiry straight into the row, which is what an expired
+invite actually is. Worth recording because it is the shape of a small trap:
+tightening a bound can make a test's SETUP impossible while leaving its
+assertion looking healthy, and a resolver that falls back to a default rather
+than failing is what turns that into a silent pass.
+
 ### What Phase B has NOT done yet, so it is not mistaken for an omission
 
-`S8-IDENTITY-012` … `014` are not started. Concretely, that means:
+`S8-IDENTITY-013` and `014` are not started. Concretely, that means:
 
 - **No world made before the claim shipped has an owner**, and there is still
   no way for a visitor to give one to it. Decision 16 stands: an anonymous id
@@ -1386,12 +1534,16 @@ unclaimable for ever by decision 16.
   answer to deleting one, permanently, not a temporary limitation.
 - **No quota, and `AI_PROVIDER` therefore stays `mock` in production.** The
   ceiling is what makes a real provider safe to switch on, and it is
-  `S8-IDENTITY-013`.
-- **No settings table**, so every policy number is still an `.env` line —
-  `S8-IDENTITY-012`.
+  `S8-IDENTITY-013`. The two limits it enforces are now settings with a
+  reader in front of them — `013` is the counter and the degrade, not the
+  numbers.
 - **Nothing tells a visitor their worlds were claimed.** The claim is silent by
   design for now; `S8-IDENTITY-014` is the one toast, and it waits for the
   quota's reason codes to have something to say.
+- **Nothing in the gateway reads a setting yet.** The reader exists, is tested,
+  and has one caller as of `013`. That is deliberate: §9.3's batch 2 moves the
+  three gateway cache TTLs here, and each needs its handler restructured
+  first.
 
 ---
 
