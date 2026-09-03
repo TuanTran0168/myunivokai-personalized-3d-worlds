@@ -11,6 +11,7 @@ import (
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/config"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/httpx"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/middleware"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/settings"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/telemetry"
 )
 
@@ -21,6 +22,7 @@ type EdgeStore interface {
 	wakeStatsReader
 	middleware.DistributedLimiter
 	auth.TokenVersionCache
+	settings.SettingCache
 	IdentityFailureCounter
 	Ping(context.Context) error
 	Close() error

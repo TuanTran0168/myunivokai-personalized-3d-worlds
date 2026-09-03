@@ -8,18 +8,20 @@ import (
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
 )
 
-// testWebAccessTTL is deliberately unlike the admin lifetime used beside it,
-// so a test that mints a web token and gets the admin lifetime fails on the
-// number rather than passing because both happened to be ten minutes.
-const testWebAccessTTL = 7 * 24 * time.Hour
+// testAccessTokenLifetime is now a plain argument rather than a property of
+// the issuer. The per-audience choice these tests used to exercise here moved
+// to AuthService.accessTokenLifetime when both lifetimes became settings, and
+// TestSessionLifetimesComeFromTheAudiencesOwnSettings in internal/services is
+// where it is asserted now — against the audience, which is what decides it.
+const testAccessTokenLifetime = 10 * time.Minute
 
 func TestTokenIssuer_IssueAndVerifyAccessToken_RoundTrips(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	issuer := NewTokenIssuer(privateKey, 10*time.Minute, testWebAccessTTL)
-	signed, expiresAt, err := issuer.IssueAccessToken("account-1", []string{"basic_user"}, contracts.AccountAudienceAdmin, 3)
+	issuer := NewTokenIssuer(privateKey)
+	signed, expiresAt, err := issuer.IssueAccessToken("account-1", []string{"basic_user"}, contracts.AccountAudienceAdmin, 3, testAccessTokenLifetime)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -52,9 +54,9 @@ func TestTokenIssuer_VerifyAccessToken_RejectsWrongSigningKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	issuedByA := NewTokenIssuer(privateKeyA, 10*time.Minute, testWebAccessTTL)
-	verifiedByB := NewTokenIssuer(privateKeyB, 10*time.Minute, testWebAccessTTL)
-	signed, _, err := issuedByA.IssueAccessToken("account-1", nil, contracts.AccountAudienceAdmin, 1)
+	issuedByA := NewTokenIssuer(privateKeyA)
+	verifiedByB := NewTokenIssuer(privateKeyB)
+	signed, _, err := issuedByA.IssueAccessToken("account-1", nil, contracts.AccountAudienceAdmin, 1, testAccessTokenLifetime)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -68,8 +70,12 @@ func TestTokenIssuer_VerifyAccessToken_RejectsExpiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	issuer := NewTokenIssuer(privateKey, -time.Minute, -time.Minute) // already expired at mint time
-	signed, _, err := issuer.IssueAccessToken("account-1", nil, contracts.AccountAudienceAdmin, 1)
+	issuer := NewTokenIssuer(privateKey)
+	// Already expired at mint time. A negative lifetime is not a value any
+	// setting will produce — auth.token.admin.access_ttl declares a floor of
+	// one minute — but IssueAccessToken takes what it is given, and this is
+	// the only way to get an expired token without waiting for one.
+	signed, _, err := issuer.IssueAccessToken("account-1", nil, contracts.AccountAudienceAdmin, 1, -time.Minute)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}

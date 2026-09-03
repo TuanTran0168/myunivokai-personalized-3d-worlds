@@ -14,11 +14,22 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// TokenVersionCache is the write side of the gateway's revocation check.
-// *redis.Client satisfies this without any change; tests inject a fake so
-// the business logic runs with no network dependency.
-type TokenVersionCache interface {
+// GatewayMirrorCache is everything auth-service writes into Redis for the
+// gateway to read WITHOUT asking it. *redis.Client satisfies this without any
+// change; tests inject a fake so the business logic runs with no network
+// dependency.
+//
+// One interface for both entries because they are one concept — values this
+// service owns and the gateway needs on the request path — even though the two
+// halves treat a cache miss oppositely. A missing tokenVersion makes the
+// gateway ask this service, because a revocation check that guesses is a
+// security hole. A missing setting makes the gateway use its compiled-in
+// default and ask nothing, because §9.3 forbids the create path from waiting
+// on a 20-60 second cold start to learn a quota number. That divergence is on
+// the reader's side; the writer is the same act.
+type GatewayMirrorCache interface {
 	SetTokenVersion(ctx context.Context, accountID string, tokenVersion int, timeToLive time.Duration) error
+	SetSetting(ctx context.Context, key contracts.SettingKey, value string) error
 }
 
 var (
@@ -60,22 +71,22 @@ const (
 // lockout, refresh rotation with reuse detection, and the Redis tokenVersion
 // cache the gateway's revocation check depends on.
 type AuthService struct {
-	store             repositories.Store
-	passwordHasher    security.PasswordHasher
-	tokenIssuer       security.TokenIssuer
-	tokenVersionCache TokenVersionCache
-	passwordPolicy    PasswordPolicy
-	cfg               config.Config
-	dummyPasswordHash string
+	store              repositories.Store
+	passwordHasher     security.PasswordHasher
+	tokenIssuer        security.TokenIssuer
+	gatewayMirrorCache GatewayMirrorCache
+	passwordPolicy     PasswordPolicy
+	cfg                config.Config
+	dummyPasswordHash  string
 }
 
-func NewAuthService(store repositories.Store, passwordHasher security.PasswordHasher, tokenIssuer security.TokenIssuer, tokenVersionCache TokenVersionCache, passwordPolicy PasswordPolicy, cfg config.Config) (*AuthService, error) {
+func NewAuthService(store repositories.Store, passwordHasher security.PasswordHasher, tokenIssuer security.TokenIssuer, gatewayMirrorCache GatewayMirrorCache, passwordPolicy PasswordPolicy, cfg config.Config) (*AuthService, error) {
 	dummyHash, err := passwordHasher.Hash("myunivokai-constant-time-decoy")
 	if err != nil {
 		return nil, err
 	}
 	return &AuthService{
-		store: store, passwordHasher: passwordHasher, tokenIssuer: tokenIssuer, tokenVersionCache: tokenVersionCache,
+		store: store, passwordHasher: passwordHasher, tokenIssuer: tokenIssuer, gatewayMirrorCache: gatewayMirrorCache,
 		passwordPolicy: passwordPolicy, cfg: cfg, dummyPasswordHash: dummyHash,
 	}, nil
 }
@@ -126,7 +137,9 @@ func (service *AuthService) login(ctx context.Context, data contracts.LoginData,
 		return contracts.LoginResponseData{}, ErrAccountLocked
 	}
 	if err := service.passwordHasher.Verify(data.Password, account.PasswordHash); err != nil {
-		if recordErr := service.store.RecordFailedLoginAttempt(ctx, account.ID, service.cfg.MaximumFailedAttempts, service.cfg.LockoutDuration); recordErr != nil {
+		if recordErr := service.store.RecordFailedLoginAttempt(ctx, account.ID,
+			service.resolveIntegerSetting(ctx, contracts.SettingKeyAuthLockoutMaximumFailedAttempts),
+			service.resolveDurationSetting(ctx, contracts.SettingKeyAuthLockoutDuration)); recordErr != nil {
 			log.Error().Err(recordErr).Str("account_id", account.ID).Msg("record failed login attempt")
 		}
 		service.audit(ctx, &account.ID, auditActionLogin, email, auditResultInvalidCreds, sourceAddress)
@@ -288,7 +301,8 @@ func (service *AuthService) issueSession(ctx context.Context, account repositori
 	// decision 1's separation. Every session in the platform is minted here,
 	// so this one line is the whole of the rule.
 	audience := contracts.AudienceForAccountKind(account.Kind)
-	accessToken, accessExpiresAt, err := service.tokenIssuer.IssueAccessToken(account.ID, roles, audience, account.TokenVersion)
+	accessToken, accessExpiresAt, err := service.tokenIssuer.IssueAccessToken(account.ID, roles, audience, account.TokenVersion,
+		service.accessTokenLifetime(ctx, audience))
 	if err != nil {
 		return contracts.LoginResponseData{}, err
 	}
@@ -296,7 +310,7 @@ func (service *AuthService) issueSession(ctx context.Context, account repositori
 	if err != nil {
 		return contracts.LoginResponseData{}, err
 	}
-	refreshExpiresAt := time.Now().UTC().Add(service.refreshTokenLifetime(audience))
+	refreshExpiresAt := time.Now().UTC().Add(service.refreshTokenLifetime(ctx, audience))
 	if err := service.store.CreateRefreshToken(ctx, repositories.RefreshToken{
 		ID: uuid.NewString(), AccountID: account.ID, FamilyID: familyID, TokenHash: refreshTokenHash, ExpiresAt: refreshExpiresAt,
 	}); err != nil {
@@ -311,19 +325,32 @@ func (service *AuthService) issueSession(ctx context.Context, account repositori
 	}, nil
 }
 
-// refreshTokenLifetime is the other half of TokenIssuer.accessTokenTTL: the
-// audience decides both ends of a session, so neither is a caller's choice.
+// accessTokenLifetime and refreshTokenLifetime are the two ends of one
+// audience's session, and they sit together because the audience decides both
+// and a caller chooses neither.
 //
-// The two values come from different places on purpose. The admin lifetime is
-// a Config field because it is already a deployed environment variable; the
-// web one is a Go constant because S8-IDENTITY-012 turns it into a
-// system_settings row, and a value that starts life as a setting must not
-// arrive as an env var first (see config.WebRefreshTokenTTL).
-func (service *AuthService) refreshTokenLifetime(audience contracts.AccountAudience) time.Duration {
+// Both used to come from somewhere else — the access pair was captured into
+// TokenIssuer when it was built, and the refresh pair was half a Config field
+// and half a Go constant. All four are now `system_settings` rows resolved per
+// call, which is what "takes effect on the next request without any service
+// restarting" means for a token lifetime.
+//
+// The fallback for an unrecognised audience is the ADMIN lifetime, which is
+// the shorter of the two and therefore the safe direction: an audience value
+// this code has never seen produces a token that expires soon rather than one
+// that lives for a week. That behaviour moved here with the choice itself.
+func (service *AuthService) accessTokenLifetime(ctx context.Context, audience contracts.AccountAudience) time.Duration {
 	if audience == contracts.AccountAudienceWeb {
-		return config.WebRefreshTokenTTL
+		return service.resolveDurationSetting(ctx, contracts.SettingKeyAuthTokenWebAccessTTL)
 	}
-	return service.cfg.RefreshTokenTTL
+	return service.resolveDurationSetting(ctx, contracts.SettingKeyAuthTokenAdminAccessTTL)
+}
+
+func (service *AuthService) refreshTokenLifetime(ctx context.Context, audience contracts.AccountAudience) time.Duration {
+	if audience == contracts.AccountAudienceWeb {
+		return service.resolveDurationSetting(ctx, contracts.SettingKeyAuthTokenWebRefreshTTL)
+	}
+	return service.resolveDurationSetting(ctx, contracts.SettingKeyAuthTokenAdminRefreshTTL)
 }
 
 func (service *AuthService) bumpAndCacheTokenVersion(ctx context.Context, accountID string) error {
@@ -331,7 +358,7 @@ func (service *AuthService) bumpAndCacheTokenVersion(ctx context.Context, accoun
 	if err != nil {
 		return err
 	}
-	if err := service.tokenVersionCache.SetTokenVersion(ctx, accountID, newVersion, service.cfg.TokenVersionCacheTTL); err != nil {
+	if err := service.gatewayMirrorCache.SetTokenVersion(ctx, accountID, newVersion, service.cfg.TokenVersionCacheTTL); err != nil {
 		// The gateway's cache-miss fallback calls auth-service directly, so a
 		// failed cache write degrades to a slower read rather than a security
 		// gap - but it is still logged because it should not happen.

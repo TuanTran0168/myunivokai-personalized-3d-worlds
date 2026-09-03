@@ -100,6 +100,11 @@ type fakeEdgeStore struct {
 	identityFailuresError error
 
 	rateLimitRouteKeys map[string]int
+
+	// mirroredSettings is the settings mirror auth-service writes and
+	// settings.Reader reads. Empty by default, which is the state a fresh
+	// environment is in and therefore the one every route must work in.
+	mirroredSettings map[contracts.SettingKey]string
 }
 
 func newFakeEdgeStore() *fakeEdgeStore {
@@ -107,7 +112,31 @@ func newFakeEdgeStore() *fakeEdgeStore {
 		values: make(map[string][]byte), timeToLives: make(map[string]time.Duration),
 		deleteCounts: make(map[string]int), tokenVersions: make(map[string]int),
 		identityFailures: make(map[string]int),
+		mirroredSettings: make(map[contracts.SettingKey]string),
 	}
+}
+
+// GetSetting answers the settings mirror. A miss is the DEFAULT state of this
+// fake on purpose: settings.Reader must resolve every value from its
+// compiled-in default without asking anything, so a fake that pre-populated
+// the mirror would hide the case every environment starts in.
+func (store *fakeEdgeStore) GetSetting(_ context.Context, key contracts.SettingKey) (string, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.getError != nil {
+		return "", store.getError
+	}
+	value, found := store.mirroredSettings[key]
+	if !found {
+		return "", edge.ErrCacheMiss
+	}
+	return value, nil
+}
+
+func (store *fakeEdgeStore) setMirroredSetting(key contracts.SettingKey, value string) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	store.mirroredSettings[key] = value
 }
 
 func (store *fakeEdgeStore) GetTokenVersion(_ context.Context, accountID string) (int, error) {

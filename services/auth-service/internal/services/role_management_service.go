@@ -65,7 +65,7 @@ func (service *AuthService) InviteAccount(ctx context.Context, data contracts.In
 	if err != nil {
 		return contracts.InviteCreateResponseData{}, err
 	}
-	expiresAt := time.Now().UTC().Add(service.cfg.InviteTokenTTL)
+	expiresAt := time.Now().UTC().Add(service.resolveDurationSetting(ctx, contracts.SettingKeyAuthTokenInviteTTL))
 	account, err := service.store.CreateInvite(ctx, repositories.InviteAccountParams{
 		Email: normalizeEmail(data.Email), RoleIDs: data.RoleIDs, InviteTokenHash: tokenHash, InviteExpiresAt: expiresAt,
 	})

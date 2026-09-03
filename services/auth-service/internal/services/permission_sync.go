@@ -25,6 +25,8 @@ var enforcedPermissions = []repositories.PermissionDefinition{
 	{Codename: contracts.PermissionAuditRead, Description: "Read the audit event log.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionRoleRead, Description: "Read role and permission records.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionRoleManage, Description: "Create, edit and delete roles.", Audience: contracts.AccountAudienceAdmin},
+	{Codename: contracts.PermissionSettingsRead, Description: "Read the platform's policy settings.", Audience: contracts.AccountAudienceAdmin},
+	{Codename: contracts.PermissionSettingsManage, Description: "Change the platform's policy settings — quota ceilings, token lifetimes and the lockout window.", Audience: contracts.AccountAudienceAdmin},
 }
 
 // reservedPermissions are declared, synced and grantable — and checked by no

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -20,6 +21,11 @@ const (
 	rateLimitKeySegment     = "rate"
 	cacheKeySegment         = "cache"
 	authTokenVersionSegment = "auth:tokenversion"
+	// settingKeySegment matches auth-service's own constant. It is singular
+	// because the key names ONE setting, and it is why a setting key may not
+	// contain a colon (contracts.settingKeyPattern refuses one): the colon is
+	// this keyspace's separator.
+	settingKeySegment = "setting"
 	// identityFailureSegment counts failed sign-in attempts PER EMAIL, which
 	// is a different question from the per-IP token bucket under
 	// rateLimitKeySegment and must never share a key with it: the attack this
@@ -166,6 +172,23 @@ func (store *RedisStore) SetTokenVersion(ctx context.Context, accountID string, 
 //
 // A pipeline rather than two round trips, and INCR before EXPIRE so a key
 // that already exists cannot lose its count to a race with its own refresh.
+// GetSetting reads one mirrored setting. auth-service is the only writer, and
+// it writes with NO TTL — so a miss means a flushed or unreachable Redis
+// rather than an expired value, which is what lets settings.Reader answer a
+// miss from its compiled-in default instead of asking auth-service. See that
+// type's comment for why this is the one cache in the gateway whose miss must
+// NOT fall back to a NATS request.
+func (store *RedisStore) GetSetting(ctx context.Context, key contracts.SettingKey) (string, error) {
+	value, err := store.client.Get(ctx, store.key(settingKeySegment, string(key))).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrCacheMiss
+	}
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
 func (store *RedisStore) RecordIdentityFailure(ctx context.Context, identityKey string, window time.Duration) (int, error) {
 	key := store.key(identityFailureSegment, sanitizeKeyPart(identityKey))
 	pipeline := store.client.Pipeline()

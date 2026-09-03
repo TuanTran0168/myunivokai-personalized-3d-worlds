@@ -76,6 +76,24 @@ type AccountProfile struct {
 	UpdatedAt            time.Time
 }
 
+// SystemSetting is one row of system_settings: an operator's override of a
+// value contracts.DeclaredSettings already declares a default for.
+//
+// Key is a contracts.SettingKey rather than a string because the registry is
+// the only thing that gives a row meaning — its type, its bounds and its
+// default all come from there, and a plain string would make "is this key
+// declared" a question a caller could forget to ask.
+//
+// UpdatedByAccountID is nil for a row whose actor's account has since been
+// deleted; the column is ON DELETE SET NULL, so a policy number survives the
+// staff member who set it. It is never nil on a row this service wrote.
+type SystemSetting struct {
+	Key                contracts.SettingKey
+	Value              string
+	UpdatedByAccountID *string
+	UpdatedAt          time.Time
+}
+
 type RefreshToken struct {
 	ID        string
 	AccountID string
@@ -218,6 +236,17 @@ type Store interface {
 	// RevokeRole's self-revoke guard needs before deciding whether the write
 	// is allowed. See agent-system/plans/services/auth-and-admin-plan.md#lockout-guards--enforced-server-side-not-in-the-ui.
 	AccountPermissionsExcludingRole(ctx context.Context, accountID, excludeRoleID string) ([]string, error)
+
+	// The settings control plane. ListSystemSettings returns orphan rows too
+	// and GetSystemSetting answers ErrNotFound for a key with no row, which is
+	// the normal case: every setting has a compiled-in default, and a fresh
+	// environment has an empty table by design.
+	ListSystemSettings(ctx context.Context) ([]SystemSetting, error)
+	GetSystemSetting(ctx context.Context, key contracts.SettingKey) (SystemSetting, error)
+	// UpsertSystemSetting reports the value it replaced, for the audit line
+	// `<key>: <old> -> <new>`. An empty previous value means there was no row,
+	// so what was replaced is the compiled-in default.
+	UpsertSystemSetting(ctx context.Context, key contracts.SettingKey, value, actorAccountID string) (previousValue string, err error)
 
 	ListPermissions(ctx context.Context) ([]Permission, error)
 	ListAuditEvents(ctx context.Context, cursor string, pageSize int, since, until *time.Time, search string) (events []AuditEvent, nextCursor string, totalCount int, err error)
