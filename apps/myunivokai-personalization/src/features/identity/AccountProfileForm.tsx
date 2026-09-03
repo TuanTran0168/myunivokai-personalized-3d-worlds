@@ -1,0 +1,441 @@
+"use client";
+
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
+import { Save, UserRound } from "lucide-react";
+import { StatusMessage } from "@/components/StatusMessage";
+import { ChipGroupWithCustom } from "@/components/ChipGroupWithCustom";
+import { SwatchChipGroup } from "@/components/SwatchChipGroup";
+import {
+  ACCOUNT_GENDERS,
+  ACCOUNT_GENDER_LABELS,
+  EMPTY_ACCOUNT_PROFILE,
+  fetchAccountProfile,
+  saveAccountProfile,
+  type AccountGender,
+  type AccountProfile
+} from "@/lib/accountProfile";
+import { readProductAccount, writeProductAccount } from "@/lib/productSession";
+import {
+  COLOR_OPTIONS,
+  FAMILY_COPY,
+  FAMILY_OPTIONS,
+  INTEREST_OPTIONS,
+  TRAIT_OPTIONS,
+  defaultStyleForFamily
+} from "@/features/world-form/worldFormOptions";
+import type { WorldFamily } from "@/lib/types";
+import { toggleItem } from "@/lib/formSelection";
+import {
+  MAXIMUM_DISPLAY_NAME_LENGTH,
+  failureStateFor,
+  wakingMessage,
+  type AuthCredentialsFormStatus
+} from "./authCredentialsFormState";
+import { announceProductSessionChanged, useProductSession } from "./useProductSession";
+
+/**
+ * Ceilings mirrored from the backend so a field cannot be filled past what the
+ * gateway would refuse. Each one is the same number
+ * contracts.WorldInput.ValidateAsCreationDefaults enforces as a maximum — and
+ * NONE of its minimums are mirrored, because this page saves a draft: a
+ * profile with two interests is a legitimate thing to keep, while a world with
+ * two is not.
+ */
+const MAXIMUM_FULL_NAME_LENGTH = 120;
+const MAXIMUM_ROLE_LENGTH = 80;
+const MAXIMUM_GOAL_LENGTH = 220;
+const MAXIMUM_CHALLENGE_LENGTH = 220;
+const MAXIMUM_INTERESTS = 8;
+const MAXIMUM_TRAITS = 6;
+const MAXIMUM_FAVORITE_COLORS = 4;
+const MINIMUM_CUSTOM_CHIP_CHARACTERS = 2;
+const MAXIMUM_CUSTOM_CHIP_CHARACTERS = 32;
+
+/**
+ * Zero, deliberately, on both chip groups.
+ *
+ * The create form requires three interests and three traits because a world
+ * needs them. A saved profile does not: somebody who has chosen one interest
+ * has told us something, and a page that refused to keep it until they chose
+ * three would be a page that argues with the person filling it in.
+ */
+const NO_MINIMUM_ITEMS = 0;
+
+/** "No family chosen" — a valid saved state, and the value the select holds for it. */
+const NO_PREFERRED_FAMILY = "";
+
+export function AccountProfileForm() {
+  const { sessionState } = useProductSession();
+  const [profile, setProfile] = useState<AccountProfile>(EMPTY_ACCOUNT_PROFILE);
+  const [isLoading, setIsLoading] = useState(true);
+  const [status, setStatus] = useState<AuthCredentialsFormStatus>({ kind: "idle" });
+  const [hasSaved, setHasSaved] = useState(false);
+
+  const isSignedIn = sessionState.status === "signed-in";
+
+  useEffect(() => {
+    if (!isSignedIn) {
+      // Not an error state: the session may simply still be unknown on the
+      // first render, which is why AccountMenu renders nothing then too.
+      setIsLoading(sessionState.status === "unknown");
+      return;
+    }
+    let isMounted = true;
+    fetchAccountProfile({
+      onServiceWaking: (attemptNumber) => {
+        if (isMounted) {
+          setStatus({ kind: "waking", attemptNumber });
+        }
+      }
+    })
+      .then((loadedProfile) => {
+        if (!isMounted) {
+          return;
+        }
+        setProfile(loadedProfile);
+        setStatus({ kind: "idle" });
+      })
+      .catch((error: unknown) => {
+        if (isMounted) {
+          setStatus(failureStateFor(error));
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [isSignedIn, sessionState.status]);
+
+  const updateProfile = useCallback((change: Partial<AccountProfile>) => {
+    setHasSaved(false);
+    setProfile((current) => ({ ...current, ...change }));
+  }, []);
+
+  const updateCreationDefaults = useCallback((change: Partial<AccountProfile["creationDefaults"]>) => {
+    setHasSaved(false);
+    setProfile((current) => ({ ...current, creationDefaults: { ...current.creationDefaults, ...change } }));
+  }, []);
+
+  /**
+   * Changing the family swaps the style with the new family's neutral one, the
+   * same rule the create page follows: a style belongs to exactly one family,
+   * so keeping "nebula" while switching to the forest would save a value the
+   * generate call refuses.
+   *
+   * Clearing the family clears the style, because a style with no family
+   * behind it is what the gateway rejects with "choose a world family first".
+   */
+  const changeFamily = useCallback((nextFamily: WorldFamily | "") => {
+    setHasSaved(false);
+    setProfile((current) => ({
+      ...current,
+      preferredWorldFamily: nextFamily,
+      creationDefaults: {
+        ...current.creationDefaults,
+        preferredWorldStyle: nextFamily === NO_PREFERRED_FAMILY ? "" : defaultStyleForFamily(nextFamily)
+      }
+    }));
+  }, []);
+
+  const handleSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setStatus({ kind: "submitting" });
+      setHasSaved(false);
+      try {
+        const savedProfile = await saveAccountProfile(profile, {
+          onServiceWaking: (attemptNumber) => setStatus({ kind: "waking", attemptNumber })
+        });
+        setProfile(savedProfile);
+        // The header greets people by this name, and it lives in a separate
+        // storage key from the profile. Without this the menu keeps the old
+        // name until the next sign-in, which reads as the save not working.
+        const storedAccount = readProductAccount();
+        if (storedAccount) {
+          writeProductAccount({ ...storedAccount, name: savedProfile.displayName });
+          announceProductSessionChanged();
+        }
+        setStatus({ kind: "idle" });
+        setHasSaved(true);
+      } catch (error) {
+        setStatus(failureStateFor(error));
+      }
+    },
+    [profile]
+  );
+
+  if (sessionState.status === "unknown") {
+    return null;
+  }
+
+  if (sessionState.status === "signed-out") {
+    return (
+      <div className="glass-panel w-full rounded-2xl p-6 text-center sm:p-8">
+        <p className="text-lg font-semibold text-on-surface">Your profile lives with your account</p>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-on-surface-variant">
+          Sign in to record your name, and the defaults the create-world form is filled from.
+        </p>
+        <Link
+          href="/sign-in"
+          className="focus-ring btn-gradient mt-5 inline-flex items-center gap-2 rounded-md px-4 py-2.5 font-semibold"
+        >
+          <UserRound className="h-4 w-4" aria-hidden="true" />
+          Sign in
+        </Link>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return <StatusMessage tone="loading">{status.kind === "waking" ? wakingMessage() : "Loading your profile…"}</StatusMessage>;
+  }
+
+  const isBusy = status.kind === "submitting" || status.kind === "waking";
+  const chosenFamily = profile.preferredWorldFamily;
+  const familyCopy = chosenFamily === NO_PREFERRED_FAMILY ? null : FAMILY_COPY[chosenFamily];
+
+  return (
+    <form onSubmit={handleSubmit} className="grid gap-6" noValidate>
+      <section className="glass-panel grid gap-4 rounded-2xl p-5 sm:p-6">
+        <h2 className="font-display text-xl font-semibold text-paper">You</h2>
+
+        <label className="grid gap-1.5">
+          <span className="font-mono text-xs uppercase tracking-widest text-brass">Display name</span>
+          <input
+            value={profile.displayName}
+            onChange={(event) => updateProfile({ displayName: event.target.value })}
+            disabled={isBusy}
+            maxLength={MAXIMUM_DISPLAY_NAME_LENGTH}
+            className="focus-ring input-dark w-full rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
+            placeholder="e.g. Neo"
+          />
+          <span className="text-xs text-on-surface-variant">
+            What the header calls you, and what the create-world form&rsquo;s Nickname field is filled with. There is
+            one name — changing it here changes both.
+          </span>
+        </label>
+
+        <label className="grid gap-1.5">
+          <span className="font-mono text-xs uppercase tracking-widest text-brass">Full name</span>
+          <input
+            value={profile.fullName}
+            onChange={(event) => updateProfile({ fullName: event.target.value })}
+            disabled={isBusy}
+            maxLength={MAXIMUM_FULL_NAME_LENGTH}
+            className="focus-ring input-dark w-full rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
+            placeholder="Optional"
+          />
+        </label>
+
+        <label className="grid gap-1.5">
+          <span className="font-mono text-xs uppercase tracking-widest text-brass">Gender</span>
+          <select
+            value={profile.gender}
+            onChange={(event) => updateProfile({ gender: event.target.value as AccountGender })}
+            disabled={isBusy}
+            className="focus-ring input-dark w-full rounded-xl px-3.5 py-2 text-on-surface"
+          >
+            {ACCOUNT_GENDERS.map((gender) => (
+              <option key={gender || "unspecified"} value={gender}>
+                {ACCOUNT_GENDER_LABELS[gender]}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-on-surface-variant">
+            Nothing reads this to decide anything. It is here because it is yours to record.
+          </span>
+        </label>
+      </section>
+
+      <section className="glass-panel grid gap-5 rounded-2xl p-5 sm:p-6">
+        <div>
+          <h2 className="font-display text-xl font-semibold text-paper">Your world defaults</h2>
+          <p className="mt-1 text-sm text-on-surface-variant">
+            The create-world form is filled from these. Everything is optional — save as much or as little as you
+            like.
+          </p>
+        </div>
+
+        {/* The toggle the owner asked for. It governs THESE fields only: the
+            display name fills the Nickname field either way, because a name is
+            not a preference to opt into being called by. */}
+        <label className="flex items-start gap-3 rounded-xl border border-hairline bg-black/30 px-4 py-3">
+          <input
+            type="checkbox"
+            checked={profile.autofillCreateForm}
+            onChange={(event) => updateProfile({ autofillCreateForm: event.target.checked })}
+            disabled={isBusy}
+            className="focus-ring mt-0.5 h-4 w-4 shrink-0 accent-secondary"
+          />
+          <span className="grid gap-0.5">
+            <span className="text-sm font-semibold text-on-surface">Fill the create-world form from my profile</span>
+            <span className="text-xs text-on-surface-variant">
+              On by default. Turn it off to start every world from a blank form. Your name is filled in either way.
+            </span>
+          </span>
+        </label>
+
+        <label className="grid gap-1.5">
+          <span className="font-mono text-xs uppercase tracking-widest text-brass">Preferred world family</span>
+          <select
+            value={chosenFamily}
+            onChange={(event) => changeFamily(event.target.value as WorldFamily | "")}
+            disabled={isBusy}
+            className="focus-ring input-dark w-full rounded-xl px-3.5 py-2 text-on-surface"
+          >
+            <option value={NO_PREFERRED_FAMILY}>No preference</option>
+            {FAMILY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} — {option.description}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="grid gap-1.5">
+          <span className="font-mono text-xs uppercase tracking-widest text-brass">Primary role</span>
+          <input
+            value={profile.creationDefaults.role ?? ""}
+            onChange={(event) => updateCreationDefaults({ role: event.target.value })}
+            disabled={isBusy}
+            maxLength={MAXIMUM_ROLE_LENGTH}
+            className="focus-ring input-dark w-full rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
+            placeholder="e.g. Explorer"
+          />
+        </label>
+
+        <ChipGroupWithCustom
+          fieldLabel="Core interests"
+          predefinedOptions={INTEREST_OPTIONS}
+          selected={profile.creationDefaults.interests}
+          onChange={(updater) => updateCreationDefaults({ interests: updater(profile.creationDefaults.interests) })}
+          minimumItems={NO_MINIMUM_ITEMS}
+          maximumItems={MAXIMUM_INTERESTS}
+          minimumCharacters={MINIMUM_CUSTOM_CHIP_CHARACTERS}
+          maximumCharacters={MAXIMUM_CUSTOM_CHIP_CHARACTERS}
+          customPlaceholder="Add your own interest"
+          customAriaLabel="Add a custom interest"
+        />
+
+        <ChipGroupWithCustom
+          fieldLabel="Traits"
+          predefinedOptions={TRAIT_OPTIONS}
+          selected={profile.creationDefaults.traits}
+          onChange={(updater) => updateCreationDefaults({ traits: updater(profile.creationDefaults.traits) })}
+          minimumItems={NO_MINIMUM_ITEMS}
+          maximumItems={MAXIMUM_TRAITS}
+          minimumCharacters={MINIMUM_CUSTOM_CHIP_CHARACTERS}
+          maximumCharacters={MAXIMUM_CUSTOM_CHIP_CHARACTERS}
+          customPlaceholder="Add your own trait"
+          customAriaLabel="Add a custom trait"
+          capitalizeLabels
+        />
+
+        <label className="grid gap-1.5">
+          <span className="font-mono text-xs uppercase tracking-widest text-brass">Goal</span>
+          <textarea
+            value={profile.creationDefaults.goal}
+            onChange={(event) => updateCreationDefaults({ goal: event.target.value })}
+            disabled={isBusy}
+            maxLength={MAXIMUM_GOAL_LENGTH}
+            rows={3}
+            className="focus-ring input-dark w-full rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
+            placeholder="What you are working toward"
+          />
+        </label>
+
+        <label className="grid gap-1.5">
+          <span className="font-mono text-xs uppercase tracking-widest text-brass">Hidden challenge</span>
+          <textarea
+            value={profile.creationDefaults.challenge ?? ""}
+            onChange={(event) => updateCreationDefaults({ challenge: event.target.value })}
+            disabled={isBusy}
+            maxLength={MAXIMUM_CHALLENGE_LENGTH}
+            rows={3}
+            className="focus-ring input-dark w-full rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
+            placeholder="Optional"
+          />
+        </label>
+
+        {/* Mood and style are per-family vocabularies, so they only appear once
+            a family is chosen. Rendering the universe's moods under "no
+            preference" would offer a value that becomes wrong the moment a
+            forest is picked. */}
+        {familyCopy ? (
+          <>
+            <SwatchChipGroup
+              fieldLabel={familyCopy.moodLabel}
+              options={familyCopy.moodOptions}
+              selected={profile.creationDefaults.mood}
+              onSelect={(mood) => updateCreationDefaults({ mood })}
+            />
+            <SwatchChipGroup
+              fieldLabel={familyCopy.styleLabel}
+              options={familyCopy.styleOptions}
+              selected={profile.creationDefaults.preferredWorldStyle}
+              onSelect={(preferredWorldStyle) => updateCreationDefaults({ preferredWorldStyle })}
+            />
+          </>
+        ) : (
+          <p className="text-sm text-on-surface-variant">
+            Choose a world family above to set a mood and a style — each family has its own.
+          </p>
+        )}
+
+        <div className="grid gap-2.5">
+          <span className="font-mono text-xs uppercase tracking-widest text-brass">
+            Palette (up to {MAXIMUM_FAVORITE_COLORS})
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {COLOR_OPTIONS.map((color) => {
+              const isSelected = profile.creationDefaults.favoriteColors.includes(color);
+              return (
+                <button
+                  key={color}
+                  type="button"
+                  disabled={isBusy}
+                  aria-pressed={isSelected}
+                  aria-label={`Palette colour ${color}`}
+                  onClick={() =>
+                    updateCreationDefaults({
+                      favoriteColors: toggleItem(
+                        profile.creationDefaults.favoriteColors,
+                        color,
+                        NO_MINIMUM_ITEMS,
+                        MAXIMUM_FAVORITE_COLORS
+                      )
+                    })
+                  }
+                  className={`focus-ring tappable h-9 w-9 rounded-full border-2 ${
+                    isSelected ? "border-secondary" : "border-white/15"
+                  }`}
+                  style={{ backgroundColor: color }}
+                />
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="submit"
+          disabled={isBusy}
+          className="focus-ring btn-gradient inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 font-semibold disabled:opacity-60"
+        >
+          <Save className="h-4 w-4" aria-hidden="true" />
+          Save profile
+        </button>
+        {status.kind === "submitting" ? <StatusMessage tone="loading">Saving…</StatusMessage> : null}
+        {status.kind === "waking" ? <StatusMessage tone="loading">{wakingMessage()}</StatusMessage> : null}
+        {status.kind === "failed" ? <StatusMessage tone="error">{status.message}</StatusMessage> : null}
+        {status.kind === "idle" && hasSaved ? <StatusMessage tone="success">Profile saved.</StatusMessage> : null}
+      </div>
+    </form>
+  );
+}

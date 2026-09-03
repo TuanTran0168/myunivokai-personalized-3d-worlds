@@ -191,3 +191,48 @@ export function defaultStyleForFamily(family: WorldFamily): string {
   return FAMILY_COPY[family].styleOptions[0].value;
 }
 export const COLOR_OPTIONS = ["#8B5CF6", "#06B6D4", "#F97316", "#22C55E", "#F43F5E", "#EAB308"];
+
+/**
+ * Every value the create-world form holds, as one shape.
+ *
+ * Named because two things now need to talk about "the form's values" without
+ * either one listing ten fields: the initial state below, and the
+ * profile-autofill rule in profileAutofill.ts.
+ */
+export type CreateFormValues = {
+  nickname: string;
+  role: string;
+  goal: string;
+  challenge: string;
+  interests: string[];
+  traits: string[];
+  mood: string;
+  worldFamily: WorldFamily;
+  preferredWorldStyle: string;
+  favoriteColors: string[];
+};
+
+/**
+ * What the create form holds before anybody touches it.
+ *
+ * Extracted from the useState calls it used to live inside, because the
+ * profile-autofill rule has to be able to ask "has this form been changed
+ * yet" — and a rule that compares against numbers typed in a second place is a
+ * rule that stops being true the first time a default is adjusted.
+ *
+ * The non-empty defaults are deliberate and predate accounts: a first-time
+ * visitor gets a form that already produces a world, rather than a wall of
+ * empty required fields.
+ */
+export const CREATE_FORM_INITIAL_VALUES: CreateFormValues = {
+  nickname: "",
+  role: "",
+  goal: "",
+  challenge: "",
+  interests: ["Technology", "Design", "AI"],
+  traits: ["curious", "builder", "focused"],
+  mood: "focused",
+  worldFamily: "universe",
+  preferredWorldStyle: "cosmic-galaxy",
+  favoriteColors: ["#8B5CF6", "#06B6D4"]
+};

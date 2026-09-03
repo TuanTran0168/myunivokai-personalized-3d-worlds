@@ -31,12 +31,17 @@ import type { GenerationJobStatus, PlanetSceneConfig, WorldFamily } from "@/lib/
 
 import {
   COLOR_OPTIONS,
+  CREATE_FORM_INITIAL_VALUES,
   FAMILY_COPY,
   FAMILY_OPTIONS,
   INTEREST_OPTIONS,
   TRAIT_OPTIONS,
-  defaultStyleForFamily
+  defaultStyleForFamily,
+  type CreateFormValues
 } from "@/features/world-form/worldFormOptions";
+import { createFormValuesFromProfile, isCreateFormPristine } from "@/features/world-form/profileAutofill";
+import { fetchAccountProfile } from "@/lib/accountProfile";
+import { useProductSession } from "@/features/identity/useProductSession";
 
 // One entry per scrollable field group in the rail, in DOM order — the single
 // source of truth for both each group's `data-form-section` marker below and
@@ -131,16 +136,16 @@ function IdentityPlacardBody({
 
 export default function HomePage() {
   const router = useRouter();
-  const [nickname, setNickname] = useState("");
-  const [role, setRole] = useState("");
-  const [goal, setGoal] = useState("");
-  const [challenge, setChallenge] = useState("");
-  const [interests, setInterests] = useState(["Technology", "Design", "AI"]);
-  const [traits, setTraits] = useState(["curious", "builder", "focused"]);
-  const [mood, setMood] = useState("focused");
-  const [worldFamily, setWorldFamily] = useState<WorldFamily>("universe");
-  const [preferredWorldStyle, setPreferredWorldStyle] = useState("cosmic-galaxy");
-  const [favoriteColors, setFavoriteColors] = useState<string[]>(["#8B5CF6", "#06B6D4"]);
+  const [nickname, setNickname] = useState(CREATE_FORM_INITIAL_VALUES.nickname);
+  const [role, setRole] = useState(CREATE_FORM_INITIAL_VALUES.role);
+  const [goal, setGoal] = useState(CREATE_FORM_INITIAL_VALUES.goal);
+  const [challenge, setChallenge] = useState(CREATE_FORM_INITIAL_VALUES.challenge);
+  const [interests, setInterests] = useState<string[]>(CREATE_FORM_INITIAL_VALUES.interests);
+  const [traits, setTraits] = useState<string[]>(CREATE_FORM_INITIAL_VALUES.traits);
+  const [mood, setMood] = useState(CREATE_FORM_INITIAL_VALUES.mood);
+  const [worldFamily, setWorldFamily] = useState<WorldFamily>(CREATE_FORM_INITIAL_VALUES.worldFamily);
+  const [preferredWorldStyle, setPreferredWorldStyle] = useState(CREATE_FORM_INITIAL_VALUES.preferredWorldStyle);
+  const [favoriteColors, setFavoriteColors] = useState<string[]>(CREATE_FORM_INITIAL_VALUES.favoriteColors);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [generationStatus, setGenerationStatus] = useState<GenerationJobStatus | undefined>();
@@ -149,6 +154,120 @@ export default function HomePage() {
     toggleCollapse,
     toggleButtonReference: formRailToggleButtonReference
   } = useWorldChromeCollapse({ errorMessage: error, worldFamily });
+
+  // Who is signed in, for the two autofills below. Read from storage rather
+  // than fetched, so the name appears on the first render with no request.
+  const { sessionState } = useProductSession();
+  // True once a profile has been applied to this form, so a re-render or a
+  // session event cannot apply it twice and clobber an edit in between.
+  const hasAppliedAccountProfile = useRef(false);
+  const [wasFilledFromProfile, setWasFilledFromProfile] = useState(false);
+
+  /**
+   * The name fills by DEFAULT, with no request and no toggle.
+   *
+   * That is the owner's rule and it is the right one: a name is not a
+   * preference somebody opts into being called by. It comes from the session
+   * copy already in `localStorage`, so it is there on the first render rather
+   * than a moment later — and it is only applied to an untouched field, so it
+   * never overwrites a nickname somebody typed for this particular world.
+   */
+  useEffect(() => {
+    if (sessionState.status !== "signed-in") {
+      return;
+    }
+    const accountDisplayName = sessionState.account.name?.trim();
+    if (!accountDisplayName) {
+      return;
+    }
+    setNickname((currentNickname) =>
+      currentNickname === CREATE_FORM_INITIAL_VALUES.nickname ? accountDisplayName : currentNickname
+    );
+  }, [sessionState]);
+
+  /**
+   * Everything else fills only when the account's own toggle says so.
+   *
+   * The guard is isCreateFormPristine rather than a "has the visitor typed"
+   * flag threaded through a dozen change handlers: the question is exactly
+   * "does this form still hold what it opened with", and comparing against
+   * CREATE_FORM_INITIAL_VALUES answers it in one place that a test can reach.
+   *
+   * A failure is swallowed. The profile is a convenience on this screen, and a
+   * cold auth-service must not put an error banner on the page somebody came
+   * here to create a world on.
+   */
+  useEffect(() => {
+    if (sessionState.status !== "signed-in" || hasAppliedAccountProfile.current) {
+      return;
+    }
+    hasAppliedAccountProfile.current = true;
+    let isMounted = true;
+    fetchAccountProfile()
+      .then((accountProfile) => {
+        if (!isMounted || !accountProfile.autofillCreateForm) {
+          return;
+        }
+        const currentValues: CreateFormValues = {
+          nickname,
+          role,
+          goal,
+          challenge,
+          interests,
+          traits,
+          mood,
+          worldFamily,
+          preferredWorldStyle,
+          favoriteColors
+        };
+        if (!isCreateFormPristine(currentValues)) {
+          return;
+        }
+        const filledValues = createFormValuesFromProfile(accountProfile, currentValues);
+        setNickname(filledValues.nickname);
+        setRole(filledValues.role);
+        setGoal(filledValues.goal);
+        setChallenge(filledValues.challenge);
+        setInterests(filledValues.interests);
+        setTraits(filledValues.traits);
+        setMood(filledValues.mood);
+        setWorldFamily(filledValues.worldFamily);
+        setPreferredWorldStyle(filledValues.preferredWorldStyle);
+        setFavoriteColors(filledValues.favoriteColors);
+        setWasFilledFromProfile(true);
+      })
+      .catch(() => {
+        // Deliberately silent - see this effect's own comment.
+      });
+    return () => {
+      isMounted = false;
+    };
+    // Depends on the session only. The field values are READ inside, but a
+    // dependency on them would re-run this on every keystroke, and the
+    // pristine check plus the ref are what make one run correct.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState.status]);
+
+  /**
+   * Empties the form for this world only, leaving the saved profile alone.
+   *
+   * Not a second copy of the profile page's toggle: that one is the account's
+   * standing preference, this is "not this time". Two controls for one setting
+   * would be worse than one control and one escape hatch.
+   */
+  function startFromBlankForm() {
+    setNickname(CREATE_FORM_INITIAL_VALUES.nickname);
+    setRole(CREATE_FORM_INITIAL_VALUES.role);
+    setGoal(CREATE_FORM_INITIAL_VALUES.goal);
+    setChallenge(CREATE_FORM_INITIAL_VALUES.challenge);
+    setInterests(CREATE_FORM_INITIAL_VALUES.interests);
+    setTraits(CREATE_FORM_INITIAL_VALUES.traits);
+    setMood(CREATE_FORM_INITIAL_VALUES.mood);
+    setWorldFamily(CREATE_FORM_INITIAL_VALUES.worldFamily);
+    setPreferredWorldStyle(CREATE_FORM_INITIAL_VALUES.preferredWorldStyle);
+    setFavoriteColors(CREATE_FORM_INITIAL_VALUES.favoriteColors);
+    setWasFilledFromProfile(false);
+  }
 
   // Each chip group manages its own custom-value draft internally; these refs
   // exist only so the rail can force an in-progress draft to commit before it
@@ -654,6 +773,24 @@ export default function HomePage() {
                 scrollport spent on nothing. 14px still separates the groups
                 clearly and gives back about a field and a half. */}
             <form id={CREATE_FORM_ELEMENT_ID} className="grid gap-3.5 px-5 py-4 sm:px-7" onSubmit={onSubmit}>
+              {/* Said out loud rather than left to be noticed. A form that
+                  silently arrives full is a form somebody has to reverse-
+                  engineer; one sentence turns that into a fact, and the escape
+                  hatch beside it means the answer to "not this time" is not
+                  "go and change your profile". */}
+              {wasFilledFromProfile ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline bg-black/30 px-3.5 py-2.5 text-xs text-on-surface-variant">
+                  <span>Filled in from your profile.</span>
+                  <button
+                    type="button"
+                    onClick={startFromBlankForm}
+                    className="focus-ring rounded text-secondary underline-offset-4 hover:underline"
+                  >
+                    Start from a blank form
+                  </button>
+                </div>
+              ) : null}
+
               <div className="grid gap-2.5" data-form-section={PROGRESS_SECTION_IDS[0]}>
                 <span className="font-mono text-xs uppercase tracking-widest text-brass">World Family</span>
                 {/* grid-cols-3, not -2: with exactly 3 options a 2-column grid always

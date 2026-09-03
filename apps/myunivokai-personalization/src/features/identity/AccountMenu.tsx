@@ -89,6 +89,14 @@ export function AccountMenu() {
           >
             Your gallery
           </Link>
+          <Link
+            href="/account"
+            role="menuitem"
+            onClick={() => setIsMenuOpen(false)}
+            className="focus-ring block rounded px-1 py-1.5 text-sm text-paper transition hover:text-secondary"
+          >
+            Your profile
+          </Link>
           <button
             type="button"
             role="menuitem"

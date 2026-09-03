@@ -101,6 +101,40 @@ test.describe("the Content-Security-Policy", () => {
     expect(observations.pageErrors).toEqual([]);
   });
 
+  // The sign-up form gained a display-name field (S8-IDENTITY-019), and the
+  // account page it points at is the one screen a signed-out visitor reaches
+  // that has no world in it. Both are asserted because the create page's own
+  // hydration is proven by the renderer tests below, and these two are not.
+  test("leaves the sign-up form hydrated, display name and all", async ({ page }) => {
+    await listenForPolicyViolations(page);
+    const observations = observe(page);
+
+    await page.goto("/sign-up");
+    await page.getByPlaceholder("e.g. Neo").fill("Neo");
+    // Submitting with a name and nothing else is handled client-side, so a
+    // response proves the nonced bootstrap ran.
+    await page.getByRole("button", { name: "Create account" }).click();
+    await expect(page.getByText("Enter your email address and password.")).toBeVisible();
+
+    expect(await readDocumentPolicyViolations(page)).toEqual([]);
+    expect(observations.policyViolations).toEqual([]);
+    expect(observations.pageErrors).toEqual([]);
+  });
+
+  test("renders the account page's signed-out state without violating the policy", async ({ page }) => {
+    await listenForPolicyViolations(page);
+    const observations = observe(page);
+
+    await page.goto("/account");
+    // Rendered by the client after it reads the session cookies, so seeing it
+    // at all proves hydration ran under the policy.
+    await expect(page.getByText("Your profile lives with your account")).toBeVisible();
+
+    expect(await readDocumentPolicyViolations(page)).toEqual([]);
+    expect(observations.policyViolations).toEqual([]);
+    expect(observations.pageErrors).toEqual([]);
+  });
+
   for (const familyName of FAMILY_PICKER_LABELS) {
     test(`does not block the ${familyName.toLowerCase()} renderer`, async ({ page }) => {
       await listenForPolicyViolations(page);

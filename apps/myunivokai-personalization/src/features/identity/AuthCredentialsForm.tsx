@@ -7,6 +7,7 @@ import { LogIn, UserPlus } from "lucide-react";
 import { StatusMessage } from "@/components/StatusMessage";
 import { signIn, signUp } from "@/lib/productAuth";
 import {
+  MAXIMUM_DISPLAY_NAME_LENGTH,
   MINIMUM_PASSWORD_LENGTH,
   credentialValidationMessage,
   failureStateFor,
@@ -49,6 +50,10 @@ export function AuthCredentialsForm({ mode }: { mode: AuthCredentialsFormMode })
   const copy = MODE_COPY[mode];
   const [emailAddress, setEmailAddress] = useState("");
   const [password, setPassword] = useState("");
+  // Sign-up only. It is the name the header greets somebody by, and the name
+  // the create form's Nickname field is filled with from then on - which is
+  // why the field says so rather than leaving it to be discovered.
+  const [displayName, setDisplayName] = useState("");
   const [status, setStatus] = useState<AuthCredentialsFormStatus>({ kind: "idle" });
 
   const isBusy = status.kind === "submitting" || status.kind === "waking";
@@ -56,7 +61,11 @@ export function AuthCredentialsForm({ mode }: { mode: AuthCredentialsFormMode })
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      const validationMessage = credentialValidationMessage(emailAddress, password);
+      const validationMessage = credentialValidationMessage(
+        emailAddress,
+        password,
+        mode === "sign-up" ? displayName : undefined
+      );
       if (validationMessage) {
         setStatus({ kind: "failed", message: validationMessage, cause: "credentials" });
         return;
@@ -71,7 +80,7 @@ export function AuthCredentialsForm({ mode }: { mode: AuthCredentialsFormMode })
       };
       try {
         if (mode === "sign-up") {
-          await signUp(credentials, hooks);
+          await signUp({ ...credentials, name: displayName.trim() }, hooks);
         } else {
           await signIn(credentials, hooks);
         }
@@ -81,7 +90,7 @@ export function AuthCredentialsForm({ mode }: { mode: AuthCredentialsFormMode })
         setStatus(failureStateFor(error));
       }
     },
-    [emailAddress, mode, password, router]
+    [displayName, emailAddress, mode, password, router]
   );
 
   const SubmitIcon = mode === "sign-up" ? UserPlus : LogIn;
@@ -100,6 +109,29 @@ export function AuthCredentialsForm({ mode }: { mode: AuthCredentialsFormMode })
         </div>
 
         <form onSubmit={handleSubmit} className="grid gap-4" noValidate>
+          {mode === "sign-up" ? (
+            <label className="grid gap-1.5">
+              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-on-surface-variant">
+                Your name
+              </span>
+              <input
+                type="text"
+                name="name"
+                autoComplete="nickname"
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                disabled={isBusy}
+                maxLength={MAXIMUM_DISPLAY_NAME_LENGTH}
+                className="input-dark focus-ring w-full rounded-md px-3 py-2.5 text-paper placeholder:text-on-surface-variant/60"
+                placeholder="e.g. Neo"
+              />
+              <span className="text-xs text-on-surface-variant">
+                Optional. It is what the header calls you, and what the create-world form&rsquo;s Nickname field is
+                filled with. You can change it later on your profile.
+              </span>
+            </label>
+          ) : null}
+
           <label className="grid gap-1.5">
             <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-on-surface-variant">Email</span>
             <input

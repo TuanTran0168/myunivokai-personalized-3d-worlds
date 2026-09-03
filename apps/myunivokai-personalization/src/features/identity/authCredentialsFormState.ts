@@ -29,6 +29,17 @@ export type AuthFailureCause = "cold-start" | "credentials" | "unexpected";
 export const MINIMUM_PASSWORD_LENGTH = 12;
 
 /**
+ * The display-name ceiling, mirroring contracts.MaximumAccountDisplayNameLength.
+ *
+ * The number is the create form's Nickname cap, and the Go constant is DEFINED
+ * as that cap rather than as its own 32 — because the display name is what
+ * that field is filled with once somebody is signed in. Two numbers that
+ * happen to agree would let an account carry a name the create form then
+ * truncates.
+ */
+export const MAXIMUM_DISPLAY_NAME_LENGTH = 32;
+
+/**
  * Named so the two forms cannot drift, and so the wording lives next to the
  * state machine that chooses between them rather than inside a component.
  */
@@ -77,7 +88,7 @@ export function failureStateFor(error: unknown): AuthCredentialsFormStatus {
  * PasswordPolicy for why length plus a breach corpus is the current guidance
  * and a mandatory symbol is not.
  */
-export function credentialValidationMessage(email: string, password: string): string | null {
+export function credentialValidationMessage(email: string, password: string, displayName?: string): string | null {
   if (email.trim() === "" || password === "") {
     return "Enter your email address and password.";
   }
@@ -86,6 +97,14 @@ export function credentialValidationMessage(email: string, password: string): st
   }
   if (password.length < MINIMUM_PASSWORD_LENGTH) {
     return `Use at least ${MINIMUM_PASSWORD_LENGTH} characters. Length is what makes a password hard to guess, so there are no other rules.`;
+  }
+  // Last, and only a ceiling. The name is optional - an account with no
+  // display name is valid and its menu falls back to the email address - so
+  // there is nothing to require, only something to bound. Reported after the
+  // credential rules because those are the ones that stop a submission from
+  // being possible at all.
+  if (displayName !== undefined && displayName.trim().length > MAXIMUM_DISPLAY_NAME_LENGTH) {
+    return `A display name can be at most ${MAXIMUM_DISPLAY_NAME_LENGTH} characters.`;
   }
   return null;
 }

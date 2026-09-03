@@ -30,6 +30,23 @@ export type Credentials = {
 };
 
 /**
+ * Sign-up carries one thing sign-in does not: the name the person wants to be
+ * called.
+ *
+ * A separate type rather than an optional field on Credentials, so LOGIN's
+ * request body is unchanged - the gateway decodes the two shapes separately
+ * for the same reason, and a login that quietly accepted a name would have a
+ * field with no meaning on the one request where somebody might expect it to
+ * identify them.
+ *
+ * It is optional here because it is optional there: an account with no display
+ * name is valid, and the account menu falls back to the email address.
+ */
+export type SignUpDetails = Credentials & {
+  name?: string;
+};
+
+/**
  * A single in-flight refresh, shared by every caller that discovers an expired
  * access token at the same moment.
  *
@@ -59,8 +76,8 @@ async function postSession(path: string, body: unknown, hooks?: GatewayRequestHo
   return session;
 }
 
-export async function signUp(credentials: Credentials, hooks?: GatewayRequestHooks): Promise<ProductSession> {
-  return postSession(SIGN_UP_PATH, credentials, hooks);
+export async function signUp(details: SignUpDetails, hooks?: GatewayRequestHooks): Promise<ProductSession> {
+  return postSession(SIGN_UP_PATH, details, hooks);
 }
 
 export async function signIn(credentials: Credentials, hooks?: GatewayRequestHooks): Promise<ProductSession> {
