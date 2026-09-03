@@ -2,6 +2,15 @@ import { apiErrorMessage } from "@/lib/api";
 import { isColdStartFailure, isCredentialFailure } from "@/lib/productAuth";
 
 /**
+ * Which of the two credential screens this is.
+ *
+ * Declared here rather than in the component, so a module that only needs to
+ * key something by mode — the backdrop world, for one — does not have to
+ * import a React component to get the union.
+ */
+export type AuthCredentialsFormMode = "sign-in" | "sign-up";
+
+/**
  * What the sign-in and sign-up forms are doing, as data rather than as a
  * handful of booleans.
  *
