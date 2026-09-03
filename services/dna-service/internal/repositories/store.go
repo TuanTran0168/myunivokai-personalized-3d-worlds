@@ -34,10 +34,28 @@ type ClaimResult struct {
 	NotifiedFamilies    []contracts.WorldFamily
 }
 
+// GenerationOutcome is how one world was produced: the reason, and the daily
+// limit that reason was measured against.
+//
+// One value rather than two arguments, for the reason contracts.AIQuotaState
+// is one value: the limit explains the reason and the reason gives the limit
+// its meaning, so there is no call site that should be able to store half of
+// it.
+//
+// Both are absent for a job whose command carried no quota verdict, which is
+// every job created before the quota shipped. The limit is a POINTER so that
+// absence stays distinct from a limit of zero — which is a policy an operator
+// can set, and which turns the AI tier off for one audience without touching
+// AI_PROVIDER.
+type GenerationOutcome struct {
+	Reason                 contracts.GenerationReason
+	DailyAIGenerationLimit *int
+}
+
 type Store interface {
 	EnsureJob(context.Context, contracts.Envelope[contracts.GenerateDNAData]) (JobRecord, error)
 	MarkJobProcessing(context.Context, string) error
-	StoreDNAAndQueueComposition(context.Context, string, contracts.WorldInput, contracts.ProfileDNA, []ai.Attempt) (contracts.Job, error)
+	StoreDNAAndQueueComposition(context.Context, string, contracts.WorldInput, contracts.ProfileDNA, []ai.Attempt, GenerationOutcome) (contracts.Job, error)
 	FailDNAJob(context.Context, string, contracts.WorldFamily, string, string, []ai.Attempt) error
 	ApplyFamilyCompleted(context.Context, string, string, contracts.Envelope[contracts.FamilyCompletedData]) error
 	ApplyFamilyFailed(context.Context, string, string, contracts.Envelope[contracts.FamilyFailedData]) error

@@ -105,14 +105,22 @@ type fakeEdgeStore struct {
 	// settings.Reader reads. Empty by default, which is the state a fresh
 	// environment is in and therefore the one every route must work in.
 	mirroredSettings map[contracts.SettingKey]string
+
+	// dailyGenerationCounts is the AI quota counter, keyed exactly as Redis
+	// keys it: "<callerKey>|<utc day>". A test asserting the sixth create of
+	// a day degrades has to be able to seed the first five without making
+	// five requests.
+	dailyGenerationCounts     map[string]int
+	dailyGenerationCountError error
 }
 
 func newFakeEdgeStore() *fakeEdgeStore {
 	return &fakeEdgeStore{
 		values: make(map[string][]byte), timeToLives: make(map[string]time.Duration),
 		deleteCounts: make(map[string]int), tokenVersions: make(map[string]int),
-		identityFailures: make(map[string]int),
-		mirroredSettings: make(map[contracts.SettingKey]string),
+		identityFailures:      make(map[string]int),
+		mirroredSettings:      make(map[contracts.SettingKey]string),
+		dailyGenerationCounts: make(map[string]int),
 	}
 }
 
@@ -131,6 +139,33 @@ func (store *fakeEdgeStore) GetSetting(_ context.Context, key contracts.SettingK
 		return "", edge.ErrCacheMiss
 	}
 	return value, nil
+}
+
+// IncrementDailyGenerationCount counts, and returns the count INCLUDING this
+// one, exactly as the Redis pipeline does. The day is part of the key so that
+// a test can prove a new UTC day starts a new allowance without moving a
+// clock.
+func (store *fakeEdgeStore) IncrementDailyGenerationCount(_ context.Context, callerKey string, at time.Time) (int, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.dailyGenerationCountError != nil {
+		return 0, store.dailyGenerationCountError
+	}
+	key := dailyGenerationCountKey(callerKey, at)
+	store.dailyGenerationCounts[key]++
+	return store.dailyGenerationCounts[key], nil
+}
+
+// seedDailyGenerationCount puts a caller partway through their allowance, so a
+// test about the sixth create of a day costs one request rather than six.
+func (store *fakeEdgeStore) seedDailyGenerationCount(callerKey string, at time.Time, generations int) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	store.dailyGenerationCounts[dailyGenerationCountKey(callerKey, at)] = generations
+}
+
+func dailyGenerationCountKey(callerKey string, at time.Time) string {
+	return callerKey + "|" + at.UTC().Format("2006-01-02")
 }
 
 func (store *fakeEdgeStore) setMirroredSetting(key contracts.SettingKey, value string) {

@@ -98,7 +98,7 @@ func (store *PostgresStore) MarkJobProcessing(ctx context.Context, jobID string)
 	return nil
 }
 
-func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, jobID string, input contracts.WorldInput, profileDNA contracts.ProfileDNA, attempts []ai.Attempt) (contracts.Job, error) {
+func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, jobID string, input contracts.WorldInput, profileDNA contracts.ProfileDNA, attempts []ai.Attempt, outcome GenerationOutcome) (contracts.Job, error) {
 	transaction, err := store.pool.Begin(ctx)
 	if err != nil {
 		return contracts.Job{}, err
@@ -122,7 +122,20 @@ func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, job
 	}
 	job.DNAVersionID = dnaVersionID
 	job.Status = contracts.JobStatusProcessing
-	if _, err := transaction.Exec(ctx, `UPDATE generation_jobs SET dna_version_id=$2, status='processing', updated_at=NOW() WHERE job_id=$1`, jobID, dnaVersionID); err != nil {
+	// The reason is written in the SAME statement and the same transaction as
+	// the DNA version, because the two facts are one fact: this DNA exists and
+	// it was produced this way. Written as a second UPDATE it could be lost to
+	// a crash between them, leaving a world whose maker is told nothing about
+	// why it looks the way it does.
+	//
+	// An absent reason is stored as SQL NULL rather than as '', which is what
+	// generationReasonColumnValue is for: an empty reason is not a reason, and
+	// the column's CHECK would refuse the empty string anyway. The limit is
+	// already a pointer for the same distinction one level up.
+	if _, err := transaction.Exec(ctx, `UPDATE generation_jobs
+		SET dna_version_id=$2, status='processing', generation_reason=$3, daily_ai_generation_limit=$4, updated_at=NOW()
+		WHERE job_id=$1`, jobID, dnaVersionID,
+		generationReasonColumnValue(outcome.Reason), outcome.DailyAIGenerationLimit); err != nil {
 		return contracts.Job{}, err
 	}
 	if err := insertAttempts(ctx, transaction, jobID, attempts); err != nil {
@@ -322,9 +335,15 @@ func (store *PostgresStore) GetJob(ctx context.Context, jobID string) (contracts
 }
 
 func (store *PostgresStore) getJobRecord(ctx context.Context, jobID string) (JobRecord, error) {
+	// generation_reason and daily_ai_generation_limit are NOT wrapped in
+	// COALESCE, unlike the four columns above them. Their NULL is information —
+	// no reason was recorded, no limit was measured — and collapsing it into ''
+	// and 0 would make a job from before the quota indistinguishable from one
+	// the AI tier was switched off for.
 	row := store.pool.QueryRow(ctx, `SELECT j.job_id, j.family, j.status, j.profile_id::text,
 		COALESCE(j.dna_version_id::text,''), COALESCE(j.world_id::text,''), COALESCE(j.error_code,''),
-		COALESCE(j.error_message,''), j.created_at, j.updated_at, p.raw_input
+		COALESCE(j.error_message,''), j.created_at, j.updated_at,
+		j.generation_reason, j.daily_ai_generation_limit, p.raw_input
 		FROM generation_jobs j JOIN profiles p ON p.id=j.profile_id WHERE j.job_id=$1`, jobID)
 	job, input, err := scanJobRecord(row)
 	if err != nil {
@@ -375,7 +394,8 @@ func getJobWithExecutor(ctx context.Context, executor queryExecutor, jobID strin
 	}
 	row := executor.QueryRow(ctx, `SELECT job_id, family, status, profile_id::text,
 		COALESCE(dna_version_id::text,''), COALESCE(world_id::text,''), COALESCE(error_code,''),
-		COALESCE(error_message,''), created_at, updated_at FROM generation_jobs WHERE job_id=$1`+lockingClause, jobID)
+		COALESCE(error_message,''), created_at, updated_at,
+		generation_reason, daily_ai_generation_limit FROM generation_jobs WHERE job_id=$1`+lockingClause, jobID)
 	job, err := scanJob(row)
 	return job, mapNotFound(err)
 }
@@ -383,25 +403,63 @@ func getJobWithExecutor(ctx context.Context, executor queryExecutor, jobID strin
 func scanJob(scanner rowScanner) (contracts.Job, error) {
 	var job contracts.Job
 	var errorCode, errorMessage string
-	if err := scanner.Scan(&job.JobID, &job.Family, &job.Status, &job.ProfileID, &job.DNAVersionID, &job.WorldID, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt); err != nil {
+	var generationReason *string
+	if err := scanner.Scan(&job.JobID, &job.Family, &job.Status, &job.ProfileID, &job.DNAVersionID, &job.WorldID, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt, &generationReason, &job.DailyAIGenerationLimit); err != nil {
 		return contracts.Job{}, err
 	}
 	if errorCode != "" {
 		job.Error = &contracts.RPCError{Code: errorCode, Message: errorMessage}
 	}
+	job.GenerationReason = generationReasonFromColumn(generationReason)
 	return job, nil
+}
+
+// generationReasonColumnValue keeps an unset reason out of the column as NULL,
+// and keeps an UNDECLARED one out of it too.
+//
+// An undeclared reason is dropped rather than written through and refused by
+// the CHECK constraint, and the trade is deliberate: what is at stake on this
+// path is a world that has been generated, is valid, and is the visitor's. A
+// display string the contract does not recognise must not roll that
+// transaction back. The ratchet that keeps the two lists in step
+// (TestTheGenerationReasonCheckAdmitsEveryDeclaredReason) is what makes this
+// branch unreachable rather than load-bearing.
+func generationReasonColumnValue(reason contracts.GenerationReason) *string {
+	if !reason.Valid() {
+		return nil
+	}
+	reasonValue := string(reason)
+	return &reasonValue
+}
+
+// generationReasonFromColumn is the same rule on the way back out. A stored
+// value the contract no longer declares reads as absent, for the reason the
+// settings reader ignores an out-of-bounds row: the code owns the vocabulary,
+// and a value that was legal when it was written is not made legal by being in
+// a database.
+func generationReasonFromColumn(storedReason *string) contracts.GenerationReason {
+	if storedReason == nil {
+		return ""
+	}
+	reason := contracts.GenerationReason(*storedReason)
+	if !reason.Valid() {
+		return ""
+	}
+	return reason
 }
 
 func scanJobRecord(scanner rowScanner) (contracts.Job, contracts.WorldInput, error) {
 	var job contracts.Job
 	var errorCode, errorMessage string
+	var generationReason *string
 	var inputJSON []byte
-	if err := scanner.Scan(&job.JobID, &job.Family, &job.Status, &job.ProfileID, &job.DNAVersionID, &job.WorldID, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt, &inputJSON); err != nil {
+	if err := scanner.Scan(&job.JobID, &job.Family, &job.Status, &job.ProfileID, &job.DNAVersionID, &job.WorldID, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt, &generationReason, &job.DailyAIGenerationLimit, &inputJSON); err != nil {
 		return contracts.Job{}, contracts.WorldInput{}, err
 	}
 	if errorCode != "" {
 		job.Error = &contracts.RPCError{Code: errorCode, Message: errorMessage}
 	}
+	job.GenerationReason = generationReasonFromColumn(generationReason)
 	var input contracts.WorldInput
 	if err := json.Unmarshal(inputJSON, &input); err != nil {
 		return contracts.Job{}, contracts.WorldInput{}, fmt.Errorf("decode profile input: %w", err)

@@ -56,7 +56,7 @@ func (spy *storeSpy) ClaimWorlds(_ context.Context, envelope contracts.Envelope[
 
 func (spy *storeSpy) MarkJobProcessing(context.Context, string) error { return nil }
 
-func (spy *storeSpy) StoreDNAAndQueueComposition(context.Context, string, contracts.WorldInput, contracts.ProfileDNA, []ai.Attempt) (contracts.Job, error) {
+func (spy *storeSpy) StoreDNAAndQueueComposition(context.Context, string, contracts.WorldInput, contracts.ProfileDNA, []ai.Attempt, repositories.GenerationOutcome) (contracts.Job, error) {
 	return contracts.Job{}, nil
 }
 

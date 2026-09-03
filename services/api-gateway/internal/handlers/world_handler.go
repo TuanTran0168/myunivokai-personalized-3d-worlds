@@ -17,6 +17,7 @@ import (
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/edge"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/httpx"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/middleware"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/quota"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/wake"
 	"github.com/oklog/ulid/v2"
 	"github.com/rs/zerolog/log"
@@ -58,18 +59,23 @@ type WorldHandler struct {
 	// rather than from the family string so that the two never drift apart -
 	// and derived once, here, because family-to-subject routing is
 	// constructor-owned throughout this type.
-	familyService        string
-	generationPublisher  GenerationPublisher
+	familyService       string
+	generationPublisher GenerationPublisher
+	// dailyAIQuota is shared by all three family handlers, because the
+	// allowance is per CALLER and not per family: five worlds is five worlds
+	// whether they are oceans or forests. A quota per handler would silently
+	// triple every limit.
+	dailyAIQuota         quota.DailyAIQuota
 	transport            *RPCTransport
 	publishTimeout       time.Duration
 	worldCacheTimeToLive time.Duration
 	shareCacheTimeToLive time.Duration
 }
 
-func newWorldHandler(serviceConfig config.Config, family contracts.WorldFamily, subjects worldSubjects, generationPublisher GenerationPublisher, transport *RPCTransport) *WorldHandler {
+func newWorldHandler(serviceConfig config.Config, family contracts.WorldFamily, subjects worldSubjects, generationPublisher GenerationPublisher, dailyAIQuota quota.DailyAIQuota, transport *RPCTransport) *WorldHandler {
 	return &WorldHandler{
 		family: family, subjects: subjects, familyService: wake.ServiceForSubject(subjects.worldGet),
-		generationPublisher: generationPublisher, transport: transport,
+		generationPublisher: generationPublisher, dailyAIQuota: dailyAIQuota, transport: transport,
 		publishTimeout: serviceConfig.NATSPublishTimeout, worldCacheTimeToLive: serviceConfig.WorldCacheTimeToLive,
 		shareCacheTimeToLive: serviceConfig.ShareCacheTimeToLive,
 	}
@@ -115,9 +121,20 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 	if !anonymousIdentifierAcceptable {
 		return
 	}
+	// Counted BEFORE the publish, which is what section 9 asks for and what
+	// makes the ceiling real: counting afterwards lets a burst of concurrent
+	// creates all pass the check before any of them lands. The cost of this
+	// order is that a create whose publish then fails has still spent one of
+	// the day's generations - one, for a caller who is about to see a 503 and
+	// retry, against a burst that would otherwise bypass the limit entirely.
+	quotaState := handler.dailyAIQuota.Evaluate(request.Context(), quota.Caller{
+		AccountIdentifier:   ownerAccountIdentifier,
+		AnonymousIdentifier: anonymousIdentifier,
+	}, createdAt)
 	command := contracts.NewEnvelope(jobID, contracts.GenerateDNAData{
 		Family: handler.family, Input: input,
 		OwnerAccountID: ownerAccountIdentifier, AnonymousID: anonymousIdentifier,
+		AIQuota: &quotaState,
 	})
 	if err := handler.generationPublisher.PublishGeneration(publishContext, command); err != nil {
 		log.Error().Err(err).Str("request_id", httpx.RequestID(request.Context())).Msg("publish generation command")

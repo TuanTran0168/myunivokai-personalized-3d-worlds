@@ -22,7 +22,17 @@ func NewOrchestrator(serviceConfig config.Config) (*ai.Orchestrator, error) {
 			return nil, err
 		}
 	}
-	return ai.NewOrchestrator(primaryProvider, fallbackProvider, validation.ValidateProfileDNA, serviceConfig.AITimeout, serviceConfig.AITotalBudget, serviceConfig.AIRepairAttempts), nil
+	// The preset provider is constructed unconditionally and from no
+	// configuration at all, unlike the two above. It is what serves a job the
+	// daily quota withheld an AI call from (section 9), and that path must
+	// exist in every deployment: a quota whose degrade depends on a provider
+	// somebody has to configure is a quota that fails to enforce itself in
+	// exactly the environment nobody configured.
+	//
+	// It is also why there is no AI_PRESET_PROVIDER variable. The value would
+	// have exactly one legal setting.
+	presetProvider := providers.NewMock()
+	return ai.NewOrchestrator(primaryProvider, fallbackProvider, presetProvider, validation.ValidateProfileDNA, serviceConfig.AITimeout, serviceConfig.AITotalBudget, serviceConfig.AIRepairAttempts), nil
 }
 
 func newProvider(providerName string, serviceConfig config.Config) (ai.Provider, error) {

@@ -33,7 +33,23 @@ const (
 	// counts is one address probing many accounts. Both exist, and a single
 	// counter answers neither.
 	identityFailureSegment = "auth:identity:failures"
-	wakeKeySegment         = "wake"
+	// dailyGenerationQuotaSegment holds one counter per caller per UTC day.
+	//
+	// A key PREFIX and not policy, which is the distinction section 9.3 draws:
+	// the two limits this counter is compared against are settings rows an
+	// operator changes, and where the count lives is not. So this stays a
+	// named constant here while the numbers stay out of this file entirely.
+	dailyGenerationQuotaSegment = "quota:ai:daily"
+	// dailyGenerationQuotaDayFormat is the same UTC day stamp
+	// wakeStatsDayFormat uses, and deliberately a separate constant: these
+	// two counters answer unrelated questions and a shared constant would
+	// invite a change to one to be made for the other's sake.
+	dailyGenerationQuotaDayFormat = "2006-01-02"
+	// dailyGenerationQuotaExpirySlack keeps a counter alive slightly past the
+	// day it names, so the last caller before UTC midnight cannot be handed a
+	// fresh allowance by an expiry that fired a moment early.
+	dailyGenerationQuotaExpirySlack = time.Hour
+	wakeKeySegment                  = "wake"
 	// Distinct segments rather than a suffix on wakeKeySegment, so a wake
 	// lock for a service can never be mistaken for a counter or the reverse.
 	wakeCountKeySegment    = "wake:count"
@@ -172,6 +188,17 @@ func (store *RedisStore) SetTokenVersion(ctx context.Context, accountID string, 
 //
 // A pipeline rather than two round trips, and INCR before EXPIRE so a key
 // that already exists cannot lose its count to a race with its own refresh.
+func (store *RedisStore) RecordIdentityFailure(ctx context.Context, identityKey string, window time.Duration) (int, error) {
+	key := store.key(identityFailureSegment, sanitizeKeyPart(identityKey))
+	pipeline := store.client.Pipeline()
+	increment := pipeline.Incr(ctx, key)
+	pipeline.Expire(ctx, key, window)
+	if _, err := pipeline.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return int(increment.Val()), nil
+}
+
 // GetSetting reads one mirrored setting. auth-service is the only writer, and
 // it writes with NO TTL — so a miss means a flushed or unreachable Redis
 // rather than an expired value, which is what lets settings.Reader answer a
@@ -189,15 +216,48 @@ func (store *RedisStore) GetSetting(ctx context.Context, key contracts.SettingKe
 	return value, nil
 }
 
-func (store *RedisStore) RecordIdentityFailure(ctx context.Context, identityKey string, window time.Duration) (int, error) {
-	key := store.key(identityFailureSegment, sanitizeKeyPart(identityKey))
+// IncrementDailyGenerationCount counts one world creation against one caller
+// and returns the count INCLUDING this one, so the caller compares it against
+// the limit directly rather than remembering to add one.
+//
+// The key names its own UTC day, so a new day starts a new counter with no
+// reset to perform, and the TTL only has to outlive that day - which is what
+// removes the cleanup job section 9 says there must not be. The expiry is
+// refreshed on every increment, which is harmless: every increment that
+// touches this key belongs to the day the key names.
+//
+// UTC and not local time, for the reason wakeStatsDayFormat gives: the process
+// runs in whatever region the host picked, and a daily allowance that resets
+// at a different moment after a redeploy is worse than one that never matches
+// anybody's midnight.
+//
+// callerKey is an account id or an anonymous id, NEVER an address. A per-IP
+// counter is shared by everyone behind one NAT and is bypassed by anyone with
+// a second address, which is why the anonymous id exists at all (section 6.3).
+func (store *RedisStore) IncrementDailyGenerationCount(ctx context.Context, callerKey string, at time.Time) (int, error) {
+	utcMoment := at.UTC()
+	key := store.key(dailyGenerationQuotaSegment, utcMoment.Format(dailyGenerationQuotaDayFormat), sanitizeKeyPart(callerKey))
 	pipeline := store.client.Pipeline()
 	increment := pipeline.Incr(ctx, key)
-	pipeline.Expire(ctx, key, window)
+	pipeline.Expire(ctx, key, timeRemainingInUTCDay(utcMoment))
 	if _, err := pipeline.Exec(ctx); err != nil {
 		return 0, err
 	}
 	return int(increment.Val()), nil
+}
+
+// timeRemainingInUTCDay is how long is left of the UTC day a moment falls in,
+// which is exactly how long its counter has to survive.
+//
+// Plus one hour of slack, and the slack is not superstition: a counter that
+// expired a few milliseconds before the day it names ended would give the last
+// caller of the day a fresh allowance. An hour of overlap costs one key per
+// caller per hour and closes that seam without a clock assumption.
+func timeRemainingInUTCDay(moment time.Time) time.Duration {
+	utcMoment := moment.UTC()
+	startOfNextDay := time.Date(utcMoment.Year(), utcMoment.Month(), utcMoment.Day(), 0, 0, 0, 0, time.UTC).
+		AddDate(0, 0, 1)
+	return startOfNextDay.Sub(utcMoment) + dailyGenerationQuotaExpirySlack
 }
 
 // IdentityFailureCount reads the tally without touching it. A missing key is
