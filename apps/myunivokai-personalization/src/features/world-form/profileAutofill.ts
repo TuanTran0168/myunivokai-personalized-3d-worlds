@@ -83,3 +83,40 @@ export function createFormValuesFromProfile(
 function haveSameItems(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
+
+/**
+ * The profile as the account page shows it: every field the create form
+ * requires a minimum of, filled with what the create form itself opens with.
+ *
+ * The account page mirrors the create form's minimums — three interests, three
+ * traits, one colour — because those fields end up IN that form, and a profile
+ * saved with one interest produces a create form sitting below its own floor
+ * with no way to tell why. Mirroring a minimum means the page has to be able
+ * to satisfy it on the first visit, which is what this does: a list the server
+ * returns empty means "never chosen", and what a visitor who never chose gets
+ * is the create form's own default.
+ *
+ * Only the fields with a minimum, plus the mood, whose picker would otherwise
+ * render with nothing selected. NOT the style: a style belongs to exactly one
+ * family, so an empty one with no family chosen is the only correct value —
+ * `changeFamily` fills it the moment there is a family to fill it for.
+ *
+ * The server keeps accepting less than this (`ValidateAsCreationDefaults` has
+ * no minimums, deliberately: it bounds what may be STORED, and a row saved
+ * before this rule existed still has to load). This is the form's rule, held
+ * where the form is.
+ */
+export function profileWithCreateFormDefaults(profile: AccountProfile): AccountProfile {
+  const defaults = profile.creationDefaults;
+  return {
+    ...profile,
+    creationDefaults: {
+      ...defaults,
+      interests: defaults.interests.length > 0 ? defaults.interests : CREATE_FORM_INITIAL_VALUES.interests,
+      traits: defaults.traits.length > 0 ? defaults.traits : CREATE_FORM_INITIAL_VALUES.traits,
+      favoriteColors:
+        defaults.favoriteColors.length > 0 ? defaults.favoriteColors : CREATE_FORM_INITIAL_VALUES.favoriteColors,
+      mood: defaults.mood.trim() || CREATE_FORM_INITIAL_VALUES.mood
+    }
+  };
+}

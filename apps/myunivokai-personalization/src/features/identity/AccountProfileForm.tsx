@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { Save, UserRound } from "lucide-react";
+import { ArrowLeft, Save, UserRound } from "lucide-react";
 import { StatusMessage } from "@/components/StatusMessage";
+import { Toast, type ToastTone } from "@/components/Toast";
 import { AmbientBackdrop } from "@/components/AmbientBackdrop";
 import { ChipGroupWithCustom } from "@/components/ChipGroupWithCustom";
 import { SwatchChipGroup } from "@/components/SwatchChipGroup";
@@ -32,10 +33,13 @@ import {
   MAXIMUM_ROLE_LENGTH,
   MAXIMUM_TRAITS,
   MINIMUM_CUSTOM_CHIP_CHARACTERS,
+  MINIMUM_FAVORITE_COLORS,
+  MINIMUM_INTERESTS,
+  MINIMUM_TRAITS,
   TRAIT_OPTIONS,
   defaultStyleForFamily
 } from "@/features/world-form/worldFormOptions";
-import { createFormValuesFromProfile } from "@/features/world-form/profileAutofill";
+import { createFormValuesFromProfile, profileWithCreateFormDefaults } from "@/features/world-form/profileAutofill";
 import { buildCreateFormPreviewScene } from "@/features/world-form/previewScene";
 import type { WorldFamily } from "@/lib/types";
 import { toggleItem } from "@/lib/formSelection";
@@ -48,12 +52,9 @@ import {
 import { announceProductSessionChanged, useProductSession } from "./useProductSession";
 
 /**
- * The world-field ceilings are imported from worldFormOptions rather than
- * written out again here: they are the same numbers
- * contracts.WorldInput.ValidateAsCreationDefaults enforces as maxima, and the
- * create form fills its own inputs from them. None of its MINIMUMS are
- * imported, because this page saves a draft — a profile with two interests is
- * a legitimate thing to keep, while a world with two is not.
+ * The world-field bounds are imported from worldFormOptions rather than
+ * written out again here, so this page and the create form cannot disagree
+ * about what a world field may hold.
  *
  * This one is an account field rather than a world field, so it has no
  * counterpart there.
@@ -61,24 +62,34 @@ import { announceProductSessionChanged, useProductSession } from "./useProductSe
 const MAXIMUM_FULL_NAME_LENGTH = 120;
 
 /**
- * Zero, deliberately, on both chip groups.
+ * The chip groups mirror the create form's MINIMUMS as well as its ceilings,
+ * on the owner's instruction and for a concrete reason: these fields end up in
+ * that form, and a profile saved with one interest produces a create form
+ * sitting below its own floor with no way for the person in front of it to
+ * tell why.
  *
- * The create form requires three interests and three traits because a world
- * needs them. A saved profile does not: somebody who has chosen one interest
- * has told us something, and a page that refused to keep it until they chose
- * three would be a page that argues with the person filling it in.
+ * That only works because `profileWithCreateFormDefaults` fills an unanswered
+ * list with what the create form opens with, so the floor is already met the
+ * first time this page is opened. The server stays permissive
+ * (`ValidateAsCreationDefaults` has no minimums): it bounds what may be
+ * STORED, and a row written before this rule still has to load.
  */
-const NO_MINIMUM_ITEMS = 0;
 
 /** "No family chosen" — a valid saved state, and the value the select holds for it. */
 const NO_PREFERRED_FAMILY = "";
 
 export function AccountProfileForm() {
   const { sessionState } = useProductSession();
-  const [profile, setProfile] = useState<AccountProfile>(EMPTY_ACCOUNT_PROFILE);
+  const [profile, setProfile] = useState<AccountProfile>(() => profileWithCreateFormDefaults(EMPTY_ACCOUNT_PROFILE));
   const [isLoading, setIsLoading] = useState(true);
   const [status, setStatus] = useState<AuthCredentialsFormStatus>({ kind: "idle" });
-  const [hasSaved, setHasSaved] = useState(false);
+  /**
+   * The one message about something that has already finished. Held rather
+   * than derived from `status` because it outlives it: the save is over and
+   * idle again while the confirmation is still on screen.
+   */
+  const [toast, setToast] = useState<{ tone: ToastTone; message: string } | null>(null);
+  const dismissToast = useCallback(() => setToast(null), []);
 
   const isSignedIn = sessionState.status === "signed-in";
 
@@ -101,7 +112,7 @@ export function AccountProfileForm() {
         if (!isMounted) {
           return;
         }
-        setProfile(loadedProfile);
+        setProfile(profileWithCreateFormDefaults(loadedProfile));
         setStatus({ kind: "idle" });
       })
       .catch((error: unknown) => {
@@ -120,12 +131,10 @@ export function AccountProfileForm() {
   }, [isSignedIn, sessionState.status]);
 
   const updateProfile = useCallback((change: Partial<AccountProfile>) => {
-    setHasSaved(false);
     setProfile((current) => ({ ...current, ...change }));
   }, []);
 
   const updateCreationDefaults = useCallback((change: Partial<AccountProfile["creationDefaults"]>) => {
-    setHasSaved(false);
     setProfile((current) => ({ ...current, creationDefaults: { ...current.creationDefaults, ...change } }));
   }, []);
 
@@ -139,7 +148,6 @@ export function AccountProfileForm() {
    * behind it is what the gateway rejects with "choose a world family first".
    */
   const changeFamily = useCallback((nextFamily: WorldFamily | "") => {
-    setHasSaved(false);
     setProfile((current) => ({
       ...current,
       preferredWorldFamily: nextFamily,
@@ -176,12 +184,12 @@ export function AccountProfileForm() {
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       setStatus({ kind: "submitting" });
-      setHasSaved(false);
+      setToast(null);
       try {
         const savedProfile = await saveAccountProfile(profile, {
           onServiceWaking: (attemptNumber) => setStatus({ kind: "waking", attemptNumber })
         });
-        setProfile(savedProfile);
+        setProfile(profileWithCreateFormDefaults(savedProfile));
         // The header greets people by this name, and it lives in a separate
         // storage key from the profile. Without this the menu keeps the old
         // name until the next sign-in, which reads as the save not working.
@@ -191,9 +199,23 @@ export function AccountProfileForm() {
           announceProductSessionChanged();
         }
         setStatus({ kind: "idle" });
-        setHasSaved(true);
+        setToast({
+          tone: "success",
+          // The confirmation says what was actually agreed to. With the switch
+          // off, "your next world starts from it" would be a promise the page
+          // has just been told not to keep.
+          message: savedProfile.autofillCreateForm
+            ? "Profile saved. Your next world starts from it."
+            : "Profile saved. Filling the create form is off, so only your name will be used."
+        });
       } catch (error) {
-        setStatus(failureStateFor(error));
+        const failure = failureStateFor(error);
+        setStatus(failure);
+        // The failure is a toast AND the inline message below, on purpose: the
+        // toast is what somebody looking anywhere else on a long form will
+        // see, and the inline one is what is still there when they come back
+        // to the button that failed.
+        setToast({ tone: "error", message: failure.kind === "failed" ? failure.message : "Could not save your profile." });
       }
     },
     [profile]
@@ -220,6 +242,22 @@ export function AccountProfileForm() {
           </div>
           {children}
         </main>
+        {/* Outside the column, so it is not inside that column's stacking
+            context and can sit above the fixed header and footer. */}
+        {toast ? (
+          <Toast
+            tone={toast.tone}
+            message={toast.message}
+            onDismiss={dismissToast}
+            action={
+              toast.tone === "success" ? (
+                <Link href="/gallery" className="focus-ring w-fit rounded font-semibold text-secondary underline">
+                  Back to your worlds
+                </Link>
+              ) : undefined
+            }
+          />
+        ) : null}
       </>
     );
   }
@@ -317,8 +355,9 @@ export function AccountProfileForm() {
         <div>
           <h2 className="font-display text-xl font-semibold text-paper">Your world defaults</h2>
           <p className="mt-1 text-sm text-on-surface-variant">
-            The create-world form is filled from these. Everything is optional — save as much or as little as you
-            like.
+            The create-world form is filled from these, and holds them to the same rules it holds itself to —{" "}
+            {MINIMUM_INTERESTS} interests, {MINIMUM_TRAITS} traits, at least one colour. The written fields are
+            optional; leave one blank and the form keeps its own.
           </p>
         </div>
 
@@ -375,7 +414,7 @@ export function AccountProfileForm() {
           predefinedOptions={INTEREST_OPTIONS}
           selected={profile.creationDefaults.interests}
           onChange={(updater) => updateCreationDefaults({ interests: updater(profile.creationDefaults.interests) })}
-          minimumItems={NO_MINIMUM_ITEMS}
+          minimumItems={MINIMUM_INTERESTS}
           maximumItems={MAXIMUM_INTERESTS}
           minimumCharacters={MINIMUM_CUSTOM_CHIP_CHARACTERS}
           maximumCharacters={MAXIMUM_CUSTOM_CHIP_CHARACTERS}
@@ -388,7 +427,7 @@ export function AccountProfileForm() {
           predefinedOptions={TRAIT_OPTIONS}
           selected={profile.creationDefaults.traits}
           onChange={(updater) => updateCreationDefaults({ traits: updater(profile.creationDefaults.traits) })}
-          minimumItems={NO_MINIMUM_ITEMS}
+          minimumItems={MINIMUM_TRAITS}
           maximumItems={MAXIMUM_TRAITS}
           minimumCharacters={MINIMUM_CUSTOM_CHIP_CHARACTERS}
           maximumCharacters={MAXIMUM_CUSTOM_CHIP_CHARACTERS}
@@ -467,7 +506,7 @@ export function AccountProfileForm() {
                       favoriteColors: toggleItem(
                         profile.creationDefaults.favoriteColors,
                         color,
-                        NO_MINIMUM_ITEMS,
+                        MINIMUM_FAVORITE_COLORS,
                         MAXIMUM_FAVORITE_COLORS
                       )
                     })
@@ -492,10 +531,20 @@ export function AccountProfileForm() {
           <Save className="h-4 w-4" aria-hidden="true" />
           Save profile
         </button>
+        {/* The way out, next to the way to commit, and there whether or not
+            anything was saved. A page reached from the header menu has no back
+            of its own, and the toast's copy of this link is gone seven seconds
+            after a save. */}
+        <Link
+          href="/gallery"
+          className="focus-ring inline-flex items-center gap-2 rounded-md border border-hairline bg-black/30 px-4 py-2.5 font-semibold text-on-surface hover:border-white/30"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Back to your worlds
+        </Link>
         {status.kind === "submitting" ? <StatusMessage tone="loading">Saving…</StatusMessage> : null}
         {status.kind === "waking" ? <StatusMessage tone="loading">{wakingMessage()}</StatusMessage> : null}
         {status.kind === "failed" ? <StatusMessage tone="error">{status.message}</StatusMessage> : null}
-        {status.kind === "idle" && hasSaved ? <StatusMessage tone="success">Profile saved.</StatusMessage> : null}
       </div>
     </form>
   );

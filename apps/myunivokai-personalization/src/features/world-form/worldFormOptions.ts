@@ -256,6 +256,7 @@ export const MINIMUM_TRAITS = 3;
 export const MAXIMUM_TRAITS = 6;
 export const MINIMUM_CUSTOM_CHIP_CHARACTERS = 2;
 export const MAXIMUM_CUSTOM_CHIP_CHARACTERS = 32;
+export const MINIMUM_FAVORITE_COLORS = 1;
 export const MAXIMUM_FAVORITE_COLORS = 4;
 
 /**

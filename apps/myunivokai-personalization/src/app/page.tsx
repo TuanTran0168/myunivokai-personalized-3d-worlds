@@ -36,11 +36,13 @@ import {
   INTEREST_OPTIONS,
   MAXIMUM_CHALLENGE_LENGTH,
   MAXIMUM_CUSTOM_CHIP_CHARACTERS,
+  MAXIMUM_FAVORITE_COLORS,
   MAXIMUM_GOAL_LENGTH,
   MAXIMUM_INTERESTS,
   MAXIMUM_ROLE_LENGTH,
   MAXIMUM_TRAITS,
   MINIMUM_CUSTOM_CHIP_CHARACTERS,
+  MINIMUM_FAVORITE_COLORS,
   MINIMUM_INTERESTS,
   MINIMUM_TRAITS,
   TRAIT_OPTIONS,
@@ -600,7 +602,7 @@ export default function HomePage() {
   }
 
   function toggleColor(color: string) {
-    setFavoriteColors((current) => toggleItem(current, color, 1, 4));
+    setFavoriteColors((current) => toggleItem(current, color, MINIMUM_FAVORITE_COLORS, MAXIMUM_FAVORITE_COLORS));
   }
 
   // Every section renders for every family now that World Style does, so the

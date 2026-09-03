@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_ACCOUNT_PROFILE, type AccountProfile } from "@/lib/accountProfile";
-import { createFormValuesFromProfile, isCreateFormPristine } from "./profileAutofill";
+import {
+  createFormValuesFromProfile,
+  isCreateFormPristine,
+  profileWithCreateFormDefaults
+} from "./profileAutofill";
 import { CREATE_FORM_INITIAL_VALUES, type CreateFormValues } from "./worldFormOptions";
 
 function pristineValues(): CreateFormValues {
@@ -120,5 +124,56 @@ describe("applying a saved profile to the form", () => {
     const filled = createFormValuesFromProfile(profileWith({}), { ...pristineValues(), nickname: "Typed" });
 
     expect(filled.nickname).toBe("Typed");
+  });
+});
+
+describe("the profile as the account page shows it", () => {
+  // The page mirrors the create form's minimums, so it has to be able to meet
+  // them the first time it is opened. An empty list is "never chosen", and
+  // what somebody who never chose gets is what the create form gives them.
+  it("fills the lists a never-saved profile has none of", () => {
+    const shown = profileWithCreateFormDefaults(EMPTY_ACCOUNT_PROFILE);
+
+    expect(shown.creationDefaults.interests).toEqual(CREATE_FORM_INITIAL_VALUES.interests);
+    expect(shown.creationDefaults.traits).toEqual(CREATE_FORM_INITIAL_VALUES.traits);
+    expect(shown.creationDefaults.favoriteColors).toEqual(CREATE_FORM_INITIAL_VALUES.favoriteColors);
+    expect(shown.creationDefaults.mood).toBe(CREATE_FORM_INITIAL_VALUES.mood);
+  });
+
+  it("leaves a saved list alone, however short", () => {
+    const shown = profileWithCreateFormDefaults(
+      profileWith({
+        creationDefaults: { ...EMPTY_ACCOUNT_PROFILE.creationDefaults, interests: ["Sailing"], traits: ["patient"] }
+      })
+    );
+
+    expect(shown.creationDefaults.interests).toEqual(["Sailing"]);
+    expect(shown.creationDefaults.traits).toEqual(["patient"]);
+  });
+
+  // A style belongs to exactly one family, so an empty one under "no
+  // preference" is the only correct value — filling it would save a style the
+  // generate call refuses.
+  it("never fills the style, which has no meaning without a family", () => {
+    expect(profileWithCreateFormDefaults(EMPTY_ACCOUNT_PROFILE).creationDefaults.preferredWorldStyle).toBe("");
+  });
+
+  it("changes nothing about the account's own fields", () => {
+    const profile = profileWith({ displayName: "Tuấn", fullName: "Trần Đăng Tuấn", gender: "male" });
+    const shown = profileWithCreateFormDefaults(profile);
+
+    expect(shown.displayName).toBe(profile.displayName);
+    expect(shown.fullName).toBe(profile.fullName);
+    expect(shown.gender).toBe(profile.gender);
+    expect(shown.autofillCreateForm).toBe(profile.autofillCreateForm);
+  });
+
+  // The seeded values are exactly the create form's own, so a profile nobody
+  // has filled in still reads as untouched — which is what keeps the ocean's
+  // calm-surface default on the account page's backdrop.
+  it("leaves a never-saved profile looking pristine to the create form", () => {
+    const shown = profileWithCreateFormDefaults(EMPTY_ACCOUNT_PROFILE);
+
+    expect(isCreateFormPristine(createFormValuesFromProfile(shown, pristineValues()))).toBe(true);
   });
 });
