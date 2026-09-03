@@ -13,6 +13,7 @@ func NewOceanHandler(serviceConfig config.Config, generationPublisher Generation
 	return &OceanHandler{WorldHandler: newWorldHandler(serviceConfig, contracts.WorldFamilyOcean, worldSubjects{
 		worldList: contracts.OceanWorldListQuerySubject, worldGet: contracts.OceanWorldGetQuerySubject,
 		variantCreate: contracts.OceanVariantCreateSubject, variantSelect: contracts.OceanVariantSelectSubject,
-		worldPublish: contracts.OceanWorldPublishSubject, shareGet: contracts.OceanShareGetQuerySubject,
+		worldPublish: contracts.OceanWorldPublishSubject, worldDelete: contracts.OceanWorldDeleteSubject,
+		shareGet: contracts.OceanShareGetQuerySubject,
 	}, generationPublisher, transport)}
 }

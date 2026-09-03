@@ -107,14 +107,46 @@ func (store *PostgresStore) GetWorld(ctx context.Context, worldID string) (World
 	return store.getWorldBundle(ctx, `w.id=$1`, worldID)
 }
 
+// getWorldBySourceJob is the ONE read that must still see a deleted world, and
+// it is not a product read: it answers a redelivered compose command with the
+// world that command already created. Filtering here would make a world deleted
+// between the create and a JetStream redelivery look like a world that was
+// never created, and the redelivery would repeat for ever against a row that is
+// not missing.
 func (store *PostgresStore) getWorldBySourceJob(ctx context.Context, sourceJobID string) (WorldBundle, error) {
-	return store.getWorldBundle(ctx, `w.source_job_id=$1`, sourceJobID)
+	return store.queryWorldBundle(ctx, `w.source_job_id=$1`, sourceJobID, deletedWorldsIncluded)
 }
 
 func (store *PostgresStore) getWorldBundle(ctx context.Context, predicate, argument string) (WorldBundle, error) {
+	return store.queryWorldBundle(ctx, predicate, argument, deletedWorldsExcluded)
+}
+
+// deletedWorldPolicy is whether a read may see a world its owner deleted.
+// Deletion is a flag on a row that stays for ever, so "gone" is entirely a
+// matter of every product read carrying the filter - which makes it worth
+// naming, so that the single read which must NOT carry it says so.
+type deletedWorldPolicy bool
+
+const (
+	deletedWorldsExcluded deletedWorldPolicy = true
+	deletedWorldsIncluded deletedWorldPolicy = false
+)
+
+const (
+	deletedWorldFilterWithAlias    = ` AND w.deleted_at IS NULL`
+	deletedWorldFilterWithoutAlias = ` AND deleted_at IS NULL`
+)
+
+func (store *PostgresStore) queryWorldBundle(ctx context.Context, predicate, argument string, deletedWorlds deletedWorldPolicy) (WorldBundle, error) {
+	worldFilter := ""
+	variantFilter := ""
+	if deletedWorlds == deletedWorldsExcluded {
+		worldFilter = deletedWorldFilterWithAlias
+		variantFilter = deletedWorldFilterWithoutAlias
+	}
 	batch := &pgx.Batch{}
-	batch.Queue(`SELECT `+worldSelectColumns+` FROM worlds w LEFT JOIN world_shares s ON s.world_id=w.id WHERE `+predicate, argument)
-	batch.Queue(`SELECT `+variantSelectColumns+` FROM world_variants WHERE world_id=(SELECT id FROM worlds WHERE `+stringsWithoutAlias(predicate)+`) ORDER BY variant_no`, argument)
+	batch.Queue(`SELECT `+worldSelectColumns+` FROM worlds w LEFT JOIN world_shares s ON s.world_id=w.id WHERE `+predicate+worldFilter, argument)
+	batch.Queue(`SELECT `+variantSelectColumns+` FROM world_variants WHERE world_id=(SELECT id FROM worlds WHERE `+stringsWithoutAlias(predicate)+variantFilter+`) ORDER BY variant_no`, argument)
 	results := store.pool.SendBatch(ctx, batch)
 	defer results.Close()
 	world, err := scanWorld(results.QueryRow())
@@ -136,7 +168,7 @@ func (store *PostgresStore) GetWorldsByIDs(ctx context.Context, worldIDs []strin
 	if len(worldIDs) == 0 {
 		return nil, nil
 	}
-	rows, err := store.pool.Query(ctx, `SELECT `+worldSelectColumns+` FROM worlds w LEFT JOIN world_shares s ON s.world_id=w.id WHERE w.id = ANY($1::uuid[])`, worldIDs)
+	rows, err := store.pool.Query(ctx, `SELECT `+worldSelectColumns+` FROM worlds w LEFT JOIN world_shares s ON s.world_id=w.id WHERE w.id = ANY($1::uuid[])`+deletedWorldFilterWithAlias, worldIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -268,6 +300,44 @@ func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug
 	}
 	bundle, err := store.GetWorld(ctx, worldID)
 	return bundle.World, err
+}
+
+// DeleteWorld sets the flag and emits nothing.
+//
+// No revision bump and no outbox row, deliberately. The snapshot a deletion
+// would produce is byte-identical to the last one, because decision 4b keeps
+// `analytics-service` untouched and adds no deleted field to the projection -
+// so the event would describe a change the read model cannot represent, and
+// `world.changed` would stop meaning "something you can see changed".
+//
+// Idempotent through COALESCE: deleting a world that is already deleted keeps
+// the first timestamp and is not an error. The second click of a button and a
+// retried request must not answer differently from the first.
+func (store *PostgresStore) DeleteWorld(ctx context.Context, worldID string, requestingAccountID *string) (models.WorldDeletion, error) {
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return models.WorldDeletion{}, err
+	}
+	defer transaction.Rollback(ctx)
+	if err := assertWorldDeletable(ctx, transaction, worldID, requestingAccountID); err != nil {
+		return models.WorldDeletion{}, err
+	}
+	// The share slug is read in the same statement that sets the flag, and
+	// read from world_shares rather than through a product read - which would
+	// now filter the very row being deleted.
+	var shareSlug *string
+	if err := transaction.QueryRow(ctx, `UPDATE worlds SET deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW()
+		WHERE id = $1
+		RETURNING (SELECT share_slug FROM world_shares WHERE world_id = worlds.id)`, worldID).Scan(&shareSlug); err != nil {
+		return models.WorldDeletion{}, mapNotFound(err)
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return models.WorldDeletion{}, err
+	}
+	if shareSlug == nil {
+		return models.WorldDeletion{}, nil
+	}
+	return models.WorldDeletion{ShareSlug: *shareSlug}, nil
 }
 
 func (store *PostgresStore) GetPublicWorld(ctx context.Context, shareSlug string) (WorldBundle, error) {

@@ -32,6 +32,7 @@ type WorldService interface {
 	RegenerateVariant(context.Context, string, *string) (models.VariantResponse, error)
 	SelectVariant(context.Context, string, string, *string) (models.VariantResponse, error)
 	PublishWorld(context.Context, string, *string) (models.PublishResponse, error)
+	DeleteWorld(context.Context, string, *string) (models.DeleteResponse, error)
 	GetPublicWorld(context.Context, string) (models.PublicWorldResponse, error)
 }
 
@@ -146,6 +147,17 @@ func (handler *NATSHandler) HandleWorldPublishQuery(message *nats.Msg) {
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
 
+func (handler *NATSHandler) HandleWorldDeleteQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.DeleteWorldData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.DeleteResponse, error) {
+		return handler.worldService.DeleteWorld(ctx, envelope.Data.WorldID, envelope.Data.RequestingAccountID)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
 func (handler *NATSHandler) HandleShareGetQuery(message *nats.Msg) {
 	var envelope contracts.Envelope[contracts.ShareQueryData]
 	if !decodeQuery(handler, message, &envelope) {
@@ -191,6 +203,13 @@ func (handler *NATSHandler) respondWithResult(message *nats.Msg, jobID string, s
 	// click later, and it would make an owner's own 404 unreadable.
 	if errors.Is(err, repositories.ErrNotWorldOwner) {
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "NOT_WORLD_OWNER", "This world belongs to another account."))
+		return
+	}
+	// Distinct from NOT_WORLD_OWNER on purpose. "This is not yours" and "this
+	// is nobody's yet" are different situations with different next steps, and
+	// only one of them has an answer the visitor can act on.
+	if errors.Is(err, repositories.ErrWorldNotOwned) {
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "WORLD_NOT_CLAIMED", "This world has no owner yet. Claim it to your account, then delete it."))
 		return
 	}
 	if errors.Is(err, repositories.ErrConflict) {

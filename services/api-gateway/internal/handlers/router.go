@@ -149,6 +149,7 @@ type worldRouteHandler interface {
 	CreateVariant(http.ResponseWriter, *http.Request)
 	SelectVariant(http.ResponseWriter, *http.Request)
 	PublishWorld(http.ResponseWriter, *http.Request)
+	DeleteWorld(http.ResponseWriter, *http.Request)
 	GetShare(http.ResponseWriter, *http.Request)
 }
 
@@ -159,6 +160,7 @@ func registerWorldRoutes(router chi.Router, handler worldRouteHandler) {
 	router.Post("/worlds/{worldID}/variants", handler.CreateVariant)
 	router.Post("/worlds/{worldID}/variants/{variantID}/select", handler.SelectVariant)
 	router.Post("/worlds/{worldID}/publish", handler.PublishWorld)
+	router.Post("/worlds/{worldID}/delete", handler.DeleteWorld)
 	router.Get("/share/worlds/{shareSlug}", handler.GetShare)
 }
 
@@ -172,5 +174,6 @@ func registerUnsupportedFamilyRoutes(router chi.Router) {
 	router.Post("/worlds/{worldID}/variants", unsupported)
 	router.Post("/worlds/{worldID}/variants/{variantID}/select", unsupported)
 	router.Post("/worlds/{worldID}/publish", unsupported)
+	router.Post("/worlds/{worldID}/delete", unsupported)
 	router.Get("/share/worlds/{shareSlug}", unsupported)
 }

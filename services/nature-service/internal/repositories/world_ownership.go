@@ -40,3 +40,42 @@ func worldMutationPermitted(ownerAccountID, requestingAccountID *string) error {
 	}
 	return nil
 }
+
+// ErrWorldNotOwned is returned when a mutation that requires an owner is asked
+// of a world that has none. Only deletion is in that category.
+var ErrWorldNotOwned = errors.New("world has no owner")
+
+// worldDeletionPermitted is STRICTER than worldMutationPermitted, and the
+// difference is the point.
+//
+// Every other mutation stays open on an unowned world, because that describes
+// every world in production and adding a variant to somebody else's world is
+// annoying and reversible. Deleting is neither: it takes a world out of its
+// maker's gallery, and a visitor cannot put it back. So an unowned world cannot
+// be deleted at all - nobody can prove they made it, which is the same reason
+// decision 16 leaves a pre-plan world unclaimable.
+//
+// What makes that acceptable rather than a dead end is the claim
+// (S8-IDENTITY-011): a world made before signing up becomes owned, and
+// deletable, the moment its maker claims it.
+func worldDeletionPermitted(ownerAccountID, requestingAccountID *string) error {
+	if ownerAccountID == nil {
+		return ErrWorldNotOwned
+	}
+	if requestingAccountID == nil || *requestingAccountID != *ownerAccountID {
+		return ErrNotWorldOwner
+	}
+	return nil
+}
+
+// assertWorldDeletable is assertWorldMutable with the stricter rule, and it
+// takes the row the same way: inside the deletion's own transaction, FOR
+// UPDATE, so a claim landing at the same moment cannot change the answer
+// between the check and the flag.
+func assertWorldDeletable(ctx context.Context, querier worldSnapshotQuerier, worldID string, requestingAccountID *string) error {
+	var ownerAccountID *string
+	if err := querier.QueryRow(ctx, `SELECT owner_account_id::text FROM worlds WHERE id = $1 FOR UPDATE`, worldID).Scan(&ownerAccountID); err != nil {
+		return mapNotFound(err)
+	}
+	return worldDeletionPermitted(ownerAccountID, requestingAccountID)
+}

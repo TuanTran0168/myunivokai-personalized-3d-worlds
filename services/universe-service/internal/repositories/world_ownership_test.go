@@ -253,6 +253,13 @@ var worldMutations = []struct {
 	},
 }
 
+// ownerOnlyMutations is a third category, and it exists because deletion
+// answers the ownership question differently from the three above: an unowned
+// world is mutable by anyone holding its id and deletable by nobody at all. Its
+// own table lives in world_deletion_test.go; the name is listed here so the
+// ratchet below can tell a classified mutation from an unclassified one.
+var ownerOnlyMutations = []string{"DeleteWorld"}
+
 // nonMutatingStoreMethods is the rest of the Store, listed so that the ratchet
 // below can tell "a read was added" from "a mutation was added and nobody
 // noticed". CreateWorld is here despite being a write: it SETS ownership from
@@ -326,6 +333,9 @@ func TestTheStoreGainsNoMethodWithoutClassifyingIt(t *testing.T) {
 	}
 	for _, mutation := range worldMutations {
 		classified[mutation.methodName] = true
+	}
+	for _, methodName := range ownerOnlyMutations {
+		classified[methodName] = true
 	}
 
 	storeType := reflect.TypeOf((*Store)(nil)).Elem()

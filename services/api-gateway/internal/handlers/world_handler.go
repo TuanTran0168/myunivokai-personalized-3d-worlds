@@ -34,6 +34,7 @@ type worldSubjects struct {
 	variantCreate string
 	variantSelect string
 	worldPublish  string
+	worldDelete   string
 	shareGet      string
 }
 
@@ -169,6 +170,30 @@ func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, re
 	}
 	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldPublish,
 		contracts.PublishWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)})
+}
+
+// DeleteWorld routes through proxyWorldMutation, and that is S8-IDENTITY-010's
+// recorded decision rather than an accident of reuse.
+//
+// The gateway could learn of a deletion two ways: from this response, or from
+// the `world.changed` event. The response wins, for two reasons. It is
+// SYNCHRONOUS - both cache entries are dropped before the visitor's own
+// response returns, so their very next request cannot hit a stale one, which an
+// event arriving through the outbox and JetStream could not promise. And the
+// gateway consumes no event at all today; making it one for this would add a
+// consumer, a durable, and a redelivery story to invalidate two keys it is
+// already holding the answer for.
+//
+// The share key is the half that only fails in production. It is keyed by SLUG,
+// which the gateway cannot derive from a world id - which is why the family
+// service returns it in the deletion response.
+func (handler *WorldHandler) DeleteWorld(responseWriter http.ResponseWriter, request *http.Request) {
+	worldID, validWorldID := worldIdentifierFromRequest(responseWriter, request)
+	if !validWorldID {
+		return
+	}
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldDelete,
+		contracts.DeleteWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)})
 }
 
 func (handler *WorldHandler) GetShare(responseWriter http.ResponseWriter, request *http.Request) {

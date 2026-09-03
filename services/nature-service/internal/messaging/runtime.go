@@ -84,6 +84,7 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		{subject: contracts.NatureVariantCreateSubject, handler: runtime.natsHandler.HandleVariantCreateQuery},
 		{subject: contracts.NatureVariantSelectSubject, handler: runtime.natsHandler.HandleVariantSelectQuery},
 		{subject: contracts.NatureWorldPublishSubject, handler: runtime.natsHandler.HandleWorldPublishQuery},
+		{subject: contracts.NatureWorldDeleteSubject, handler: runtime.natsHandler.HandleWorldDeleteQuery},
 		{subject: contracts.NatureShareGetQuerySubject, handler: runtime.natsHandler.HandleShareGetQuery},
 	}
 	for _, binding := range queryBindings {

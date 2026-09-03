@@ -21,7 +21,12 @@ type MemoryStore struct {
 	// Postgres store reads, so a snapshot built here carries the same
 	// publish timestamp the real one would.
 	publishedAt map[string]time.Time
-	outbox      []OutboxMessage
+	// deletedAt stands in for worlds.deleted_at. Keyed rather than a field on
+	// the stored world, so that "every product read filters it" is as easy to
+	// get wrong here as it is in SQL - a mirror that made the mistake
+	// impossible would prove nothing about the store that ships.
+	deletedAt map[string]time.Time
+	outbox    []OutboxMessage
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -31,6 +36,7 @@ func NewMemoryStore() *MemoryStore {
 		slugs:       map[string]string{},
 		jobs:        map[string]string{},
 		publishedAt: map[string]time.Time{},
+		deletedAt:   map[string]time.Time{},
 	}
 }
 
@@ -74,7 +80,7 @@ func (s *MemoryStore) GetWorld(ctx context.Context, worldID string) (WorldBundle
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	world, ok := s.worlds[worldID]
-	if !ok {
+	if !ok || s.isDeleted(worldID) {
 		return WorldBundle{}, ErrNotFound
 	}
 	return WorldBundle{World: world, Variants: cloneVariants(s.variants[worldID])}, nil
@@ -86,7 +92,7 @@ func (s *MemoryStore) GetWorldsByIDs(ctx context.Context, worldIDs []string) ([]
 	bundles := make([]WorldBundle, 0, len(worldIDs))
 	for _, worldID := range worldIDs {
 		world, ok := s.worlds[worldID]
-		if !ok {
+		if !ok || s.isDeleted(worldID) {
 			continue
 		}
 		bundles = append(bundles, WorldBundle{World: world, Variants: cloneVariants(s.variants[worldID])})
@@ -228,11 +234,40 @@ func (s *MemoryStore) recordWorldChange(worldID string) error {
 	return nil
 }
 
+func (s *MemoryStore) DeleteWorld(ctx context.Context, worldID string, requestingAccountID *string) (models.WorldDeletion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	world, ok := s.worlds[worldID]
+	if !ok {
+		return models.WorldDeletion{}, ErrNotFound
+	}
+	if err := worldDeletionPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
+		return models.WorldDeletion{}, err
+	}
+	// Mirrors the Postgres COALESCE: a second deletion keeps the first
+	// timestamp and answers the same way.
+	if _, alreadyDeleted := s.deletedAt[worldID]; !alreadyDeleted {
+		s.deletedAt[worldID] = time.Now().UTC()
+	}
+	world.UpdatedAt = time.Now().UTC()
+	s.worlds[worldID] = world
+	if world.ShareSlug == nil {
+		return models.WorldDeletion{}, nil
+	}
+	return models.WorldDeletion{ShareSlug: *world.ShareSlug}, nil
+}
+
+// isDeleted is read under whichever lock the caller already holds.
+func (s *MemoryStore) isDeleted(worldID string) bool {
+	_, deleted := s.deletedAt[worldID]
+	return deleted
+}
+
 func (s *MemoryStore) GetPublicWorld(ctx context.Context, slug string) (WorldBundle, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	worldID, ok := s.slugs[slug]
-	if !ok {
+	if !ok || s.isDeleted(worldID) {
 		return WorldBundle{}, ErrNotFound
 	}
 	world := s.worlds[worldID]

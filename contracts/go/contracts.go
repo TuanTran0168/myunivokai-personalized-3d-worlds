@@ -33,18 +33,21 @@ const (
 	UniverseVariantCreateSubject  = "myunivokai.queries.universe.variant.create.v1"
 	UniverseVariantSelectSubject  = "myunivokai.queries.universe.variant.select.v1"
 	UniverseWorldPublishSubject   = "myunivokai.queries.universe.world.publish.v1"
+	UniverseWorldDeleteSubject    = "myunivokai.queries.universe.world.delete.v1"
 	UniverseShareGetQuerySubject  = "myunivokai.queries.universe.share.get.v1"
 	NatureWorldListQuerySubject   = "myunivokai.queries.nature.world.list.v1"
 	NatureWorldGetQuerySubject    = "myunivokai.queries.nature.world.get.v1"
 	NatureVariantCreateSubject    = "myunivokai.queries.nature.variant.create.v1"
 	NatureVariantSelectSubject    = "myunivokai.queries.nature.variant.select.v1"
 	NatureWorldPublishSubject     = "myunivokai.queries.nature.world.publish.v1"
+	NatureWorldDeleteSubject      = "myunivokai.queries.nature.world.delete.v1"
 	NatureShareGetQuerySubject    = "myunivokai.queries.nature.share.get.v1"
 	OceanWorldListQuerySubject    = "myunivokai.queries.ocean.world.list.v1"
 	OceanWorldGetQuerySubject     = "myunivokai.queries.ocean.world.get.v1"
 	OceanVariantCreateSubject     = "myunivokai.queries.ocean.variant.create.v1"
 	OceanVariantSelectSubject     = "myunivokai.queries.ocean.variant.select.v1"
 	OceanWorldPublishSubject      = "myunivokai.queries.ocean.world.publish.v1"
+	OceanWorldDeleteSubject       = "myunivokai.queries.ocean.world.delete.v1"
 	OceanShareGetQuerySubject     = "myunivokai.queries.ocean.share.get.v1"
 
 	JobStatusQueued     JobStatus = "queued"
@@ -600,6 +603,14 @@ type VariantSelectData struct {
 }
 
 type PublishWorldData struct {
+	WorldID             string  `json:"worldId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
+}
+
+// DeleteWorldData is the one mutation with no anonymous form. Deleting is
+// owner-only, so a nil RequestingAccountID can never authorise it - unlike
+// every other mutation, where nil is how an unowned world stays usable.
+type DeleteWorldData struct {
 	WorldID             string  `json:"worldId"`
 	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
 }

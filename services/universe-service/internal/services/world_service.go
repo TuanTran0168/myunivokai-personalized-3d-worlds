@@ -164,6 +164,18 @@ func (service *WorldService) PublishWorld(ctx context.Context, worldID string, r
 	return models.PublishResponse{}, lastConflictError
 }
 
+// DeleteWorld is owner-only and reversible for ever. The store decides who may
+// do it; this method exists to shape the answer, and the share slug in it is
+// what lets the gateway drop a cached share response keyed by a slug no other
+// service can derive.
+func (service *WorldService) DeleteWorld(ctx context.Context, worldID string, requestingAccountID *string) (models.DeleteResponse, error) {
+	deletion, err := service.store.DeleteWorld(ctx, worldID, requestingAccountID)
+	if err != nil {
+		return models.DeleteResponse{}, err
+	}
+	return models.DeleteResponse{Deleted: true, ShareSlug: deletion.ShareSlug}, nil
+}
+
 func (service *WorldService) GetPublicWorld(ctx context.Context, shareSlug string) (models.PublicWorldResponse, error) {
 	bundle, err := service.store.GetPublicWorld(ctx, shareSlug)
 	if err != nil {

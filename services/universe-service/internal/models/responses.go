@@ -56,3 +56,21 @@ type PublicDNA struct {
 	TraitScores TraitScores `json:"traitScores"`
 	Planets     []DNAPlanet `json:"planets"`
 }
+
+// WorldDeletion is what deleting a world produces. The flag itself is not worth
+// returning - the caller asked for it - but the share slug is: the gateway's
+// share cache is keyed by slug, only this service can map a world id to one,
+// and without it a world its owner just deleted keeps resolving at its public
+// URL for a whole cache TTL. That is the bug that appears only in production.
+type WorldDeletion struct {
+	ShareSlug string
+}
+
+// DeleteResponse is the deletion's wire shape. `deleted` is always true - a
+// failure is an error envelope, not a false - and it exists so the response is
+// a JSON object with a field rather than an empty body a client has to treat as
+// a special case.
+type DeleteResponse struct {
+	Deleted   bool   `json:"deleted"`
+	ShareSlug string `json:"shareSlug,omitempty"`
+}
