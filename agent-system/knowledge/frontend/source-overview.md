@@ -28,7 +28,7 @@ itself.
 | `/` | `src/app/page.tsx` | Landing + family picker. Submit -> `202 + jobId` -> queued/processing polling -> completed world redirect; pending polling resumes after refresh |
 | `/worlds/[worldId]` | `src/app/worlds/[worldId]/page.tsx` | Dashboard: 3D canvas, POI panel, variants, publish/share, PNG export. Reads `?family=` to pick the API + renderer |
 | `/gallery` | `src/app/gallery/page.tsx` | Signed in: **every world the account owns**, from `GET /api/me/worlds` (`lib/galleryWorldSources.ts`). Signed out: worlds saved on this device (`lib/savedWorlds.ts`). Family-aware, loaded in parallel. Backdrop via `components/AmbientBackdrop` |
-| `/sign-in`, `/sign-up` | `src/app/sign-in/page.tsx`, `src/app/sign-up/page.tsx` | Both render `features/identity/AuthCredentialsForm`. Sign-up also takes a display name |
+| `/sign-in`, `/sign-up` | `src/app/sign-in/page.tsx`, `src/app/sign-up/page.tsx` | Both render `features/identity/AuthCredentialsForm`: a two-column screen from `lg` — what an account gives you on the left, the card on the right — over a world of its own (`features/identity/authBackdropScene.ts`, a DIFFERENT one per mode, because the two screens are one route apart). Sign-up also takes a display name |
 | `/account` | `src/app/account/page.tsx` | The account's own page: name, full name, gender, and the defaults the create form is filled from. `AccountProfileForm` owns the whole layout, heading included, because it also renders the world behind it — the scene the create form would open with, rebuilt as the fields change |
 | `/share/worlds/[shareSlug]` | `src/app/share/worlds/[shareSlug]/page.tsx` | Public **universe** share page |
 | `/nature/share/worlds/[shareSlug]` | `src/app/nature/share/worlds/[shareSlug]/page.tsx` | Public **nature** share page (twin route; nature-service prints share URLs with the `/nature` prefix) |
@@ -39,6 +39,23 @@ Content-Security-Policy with a per-request nonce (`lib/contentSecurityPolicy.ts`
 `npm run check:csp` is the only thing that can catch a hole in it — `tsc`, lint,
 build and the unit tests all passed against a policy that produced fourteen
 `connect-src blocked blob` violations per scene.
+
+**And it has been catching that hole on a development server, not on a build.**
+Corrected 2026-09-03. `playwright.config.ts` defaults to port 41300 with
+`reuseExistingServer`, which is also `npm run dev`'s port and the port the local
+compose stack serves this app on — so `check:csp` attaches to whatever is
+already running rather than to the production build the config's own comment
+says it measures. Against a real build it fails 7 of 8, because a prerendered
+page's HTML is written with no nonce while the policy demands one:
+
+```bash
+SHOOT_PORT=41399 npm run shoot -- e2e/content-security-policy.spec.ts --project=desktop
+```
+
+`next dev` injects the nonce and hides this. The defect, its cost and the
+decision it needs are `S3-CSP-001` in
+[sprint-03's user stories](../../plans/sprints/sprint-03-2026-09-09/user-stories.md#the-defect-this-work-uncovered-and-did-not-fix).
+Until it is fixed, every one of these specs measures the dev server.
 
 ## The lib layer — every piece of data passes through here
 
@@ -248,6 +265,57 @@ build and the unit tests all passed against a policy that produced fourteen
   `globals.css` and fails if either drifts. See
   [../user-stories/world-chrome.md](../../plans/backlog/world-chrome.md).
 
+## The two glass materials, and which surface gets which
+
+`src/app/globals.css` holds two, not one, and the rule between them is the whole
+of it: **clear where the world is the subject, regular where the panel is the
+subject.**
+
+| Material | What it is | Where |
+| --- | --- | --- |
+| `.glass-panel` / `.liquid-glass` | `--glass-tint` at 8%, saturate only, NO blur, and a heavy three-layer text-shadow doing all the legibility work | Panels over a live world that is being configured or looked at: the create form's rail, the live-preview island, a world page's HUD |
+| `.glass-overlay` (+ `.glass-overlay-sheen`, `.glass-overlay-alert`) | `--glass-overlay-tint` at 84%, `blur(28px)`, a gradient specular rim, one tight text-shadow | Anything floating over other INTERFACE: the account menu, `components/Toast.tsx`, the sign-in card, `.lg-toast` |
+
+This is iOS 26's own split (`clear` and `regular`) and it arrived because there
+was only the clear one: an open account menu and the create form's live-preview
+panel were legible through each other, which is not depth, it is a collision.
+Three things a later reader will otherwise undo:
+
+- **The material declares no `position`.** This file loads after
+  `@tailwind utilities`, so a `position` here out-ranks `absolute`/`fixed` on the
+  element wearing it — which is exactly how the dropdown once laid itself out
+  inside the 57px header bar. Its rim and sheen are pseudo-elements, so every
+  call site positions itself.
+- **84% is not a taste setting.** `backdrop-filter` is the first thing a
+  compositor drops (software rendering, some mobile browsers), and the tint has
+  to hold on its own when it does. The blur makes it beautiful; the tint makes
+  it correct.
+- **A tone is a modifier class, never a Tailwind `bg-*`.** `.glass-overlay` sets
+  the `background` shorthand and wins against any utility, which is why the
+  error tone is `.glass-overlay-alert`.
+
+`text-on-world` is the third piece: the same heavy text-shadow, for text with no
+panel under it at all — the sign-in screen's editorial column sits straight on
+the world.
+
+## Where a finished action reports itself
+
+One inset, `--toast-inset-top`, for the two toast surfaces this app has: the
+`sonner` stack mounted in `app/layout.tsx` and `components/Toast.tsx`. It used
+to be `72px` in a prop and `bottom-20` in a class name, and that is how a save
+confirmation ended up on top of the Save button that produced it and over the
+fixed footer.
+
+- `components/Toast.tsx` is the held, dismissible one: a success fades after
+  seven seconds, a failure waits. `toastLifetimeMilliseconds` is that rule.
+- `sonner` is the brief one, for a share link copied or a world deleted.
+- `lib/returnDestinations.ts` names the only two places anybody is sent back to
+  — the create form ("your personalization", the owner's word for it) and the
+  gallery — and `returnDestinationsFrom(pathname)` drops the page being looked
+  at, so a toast on the gallery never offers the gallery.
+  `components/ReturnDestinationLinks.tsx` renders them in a toast or as form
+  controls.
+
 ## The 3D part
 
 - [threejs-scene-architecture.md](threejs-scene-architecture.md) — three.js
@@ -279,7 +347,12 @@ preferred family came to fill the picker while the canvas stayed a universe.
   `any`; it is not yet a schema-derived discriminated union with runtime
   validation.
 - Both family renderers are statically imported by `registry.ts`; lazy family
-  chunks remain pending.
+  chunks remain pending. `components/AmbientBackdrop` is the one canvas that IS
+  lazy, and it is worth knowing how much that was worth: `/gallery` fell from
+  509 kB of first-load JS to 131 kB and `/account` from 510 kB to 138 kB, which
+  also let the credential screens gain a 3D world for nothing (121 kB, from
+  116 kB). Pages where the world is the subject keep the static import, because
+  there the canvas is not what the visitor is waiting past.
 - The main canvas allows DPR up to 3 and has no adaptive quality profile or
   recoverable WebGL error boundary.
 - Nature GLBs are self-hosted, but Drei still uses its default external Draco
