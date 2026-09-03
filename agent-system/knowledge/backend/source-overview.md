@@ -164,6 +164,13 @@ Each family's `worlds` table carries `owner_account_id`, `anonymous_id` and
 `deleted_at`, all nullable, none backfilled. A world with no owner is the
 normal case and describes every world made before 2026-09-03.
 
+**Exactly one of the two identity columns is ever set on a new world.** The
+gateway drops the visitor's `X-Anonymous-Id` the moment a verified token gives
+it an account to name instead, because a world that has an owner can never be
+claimed. `owner_account_id IS NULL` answers "is this anonymous"; `anonymous_id`
+answers "*which* anonymous visitor", and only the second can be turned into
+ownership later.
+
 `internal/repositories/world_ownership.go` holds the rules, and there are two
 of them because deletion does not follow the others:
 
@@ -188,6 +195,48 @@ clause.
 A deletion bumps no revision and stages no outbox row: `analytics-service` is
 deliberately untouched, so the snapshot it would emit is identical to the last
 one.
+
+### The claim
+
+One command in, one to three out. The gateway is admitted on exactly one
+command subject and it is DNA's, and `dna-service` is the only service that
+knows which FAMILIES a visitor used — its own `generation_jobs` rows name one
+each. So `POST /api/me/worlds/claim` publishes
+`commands.dna.world.claim.v1`, and `dna-service` publishes
+`commands.<family>.world.claim.v1` only for the families that visitor actually
+used.
+
+`dna-service`'s `ClaimWorlds` reads those families **before** the `UPDATE`,
+while `anonymous_id` still points at the rows, and discards them if the update
+claimed nothing — that last line is the concurrent loser's path, and without it
+a claim that took no rows would still fan out.
+
+Each family's `ClaimWorlds` is one statement:
+`SET owner_account_id = $1, anonymous_id = NULL WHERE anonymous_id = $2 AND
+owner_account_id IS NULL`. The guard is the whole of the idempotency and of the
+two-device race, and clearing `anonymous_id` is not tidiness — it is a bearer
+credential in a JS-readable cookie, useless once an account owns the worlds it
+named. No revision bump and no outbox row, for the same reason a deletion has
+none.
+
+**The claim consumers carry no delivery limit**, because a claim that gave up
+would leave somebody's worlds anonymous for ever with nothing anywhere saying
+so. That makes a message which can never be applied a message the fleet retries
+until the stream drops it, so a transport-level failure is told apart by its
+error: `ErrInvalidWorldClaimCommand` is `Term()`ed, everything else nacked. The
+gateway also refuses to publish an unapplicable one, including when the fault is
+its own — a verified token whose subject is not an account id is a 500 there.
+
+Only `dna-service` is woken. The gateway owns the only waker and cannot know
+which families were used; the family claim commands wait in
+`MYUNIVOKAI_COMMANDS` until each service next runs. The bound that leaves is the
+stream's 168-hour retention.
+
+`nats_publish_permissions_test.go` in the gateway is where the whole command
+boundary is checked: `commandSubjectRoutes` names every command subject with its
+one permitted publisher and its one permitted subscriber, and the tests fail on
+an extra publisher, a missing subscriber, a subject in the config the table does
+not name, and any command wildcard.
 
 The runtime owns connection lifecycle, deterministic subscription registration,
 pull/ack/retry policy, and outbox polling. Fetch size/wait, retry delay,

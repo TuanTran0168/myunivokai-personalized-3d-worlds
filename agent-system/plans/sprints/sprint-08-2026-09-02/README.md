@@ -4,18 +4,23 @@
 > **Status:** **Phase A implemented** on
 > `feat/fe-be/end-user-identity-phase-a` (one branch per phase, by the owner's
 > grouping — the plan's one-story-per-branch task lines are superseded by it).
-> **Phase B is half implemented** on `feat/be/end-user-identity-phase-b`:
-> `S8-IDENTITY-007` … `010` are done — a world has an owner, the owner travels
-> on the commands and is enforced inside each mutation's own transaction, and an
-> owner can delete a world whose caches drop before the response returns.
-> `011` … `014` (the claim, system settings, the quota and its one toast) and
-> Phase C are committed scope and not started. **Read
+> **Phase B is most of the way in.** `S8-IDENTITY-007` … `010` are on
+> `feat/be/end-user-identity-phase-b` (merged): a world has an owner, the owner
+> travels on the commands and is enforced inside each mutation's own
+> transaction, and an owner can delete a world whose caches drop before the
+> response returns. `011`, the claim, is on
+> `feat/be/end-user-identity-phase-b-continued` — signing in turns every world
+> a browser made anonymously into that account's, in one to three services
+> rather than blindly in all of them.
+> `012` … `014` (system settings, the quota and its one toast) and Phase C are
+> committed scope and not started. **Read
 > [user-stories.md](user-stories.md)'s Phase B corrections section** before any
-> of them: seven entries, three of which change what is left to build — the
-> plan's `WorldSnapshot` field was deliberately not added and the same reasoning
-> applies to `011`, the ACL lines `008` asked for were already in the file, and
-> deletion turned out to be stricter than any story said, which is what makes
-> `011` the story that lets a pre-existing world be deleted at all.
+> of them: twelve entries, and entry 8 first — a single struct literal in
+> `dna-service` dropped the owner that `007` and `008` existed to establish, so
+> both stories shipped inert with every test in the repository passing. Three
+> more change what is left to build: the plan's `WorldSnapshot` field was
+> deliberately not added, deletion is stricter than any story said, and neither
+> a deletion nor a claim emits an event.
 > The stories execute
 > [`end-user-identity-and-ownership.md`](../../architecture/end-user-identity-and-ownership.md),
 > whose twenty decisions are all taken.
@@ -114,12 +119,17 @@ nullable columns per family plus one new table in an existing database.
 - Two nullable columns and two partial indexes in each of `universe`, `nature`,
   `ocean` and `dna-service`. **No backfill** (decision 16).
 - Identity fields on the two commands, the ~3 NATS ACL lines, and write-path
-  authorization inside the same transaction as each mutation.
+  authorization inside the same transaction as each mutation. **The ACL lines
+  turned out to be already there** for the commands that existed; the four the
+  claim needed are the ones that were actually added, and the test that reads
+  the config is now a table naming every command subject's one publisher and
+  its one subscriber.
 - The owner-only world delete as a flag, filtered server-side — and **its Redis
   cache invalidation as a separate story with its own test through the
   gateway**, because that is the half that only fails in production.
 - The anonymous claim: gateway → `dna-service` → only the families that
-  visitor actually used.
+  visitor actually used. **And the browser's own gallery shelf, without which
+  the claim changes four databases and nothing a visitor can see.**
 - **A `system_settings` mechanism in `auth-service`**, with **nine settings —
   `auth-service`'s own values only** (the two quota limits, the two new web
   token TTLs, the two lockout values, and three token TTLs), so a policy number

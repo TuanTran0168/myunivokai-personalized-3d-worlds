@@ -50,7 +50,13 @@ build and the unit tests all passed against a policy that produced fourteen
   visitor's world reached the gateway anonymous and was stamped with no owner.
   The generation poll is the deliberate exception and stays unauthenticated: a
   job belongs to whoever holds its id, and an expired token there would fail a
-  poll on a world being generated at that moment. Every method takes a family. The `normalize*`
+  poll on a world being generated at that moment.
+
+  `createWorld` also sends `X-Anonymous-Id`, and only when signed OUT
+  (`anonymousCreateHeaders`) — the gateway drops it whenever it has a verified
+  account instead, so sending it while signed in would be a value nothing
+  reads. That call is where the id is first minted, rather than on page load,
+  so a visitor who only ever looked is never given an identifier. Every method takes a family. The `normalize*`
   functions matter most: the BE returns `{ world, selectedVariant, variants }`
   (variant list at the response ROOT) and normalize maps everything onto the
   unified `World` / `WorldVariant` types. **The FE's worst historical bug lived
@@ -103,6 +109,18 @@ build and the unit tests all passed against a policy that produced fourteen
   existed. The duplicate check on write spans EVERY shelf, so opening an
   anonymous world while signed in does not quietly claim it — claiming is
   `S8-IDENTITY-011`, by anonymous id, deliberately not by world id.
+  `moveAnonymousWorldsToOwner(ownerKey)` is the local half of the claim, and
+  the reason the claim is visible at all: this gallery renders from
+  `localStorage` filtered by owner, so a claim that moved five worlds in four
+  databases would otherwise still show an empty grid. It runs only after the
+  server accepted.
+- `lib/anonymousWorldClaim.ts` — `claimAnonymousWorldsForAccount()`, both
+  halves of the claim in the one order they are safe in: ask the server, clear
+  the anonymous cookie, then move the shelf. Its own module for the reason
+  `galleryOwner.ts` is one — `savedWorlds.ts` is pure storage with no network
+  in it. A failure leaves BOTH halves untouched, which makes the next sign-in
+  the retry; the server's own `owner_account_id IS NULL` guard makes that retry
+  a no-op if the first attempt actually worked.
 - `lib/galleryOwner.ts` — `resolveGalleryOwnerKey()`, the async form of the
   above. `currentOwnerKey()` answers synchronously except in one case, a live
   session whose account copy was evicted from `localStorage`; this asks
@@ -113,8 +131,20 @@ build and the unit tests all passed against a policy that produced fourteen
   (`myunivokai_access`, `myunivokai_refresh`, `myunivokai_anonymous`) plus the
   account copy in `localStorage`. **None is `httpOnly` and none can be**, so
   the CSP is the control, not the cookie flags.
+
+  The anonymous id is minted HERE, by `crypto.randomUUID`, not by the gateway —
+  the plan's §7 says the gateway mints it and is corrected: two tabs creating
+  at once would each be handed a different id and one world would be orphaned.
+  It is cleared in exactly one place, `clearAnonymousIdentifier`, after a claim
+  succeeds; `clearProductSession` deliberately leaves it alone, because signing
+  out is not becoming a different visitor. `ANONYMOUS_IDENTIFIER_HEADER_NAME`
+  lives here too, and must stay in the gateway's product CORS `AllowedHeaders`
+  or every request carrying it fails in a browser and passes in every test.
 - `lib/productAuth.ts` — `signUp` / `signIn` / `signOut` /
-  `refreshProductSession` / `authorizedGatewayRequest` / `fetchSignedInAccount`.
+  `refreshProductSession` / `authorizedGatewayRequest` / `fetchSignedInAccount`
+  / `claimAnonymousWorlds`. The claim reads the anonymous id rather than
+  read-or-creating it — minting one in order to claim with it would name worlds
+  that cannot exist — and clears the cookie only after the server answered.
   Refresh is single-flight at module scope because the refresh token is
   single-use with family-wide reuse detection: two parallel refreshes would
   present the same token twice and revoke the whole family.

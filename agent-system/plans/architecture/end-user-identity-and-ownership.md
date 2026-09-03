@@ -691,6 +691,7 @@ Neon-specific coupling, for no additional guarantee.
 1. POST /api/{family}/worlds with no session
    → gateway mints anonymousId=<uuid> and RETURNS IT IN THE 202 BODY
      (the client writes it to its own myunivokai_anonymous cookie)
+     [CORRECTED 2026-09-03: the CLIENT mints it. See below.]
    → rides the generate command → profiles.anonymous_id → compose → worlds.anonymous_id
    → a subsequent create sends X-Anonymous-Id and reuses the same one
 
@@ -735,6 +736,40 @@ Properties that matter:
   worlds, and under §4.2 it sits in a JS-readable cookie, so an XSS can take
   it. Same exposure as the refresh token, same mitigation — the CSP. 180 days
   bounds it, and the cookie's own `max-age` is what enforces that.
+
+  **Corrected 2026-09-03, while implementing `S8-IDENTITY-011`: the client
+  mints it, and the gateway validates it.** Step 1 above has the gateway
+  minting the id into the 202 body; Phase A had already shipped the opposite,
+  and the opposite is right. The deciding case is two tabs creating at once:
+  gateway-minting hands each create a different id, the client can keep only
+  one, and the other world is orphaned under an id nobody holds.
+  Read-or-create against one cookie has no such race, needs no field on
+  `contracts.Job`, and leaves one minting site instead of two.
+
+  What the gateway does instead is the part it is placed to do. A malformed
+  `X-Anonymous-Id` is refused with `400 INVALID_ANONYMOUS_ID` rather than
+  ignored — ignoring it would create a world that is unclaimable for ever and
+  answer 202 — and **exactly one of `ownerAccountId` and `anonymousId` is ever
+  set**, because a world that has an owner can never be claimed and the
+  anonymous id beside it would be a personal-data trail with no reader.
+- **A claim retries until it is applied, so an unapplicable one must not be
+  published.** Added 2026-09-03. The claim consumers carry no delivery limit,
+  because a claim that gave up would leave somebody's worlds anonymous for ever
+  with nothing anywhere saying so — which makes a message that can never
+  succeed one the fleet retries until the stream drops it. Two things follow:
+  the consumers discard a message the transport itself cannot read
+  (`ErrInvalidWorldClaimCommand`, terminated rather than nacked), and the
+  gateway refuses to publish one at all, including when the fault is its own —
+  a verified token whose subject is not an account id is a 500 at the edge.
+- **Only `dna-service` is woken.** Added 2026-09-03. "Only the families the
+  visitor used are woken" holds, but not by waking them: the gateway owns the
+  only waker and cannot know which families were used, while `dna-service`
+  knows and has no waker. The family claim commands wait in
+  `MYUNIVOKAI_COMMANDS` until each service next runs, which on this tier is the
+  next time anybody opens a world of that family. The bound that leaves is the
+  stream's 168-hour retention, named here so it is a known state: a family with
+  no traffic from anybody for a week would lose the claim, and the fix would be
+  `--max-age`, not code.
 - **It cannot be replaced by the world ids the client already stores.** A world
   id is not a secret: `/worlds/{worldId}` is the URL a visitor sends to a
   friend. "Claim these ids" would let the recipient of a shared link claim

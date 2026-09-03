@@ -7,12 +7,15 @@
 > **Read the Phase A corrections section before Phase A's own stories** — five
 > of its claims turned out to be wrong, including one requirement that is not
 > achievable before email exists.
-> **Read the Phase B corrections section before `007` … `014`.** Seven entries,
-> and three of them change what the remaining stories should do: the plan's
-> `WorldSnapshot` field was not added and the reason applies to `011` as well,
-> the ACL lines `008` asked for were already in the file, and deletion is
-> stricter than any story said — which is why `011` is the story that makes a
-> pre-existing world deletable at all.
+> **Read the Phase B corrections section before `012` … `014`.** Twelve
+> entries. The one to read first is 8: a single struct literal in
+> `dna-service` dropped the owner `007` and `008` had just gone to the trouble
+> of establishing, so both stories shipped inert with every test passing. Of
+> the rest, three change what is left to build — the plan's `WorldSnapshot`
+> field was not added, deletion is stricter than any story said, and neither a
+> deletion nor a claim emits an event — and three record decisions the stories
+> do not state: who mints the anonymous id, what happens to a malformed one,
+> and why a claim that can never apply must never be published.
 
 One epic, three phases, seventeen branch-sized stories. The phases are ordered
 by dependency and each ends in a shippable state:
@@ -815,7 +818,7 @@ Tasks:
 
 ### S8-IDENTITY-011 — Claim the worlds I made before I signed up
 
-Status: Planned
+Status: Implemented — `feat/be/end-user-identity-phase-b-continued`
 Priority: P0
 
 As a visitor who has just signed up,
@@ -856,24 +859,25 @@ Source evidence:
 - infra/nats/nats-server.conf — the gateway physically cannot publish a per-family claim subject, which is why the claim routes through `dna-service`
 
 Tasks:
-- [ ] `feat/be/anonymous-world-claim`: mint the anonymous id in the gateway
-      into the 202 body, accept it back on `X-Anonymous-Id`, and carry it on
-      the generate command through to `profiles.anonymous_id` and
-      `worlds.anonymous_id`.
-- [ ] Add `POST /api/me/worlds/claim`, publishing exactly one
+- [x] Accept the anonymous id on `X-Anonymous-Id` and carry it on the generate
+      command through to `profiles.anonymous_id` and `worlds.anonymous_id`.
+      **The CLIENT mints it, not the gateway** — corrections 9 and 10 below.
+- [x] Add `POST /api/me/worlds/claim`, publishing exactly one
       `commands.dna.world.claim.v1`.
-- [ ] Add the `dna-service` claim handler that updates profiles and then
+- [x] Add the `dna-service` claim handler that updates profiles and then
       publishes the per-family claim subject only for families its own
       `generation_jobs` rows name.
-- [ ] Add the family claim consumer: one transaction, the `IS NULL` guard, the
-      revision bump and the outbox row.
-- [ ] Add the idempotency and two-device tests.
-- [ ] Have the client write and later clear its own anonymous-id cookie, with
-      the 180-day lifetime as a named constant.
-- [ ] Add `X-Anonymous-Id` to the gateway's product `AllowedHeaders`
-      ([`router.go:82`](../../../../services/api-gateway/internal/handlers/router.go)) —
-      a one-line change that otherwise fails as a CORS preflight rejection in
-      the browser and passes in every server-side test.
+- [x] Add the family claim consumer: one transaction and the `IS NULL` guard.
+      **No revision bump and no outbox row** — correction 6 above.
+- [x] Add the idempotency and two-device tests.
+- [x] Have the client clear its own anonymous-id cookie once a claim has
+      succeeded. Writing it, with the 180-day named constant, shipped in Phase
+      A; **moving the gallery's own shelf did not, and without it the whole
+      story is invisible** — correction 12 below.
+- [x] Add `X-Anonymous-Id` to the gateway's product `AllowedHeaders` — in
+      `product_auth_router.go`'s `productCORSOptions`, not `router.go:82`,
+      which is where the task line was written before Phase A moved it. Pinned
+      by a preflight test, because it otherwise fails only in a browser.
 
 ### S8-IDENTITY-012 — System settings, so a policy number is not another `.env` line
 
@@ -1148,10 +1152,14 @@ Tasks:
 
 ## Phase B — corrected during execution, 2026-09-03
 
-Written after `S8-IDENTITY-007` … `010` were implemented, and read before those
-stories. Four of the plan's or the stories' own instructions turned out to be
-wrong or unnecessary, and one defect was introduced and caught in review rather
-than by a test — the record of that one is worth more than the tidy version.
+Written after `S8-IDENTITY-007` … `011` were implemented, and read before the
+stories that are left. Six of the plan's or the stories' own instructions
+turned out to be wrong or unnecessary, and three defects were found by reading
+the code rather than by a test — entries 7, 8 and 12. The record of those is
+worth more than the tidy version, and entry 8 is the one to read first: it is
+two merged stories that did nothing at all.
+
+Entries 1 to 7 were written after `010`; 8 to 12 after `011`.
 
 ### 1. The plan asked for `OwnerAccountID` on `WorldSnapshot`, and it was not added
 
@@ -1265,22 +1273,125 @@ mutations from a caller holding its UUID (every read refused it and
 `assertWorldMutable` did not), and deleting a world woke `analytics-service`
 for an event that, by correction 6, never comes.
 
+### 8. `007` and `008` shipped inert, because one line threw the owner away
+
+Found while implementing `S8-IDENTITY-011`, in code merged to `staging` two
+commits earlier. It is the most expensive finding of the phase and the cheapest
+to have missed.
+
+`GenerationService.Generate` normalizes the world input, and to attach the
+normalized copy it rebuilt its envelope as a literal:
+
+```go
+normalizedEnvelope := contracts.Envelope[contracts.GenerateDNAData]{
+    JobID: envelope.JobID, Timestamp: envelope.Timestamp,
+    Data: contracts.GenerateDNAData{Family: envelope.Data.Family, Input: input},
+}
+```
+
+`OwnerAccountID` is not in that literal. So the gateway stamped the owner from
+a verified token, `dna-service` dropped it, `EnsureJob` wrote NULL, and **every
+world created by a signed-in visitor was stored as anonymous.** `007` gave the
+column and `008` gave it a value; between them nothing arrived. Every test in
+the repository passed, because the field's journey was asserted at each end —
+the gateway publishes it, the store writes what it is given — and never across
+the one line in the middle that rewrites the message.
+
+It is now `normalizedEnvelope := envelope` with one field replaced, which
+cannot forget the next field either. The lesson is narrower than "test more":
+**a struct literal that has to re-list its fields is a silent dropper**, and the
+place to look for one is wherever a message is rebuilt rather than modified.
+
+### 9. The client mints the anonymous id, and §7 says the gateway does
+
+Plan §7 has the gateway minting it and returning it in the 202 body. Phase A had
+already shipped the opposite — a client-minted `crypto.randomUUID` in a cookie
+with a sliding 180-day window — so this was a real fork rather than a detail.
+
+The deciding case is two tabs. Gateway-minting hands each concurrent create a
+different id; the client can keep only one, and the other world is orphaned
+under an id nobody holds. Read-or-create against one cookie has no such race,
+costs no contract field, and leaves one minting site instead of two. The
+gateway's job is what it is good at instead: **validating**, and deciding which
+of the two identity fields survives.
+
+### 10. A malformed `X-Anonymous-Id` is refused, and a claim that can never apply is never published
+
+Two decisions no story states, both about the same failure shape: something
+that looks like success and is a permanent loss.
+
+An unparseable anonymous id on a create is a **400**, not an ignored header.
+Ignoring it would create the world and answer 202 — a world with no anonymous
+id, unclaimable for ever, reported as a success. A signed-in create is the
+exception and ignores the header entirely, because a visitor must not be blocked
+from creating anything by a 180-day cookie they never see.
+
+And the claim's consumers have **no delivery limit at all**, on purpose: a claim
+that gave up would leave somebody's worlds anonymous for ever with nothing
+anywhere saying so. That makes a message which can never be applied one the
+fleet retries until the stream drops it, so the two failures are told apart by
+the error rather than by a delivery count —
+`ErrInvalidWorldClaimCommand` is terminated, everything else nacked. The
+gateway also refuses to publish one, **including when the fault is its own**: a
+verified token whose subject is not an account id is a 500 there, not a poison
+message downstream.
+
+### 11. Only `dna-service` is woken, and the family claims wait in the stream
+
+§7 asks that "only the family services that visitor actually used are woken,
+not all three". That is satisfied, but not by waking: the gateway has the only
+waker in the fleet and cannot know which families a visitor used —
+`generation_jobs` knows, and it lives in `dna-service`, which has no waker.
+
+So the gateway wakes `dna-service` and nothing else. `dna-service` publishes one
+to three family claim commands, and each waits in `MYUNIVOKAI_COMMANDS` until
+that family service next runs — which on this tier is the next time anybody
+opens a world of that family. Waking all three from the gateway would spend two
+cold starts per signup on services with nothing to do, which is the cost §7 was
+avoiding.
+
+**The bound this leaves, named rather than discovered:** the stream's retention
+is 168 hours (`infra/nats/bootstrap.sh`). A family service that has not run for
+seven days would lose the claim. That means a family with no traffic at all for
+a week, from anybody — and if it becomes a real risk, the fix is the stream's
+`--max-age`, not this code.
+
+### 12. The claim is invisible without moving the browser's own shelf
+
+`S8-IDENTITY-011`'s scenarios are all server-side, and implementing only those
+would have produced a claim that changes four databases and nothing a visitor
+can see.
+
+The gallery renders from `localStorage` filtered by owner shelf
+(`S8-IDENTITY-018`, Phase A). A visitor who signs up and claims five worlds
+would still be looking at an empty grid and a note about worlds belonging to
+somebody else. So the claim has a second half — `moveAnonymousWorldsToOwner` —
+and it runs strictly **after** the server accepted, because the server is the
+only thing that decides whether the claim happened and the anonymous id is the
+only thing that could ever ask again.
+
+That same note's copy promised "moving them into your account is coming", and
+has been corrected: what is left of that state is a browser that lost its
+anonymous-id cookie while keeping the `localStorage` list, and those worlds are
+unclaimable for ever by decision 16.
+
 ### What Phase B has NOT done yet, so it is not mistaken for an omission
 
-`S8-IDENTITY-011` … `014` are not started. Concretely, that means:
+`S8-IDENTITY-012` … `014` are not started. Concretely, that means:
 
-- **No world made before this branch has an owner**, and there is no way for a
-  visitor to give one to it. The claim is what does that, and until it lands
-  `WORLD_NOT_CLAIMED` is the honest answer to deleting a pre-existing world
-  rather than a temporary limitation.
-- **No anonymous id is written anywhere yet.** The web app has minted and kept
-  one since Phase A, and the columns exist, but nothing puts it on a command —
-  that is `S8-IDENTITY-011`'s first task. Worlds created between this branch and
-  that one carry an owner if the visitor was signed in, and nothing at all if
-  they were not.
+- **No world made before the claim shipped has an owner**, and there is still
+  no way for a visitor to give one to it. Decision 16 stands: an anonymous id
+  is what a claim matches on, worlds created before one was ever sent carry
+  none, and nobody can prove they made them. `WORLD_NOT_CLAIMED` is the honest
+  answer to deleting one, permanently, not a temporary limitation.
 - **No quota, and `AI_PROVIDER` therefore stays `mock` in production.** The
   ceiling is what makes a real provider safe to switch on, and it is
   `S8-IDENTITY-013`.
+- **No settings table**, so every policy number is still an `.env` line —
+  `S8-IDENTITY-012`.
+- **Nothing tells a visitor their worlds were claimed.** The claim is silent by
+  design for now; `S8-IDENTITY-014` is the one toast, and it waits for the
+  quota's reason codes to have something to say.
 
 ---
 
