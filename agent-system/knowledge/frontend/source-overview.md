@@ -44,7 +44,13 @@ build and the unit tests all passed against a policy that produced fourteen
 
 - `lib/api.ts` — the single API client, now **family-aware and asynchronous**:
   `request(family, path, init)` picks the gateway route by `WorldFamily`
-  (`API_BASE_URLS_BY_FAMILY`), and every method takes a family. The `normalize*`
+  (`API_PATH_PREFIXES_BY_FAMILY`) and sends it through
+  `authorizedGatewayRequest`, so a world call carries the session and refreshes
+  once on expiry. It carried none until 2026-09-03, which meant a signed-in
+  visitor's world reached the gateway anonymous and was stamped with no owner.
+  The generation poll is the deliberate exception and stays unauthenticated: a
+  job belongs to whoever holds its id, and an expired token there would fail a
+  poll on a world being generated at that moment. Every method takes a family. The `normalize*`
   functions matter most: the BE returns `{ world, selectedVariant, variants }`
   (variant list at the response ROOT) and normalize maps everything onto the
   unified `World` / `WorldVariant` types. **The FE's worst historical bug lived
@@ -52,8 +58,16 @@ build and the unit tests all passed against a policy that produced fourteen
   response shape changes, fix normalize first. Creation stores the pending job
   in session storage, polls `/api/jobs/{jobId}` with bounded backoff/deadline,
   supports `AbortSignal`, and loads the world only after completion.
+- `lib/gatewayRequest.ts` — the transport, with nothing about worlds or
+  identity in it: `ApiError`, the 429 and `SERVICE_WAKING` retry loops,
+  `requestGatewayJson`, `waitForDelay`. It is a separate module for a
+  structural reason rather than a tidy one — `api.ts` needs the session and
+  `productAuth.ts` needs the transport, so leaving it inside `api.ts` made the
+  two import each other. `api.ts` re-exports `ApiError`, `requestGatewayJson`
+  and `GatewayRequestHooks`, so the rest of the app has one import path.
 - `lib/gateway.ts` — validates the one configured gateway origin and owns the
-  family-to-public-prefix map. Browser requests and both server-rendered share
+  family-to-public-prefix map (`apiPathPrefixForFamily` for browser calls,
+  `apiBaseUrlForFamily` where a full base URL is still wanted). Browser requests and both server-rendered share
   metadata routes use this same helper. It deliberately has no direct-service
   fallback.
 - `lib/types.ts` — mirrors the BE JSON contract. `WorldSceneConfig` (universe,

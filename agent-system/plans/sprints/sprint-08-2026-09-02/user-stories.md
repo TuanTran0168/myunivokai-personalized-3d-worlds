@@ -1,11 +1,18 @@
 # Sprint 08 user stories — end-user identity and world ownership
 
-> **Document status:** Phase A implemented; Phases B and C planned
+> **Document status:** Phase A implemented; Phase B half implemented
+> (`S8-IDENTITY-007` … `010`); `011` … `014` and Phase C planned
 > **Sprint starts:** 2026-09-02
-> **Last source review:** 2026-09-02
+> **Last source review:** 2026-09-03
 > **Read the Phase A corrections section before Phase A's own stories** — five
 > of its claims turned out to be wrong, including one requirement that is not
 > achievable before email exists.
+> **Read the Phase B corrections section before `007` … `014`.** Seven entries,
+> and three of them change what the remaining stories should do: the plan's
+> `WorldSnapshot` field was not added and the reason applies to `011` as well,
+> the ACL lines `008` asked for were already in the file, and deletion is
+> stricter than any story said — which is why `011` is the story that makes a
+> pre-existing world deletable at all.
 
 One epic, three phases, seventeen branch-sized stories. The phases are ordered
 by dependency and each ends in a shippable state:
@@ -656,7 +663,7 @@ migration, adds no route and changes no contract.
 
 ### S8-IDENTITY-007 — Ownership columns, additive and with no backfill
 
-Status: Planned
+Status: Implemented — `feat/be/end-user-identity-phase-b`
 Priority: P0
 
 As the product owner,
@@ -693,7 +700,7 @@ Tasks:
 
 ### S8-IDENTITY-008 — Ownership travels over NATS and is enforced on the write path
 
-Status: Planned
+Status: Implemented — `feat/be/end-user-identity-phase-b`
 Priority: P0
 
 As an account holder,
@@ -739,7 +746,7 @@ Tasks:
 
 ### S8-IDENTITY-009 — An owner can delete their own world
 
-Status: Planned
+Status: Implemented — `feat/be/end-user-identity-phase-b`
 Priority: P0
 
 As an account holder,
@@ -773,7 +780,7 @@ Tasks:
 
 ### S8-IDENTITY-010 — A deleted world's caches are actually gone
 
-Status: Planned
+Status: Implemented — `feat/be/end-user-identity-phase-b`
 Priority: P0
 
 As an account holder,
@@ -1136,6 +1143,144 @@ Tasks:
 - [ ] Write next to that check, in the code, that keying on a provider name
       instead re-merges three different situations at the last possible moment.
 - [ ] Add a test per reason code: one fires, three stay silent.
+
+---
+
+## Phase B — corrected during execution, 2026-09-03
+
+Written after `S8-IDENTITY-007` … `010` were implemented, and read before those
+stories. Four of the plan's or the stories' own instructions turned out to be
+wrong or unnecessary, and one defect was introduced and caught in review rather
+than by a test — the record of that one is worth more than the tidy version.
+
+### 1. The plan asked for `OwnerAccountID` on `WorldSnapshot`, and it was not added
+
+Plan §15 says `contracts.WorldSnapshot` gains `OwnerAccountID *uuid.UUID` and
+that `analytics-service-plan.md`'s data boundary records it as **excluded**.
+`S8-IDENTITY-008`'s first task repeats it.
+
+The field was **not added**, and the boundary line was written to say why. The
+snapshot has exactly two consumers: `dna-service`, which reads `WorldID` and
+nothing else from it, and `analytics-service`, which is required to drop the
+owner. So adding it moves personal data across a service boundary **for no
+reader at all**. "Never sent" is a stronger guarantee than "dropped on
+arrival", and it is enforced by a reflection test in each of the three family
+services rather than by a sentence in a document.
+
+The plan's own rule survives unchanged, because the rule is that no field
+crosses without a line in the data boundary — and the line is there.
+
+### 2. The "~3 NATS ACL lines" were already in the file
+
+`S8-IDENTITY-008` asks for them. `infra/nats/nats-server.conf` already grants
+exactly what the design's trust argument requires: the gateway is the only
+publisher admitted on `commands.dna.generate.v1`, `dna-service` the only one
+admitted on a family compose subject, and no user holds a command wildcard. The
+lines the task anticipated belong to the **claim** subjects in
+`S8-IDENTITY-011`, which do not exist yet.
+
+What was genuinely missing is the assertion. Three tests now parse the config
+and fail if a second publisher appears on a command subject, if the gateway
+loses its own grant, or if any service gains a command wildcard. The boundary
+lives in a config file, so it is checked against the config file: every Go test
+in every service would still pass while it silently moved.
+
+### 3. `owner_account_id` is write-once, and the guard was written before the write
+
+`S8-IDENTITY-007` asks for `WHERE owner_account_id IS NULL` on every write. At
+that point **nothing writes the column** — the claim (`S8-IDENTITY-011`) brings
+the first write. A store method with no caller would have been dead code for
+two commits.
+
+What shipped instead is the ratchet: a test in each family service and in
+`dna-service` that scans every SQL literal in the repositories package and
+fails any statement assigning `owner_account_id` without the guard in the same
+statement. It finds nothing today, which is the point — the commit that adds
+the write is reviewed for what it does, and the guard is the thing it would
+forget.
+
+### 4. Two index decisions differ from the plan's SQL
+
+- The names follow the repo's own `idx_<table>_<columns>` convention rather
+  than the plan's `<table>_<what>_idx`, which would have been the only indexes
+  of that shape in four databases.
+- **`profiles` gained an `anonymous_id` index the plan does not list.** §6.3
+  gives the family tables both indexes and this table only the owner one. The
+  claim's predicate is identical on both (`anonymous_id = $1 AND
+  owner_account_id IS NULL`), and `profiles` gains a row for every world ever
+  created, so the omission means a sequential scan over the largest table in
+  `dna-service` on every signup. It reads as an oversight rather than a
+  decision.
+
+### 5. Deleting is stricter than every other mutation, which no story said
+
+`S8-IDENTITY-009` says "a non-owner calling delete is rejected" and stops
+there. It does not say what happens to an **unowned** world — which is every
+world in production.
+
+The rule taken: an unowned world stays mutable by anyone holding its id and is
+deletable by **nobody**. A stranger adding a variant to a world they were sent
+a link to is annoying and reversible; a stranger deleting it takes the world
+out of its maker's gallery, and the maker cannot put it back. Nobody can prove
+they made an unowned world, which is the same reasoning decision 16 uses to
+leave a pre-plan world unclaimable.
+
+It is refused with its own code, `403 WORLD_NOT_CLAIMED`, distinct from
+`NOT_WORLD_OWNER`: "this is not yours" and "this is nobody's yet" have
+different next steps, and only the second one has an answer the visitor can
+act on. `S8-IDENTITY-011` is that answer.
+
+### 6. Neither deletion nor the claim emits `world.changed`, and §7 says the claim does
+
+Plan §7 has the claim "emitting the existing `world.changed` event". The same
+argument that applies to deletion applies to it: decision 4b keeps
+`analytics-service` untouched, correction 1 above keeps ownership off the
+snapshot, so the event a claim or a deletion would publish is **byte-identical
+to the last one**. Publishing it makes `world.changed` stop meaning "something
+you can see changed" — a consumer added later would be woken for nothing, and
+the read model would rewrite identical values.
+
+Deletion therefore bumps no revision and stages no outbox row. The claim will
+follow the same rule when it lands, and this correction is written now so that
+`S8-IDENTITY-011`'s own task line is read against it.
+
+### 7. A stale session broke the public share page, and no test was asking
+
+Found in review rather than by CI, and recorded because of how it hid.
+
+`S8-IDENTITY-008` attached the identity middleware to the whole business route
+group. `/api/{family}/share/worlds/{slug}` is in that group and is the URL a
+visitor sends to a friend — so **anybody whose seven-day token had expired was
+answered 401 on a page that has nothing to do with their session.** Every test
+passed: a page that does not care about tokens is a page nobody thought to send
+a bad token to.
+
+The middleware now sits on the five write routes only, where each one either
+sets the owner or is checked against it. The test that pins it sends three
+different kinds of useless credential at the share route and requires 200 from
+all three.
+
+Two smaller defects came out of the same pass: a deleted world still accepted
+mutations from a caller holding its UUID (every read refused it and
+`assertWorldMutable` did not), and deleting a world woke `analytics-service`
+for an event that, by correction 6, never comes.
+
+### What Phase B has NOT done yet, so it is not mistaken for an omission
+
+`S8-IDENTITY-011` … `014` are not started. Concretely, that means:
+
+- **No world made before this branch has an owner**, and there is no way for a
+  visitor to give one to it. The claim is what does that, and until it lands
+  `WORLD_NOT_CLAIMED` is the honest answer to deleting a pre-existing world
+  rather than a temporary limitation.
+- **No anonymous id is written anywhere yet.** The web app has minted and kept
+  one since Phase A, and the columns exist, but nothing puts it on a command —
+  that is `S8-IDENTITY-011`'s first task. Worlds created between this branch and
+  that one carry an owner if the visitor was signed in, and nothing at all if
+  they were not.
+- **No quota, and `AI_PROVIDER` therefore stays `mock` in production.** The
+  ceiling is what makes a real provider safe to switch on, and it is
+  `S8-IDENTITY-013`.
 
 ---
 

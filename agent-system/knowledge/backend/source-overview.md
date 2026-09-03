@@ -79,7 +79,13 @@ Source: `services/api-gateway`.
 - `internal/broker`: JetStream publish and Core NATS request-reply.
 - `internal/edge`: Redis cache and atomic distributed token bucket.
 - `internal/middleware`: request identity, headers, CORS, body limit, logging,
-  recovery, and Redis-first rate limit with local fallback.
+  recovery, and Redis-first rate limit with local fallback. Two product-session
+  middlewares, and the difference between them is a routing decision:
+  `RequireProductAccessToken` guards `/api/me`, while
+  `OptionalProductAccessToken` attaches claims where a session may be absent
+  and is registered on the five world WRITE routes only. It must not reach the
+  reads — `/api/{family}/share/worlds/{slug}` is a public URL and answered 401
+  to anybody holding an expired token while it did.
 - `internal/config`: NATS/Redis/cache/edge configuration and production CORS
   validation.
 
@@ -125,9 +131,10 @@ random-index strategy is injected in tests, preserving deterministic assertions
 without removing runtime variety. Variant regeneration remains inside family
 services and does not call AI.
 
-## Universe and Nature services
+## Universe, Nature and Ocean services
 
-Sources: `services/universe-service` and `services/nature-service`.
+Sources: `services/universe-service`, `services/nature-service` and
+`services/ocean-service`.
 
 Both use the same layers:
 
@@ -147,6 +154,40 @@ Each service:
 - supports idempotent compose redelivery and AI-free variants;
 - stores `profileId`, `dnaVersionId`, source job, visual intent, and DNA
 snapshot in its own database.
+
+`ocean-service` is a third copy of this shape and is described by every line
+above.
+
+### Ownership and deletion
+
+Each family's `worlds` table carries `owner_account_id`, `anonymous_id` and
+`deleted_at`, all nullable, none backfilled. A world with no owner is the
+normal case and describes every world made before 2026-09-03.
+
+`internal/repositories/world_ownership.go` holds the rules, and there are two
+of them because deletion does not follow the others:
+
+- `worldMutationPermitted` — a world with **no** owner is mutable by anyone
+  holding its id; a world with an owner is mutable only by that owner.
+- `worldDeletionPermitted` — a world with no owner is deletable by **nobody**,
+  which is `ErrWorldNotOwned` and reaches the client as `403
+  WORLD_NOT_CLAIMED`.
+
+Both are applied by a `SELECT ... FOR UPDATE` inside the mutation's own
+transaction, never against a read model. The mutation lookup also filters
+`deleted_at IS NULL`; the deletion lookup deliberately does not, so deleting
+twice answers the way deleting once did.
+
+Deletion sets a timestamp and never removes a row. Every product read filters
+it — the world read, the `?ids=` batch and share resolution — with exactly one
+exception, `getWorldBySourceJob`, the create path's idempotency lookup, which
+must still find a deleted world or a JetStream redelivery repeats for ever.
+`deletedWorldPolicy` is what makes that exception a name rather than a missing
+clause.
+
+A deletion bumps no revision and stages no outbox row: `analytics-service` is
+deliberately untouched, so the snapshot it would emit is identical to the last
+one.
 
 The runtime owns connection lifecycle, deterministic subscription registration,
 pull/ack/retry policy, and outbox polling. Fetch size/wait, retry delay,
