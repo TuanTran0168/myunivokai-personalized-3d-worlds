@@ -108,22 +108,21 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 		businessRouter.Use(cors.Handler(productCORSOptions(serviceConfig)))
 		businessRouter.Use(middleware.RateLimit(edgeStore, productRateLimitRouteKey, serviceConfig.RateLimitRequestsPerSecond, serviceConfig.RateLimitBurst))
 		businessRouter.Use(middleware.BodyLimit(serviceConfig.MaximumRequestBodyBytes))
-		// Optional, not required: every route in this group has to keep
-		// working for a visitor with no account, because anonymous creation is
-		// the product's first impression and every world in production was
-		// made that way. What the middleware buys is that a world made by
-		// somebody signed in gets an owner without the client being trusted to
-		// say who that is.
-		businessRouter.Use(middleware.OptionalProductAccessToken(accessTokenVerifier, revocationChecker))
+		// Attached to the WRITES only, inside registerWorldRoutes, and not to
+		// this group. Applying it here breaks the share page: it is a public
+		// URL that has to behave identically for everyone, and a visitor
+		// carrying an expired token would be answered 401 on a page that has
+		// nothing to do with their session.
+		attachProductIdentity := middleware.OptionalProductAccessToken(accessTokenVerifier, revocationChecker)
 		businessRouter.Get("/api/jobs/{jobID}", dnaJobHandler.GetJob)
 		businessRouter.Route("/api/universe", func(familyRouter chi.Router) {
-			registerWorldRoutes(familyRouter, universeHandler)
+			registerWorldRoutes(familyRouter, universeHandler, attachProductIdentity)
 		})
 		businessRouter.Route("/api/nature", func(familyRouter chi.Router) {
-			registerWorldRoutes(familyRouter, natureHandler)
+			registerWorldRoutes(familyRouter, natureHandler, attachProductIdentity)
 		})
 		businessRouter.Route("/api/ocean", func(familyRouter chi.Router) {
-			registerWorldRoutes(familyRouter, oceanHandler)
+			registerWorldRoutes(familyRouter, oceanHandler, attachProductIdentity)
 		})
 		// Every supported family must be registered ABOVE this line: chi
 		// matches in registration order, so a family mounted after the
@@ -153,15 +152,30 @@ type worldRouteHandler interface {
 	GetShare(http.ResponseWriter, *http.Request)
 }
 
-func registerWorldRoutes(router chi.Router, handler worldRouteHandler) {
-	router.Post("/worlds", handler.CreateWorld)
+// registerWorldRoutes splits a family's routes by whether the server reads the
+// caller's identity, and the split is the point rather than a tidy-up.
+//
+// The reads are open, and one of them must be: `/share/worlds/{slug}` is the
+// URL a visitor sends to a friend, so it has to answer a stranger, a signed-in
+// stranger and somebody holding a seven-day-old token identically. Attaching
+// the identity middleware to the whole group made a public page 401 for anybody
+// whose session had gone stale — the session being irrelevant to the page is
+// exactly what made the failure invisible in every other test.
+//
+// The writes carry it, because each one either sets the owner or is checked
+// against it.
+func registerWorldRoutes(router chi.Router, handler worldRouteHandler, attachProductIdentity func(http.Handler) http.Handler) {
 	router.Get("/worlds", handler.GetWorlds)
 	router.Get("/worlds/{worldID}", handler.GetWorld)
-	router.Post("/worlds/{worldID}/variants", handler.CreateVariant)
-	router.Post("/worlds/{worldID}/variants/{variantID}/select", handler.SelectVariant)
-	router.Post("/worlds/{worldID}/publish", handler.PublishWorld)
-	router.Post("/worlds/{worldID}/delete", handler.DeleteWorld)
 	router.Get("/share/worlds/{shareSlug}", handler.GetShare)
+	router.Group(func(writeRouter chi.Router) {
+		writeRouter.Use(attachProductIdentity)
+		writeRouter.Post("/worlds", handler.CreateWorld)
+		writeRouter.Post("/worlds/{worldID}/variants", handler.CreateVariant)
+		writeRouter.Post("/worlds/{worldID}/variants/{variantID}/select", handler.SelectVariant)
+		writeRouter.Post("/worlds/{worldID}/publish", handler.PublishWorld)
+		writeRouter.Post("/worlds/{worldID}/delete", handler.DeleteWorld)
+	})
 }
 
 func registerUnsupportedFamilyRoutes(router chi.Router) {

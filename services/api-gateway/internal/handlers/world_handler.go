@@ -146,7 +146,7 @@ func (handler *WorldHandler) CreateVariant(responseWriter http.ResponseWriter, r
 		return
 	}
 	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantCreate,
-		contracts.VariantCreateData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)})
+		contracts.VariantCreateData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
 }
 
 func (handler *WorldHandler) SelectVariant(responseWriter http.ResponseWriter, request *http.Request) {
@@ -160,7 +160,7 @@ func (handler *WorldHandler) SelectVariant(responseWriter http.ResponseWriter, r
 		return
 	}
 	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantSelect,
-		contracts.VariantSelectData{WorldID: worldID, VariantID: variantID, RequestingAccountID: requestingAccountIdentifier(request)})
+		contracts.VariantSelectData{WorldID: worldID, VariantID: variantID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
 }
 
 func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, request *http.Request) {
@@ -169,7 +169,7 @@ func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, re
 		return
 	}
 	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldPublish,
-		contracts.PublishWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)})
+		contracts.PublishWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
 }
 
 // DeleteWorld routes through proxyWorldMutation, and that is S8-IDENTITY-010's
@@ -193,7 +193,7 @@ func (handler *WorldHandler) DeleteWorld(responseWriter http.ResponseWriter, req
 		return
 	}
 	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldDelete,
-		contracts.DeleteWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)})
+		contracts.DeleteWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesNoReadModelEvent)
 }
 
 func (handler *WorldHandler) GetShare(responseWriter http.ResponseWriter, request *http.Request) {
@@ -215,7 +215,18 @@ func (handler *WorldHandler) GetShare(responseWriter http.ResponseWriter, reques
 // the public share page renders, and without this the share served the previous
 // variant for a whole cache TTL — long enough for a seed-derived rare feature to
 // appear on the dashboard and be missing from the shared link.
-func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWriter, request *http.Request, worldID, subject string, data any) {
+// readModelEventPolicy says whether this mutation leaves an event behind for
+// analytics-service to consume. Every mutation did until deletion, which
+// deliberately emits nothing - so the wake below would otherwise start a
+// service to consume a message that will never arrive.
+type readModelEventPolicy bool
+
+const (
+	mutationProducesReadModelEvent   readModelEventPolicy = true
+	mutationProducesNoReadModelEvent readModelEventPolicy = false
+)
+
+func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWriter, request *http.Request, worldID, subject string, data any, readModelEvent readModelEventPolicy) {
 	handler.transport.InvalidateWorld(request.Context(), handler.family, worldID)
 	response, ok := handler.transport.Request(responseWriter, request, subject, data)
 	if !ok {
@@ -223,7 +234,9 @@ func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWrit
 	}
 	handler.transport.InvalidateWorld(request.Context(), handler.family, worldID)
 	handler.transport.InvalidateShare(request.Context(), handler.family, shareSlugFromMutationPayload(response.Data.Payload))
-	handler.wakeReadModel()
+	if readModelEvent == mutationProducesReadModelEvent {
+		handler.wakeReadModel()
+	}
 	httpx.WriteRawJSON(responseWriter, response.Data.StatusCode, response.Data.Payload)
 }
 

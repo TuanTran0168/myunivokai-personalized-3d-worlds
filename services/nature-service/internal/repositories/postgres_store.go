@@ -322,22 +322,27 @@ func (store *PostgresStore) DeleteWorld(ctx context.Context, worldID string, req
 	if err := assertWorldDeletable(ctx, transaction, worldID, requestingAccountID); err != nil {
 		return models.WorldDeletion{}, err
 	}
-	// The share slug is read in the same statement that sets the flag, and
-	// read from world_shares rather than through a product read - which would
-	// now filter the very row being deleted.
-	var shareSlug *string
-	if err := transaction.QueryRow(ctx, `UPDATE worlds SET deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW()
-		WHERE id = $1
-		RETURNING (SELECT share_slug FROM world_shares WHERE world_id = worlds.id)`, worldID).Scan(&shareSlug); err != nil {
-		return models.WorldDeletion{}, mapNotFound(err)
+	if _, err := transaction.Exec(ctx, `UPDATE worlds SET deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW()
+		WHERE id = $1`, worldID); err != nil {
+		return models.WorldDeletion{}, err
+	}
+	// Read in the same transaction as the flag, and read from world_shares
+	// directly rather than through a product read - which now filters the very
+	// row being deleted. Two plain statements rather than a subquery in
+	// RETURNING: there is no Postgres in CI, so the SQL that ships is the SQL
+	// somebody has to be able to check by reading it.
+	var shareSlug string
+	err = transaction.QueryRow(ctx, `SELECT share_slug FROM world_shares WHERE world_id = $1`, worldID).Scan(&shareSlug)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return models.WorldDeletion{}, err
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		shareSlug = ""
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return models.WorldDeletion{}, err
 	}
-	if shareSlug == nil {
-		return models.WorldDeletion{}, nil
-	}
-	return models.WorldDeletion{ShareSlug: *shareSlug}, nil
+	return models.WorldDeletion{ShareSlug: shareSlug}, nil
 }
 
 func (store *PostgresStore) GetPublicWorld(ctx context.Context, shareSlug string) (WorldBundle, error) {

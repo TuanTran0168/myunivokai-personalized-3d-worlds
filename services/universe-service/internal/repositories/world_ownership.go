@@ -16,9 +16,15 @@ var ErrNotWorldOwner = errors.New("not the world owner")
 // and never as a separate round trip a concurrent claim could slip between.
 // `FOR UPDATE` holds the row until the mutation commits or rolls back, so the
 // answer cannot go stale between the check and the write it authorises.
+// The `deleted_at IS NULL` here is not about ownership, and it is the reason
+// this lookup is not simply the ownership one: every product READ says a
+// deleted world does not exist, so a mutation has to say the same. Without it a
+// caller holding the UUID could add variants to, and publish, a world nobody
+// can see - writing rows and emitting world-change events for something that
+// renders nowhere.
 func assertWorldMutable(ctx context.Context, querier worldSnapshotQuerier, worldID string, requestingAccountID *string) error {
 	var ownerAccountID *string
-	if err := querier.QueryRow(ctx, `SELECT owner_account_id::text FROM worlds WHERE id = $1 FOR UPDATE`, worldID).Scan(&ownerAccountID); err != nil {
+	if err := querier.QueryRow(ctx, `SELECT owner_account_id::text FROM worlds WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, worldID).Scan(&ownerAccountID); err != nil {
 		return mapNotFound(err)
 	}
 	return worldMutationPermitted(ownerAccountID, requestingAccountID)
@@ -68,10 +74,15 @@ func worldDeletionPermitted(ownerAccountID, requestingAccountID *string) error {
 	return nil
 }
 
-// assertWorldDeletable is assertWorldMutable with the stricter rule, and it
-// takes the row the same way: inside the deletion's own transaction, FOR
+// assertWorldDeletable is assertWorldMutable with the stricter ownership rule,
+// and it takes the row the same way: inside the deletion's own transaction, FOR
 // UPDATE, so a claim landing at the same moment cannot change the answer
 // between the check and the flag.
+//
+// It deliberately does NOT filter deleted worlds, unlike the lookup above.
+// Deleting twice has to answer the way deleting once did - a retried request
+// and a second click are the normal cases - and filtering here would turn the
+// second one into a 404.
 func assertWorldDeletable(ctx context.Context, querier worldSnapshotQuerier, worldID string, requestingAccountID *string) error {
 	var ownerAccountID *string
 	if err := querier.QueryRow(ctx, `SELECT owner_account_id::text FROM worlds WHERE id = $1 FOR UPDATE`, worldID).Scan(&ownerAccountID); err != nil {

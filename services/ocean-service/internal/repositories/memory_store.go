@@ -104,7 +104,7 @@ func (s *MemoryStore) AddVariant(ctx context.Context, worldID string, variant mo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	world, ok := s.worlds[worldID]
-	if !ok {
+	if !ok || s.isDeleted(worldID) {
 		return models.WorldVariant{}, ErrNotFound
 	}
 	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
@@ -131,7 +131,7 @@ func (s *MemoryStore) SelectVariant(ctx context.Context, worldID, variantID stri
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	world, ok := s.worlds[worldID]
-	if !ok {
+	if !ok || s.isDeleted(worldID) {
 		return models.WorldVariant{}, ErrNotFound
 	}
 	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
@@ -164,7 +164,7 @@ func (s *MemoryStore) PublishWorld(ctx context.Context, worldID, slug string, re
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	world, ok := s.worlds[worldID]
-	if !ok {
+	if !ok || s.isDeleted(worldID) {
 		return models.World{}, ErrNotFound
 	}
 	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {

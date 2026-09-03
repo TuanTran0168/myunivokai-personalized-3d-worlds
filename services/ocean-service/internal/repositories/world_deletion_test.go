@@ -203,3 +203,43 @@ func TestTheCreatePathStillFindsADeletedWorld(t *testing.T) {
 		t.Error("the create path's idempotency lookup now filters deleted worlds. A world deleted between its create and a JetStream redelivery would look like one that was never created, and the redelivery would repeat for ever against a row that is not missing")
 	}
 }
+
+// Found in review, and it is the half a deletion is easy to forget: every
+// product READ stops returning the world, so every MUTATION has to stop
+// accepting it too. Without this, a caller holding the UUID could keep adding
+// variants to and publishing a world nobody can see - writing rows and emitting
+// world-change events for something that renders nowhere.
+//
+// Deleting again is the deliberate exception, and it is asserted alongside so
+// the two rules stay visible together.
+func TestADeletedWorldAcceptsNoMutationButAcceptsAnotherDeletion(t *testing.T) {
+	owner := deletionTestOwnerAccountID
+	store := NewMemoryStore()
+	ctx := context.Background()
+
+	bundle, err := store.CreateWorld(ctx,
+		models.World{SourceJobID: "job-1", Visibility: "private", OwnerAccountID: &owner},
+		models.WorldVariant{ID: "variant-1", VariantNo: 1, Seed: "seed-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worldID := bundle.World.ID
+	if _, err := store.DeleteWorld(ctx, worldID, &owner); err != nil {
+		t.Fatal(err)
+	}
+
+	// The owner's own mutations, which is the strongest form of the case: it is
+	// not authorisation that refuses them.
+	for _, mutation := range worldMutations {
+		t.Run(mutation.methodName, func(t *testing.T) {
+			mutationError := mutation.mutate(store, worldID, "variant-1", &owner)
+			if !errors.Is(mutationError, ErrNotFound) {
+				t.Fatalf("%s on a deleted world: error = %v, want ErrNotFound", mutation.methodName, mutationError)
+			}
+		})
+	}
+
+	if _, err := store.DeleteWorld(ctx, worldID, &owner); err != nil {
+		t.Fatalf("deleting an already-deleted world must stay idempotent: %v", err)
+	}
+}

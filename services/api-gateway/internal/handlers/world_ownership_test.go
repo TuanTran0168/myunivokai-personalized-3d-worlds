@@ -80,6 +80,47 @@ func TestATokenTheProductEdgeRejectsCreatesNoWorldAtAll(t *testing.T) {
 	}
 }
 
+// The regression this split exists to prevent, kept as a test because it is
+// invisible from anywhere else: the share page is a public URL and has to
+// answer a stranger, a signed-in stranger and somebody holding a stale token
+// the same way.
+//
+// When the identity middleware was attached to the whole business group, a
+// visitor whose seven-day token had expired was answered 401 on a page that has
+// nothing to do with their session — and every test still passed, because no
+// test sent a bad token to a page that does not care about tokens.
+func TestThePublicSharePageIgnoresTheVisitorsSessionEntirely(t *testing.T) {
+	shareResponse, err := contracts.SuccessRPCEnvelope("request-1", http.StatusOK, map[string]any{
+		"world": map[string]any{"nickname": "Neo"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, presentedAuthorization := range []struct {
+		description string
+		header      string
+	}{
+		{description: "no session at all", header: ""},
+		{description: "a token that does not verify", header: "Bearer not-a-real-token"},
+		{description: "an admin-audience token", header: "Bearer " + mintProductAccessToken(t, ownershipTestAccountID, contracts.AccountAudienceAdmin)},
+	} {
+		t.Run(presentedAuthorization.description, func(t *testing.T) {
+			router := NewRouter(testGatewayConfig(), &fakeBroker{response: shareResponse}, newFakeEdgeStore(), nil, nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/universe/share/worlds/neo-64x3rcsu3a", nil)
+			if presentedAuthorization.header != "" {
+				request.Header.Set("Authorization", presentedAuthorization.header)
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d, want 200 with %s; body=%s", response.Code, presentedAuthorization.description, response.Body.String())
+			}
+		})
+	}
+}
+
 // Every mutation carries who is asking, and carries it from the token. The
 // body is checked in the same test because "never from the request body" is
 // the half that makes the family service's check worth anything.
