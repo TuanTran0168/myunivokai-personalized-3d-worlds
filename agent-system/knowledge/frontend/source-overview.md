@@ -114,8 +114,13 @@ build and the unit tests all passed against a policy that produced fourteen
   page started offering the same fields; each list mirrors a backend vocabulary
   (`allowedMoods`, `allowedWorldStylesByFamily`), so a second copy is how the
   two screens come to offer a value the other cannot render.
-- `features/world-form/profileAutofill.ts` — the two pure functions that decide
-  whether and how a saved profile fills the create form.
+- `features/world-form/profileAutofill.ts` — the pure functions that decide
+  whether and how a saved profile fills the create form, plus
+  `profileWithCreateFormDefaults`, which is how the account page can mirror the
+  create form's MINIMUMS (3 interests, 3 traits, 1 colour) without being
+  unusable on a first visit: an unanswered list is shown holding what the
+  create form itself opens with. The server stays permissive — it bounds what
+  may be stored, and a row written before the rule still has to load.
   `isCreateFormPristine` is the guard (the profile arrives from the network a
   moment after mount, and must never overwrite something already typed) and it
   deliberately IGNORES the nickname, because the display name is filled from
@@ -141,6 +146,12 @@ build and the unit tests all passed against a policy that produced fourteen
 - `lib/useDebouncedValue.ts` — the hook and
   `PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS`, shared by both previews so they
   cannot drift apart.
+- `components/Toast.tsx` — one message about something that has already
+  finished, over the page rather than beside a control. `StatusMessage` still
+  reports on the control it sits next to (a save in progress, a field that will
+  not do); this reports on an action that is over, which is why it is not
+  anchored. `toastLifetimeMilliseconds` is the tested part: a success leaves on
+  its own, a failure waits to be dismissed.
 - `lib/exportImage.ts` — downloads the WebGL canvas as PNG
   (requires `preserveDrawingBuffer`, already set on the Canvas).
 - `lib/formRailCollapse.ts` + `components/WorldChromeToggle.tsx` — the one-button

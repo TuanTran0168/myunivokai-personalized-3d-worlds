@@ -2050,12 +2050,18 @@ logic in it.
   `AccountProfileData.CreationDefaults.Nickname` on read and written back on
   update, so the header menu and the create form cannot greet the same person
   differently. A test refuses the column outright.
-- **A draft, not a submission.** `WorldInput.ValidateAsCreationDefaults`
-  enforces every ceiling and every vocabulary and **not one minimum**. The
-  generate path's minimums are right for a world and wrong for a saved
-  preference: running them here would refuse to save a profile until it was a
-  complete world, on a page whose whole job is to be opened before it has ever
-  been filled in.
+- **A draft, not a submission — at the API.**
+  `WorldInput.ValidateAsCreationDefaults` enforces every ceiling and every
+  vocabulary and **not one minimum**. The generate path's minimums are right
+  for a world and wrong for a stored row: enforcing them there would refuse a
+  profile until it was a complete world, and would make a row written before
+  the rule existed unreadable.
+  **The FORM enforces the minimums anyway** (owner's instruction, 2026-09-03),
+  and the two are not in conflict: the API bounds what may be stored, the page
+  holds itself to what the create form needs, and the page can do that only
+  because an unanswered list is shown holding the create form's own default.
+  A profile saved with one interest would otherwise produce a create form
+  sitting below its own floor with nothing on screen to explain why.
 - **The account id comes from the token.** Neither route takes an account id
   and neither body has a field for one — and the gateway disallows unknown
   fields, so the attempt is a 400 rather than an ignored value.
@@ -2096,6 +2102,17 @@ a soundscape that restarts on every rebuild is worse than none.
 What this does not become is a second create form. The profile page has no
 generate button and posts nothing to a family service; the preview is local,
 and the only thing it proves is what the create form will do next time.
+
+**A save is reported by a toast rather than by a line under the button**, and
+the rule worth keeping is the lifetime rather than the component: a success
+leaves on its own after seven seconds, a failure stays until it is dismissed.
+A confirmation nobody read still happened; an error nobody read is an error
+nobody can act on, and one that vanishes mid-sentence is worse than one that
+was never shown. The failure is ALSO left inline beside the button it belongs
+to, because that is where somebody returns to try again. The toast carries the
+way out — back to the worlds — and so does a button beside Save, permanently:
+a page reached from the header menu has no back of its own, and the toast's
+copy is gone seven seconds later.
 
 ### What it does not do
 

@@ -444,6 +444,32 @@ Tasks:
       world its own fields describe.
 - [x] The create form's field limits and `maxLength` values named once, in
       `worldFormOptions.ts`, rather than as bare numbers in two files.
+- [x] The profile page mirrors the create form's minimums, and
+      `profileWithCreateFormDefaults` makes them reachable on a first visit.
+- [x] A `Toast` on save, whose lifetime rule is the tested part: a success
+      leaves on its own, a failure waits to be read.
+
+Scenario: The page holds itself to the rules the create form holds
+
+Given the profile page
+When the world defaults are edited
+Then Core interests keeps a minimum of three, Traits a minimum of three and the
+palette a minimum of one — the same floors the create form enforces
+And a profile that has never been saved opens with those fields already holding
+what the create form itself opens with, so the floor is met on the first visit
+And the server keeps accepting less, because it bounds what may be STORED and a
+row written before this rule still has to load.
+
+Scenario: A save says so, and offers the way out
+
+Given a profile being saved
+When the save succeeds
+Then a toast says so, and says which of the two things was agreed to — the
+create form filled from this, or only the name, per the toggle's own state
+And it carries a link back to the worlds
+And it leaves on its own, while a FAILURE toast stays until it is dismissed
+And a "Back to your worlds" button sits beside Save whether or not anything was
+saved, because a page reached from the header menu has no back of its own.
 
 No migration, no contract change, no new route: this story is entirely about
 what the browser already had and was not showing.
