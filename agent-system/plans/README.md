@@ -27,14 +27,26 @@ deployment — read it before any backend, messaging, data or deployment work.
 [frontend-gateway-consolidation.md](architecture/frontend-gateway-consolidation.md)
 are cross-cutting mechanisms with the same standing.
 [end-user-identity-and-ownership.md](architecture/end-user-identity-and-ownership.md)
-is the third — **proposed 2026-09-02, no code yet, scheduled as
-[Sprint 08](sprints/sprint-08-2026-09-02/README.md)** — and it is the one
+is the third — **built: all 21 stories of
+[Sprint 08](sprints/sprint-08-2026-09-02/README.md) are `Implemented` and
+Phases A-C are in production. Corrected 2026-09-05; this line said "proposed,
+no code yet"** — and it is the one
 to read before touching `accounts`, the token audience, any world's owner, or
 the web app's session. Read its **§16 first**: twenty decisions taken across
 four rounds on 2026-09-02 supersede parts of six of its own sections, and most
 of them cut scope rather than adding it. The first is the one to
 read before touching gateway error handling, `/healthz`, the wake platform
 adapters or `/api/admin/wake-stats`.
+
+[admin-surface-and-family-service-duplication.md](architecture/admin-surface-and-family-service-duplication.md)
+is the fourth, and the newest — **a proposal from 2026-09-05, nothing built.**
+It answers "what is left on the admin side, or should the backend be
+refactored", and **its §4 should be read before the rest of it**: surveying for
+it found that every published world in every family hands out a share URL that
+404s, and that `myunivokai-ocean` has no `PUBLIC_WEB_URL` in production, so its
+links point at `localhost`. Read it before proposing any admin feature — it
+records which one is forbidden and why — and before any change that would be
+written once per family service.
 
 ## services/
 
