@@ -33,8 +33,8 @@ var ErrInvalidWorldClaimCommand = errors.New("invalid universe world claim comma
 
 type WorldService interface {
 	ComposeWorld(context.Context, contracts.Envelope[contracts.ComposeWorldData]) (models.CreateWorldResponse, error)
-	GetWorlds(context.Context, []string) (models.WorldListResponse, error)
-	GetWorld(context.Context, string) (models.WorldResponse, error)
+	GetWorlds(context.Context, []string, *string) (models.WorldListResponse, error)
+	GetWorld(context.Context, string, *string) (models.WorldResponse, error)
 	RegenerateVariant(context.Context, string, *string) (models.VariantResponse, error)
 	SelectVariant(context.Context, string, string, *string) (models.VariantResponse, error)
 	PublishWorld(context.Context, string, *string) (models.PublishResponse, error)
@@ -124,7 +124,7 @@ func (handler *NATSHandler) HandleWorldListQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.WorldListResponse, error) {
-		return handler.worldService.GetWorlds(ctx, envelope.Data.WorldIDs)
+		return handler.worldService.GetWorlds(ctx, envelope.Data.WorldIDs, envelope.Data.RequestingAccountID)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
@@ -135,7 +135,7 @@ func (handler *NATSHandler) HandleWorldGetQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.WorldResponse, error) {
-		return handler.worldService.GetWorld(ctx, envelope.Data.WorldID)
+		return handler.worldService.GetWorld(ctx, envelope.Data.WorldID, envelope.Data.RequestingAccountID)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }

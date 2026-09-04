@@ -190,21 +190,46 @@ func (handler *WorldHandler) GetWorlds(responseWriter http.ResponseWriter, reque
 		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "VALIDATION_ERROR", fmt.Sprintf("Too many ids; request at most %d worlds per call.", maximumBatchWorldIdentifiers))
 		return
 	}
-	handler.transport.Proxy(responseWriter, request, handler.subjects.worldList, contracts.WorldListQueryData{WorldIDs: worldIdentifiers}, cachePolicy{})
+	handler.transport.Proxy(responseWriter, request, handler.subjects.worldList,
+		contracts.WorldListQueryData{WorldIDs: worldIdentifiers, RequestingAccountID: requestingAccountIdentifier(request)}, cachePolicy{})
 }
 
+// GetWorld is an ownership-checked read, and it is NOT cached. The second half
+// is the part that is easy to leave out, and leaving it out would have undone
+// the first.
+//
+// The world cache key is `family:worldID`, with no room for who asked. With an
+// ownership check downstream and that key above it, the owner's own first read
+// would store their private world under a name a stranger's request resolves
+// to — so the check would hold for one request and Redis would answer the next
+// sixty seconds of them. A fix the layer above it silently defeats is worse
+// than no fix, because it tests green.
+//
+// **Putting the caller into the key was the alternative, and it was rejected.**
+// The cacheStore this gateway holds can Get, Set and Delete one exact key, and
+// S8-IDENTITY-010's guarantee is that deleting a world drops that world's entry
+// SYNCHRONOUSLY, before the visitor's own response returns. With an audience in
+// the key there is no longer a single entry to drop, and no prefix delete to
+// reach the rest — so the choice was between a correct cache key and a
+// deletion that takes effect immediately, and the deletion wins.
+//
+// **What removing it costs, stated rather than assumed.** A 60-second TTL
+// (defaultWorldCacheTimeToLive) on a read whose fanout is one person looking at
+// their own page — and every mutation on that same page already invalidates it,
+// so it is cold for most of the traffic that reaches here anyway. The SHARE
+// read keeps its cache, because that is the genuinely public path, one link
+// sent to many people, and its answer does not depend on who is asking.
+//
+// InvalidateWorld still deletes this key. Nothing writes it any more, but an
+// older gateway serving alongside a rolling deploy does, and an entry it left
+// behind has to stay reachable.
 func (handler *WorldHandler) GetWorld(responseWriter http.ResponseWriter, request *http.Request) {
 	worldID, validWorldID := worldIdentifierFromRequest(responseWriter, request)
 	if !validWorldID {
 		return
 	}
-	cacheIdentifier := edge.WorldCacheIdentifier(string(handler.family), worldID)
-	if handler.transport.WriteCacheHit(responseWriter, request, worldCacheNamespace, cacheIdentifier) {
-		return
-	}
-	handler.transport.Proxy(responseWriter, request, handler.subjects.worldGet, contracts.WorldQueryData{WorldID: worldID}, cachePolicy{
-		namespace: worldCacheNamespace, identifier: cacheIdentifier, timeToLive: handler.worldCacheTimeToLive,
-	})
+	handler.transport.Proxy(responseWriter, request, handler.subjects.worldGet,
+		contracts.WorldQueryData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, cachePolicy{})
 }
 
 func (handler *WorldHandler) CreateVariant(responseWriter http.ResponseWriter, request *http.Request) {

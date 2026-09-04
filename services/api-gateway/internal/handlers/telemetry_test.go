@@ -14,6 +14,15 @@ import (
 
 const telemetryTestWorldID = "11111111-1111-4111-8111-111111111111"
 
+// The three cache tests below read the SHARE route rather than
+// GET /worlds/{id}, and that is a consequence of the read-authorization fix
+// rather than a preference. A by-id world read is answered per caller now, so
+// the gateway does not cache it at all - see WorldHandler.GetWorld for why
+// putting the caller in the key was rejected. The share route is the one read
+// whose answer is the same for everybody, which is exactly what makes it
+// cacheable and what makes it the right place to measure a cache.
+const telemetryTestShareSlug = "neo-64x3rcsu3a"
+
 func telemetrySnapshot(collector *telemetry.Collector) contracts.HTTPRollupData {
 	return collector.Snapshot("test-instance", time.Now().UTC(), time.Minute)
 }
@@ -142,18 +151,18 @@ func TestCacheHitsAndMissesAreBothCounted(t *testing.T) {
 	collector := telemetry.NewCollector()
 	router := NewRouter(testGatewayConfig(), &fakeBroker{response: responseEnvelope}, edgeStore, nil, collector)
 
-	worldPath := "/api/universe/worlds/" + telemetryTestWorldID
+	sharePath := "/api/universe/share/worlds/" + telemetryTestShareSlug
 	// The first read misses and populates the cache; the second one hits it.
-	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, worldPath, nil))
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, sharePath, nil))
 	cachedResponse := httptest.NewRecorder()
-	router.ServeHTTP(cachedResponse, httptest.NewRequest(http.MethodGet, worldPath, nil))
+	router.ServeHTTP(cachedResponse, httptest.NewRequest(http.MethodGet, sharePath, nil))
 	if cachedResponse.Header().Get("X-Cache") != "HIT" {
 		t.Fatalf("the second read was not served from cache: X-Cache=%q", cachedResponse.Header().Get("X-Cache"))
 	}
 
 	data := telemetrySnapshot(collector)
-	if len(data.CacheBuckets) != 1 || data.CacheBuckets[0].Namespace != worldCacheNamespace {
-		t.Fatalf("cache buckets = %+v, want one for %s", data.CacheBuckets, worldCacheNamespace)
+	if len(data.CacheBuckets) != 1 || data.CacheBuckets[0].Namespace != shareCacheNamespace {
+		t.Fatalf("cache buckets = %+v, want one for %s", data.CacheBuckets, shareCacheNamespace)
 	}
 	if data.CacheBuckets[0].Hits != 1 || data.CacheBuckets[0].Misses != 1 {
 		t.Fatalf("cache bucket = %+v, want one hit and one miss", data.CacheBuckets[0])
@@ -173,7 +182,10 @@ func TestARedisFailureIsCountedAsNeitherAHitNorAMiss(t *testing.T) {
 	collector := telemetry.NewCollector()
 	router := NewRouter(testGatewayConfig(), &fakeBroker{response: responseEnvelope}, edgeStore, nil, collector)
 
-	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/universe/worlds/"+telemetryTestWorldID, nil))
+	// The share route, for the reason on telemetryTestShareSlug: against the
+	// by-id world read this would now pass without a cache lookup happening at
+	// all, which is a test asserting nothing.
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/universe/share/worlds/"+telemetryTestShareSlug, nil))
 
 	data := telemetrySnapshot(collector)
 	if len(data.CacheBuckets) != 0 {

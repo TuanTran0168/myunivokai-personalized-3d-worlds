@@ -273,12 +273,46 @@ var ownerOnlyMutations = []string{"DeleteWorld"}
 // transfer endpoint, which v1 deliberately does not have.
 var ownershipAssigningWrites = []string{"CreateWorld", "ClaimWorlds"}
 
-// nonMutatingStoreMethods is the rest of the Store, listed so that the ratchet
-// below can tell "a read was added" from "a mutation was added and nobody
-// noticed".
+// ownershipFilteredReads is the fifth category, and it exists because the four
+// above are all about WRITING.
+//
+// This list is where the read-authorization defect hid. `GetWorld` and
+// `GetWorldsByIDs` sat in "the rest of the Store" below - correctly classified
+// as non-mutating, and therefore asked no further question. The ratchet's one
+// question was "does this method mutate a world?", and a read that hands a
+// stranger somebody's private world answers no. `GET /worlds/{id}` served an
+// owned, never-published world to a caller with no credentials at all, and
+// every test in this file passed while it did.
+//
+// These methods return a world, so a world's owner rides along with it, so the
+// caller has to be allowed to see it. The store does not decide that and has no
+// caller in its signature: unlike a mutation, a read has no transaction to
+// check inside, so the rule runs one layer up against the owner already loaded.
+// See WorldReadPermitted, and world_read_authorization_test.go in ../services
+// for the proof that the service layer actually applies it.
+var ownershipFilteredReads = []string{"GetWorld", "GetWorldsByIDs"}
+
+// worldReadsThatNeedNoOwner is the exemption the ratchet below demands, and it
+// has exactly one member so that adding a second one has to be argued.
+//
+// GetPublicWorld returns a world to anybody, which is correct: it is reached by
+// SHARE SLUG rather than by world id, so it can only answer for a world whose
+// owner chose to publish it, and what it hands back is the redacted
+// PublicWorld/PublicVariant/PublicDNA rather than the world itself. Publishing
+// IS the owner's decision to make it readable, so there is no owner left to
+// check.
+var worldReadsThatNeedNoOwner = []string{"GetPublicWorld"}
+
+// nonMutatingStoreMethods is the rest of the Store: methods with no world owner
+// to check at all.
+//
+// GetPublicWorld is the one that has to be argued rather than assumed, because
+// it does read a world and is open to everybody. That is correct, and it is the
+// whole point of publishing: it is reached by SHARE SLUG rather than world id,
+// it only ever answers for a world whose owner chose to publish it, and what it
+// returns is the redacted PublicWorld/PublicVariant/PublicDNA rather than the
+// world itself. Publishing is the owner's decision to make it readable.
 var nonMutatingStoreMethods = []string{
-	"GetWorld",
-	"GetWorldsByIDs",
 	"GetPublicWorld",
 	"PendingOutbox",
 	"MarkOutboxPublished",
@@ -350,17 +384,88 @@ func TestTheStoreGainsNoMethodWithoutClassifyingIt(t *testing.T) {
 	for _, methodName := range ownershipAssigningWrites {
 		classified[methodName] = true
 	}
+	for _, methodName := range ownershipFilteredReads {
+		classified[methodName] = true
+	}
 
 	storeType := reflect.TypeOf((*Store)(nil)).Elem()
 	for methodIndex := 0; methodIndex < storeType.NumMethod(); methodIndex++ {
 		methodName := storeType.Method(methodIndex).Name
 		if !classified[methodName] {
-			t.Errorf("Store.%s is neither in worldMutations nor in nonMutatingStoreMethods. If it mutates a world, add it to the table so its ownership check is proven; if it only reads, say so in the list.", methodName)
+			t.Errorf("Store.%s is unclassified. If it MUTATES a world, add it to worldMutations so its ownership check is proven. If it RETURNS a world, add it to ownershipFilteredReads and make the service layer filter it - \"it only reads\" is what let an unauthorized read ship. If it does neither, say so in nonMutatingStoreMethods.", methodName)
 		}
 	}
 	if storeType.NumMethod() != len(classified) {
 		t.Errorf("Store has %d methods but %d are classified; a name in one of the two lists no longer exists on the interface", storeType.NumMethod(), len(classified))
 	}
+}
+
+// The ratchet the read rule actually needs, and it is stronger than the one
+// above because it derives its expectation from the interface instead of
+// trusting a list.
+//
+// ownershipFilteredReads is only as honest as somebody's memory on the day a
+// sixth read is written. So this asks the type system: a Store method that
+// hands back a WorldBundle is handing back a world, and a world carries an
+// owner, so it must be ownership-filtered, or an ownership-ASSIGNING write, or
+// explicitly exempt with the reason written down. A new GetWorldByWhatever
+// returning bundles fails here on the day it is added - which is the only day
+// the reason is still in the author's head.
+//
+// This is the check that would have caught the defect these tests were written
+// for. The classification ratchet above asked "does it mutate?" and let
+// GetWorld through as a read; a read that returns somebody else's private world
+// is not a mutation, and the question was the wrong one.
+func TestEveryStoreMethodThatReturnsAWorldIsOwnershipFiltered(t *testing.T) {
+	accountedFor := map[string]bool{}
+	for _, methodName := range ownershipFilteredReads {
+		accountedFor[methodName] = true
+	}
+	for _, methodName := range ownershipAssigningWrites {
+		accountedFor[methodName] = true
+	}
+	for _, methodName := range worldReadsThatNeedNoOwner {
+		accountedFor[methodName] = true
+	}
+
+	storeType := reflect.TypeOf((*Store)(nil)).Elem()
+	for methodIndex := 0; methodIndex < storeType.NumMethod(); methodIndex++ {
+		method := storeType.Method(methodIndex)
+		if !returnsAWorldBundle(method.Type) || accountedFor[method.Name] {
+			continue
+		}
+		t.Errorf("Store.%s returns a world, so it returns a world's owner with it. Add it to ownershipFilteredReads and filter it at the service layer, or to worldReadsThatNeedNoOwner with the reason no owner needs checking.", method.Name)
+	}
+
+	// And the same fence from the other side, so the list cannot quietly come
+	// to name something that no longer returns a world at all.
+	for _, methodName := range ownershipFilteredReads {
+		method, found := storeType.MethodByName(methodName)
+		if !found {
+			t.Errorf("ownershipFilteredReads names Store.%s, which is not on the interface any more", methodName)
+			continue
+		}
+		if !returnsAWorldBundle(method.Type) {
+			t.Errorf("ownershipFilteredReads names Store.%s, which returns no world; the list has drifted from what it is for", methodName)
+		}
+	}
+}
+
+// returnsAWorldBundle reports whether a method hands back a world, as one
+// bundle or as many. Reflection rather than a naming convention on purpose: a
+// method called anything at all is caught by what it returns.
+func returnsAWorldBundle(methodType reflect.Type) bool {
+	worldBundleType := reflect.TypeOf(WorldBundle{})
+	for resultIndex := 0; resultIndex < methodType.NumOut(); resultIndex++ {
+		result := methodType.Out(resultIndex)
+		if result == worldBundleType {
+			return true
+		}
+		if result.Kind() == reflect.Slice && result.Elem() == worldBundleType {
+			return true
+		}
+	}
+	return false
 }
 
 // The data boundary, checked rather than described.
