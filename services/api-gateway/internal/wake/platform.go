@@ -92,6 +92,7 @@ package wake
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 // PlatformName selects the wake adapter at startup, like ai.ProviderName
@@ -152,13 +153,41 @@ type Platform interface {
 	Supports(service string) bool
 
 	// Wake asks the platform to start the service and returns once the
-	// request has been delivered.
+	// request has been delivered, along with what came back.
 	//
 	// A nil error means the platform was told, NOT that the service can
 	// answer a query — cold start continues long after this returns. Callers
 	// must never treat nil as readiness; see
 	// agent-system/plans/architecture/service-wake-mechanism.md#healthz-is-a-start-signal-not-a-readiness-signal.
-	Wake(ctx context.Context, service string) error
+	Wake(ctx context.Context, service string) (WakeObservation, error)
+}
+
+// WakeObservation is what a wake call saw. It carries no verdict, and that is
+// the point: the status code still decides nothing (a booting instance may
+// legitimately answer 502, or 404 from a router that has not attached it yet),
+// but until it was recorded, two completely different events were logged as
+// the same line.
+//
+// The two, measured against production on 2026-09-04:
+//
+//   - Elapsed 12.7s, then a status. The host held the connection open while it
+//     started the instance. The wake worked.
+//   - Elapsed under a second, with a status from something that was already
+//     awake. Nothing started, and the service stayed asleep through four such
+//     calls while `"wake call sent"` was logged each time.
+//
+// Elapsed is therefore the field that matters most, which is unintuitive
+// enough to say out loud: on a host that starts an instance by holding the
+// request, a FAST wake call is the suspicious one.
+type WakeObservation struct {
+	// Host actually requested, so a wake aimed at the wrong target is legible
+	// in the log rather than requiring an operator to read it back out of the
+	// dashboard and compare by eye.
+	Host string
+	// StatusCode as received. Zero when no response arrived.
+	StatusCode int
+	// Elapsed from sending the request to reading the response.
+	Elapsed time.Duration
 }
 
 const querySubjectPrefix = "myunivokai.queries."

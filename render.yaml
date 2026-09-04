@@ -180,8 +180,25 @@ services:
         sync: false
       - key: TELEMETRY_SERVICE_URL
         sync: false
+      # Raised from 5s to 45s on 2026-09-04, and set live on the dashboard the
+      # same day — this line exists so the next blueprint sync does not put
+      # 5s back. 5s could not cover a cold start: measured first-byte on a
+      # sleeping instance's /healthz was 7.3s (dna), 12.7s (nature), 13.3s
+      # (universe), so every wake call was abandoned before the host had
+      # finished starting anything.
+      #
+      # It costs nothing on the request path. Coordinator.Wake runs detached
+      # (`go wakeDetached`) and the client response has already been written,
+      # so this bounds one goroutine and one outbound connection, never the
+      # gateway's own 8s WriteTimeout.
+      #
+      # Raising it did NOT fix the fleet, which is worth knowing before
+      # somebody raises it further: with 45s available the wake still returned
+      # inside one second and ocean-service still never started. Whatever
+      # answers these calls is not the sleeping instance. See
+      # DEFECT-WAKE-001 in agent-system/plans/backlog/engineering-backlog.md.
       - key: SERVICE_WAKE_TIMEOUT
-        value: 5s
+        value: 45s
       - key: SERVICE_WAKE_LOCK_TTL
         value: 60s
       - key: SERVICE_WAKE_RETRY_AFTER

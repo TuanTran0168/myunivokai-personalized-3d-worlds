@@ -169,15 +169,39 @@ func (coordinator *Coordinator) wakeDetached(service string) {
 	// counting successes would undercount exactly the slow cold starts worth
 	// knowing about.
 	coordinator.recordWake(ctx, service)
-	if err := coordinator.platform.Wake(ctx, service); err != nil {
-		// Expected, and not an error worth alarming on: a host that starts an
-		// instance when a connection arrives has already begun doing so, and
-		// the boot outlasts any timeout worth holding a goroutine for. The
-		// wake still happened; only our observation of it timed out.
-		log.Debug().Err(err).Str("service", service).Str("wake_platform", string(coordinator.platform.Name())).Msg("wake call did not complete")
+	observation, err := coordinator.platform.Wake(ctx, service)
+	if err != nil {
+		// Not an error worth alarming on: a host that starts an instance when
+		// a connection arrives has already begun doing so, and the boot
+		// outlasts any timeout worth holding a goroutine for. The wake still
+		// happened; only our observation of it timed out.
+		//
+		// Raised from debug to info on 2026-09-04. Debug was right while the
+		// timeout was five seconds, where hitting it meant nothing — but
+		// debug is not emitted in production, so this branch was invisible
+		// there, and against a timeout long enough to cover a measured cold
+		// start a wake that still runs out of it is the most informative line
+		// this package produces.
+		log.Info().Err(err).
+			Str("service", service).
+			Str("wake_platform", string(coordinator.platform.Name())).
+			Str("wake_host", observation.Host).
+			Dur("wake_elapsed", observation.Elapsed).
+			Msg("wake call did not complete")
 		return
 	}
-	log.Info().Str("service", service).Str("wake_platform", string(coordinator.platform.Name())).Msg("wake call sent")
+	// The three observation fields are the whole reason this line exists in
+	// its current shape. Without them it read "wake call sent" for a call
+	// that reached the right host and started an instance, and for one that
+	// was answered instantly by something else, which is how a fleet that
+	// never woke went unnoticed for weeks. See wake.WakeObservation.
+	log.Info().
+		Str("service", service).
+		Str("wake_platform", string(coordinator.platform.Name())).
+		Str("wake_host", observation.Host).
+		Int("wake_status", observation.StatusCode).
+		Dur("wake_elapsed", observation.Elapsed).
+		Msg("wake call sent")
 }
 
 // Seen records that a service answered, which is the only unbiased way to
