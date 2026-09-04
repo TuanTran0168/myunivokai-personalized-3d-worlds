@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Suspense, use, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Copy, Download, ExternalLink, Loader2, RefreshCw, Rocket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, apiErrorMessage } from "@/lib/api";
@@ -16,6 +16,7 @@ import { resolveGalleryOwnerKey } from "@/lib/galleryOwner";
 import { isForestScene, pointsOfInterestFromScene, sceneFromVariant, selectedVariant } from "@/lib/scene";
 import { sharePagePath, worldFamilyFromQueryValue, WORLD_FAMILY_QUERY_PARAMETER } from "@/lib/worldRoutes";
 import type { PlanetSceneConfig, World, WorldFamily, WorldVariant } from "@/lib/types";
+import { ReturnDestinationLinks } from "@/components/ReturnDestinationLinks";
 import { StatusMessage } from "@/components/StatusMessage";
 import { PlanetDetailsPanel } from "@/components/PlanetDetailsPanel";
 import { RareFeatureBadge } from "@/components/RareFeatureBadge";
@@ -74,6 +75,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const currentPath = usePathname();
   const [action, setAction] = useState<"variant" | "publish" | "select" | "copy" | "delete" | null>(null);
   // Deleting takes two clicks on the same button rather than a dialog. A world
   // is not recoverable from this screen once it is gone - the row survives, but
@@ -351,7 +353,21 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   if (!world) {
     return (
       <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-footer-height pt-header-height">
-        <StatusMessage tone="error">{error || "World not found"}</StatusMessage>
+        {/* The ways out are here because this fix created a new way IN.
+            `GET /worlds/{id}` is ownership-checked now, so a link that arrived
+            by way of a screenshot, a pasted URL or somebody else's browser
+            history lands on this screen with "This world belongs to another
+            account." — a visitor who has done nothing wrong, on a page whose
+            only previous outcome was a world. An error with no way out is a
+            dead end; this one is reachable by accident.
+
+            The share slug is not offered, and cannot be: it only exists in the
+            private payload this read just refused. The public door to somebody
+            else's world is the /share link its maker sends, not this page. */}
+        <div className="flex flex-col items-center gap-5 text-center">
+          <StatusMessage tone="error">{error || "World not found"}</StatusMessage>
+          <ReturnDestinationLinks currentPath={currentPath} presentation="control" />
+        </div>
       </main>
     );
   }
