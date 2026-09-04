@@ -83,9 +83,19 @@ Source: `services/api-gateway`.
   middlewares, and the difference between them is a routing decision:
   `RequireProductAccessToken` guards `/api/me`, while
   `OptionalProductAccessToken` attaches claims where a session may be absent
-  and is registered on the five world WRITE routes only. It must not reach the
-  reads — `/api/{family}/share/worlds/{slug}` is a public URL and answered 401
-  to anybody holding an expired token while it did.
+  and is registered on every world route **except one**:
+  `/api/{family}/share/worlds/{slug}`. That page is a public URL and answered
+  401 to anybody holding an expired token while the middleware reached it.
+
+  **Corrected 2026-09-04.** This bullet used to say the middleware was on the
+  five WRITE routes only, and that it "must not reach the reads" — the share
+  route's requirement, generalised to all three reads. The consequence was
+  `GET /api/{family}/worlds/{id}` answering 200 with no credentials at all for
+  an owned, never-published world: its nickname, role, every variant and the
+  whole DNA snapshot, which is strictly more than the share response is
+  redacted down to. One route needing no session is not the same fact as three
+  routes not wanting one. Both reads now carry the caller and are filtered by
+  `WorldReadPermitted` in the family service.
 - `internal/config`: NATS/Redis/cache/edge configuration and production CORS
   validation.
 

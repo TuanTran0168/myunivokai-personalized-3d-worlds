@@ -1862,3 +1862,161 @@ commented `render.yaml` block keeps `name: myunivokai-web` while its
 `deploy/single-container/README.md` in words, because a reader who saw only
 the folder name would otherwise "fix" the deployment name and break every
 share URL already handed out.
+
+## Found in the running product after Phase C, 2026-09-04
+
+### S8-IDENTITY-021 — A world read is checked against its owner
+
+> **Status: Implemented** on `fix/be/world-read-authorization`.
+> Reported by the owner from a browser, not by a failing job.
+
+**As** somebody whose worlds are now tied to an account,
+**I want** a world I have not published to be mine to read,
+**so that** signing up means my worlds are mine rather than merely labelled.
+
+#### What was reported
+
+A `/worlds/{id}` link for an unpublished world belonging to another account
+rendered that world, signed out, with no error. The owner's words:
+*"chưa publish mà không login vẫn xem được là sao? đáng lẽ phải 401 hay 403 gì
+chứ?"* — and they were right. `GET /api/{family}/worlds/{id}` answered **200**
+to a caller with no credentials at all.
+
+What it handed over is the part that makes this more than a status code: the
+nickname, the `role`, the `selectedVariantId`, **every** variant with its full
+`WorldSceneConfig`, and the whole `personalityDNA` — `energySignature`,
+`visualHints`, `shortNarrative` and all. That is strictly **more** than the
+share page is deliberately redacted down to (`PublicWorld`, `PublicVariant`,
+`PublicDNA`). The redaction existed; the door beside it did not use it.
+
+The batch read had the identical hole, which matters because fixing only the
+first would have left `?ids=` as the way around it.
+
+#### Why nothing here caught it
+
+Not a bypass, and not missing coverage. Phase B put ownership on every
+mutation, wrote the rule down once in `worldMutationPermitted`, proved it with
+a five-caller table in all three family services, and guarded the table with a
+**reflective ratchet over every `Store` method** so a mutation added later
+without a check fails the build.
+
+The ratchet asked one question: *does this method mutate a world?* `GetWorld`
+and `GetWorldsByIDs` answered no, and were filed in a list literally commented
+as *"the rest of the Store, listed so that the ratchet can tell 'a read was
+added' from 'a mutation was added and nobody noticed'"*. **A read was the safe
+outcome.** But a read that hands a stranger somebody's private world is not a
+mutation, so the question was the wrong one — the category was the blind spot,
+not the coverage.
+
+Three documents then recorded the gap as settled design rather than as an
+unclosed hole, each corrected in place on 2026-09-04:
+
+- `registerWorldRoutes` in the gateway carried *"the reads are open, and one of
+  them must be"* — true of `/share/worlds/{slug}`, quietly extended to the two
+  routes beside it.
+- `knowledge/backend/source-overview.md` said `OptionalProductAccessToken`
+  *"must not reach the reads"*, which is the share route's requirement
+  generalised to all three.
+- `plans/architecture/end-user-identity-and-ownership.md` §"What ownership is
+  today" said *"anyone holding a world UUID can read that world"* as a fact
+  about the baseline, and §6.5 — the only section that says what ownership DOES
+  — is titled *"The write path gains one behaviour and one endpoint"*. The read
+  path was never specified, and unspecified became open.
+
+#### Scenarios
+
+1. **An owned, unpublished world, and nobody signed in** → `403
+   NOT_WORLD_OWNER`, "This world belongs to another account."
+2. **An owned world, and a different account's token** → the same 403. The
+   account comes from the verified token and never from the body or the query.
+3. **An owned world, and its owner** → 200, unchanged.
+4. **An UNOWNED world, and anybody at all** → 200, unchanged. This is not a
+   compromise: it is every world made before ownership existed and every world
+   made by a visitor who has not signed up, and refusing them would have broken
+   the product in order to secure it.
+5. **A published world, by SLUG, with no session or a garbage token** → 200,
+   redacted, unchanged. The regression guard that already existed
+   (`TestThePublicSharePageIgnoresTheVisitorsSessionEntirely`) is why this
+   could be trusted rather than hoped for.
+6. **A published world, by ID, as a stranger** → still 403. Publishing opens
+   the share door, not the id door.
+7. **The gallery batch, `?ids=` mixing readable and unreadable worlds** →
+   answers with the readable ones and drops the rest, rather than failing.
+
+#### Decisions inside it
+
+**403, not 404.** A 404 would hide the world's existence, which is the usual
+advice. It was rejected because the WRITE path already answers 403
+`NOT_WORLD_OWNER` for the same world, so a 404 on the read alone hides nothing
+a POST would not reveal — and it would cost a real visitor, somebody who
+followed a URL out of a screenshot or a chat, the one sentence that explains
+what happened.
+
+**The read rule delegates to the write rule.** `WorldReadPermitted` calls
+`worldMutationPermitted` rather than restating it. Two copies of "an owned
+world belongs to its owner, an unowned one to whoever holds its id" is one copy
+too many, and the copy that drifts is the one nobody is looking at.
+
+**The check runs in the family service, not the gateway**, matching where §6.4
+put the write check — but with no transaction, deliberately. A mutation takes
+the row `FOR UPDATE` so a concurrent claim cannot change the answer between the
+check and the write it authorises. A read authorises nothing, so the owner
+already loaded with the world is enough, and it costs no extra query:
+`worldSelectColumns` has always selected `owner_account_id`.
+
+**The gateway's `world:v1` cache had to go, and that is the half a fix like
+this loses.** The key is `family:worldID`, with no room for who asked. Left in
+place, the owner's own first read would store their private world under a name
+a stranger's request resolves to — the ownership check would hold for exactly
+one request, and Redis would answer the next sixty seconds of them, with every
+ownership test still green. Putting the caller into the key was the
+alternative and was rejected: `cacheStore` can Get, Set and Delete one exact
+key, and `S8-IDENTITY-010`'s guarantee is that a deletion drops the world's
+entry **synchronously**, before the visitor's own response returns. With an
+audience in the key there is no single entry to drop and no prefix delete to
+reach the rest. So: a 60-second TTL, on a read whose fanout is one person
+looking at their own page, which every mutation on that page already
+invalidated. `share:v1` keeps its cache — it is the genuinely public path, and
+its answer is the same for everybody. The mutations still delete `world:v1`,
+because an older gateway alongside a rolling deploy still writes it.
+
+**The refusal needed somewhere to go.** The fix created a new way INTO the
+world page's error state: a `/worlds/{id}` link that arrived by way of a
+screenshot or somebody else's history now lands on "This world belongs to
+another account." That screen previously had one outcome, a world, so its error
+branch was a bare message with no navigation. It now carries
+`ReturnDestinationLinks`. The share slug is not offered there and cannot be —
+it exists only in the payload the read just refused.
+
+#### Done means
+
+- [x] `403 NOT_WORLD_OWNER` for a read of another account's world, by id and
+      filtered out of `?ids=`, in universe, nature and ocean.
+- [x] Both reads carry the caller from the verified token —
+      `TestEveryWorldReadCarriesTheTokensAccount`, written with a body naming a
+      different account, for the same reason its mutation twin is.
+- [x] The by-id read is not served from cache, asserted from both ends: a
+      poisoned entry under exactly the old key never reaches a response, and
+      two reads produce two round trips
+      (`TestTheByIdWorldReadIsNeverServedFromCache`).
+- [x] An anonymous read still works and carries no invented account
+      (`TestAWorldReadWithNoSessionCarriesNoAccount`). A regression guard, not
+      a proof of the fix: it passes on the old code too, which is the point.
+- [x] The ratchet asks a question that could catch this —
+      `TestEveryStoreMethodThatReturnsAWorldIsOwnershipFiltered` derives its
+      expectation from the interface, failing any `Store` method that returns a
+      `WorldBundle` without being declared ownership-filtered, ownership-
+      assigning, or exempt with its reason written down. `GetPublicWorld` is
+      the single exemption, and it is argued rather than assumed.
+- [x] Every new test verified RED against the pre-fix code, not merely green
+      after it. Two of the four gateway tests and the two ownership cases of
+      the family table fail without the change; the three legitimate callers
+      keep passing, which is what says the fix is a filter and not a wall.
+- [x] `go vet` and `go test` clean across all seven Go services; typecheck,
+      lint and 801 frontend tests clean.
+- [x] Verified end to end against the local stack, not only in unit tests:
+      signed up a second account, created a world through the real generate →
+      compose → read path, and confirmed 200 for its owner, 403 for a stranger,
+      1-of-1 in the owner's batch, 0-of-1 in a stranger's, an unowned world
+      still 200 for anybody, and the share URL still public with no session and
+      with a garbage token.
