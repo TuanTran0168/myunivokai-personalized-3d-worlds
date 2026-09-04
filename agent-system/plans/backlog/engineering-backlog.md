@@ -793,17 +793,23 @@ rejected alternatives, is
 
 ## DEFECT-WAKE-001 — The wake mechanism reports waking services it does not wake
 
-Status: **Open.** Measured against production on 2026-09-04. One contributing
-cause is fixed — `SERVICE_WAKE_TIMEOUT` 5s → 45s, set live on the dashboard and
-written into `render.yaml` so a blueprint sync cannot revert it — and that fix
-was then measured **not to be sufficient**. The instrument the next step needs
-ships on `fix/be/wake-response-visibility`.
-Priority: P1. Every family service is spun down after roughly fifteen minutes
-idle, and on current traffic that is almost always, so almost every visitor
-opening a world pays this. It is P1 rather than P0 only because the deployed
-frontend predates Sprint 08; the first `staging` → `main` release puts
-`/sign-in`, `/account` and `/worlds` on the same mechanism, which is why this
-belongs in the release conversation.
+Status: **Open, and re-measured against production on 2026-09-04 after the
+`staging` → `main` release (PR #159).** One contributing cause is fixed —
+`SERVICE_WAKE_TIMEOUT` 5s → 45s, live on the dashboard and now written into
+`main`'s `render.yaml`, so the blueprint-sync revert hazard is closed. The
+instrument shipped with the release: `wake_host`, `wake_status` and
+`wake_elapsed` are in production code. **The defect survived the release**, and
+the premise this document said was unconfirmed is now confirmed by measurement
+— see §The asymmetry, measured.
+Priority: **P1, and the reason it was not P0 has expired.** Every family
+service is spun down after roughly fifteen minutes idle, and on current traffic
+that is almost always, so almost every visitor opening a world pays this. It
+was P1 rather than P0 only because the deployed frontend predated Sprint 08 —
+**that release has now happened**, `/sign-in`, `/account`, `/gallery` and
+`/worlds` all answer 200 in production, and `auth` is itself a wake target
+([`platform.go:130`](../../../services/api-gateway/internal/wake/platform.go#L130)).
+So the mitigation that was doing the work — nobody could reach the routes — is
+gone. Re-triage this before the next sprint is scoped, not after.
 Found: 2026-09-04, while verifying whether `staging` → `main` needed new
 environment configuration. It needed none; it needed this.
 
@@ -892,17 +898,185 @@ Then a later request still fires a wake before the tally is consulted
 And the tally was observed to have expired after roughly ninety minutes, so a
 visitor is not refused for ever — only for the window after a failed burst.
 
+### The asymmetry, measured — 2026-09-04, after the release
+
+The earlier windows showed a gateway logging `"wake call sent"` beside a target
+producing no log lines, which is an absence of evidence in two places. This run
+is the same experiment reduced to **one variable**: the same URL, requested from
+two different places, with nothing else changed.
+
+`ocean` was asleep. Eight requests through the gateway, twelve seconds apart,
+each of which fires a wake at `https://myunivokai-ocean.onrender.com/healthz`:
+
+| Attempt | Through the gateway | Answered in |
+| --- | --- | --- |
+| 1–7, over ~84 s | `503 SERVICE_WAKING`, `retry-after: 15` | 0.48 – 0.81 s each |
+| — | **`GET https://myunivokai-ocean.onrender.com/healthz` from outside Render** | **`200`, 12.46 s to first byte — the instance started** |
+| 8, immediately after | `404 NOT_FOUND` — the slug genuinely does not exist | 1.18 s |
+
+Read the three rows together, because each one alone proves nothing:
+
+- **Seven wake cycles across ~84 seconds started nothing.** The measured cold
+  start for this same service is 12.46 s, so this is not a service that was
+  merely slow — it never began.
+- **The identical URL, requested from outside Render, started it in 12.46 s.**
+  The host does hold the connection and boot the instance. `/healthz` is
+  exactly the path the wake adapter targets
+  ([`http.go:18,61`](../../../services/api-gateway/internal/wake/platforms/http.go#L18)),
+  so this is not a different door.
+- **Once awake, the gateway answered correctly in 1.18 s** — a truthful `404`
+  for a slug that does not exist, having travelled gateway → NATS →
+  `ocean-service` → Postgres and back. So every part of the chain works and
+  **the wake is the only broken part**, which is what the earlier windows
+  claimed and could not isolate.
+
+`SERVICE_WAKING` returning in **half a second** is the whole finding restated:
+a wake that worked would hold the connection for about twelve seconds. The
+`WakeObservation` type says this out loud — *on a host that starts an instance
+by holding the request, a fast wake call is the suspicious one* — and
+production is now producing exactly that shape.
+
+### The mechanism, read from the log — `wake_status` is 429
+
+**The diagnosis is now complete.** The fields shipped with PR #159 were read off
+the production gateway the same day, and they say something no hypothesis in
+this entry predicted:
+
+```json
+{"service":"ocean","wake_host":"myunivokai-ocean.onrender.com",
+ "wake_status":429,"wake_elapsed":105.890907,"message":"wake call sent"}
+{"service":"ocean","wake_host":"myunivokai-ocean.onrender.com",
+ "wake_status":429,"wake_elapsed":45.580116,"message":"wake call sent"}
+```
+
+**`429 Too Many Requests`, in 46 and 106 milliseconds.** Three things follow,
+and the third is the one that changes what to build:
+
+1. **The host is right.** `myunivokai-ocean.onrender.com` is the exact public
+   URL, which retires the "wrong wake target" hypothesis for the third and
+   last time — it is now confirmed from the gateway's own outbound request
+   rather than from reading the dashboard back.
+2. **It is not a private-network block.** The request reaches Render's routing
+   layer and comes back with an HTTP status, not a connection error and not a
+   timeout. `render.yaml`'s note about free services and private network
+   traffic is not what is happening here.
+3. **It is a refusal, and a refusal is not a start.** The premise in
+   [`platforms/http.go`](../../../services/api-gateway/internal/wake/platforms/http.go)
+   is *"the wake happened when the connection arrived"*. A 429 is the edge
+   declining the request **without passing it to the origin**, so the
+   connection arrived and the wake did not happen. That is the premise failing,
+   with a mechanism attached.
+
+**The volume rules out self-infliction, which was the first thing to check.**
+Filtering the gateway log to `"wake call sent"` returns **23 wake calls across
+six days** (2026-08-29 → 2026-09-04) spread over six services — `universe` 8,
+`auth` 5, `nature` 4, `ocean` 4, `dna` 1, `analytics` 1. That is roughly four a
+day. The single-flight lock is visibly working: eight gateway requests inside
+96 seconds produced **two** wake calls, not eight. So this is not our retry
+pattern tripping a limit we could tune our way out of.
+
+**21 of those 23 lines carry no `wake_status` at all**, because they predate the
+observability fix. That is worth stating rather than filtering out: for six days
+the log recorded twenty-one wake calls with no way to tell a refusal from a
+boot, which is precisely the gap PR #159 closed and the reason a defect this
+cheap to diagnose stayed open.
+
+**Why the source matters, stated as the hypothesis it still is.** The same URL
+from an external IP returns 200 and starts the instance in 12.46 s; from the
+gateway it returns 429 in 46 ms. So the refusal is **source-dependent**. The
+likeliest reading is that Render's egress addresses are shared across its
+free-tier fleet and the limit is applied per source address rather than per
+account — which would mean our four calls a day are irrelevant, because the
+address was over the limit before we made any of them. **This is not measured**
+and does not need to be for the decision below: what matters is that the
+refusal is not ours to fix by backing off.
+
+### One code fix this finding makes concrete
+
+`TestHTTPWakeIgnoresTheResponseStatus` asserts that a **502** is not a failure,
+and it is right — *"a booting instance can legitimately answer 502 or nothing
+at all while it starts"*. That test says nothing about 429, and 429 is the case
+that actually occurs. The two are opposite events:
+
+| Response | What it means | What the wake should conclude |
+| --- | --- | --- |
+| 502 / 503 / 504, or a timeout | the origin is starting | **the wake worked** — keep it |
+| **429** | the edge refused; the origin was never asked | **the wake did nothing** |
+
+So the fix is to split them: keep ignoring the status as a *readiness* verdict,
+and start reading it as a *delivery* verdict. **Built the same day** — see step
+3 below, which also records the one thing this paragraph first got wrong.
+
+It does not make the wake work, and nothing in our code can if the refusal is
+per source address. What it buys is that `"wake call sent"` stops being false
+and a refusal is visible at **warn** rather than hidden inside an info line
+that says the opposite. Small, testable, and independent of the hosting
+decision below — which is the argument for doing it regardless of which option
+step 4 picks, because all three of them still want a log that does not lie.
+
 Next steps, in order:
 
-1. Merge `fix/be/wake-response-visibility` so `wake_host`, `wake_status` and
-   `wake_elapsed` reach production logs. One request then answers what is
-   replying to these calls.
-2. If the reply comes from inside Render's network, the mechanism's premise
-   fails on this host and the choice is between a paid plan
-   (`SERVICE_WAKE_PLATFORM=none`, no code change) and a wake that leaves and
-   re-enters Render.
-3. An external keep-warm cron was costed and rejected: seven services awake
+1. ~~Merge `fix/be/wake-response-visibility`~~ — **done, released in PR #159.**
+2. ~~Read one wake's log line~~ — **done, 2026-09-04. `wake_status` is 429.**
+   The prediction was right about the host and the elapsed time and had no
+   guess for the status; the status is the whole answer.
+3. ~~Split delivery from readiness in the HTTP wake platform~~ — **done,
+   2026-09-04.** `WakeObservation.Refused()` reads the status as a delivery
+   verdict while leaving readiness undecidable, and `Coordinator` now logs
+   `"wake call refused"` at **warn** for a 429 instead of `"wake call sent"` at
+   info. `TestRefusedSeparatesADeclinedCallFromABootingInstance` pins both
+   halves across seven statuses, because widening the rule to "any 4xx/5xx" is
+   the natural-looking change that would reclassify a booting 502 as a refusal
+   and destroy the useful half.
+
+   **One claim in the paragraph above was wrong and is corrected here rather
+   than edited away:** the give-up tally did **not** need fixing. `RecordWakeSent`
+   is called at the decision to call and only `RecordServiceSeen` clears it, so
+   a refused wake already counted as unanswered. That is also why the
+   classification went into the log and **not** into the control flow — turning
+   a refusal into a returned error would have undercounted the slow cold starts
+   the coordinator's own comment exists to protect.
+4. **Then choose the hosting answer.** The premise is confirmed failed, so this
+   is now a decision rather than an investigation:
+   - **A paid plan** — `SERVICE_WAKE_PLATFORM=none`, no code change, and the
+     mechanism retires cleanly by its own design (§Removal when leaving free
+     tier). Costs money; removes the problem rather than working around it.
+   - **A wake that leaves and re-enters Render** — now *justified* rather than
+     speculative, because the 429 is source-dependent: a trigger on any
+     non-Render egress gets the 200-and-start that an external IP already
+     demonstrably gets. Note this is **not** the keep-warm cron rejected in
+     item 5: it fires on a visitor's arrival and wakes only what they asked
+     for, so it buys the same instance-hours the current design intends.
+     Costs one small external component and a shared secret.
+   - **Do nothing and accept it** — a visitor waits out the give-up window and
+     then sees `SERVICE_UNAVAILABLE`. Only defensible while nobody is using
+     the product, and the release removed the thing that made that true.
+5. An external **keep-warm** cron was costed and rejected: seven services awake
    continuously is ~5,110 instance-hours a month against a 750-hour allowance.
+   Item 4's second option is a different mechanism and is not covered by this
+   rejection.
+
+Reproduce the asymmetry, no API key needed:
+
+```bash
+# 1. a sleeping family service, through the gateway - fires a wake each time
+for i in 1 2 3 4 5 6 7; do
+  curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' \
+    https://myunivokai-gateway.onrender.com/api/ocean/share/worlds/does-not-exist
+  sleep 12
+done
+# 503 ~0.5s, seven times. Nothing starts.
+
+# 2. the SAME url the wake adapter targets, from outside Render
+curl -s -o /dev/null -w '%{http_code} %{time_starttransfer}s\n' \
+  https://myunivokai-ocean.onrender.com/healthz
+# 200 ~12s. It starts.
+
+# 3. through the gateway again
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' \
+  https://myunivokai-gateway.onrender.com/api/ocean/share/worlds/does-not-exist
+# 404 ~1s. Everything but the wake works.
+```
 
 ## DEFERRED-AUTH-001 — Define identity before authentication
 
