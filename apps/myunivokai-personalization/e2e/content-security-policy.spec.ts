@@ -34,6 +34,27 @@ const DRACO_FAMILY_PICKER_LABEL = "Forest";
  * the part under test. */
 const SCENE_SETTLE_MILLISECONDS = 9_000;
 
+/**
+ * The scene's own canvas, and why a bare `canvas` will not do.
+ *
+ * Picking a family starts a world transition, and `WorldTransition.tsx` mounts
+ * a SECOND canvas over the scene for the warp effect — `aria-hidden`, and
+ * unmounted again when the transition ends. So `locator("canvas")` is ambiguous
+ * for exactly as long as the animation runs, and an assertion that fires inside
+ * that window fails on strict mode rather than on anything about the policy.
+ *
+ * `data-engine` is written by react-three-fiber onto the canvas it owns, so
+ * this names the RENDERER's output specifically, which is what this suite is
+ * about. The attribute is matched without its value (`three.js r171`) so a
+ * three.js upgrade does not silently stop matching anything.
+ *
+ * The ambiguity predates the CSP work and was simply unreachable: before
+ * `S3-CSP-001` was fixed, nothing on a production build hydrated, so no canvas
+ * of either kind was ever created and these three tests failed earlier for a
+ * different reason.
+ */
+const SCENE_CANVAS_SELECTOR = "canvas[data-engine]";
+
 type PageObservations = {
   policyViolations: string[];
   pageErrors: string[];
@@ -132,7 +153,7 @@ test.describe("the Content-Security-Policy", () => {
     // And the world behind it: this route mounts a scene renderer of its own
     // now, which is a second thing the policy could refuse and a slower one to
     // notice, since a missing backdrop breaks nothing visible on the panel.
-    await expect(page.locator("canvas")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(SCENE_CANVAS_SELECTOR)).toBeVisible({ timeout: 60_000 });
     await page.waitForTimeout(SCENE_SETTLE_MILLISECONDS);
 
     expect(await readDocumentPolicyViolations(page)).toEqual([]);
@@ -147,7 +168,7 @@ test.describe("the Content-Security-Policy", () => {
 
       await page.goto("/");
       await page.getByRole("button", { name: familyName, exact: false }).first().click();
-      await expect(page.locator("canvas")).toBeVisible({ timeout: 60_000 });
+      await expect(page.locator(SCENE_CANVAS_SELECTOR)).toBeVisible({ timeout: 60_000 });
       await page.waitForTimeout(SCENE_SETTLE_MILLISECONDS);
 
       const documentViolations = await readDocumentPolicyViolations(page);
@@ -174,7 +195,7 @@ test.describe("the Content-Security-Policy", () => {
 
     await page.goto("/");
     await page.getByRole("button", { name: DRACO_FAMILY_PICKER_LABEL, exact: false }).first().click();
-    await expect(page.locator("canvas")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(SCENE_CANVAS_SELECTOR)).toBeVisible({ timeout: 60_000 });
     await page.waitForTimeout(SCENE_SETTLE_MILLISECONDS);
 
     const gstaticRequests = observations.requestedUrls.filter((url) => url.includes("gstatic.com"));
