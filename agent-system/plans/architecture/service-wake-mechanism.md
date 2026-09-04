@@ -8,7 +8,21 @@
 > started normally, in 7-13 seconds, when the same URL was requested from
 > outside Render. Everything below describes the design accurately and the code
 > matches it; the premise it rests on — *"the wake happened when the connection
-> arrived"* — is what does not hold. Read
+> arrived"* — is what does not hold.
+>
+> **Re-measured 2026-09-04 after the `staging` → `main` release (PR #159), and
+> the premise is now confirmed false rather than suspected.** The observability
+> this document's own fix added is deployed, and the defect survived the
+> release. Reduced to one variable — the same URL from two places, nothing else
+> changed — `ocean` answered `503 SERVICE_WAKING` in **0.48-0.81 s** through the
+> gateway on seven consecutive attempts across ~84 s and never started, then
+> started in **12.46 s** on one request to that identical `/healthz` from
+> outside Render, after which the gateway answered a truthful `404` in 1.18 s.
+> So gateway → NATS → service → Postgres all work and the wake is the only
+> broken part. What is still *not* established is **why** the inside-Render call
+> returns fast: that needs the `wake_host`/`wake_status`/`wake_elapsed` fields
+> read off a production log, and the behaviour being measured is not the same
+> fact as the mechanism being known. Read
 > [DEFECT-WAKE-001](../backlog/engineering-backlog.md#defect-wake-001--the-wake-mechanism-reports-waking-services-it-does-not-wake)
 > before changing anything here: it records what was ruled out (instance-hour
 > limits, wrong target URLs, the 5s timeout, NATS, Redis, CORS) so the same
