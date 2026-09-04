@@ -21,6 +21,39 @@
 # myunivokai-env-prod in the dashboard (blueprint sync cannot do this —
 # group membership has no render.yaml representation), not filling in
 # NATS_USERNAME/NATS_PASSWORD by hand.
+#
+# RESOLVED, re-verified against the live account on 2026-09-04: the group is
+# now linked to ALL EIGHT services — gateway, dna, nature, universe, analytics,
+# ocean, telemetry, auth — and it carries NATS_URL plus the nats.creds Secret
+# File. The linking work the paragraph above asks for is done, so do not do it
+# again. Three consequences, all of them load-bearing:
+#   - The NATS_USERNAME/NATS_PASSWORD sync:false entries below are dead on
+#     every service, not just four. Nothing reads them. They are kept because
+#     removing an env var from a blueprint does not remove it from a service.
+#   - Production authenticates with ONE shared credential. There is no
+#     per-service NATS user, so infra/nats/nats-server.conf's per-user publish
+#     and subscribe allow lists are local-only in the strong sense: production
+#     has no equivalent of them to keep in step. A new subject needs no
+#     production ACL grant.
+#   - Verified end to end the same day rather than inferred: /api/v1/readyz
+#     reports nats and redis ready, and ocean-service answered a share query
+#     through NATS (gateway -> NATS -> ocean -> Postgres -> 404 in 493 ms).
+#
+# WHICH BRANCH RENDER DEPLOYS, because this file does not say and the answer
+# has cost two defects. There is no `branch:` key anywhere below, so every
+# service falls back to the repository's DEFAULT branch, which is `main`.
+# Read from the API on 2026-09-04: myunivokai-gateway is `branch: main`,
+# `autoDeploy: yes`. Two things follow that a reader of this file would
+# otherwise learn the hard way:
+#   - `staging` is not deployed anywhere. Work merged to staging and left
+#     there is not in production, however green its CI is. DEFECT-CSP-001 sat
+#     latent behind 46 such commits and would have been a total outage on the
+#     first release.
+#   - A blueprint sync applies THIS FILE from `main`. Any hardcoded `value:`
+#     here overwrites whatever is on the dashboard, so a dashboard-only fix is
+#     reverted by the next sync unless the value is changed here too. That is
+#     not hypothetical: SERVICE_WAKE_TIMEOUT was set live to 45s on 2026-09-04
+#     while `main` still said 5s, and only the release closed the gap.
 services:
 # =============================================================================
 # Note: The personalization frontend (apps/myunivokai-personalization) is
@@ -203,16 +236,41 @@ services:
         value: 60s
       - key: SERVICE_WAKE_RETRY_AFTER
         value: 15s
-      # Off until myunivokai-telemetry exists and has been verified — with it
-      # off the gateway registers no telemetry middleware, runs no ticker and
-      # publishes nothing, so this is the same request path the previous
-      # deploy served. Flipping it to "true" starts filling
-      # MYUNIVOKAI_EVENTS with one rollup envelope per minute whether or not
-      # a consumer exists yet, which is deliberate: envelopes accumulate on
-      # the stream the same way analytics' events did before that service was
-      # built. See agent-system/plans/services/telemetry-service-plan.md.
+      # ON since 2026-09-04. It was "false" until myunivokai-telemetry existed
+      # and had been verified, and that condition has now been met twice over:
+      # the service is deployed and its durable consumer shipped in Sprint 05,
+      # and the release that put that consumer's code on `main` is PR #159.
+      #
+      # The reason the "false" outlived its purpose is worth keeping, because
+      # it is how a two-step finish loses its second step. This file's own
+      # myunivokai-telemetry comment names both: set TELEMETRY_SERVICE_URL on
+      # the gateway, then set TELEMETRY_ENABLED=true and redeploy. The URL was
+      # set. The flag was not. So Sprint 05 shipped a Rust service, a dual-sink
+      # switch and an admin screen, and the screen read an empty database for
+      # two weeks — a service that starts with nothing to consume looks exactly
+      # like a working one until somebody opens the screen, which is the
+      # failure mode the telemetry comment below predicted about storage and
+      # which arrived through the producer instead.
+      #
+      # With it on, the gateway registers the telemetry middleware, runs the
+      # flush ticker, and publishes one rollup envelope per minute per instance
+      # to myunivokai.events.telemetry.http.v1 through JetStream. It is bounded
+      # work off the request path.
+      #
+      # No production ACL grant is needed, checked rather than assumed because
+      # a per-user publish allow list would have made this flip fail silently.
+      # The local infra/nats/nats-server.conf does grant this subject to the
+      # gateway as a literal, and explains why not a wildcard — but that file
+      # is local-only and production has no equivalent: all eight services
+      # share one nats.creds from the myunivokai-env-prod group, so there is no
+      # per-service user whose grants could lag a new subject. See this file's
+      # header. The stream side was never in question: the subject already
+      # matches MYUNIVOKAI_EVENTS's myunivokai.events.> filter.
+      #
+      # If data still does not arrive, the symptom to look for is a publish
+      # error in the gateway log once a minute, and the revert is this value.
       - key: TELEMETRY_ENABLED
-        value: "false"
+        value: "true"
       - key: TELEMETRY_FLUSH_INTERVAL
         value: 60s
 
@@ -468,6 +526,13 @@ services:
   #
   # Then set TELEMETRY_SERVICE_URL on myunivokai-gateway (blank on first sync,
   # like the other five) and TELEMETRY_ENABLED=true, and redeploy the gateway.
+  #
+  # BOTH DONE, 2026-09-04 — and the gap between them is the reason this note
+  # now says so. The URL was set when the service was deployed; the flag was
+  # left at "false" and stayed there, so this two-step instruction was half
+  # executed for two weeks while the admin screen showed an empty database.
+  # A step that is written in a comment and not in a checklist is a step that
+  # gets done once. See the TELEMETRY_ENABLED block on myunivokai-gateway.
   #
   # No MIGRATIONS_DIR: sqlx embeds the migrations into the binary at compile
   # time, so this container cannot start with migrations that do not match its
