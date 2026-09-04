@@ -56,7 +56,7 @@ func Load() (Config, error) {
 	loadEnvironmentFiles()
 	loadedConfig := Config{
 		AppEnvironment:             get("APP_ENV", "development"),
-		PublicWebURL:               get("PUBLIC_WEB_URL", "http://localhost:41300"),
+		PublicWebURL:               get("PUBLIC_WEB_URL", "http://localhost:41300/universe"),
 		DatabaseURL:                get("DATABASE_URL", ""),
 		DatabaseDirectURL:          get("DATABASE_DIRECT_URL", ""),
 		DatabaseMaximumConnections: getInt("DATABASE_MAX_CONNS", defaultDatabaseMaximumConnections),

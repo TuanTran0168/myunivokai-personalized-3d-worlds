@@ -373,8 +373,15 @@ services:
         value: 500ms
       - key: OUTBOX_BATCH_SIZE
         value: "50"
+      # Declared rather than left to the dashboard, because leaving it there is
+      # what broke it: myunivokai-ocean had NO value set at all, so it fell
+      # through to the compiled default and every ocean share link in production
+      # pointed at http://localhost:41300. The path segment after the origin is
+      # the family's own web prefix - the share route is
+      # /{family}/share/worlds/{slug} - so this value is derivable from the
+      # service it sits under and nothing about it is environment-specific.
       - key: PUBLIC_WEB_URL
-        sync: false
+        value: "https://myunivokai.vercel.app/universe"
 
   - type: web
     name: myunivokai-auth
@@ -645,8 +652,15 @@ services:
         value: 500ms
       - key: OUTBOX_BATCH_SIZE
         value: "50"
+      # Declared rather than left to the dashboard, because leaving it there is
+      # what broke it: myunivokai-ocean had NO value set at all, so it fell
+      # through to the compiled default and every ocean share link in production
+      # pointed at http://localhost:41300. The path segment after the origin is
+      # the family's own web prefix - the share route is
+      # /{family}/share/worlds/{slug} - so this value is derivable from the
+      # service it sits under and nothing about it is environment-specific.
       - key: PUBLIC_WEB_URL
-        sync: false
+        value: "https://myunivokai.vercel.app/nature"
 
   - type: web
     name: myunivokai-ocean
@@ -698,5 +712,12 @@ services:
         value: 500ms
       - key: OUTBOX_BATCH_SIZE
         value: "50"
+      # Declared rather than left to the dashboard, because leaving it there is
+      # what broke it: myunivokai-ocean had NO value set at all, so it fell
+      # through to the compiled default and every ocean share link in production
+      # pointed at http://localhost:41300. The path segment after the origin is
+      # the family's own web prefix - the share route is
+      # /{family}/share/worlds/{slug} - so this value is derivable from the
+      # service it sits under and nothing about it is environment-specific.
       - key: PUBLIC_WEB_URL
-        sync: false
+        value: "https://myunivokai.vercel.app/ocean"

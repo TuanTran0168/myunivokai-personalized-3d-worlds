@@ -20,6 +20,18 @@ const (
 	traitLandmarkType            = "Trait Landmark"
 )
 
+// sharePagePathPrefix is where the web app serves a published world, BELOW the
+// family prefix that PUBLIC_WEB_URL already carries. The full route is
+// /{family}/share/worlds/{slug}, declared once in
+// apps/myunivokai-personalization/src/lib/worldRoutes.ts.
+//
+// It is a named constant because the literal it replaces was written three
+// times, in three services, and all three were missing the `worlds/` segment -
+// so every share link this platform has ever handed out was a 404. A path that
+// only the frontend knows the shape of is a path the backend gets to guess at.
+const sharePagePathPrefix = "/share/worlds/"
+
+
 type WorldService struct {
 	config  config.Config
 	store   repositories.Store
@@ -210,7 +222,7 @@ func (service *WorldService) PublishWorld(ctx context.Context, worldID string, r
 			if world.ShareSlug == nil {
 				return models.PublishResponse{}, errors.New("share slug was not created")
 			}
-			return models.PublishResponse{ShareSlug: *world.ShareSlug, ShareURL: strings.TrimRight(service.config.PublicWebURL, "/") + "/share/" + *world.ShareSlug}, nil
+			return models.PublishResponse{ShareSlug: *world.ShareSlug, ShareURL: strings.TrimRight(service.config.PublicWebURL, "/") + sharePagePathPrefix + *world.ShareSlug}, nil
 		}
 		if !errors.Is(err, repositories.ErrConflict) {
 			return models.PublishResponse{}, err
