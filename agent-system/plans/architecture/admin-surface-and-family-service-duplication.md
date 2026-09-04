@@ -241,7 +241,8 @@ it is the reason A1 is not simply "half a day".
 anonymous, accounts holding at least one world, a worlds-per-account histogram.
 This is Phase E's P2 and it needs the periodic rollup event, because the claim
 deliberately publishes nothing and a test enforces that
-(`contracts_world_claim_test.go`). See §13 — that plan is not merged.
+(`contracts_world_claim_test.go`). See
+[`phase-e-what-ownership-unlocks.md`](phase-e-what-ownership-unlocks.md).
 
 **A3 — confirm telemetry actually arrives.** `TELEMETRY_ENABLED: "true"` is
 committed in `render.yaml` (`8cb89a0`, merged). The three telemetry pages have
@@ -472,11 +473,14 @@ Doing it while only Tier 0 is in scope is what keeps it from becoming a project.
 Recorded rather than fixed, because none of it belongs in this document's
 change.
 
-- **`feat/docs/phase-e-what-ownership-unlocks` is not merged.** The Phase E plan
-  (587 lines) and the first drafts of the share defect exist only on that local
-  branch. Anything above that references "Phase E P2" is referring to an
-  unmerged document. Merge it or discard it, but it should not stay
-  half-present.
+- ~~`feat/docs/phase-e-what-ownership-unlocks` is not merged.~~ **Resolved
+  2026-09-05.** Its document is now
+  [`phase-e-what-ownership-unlocks.md`](phase-e-what-ownership-unlocks.md) on
+  this branch, with a correction note recording that this document's §4
+  (not that one's §7) is the one that actually fixed the share-URL defect. The
+  branch's own code changes (to `render.yaml` and the wake package) were
+  discarded rather than merged — they were already superseded by other work
+  that landed in between.
 - **`sprint-07`'s README says "Planned; scope approved, implementation
   absent"** while its own `user-stories.md` marks five of six stories
   `Implemented`. The README is wrong.
