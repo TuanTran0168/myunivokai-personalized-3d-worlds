@@ -12,6 +12,7 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/edge"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/wake"
 	"github.com/nats-io/nats.go"
 )
@@ -444,16 +445,21 @@ func TestAnInvalidCreateWorldRequestWakesNothing(t *testing.T) {
 
 // A cached read never reaches NATS, so it must never wake anything either -
 // the cache exists precisely so a sleeping service is not needed at all.
+//
+// The SHARE route, and only because it is now the only cached read: a by-id
+// world read is answered per caller, so the gateway no longer caches it. See
+// WorldHandler.GetWorld. The property under test is unchanged - it was never
+// about which route, only about a hit not reaching the broker.
 func TestACacheHitWakesNothing(t *testing.T) {
 	waker := newFakeWaker(wake.Services...)
 	edgeStore := newFakeEdgeStore()
-	worldID := "9f8a1b2c-3d4e-4f50-8a1b-2c3d4e5f6071"
-	if err := edgeStore.Set(context.Background(), worldCacheNamespace, string(contracts.WorldFamilyUniverse)+":"+worldID, []byte(`{"worldId":"cached"}`), time.Minute); err != nil {
+	const cachedShareSlug = "neo-64x3rcsu3a"
+	if err := edgeStore.Set(context.Background(), shareCacheNamespace, edge.ShareCacheIdentifier(string(contracts.WorldFamilyUniverse), cachedShareSlug), []byte(`{"world":{"nickname":"cached"}}`), time.Minute); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
 	router := NewRouter(testGatewayConfig(), &fakeBroker{requestError: nats.ErrNoResponders}, edgeStore, waker, nil)
 	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/universe/worlds/"+worldID, nil))
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/universe/share/worlds/"+cachedShareSlug, nil))
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 from cache", response.Code)

@@ -718,12 +718,38 @@ type Job struct {
 	DailyAIGenerationLimit *int `json:"dailyAiGenerationLimit,omitempty"`
 }
 
+// RequestingAccountID on the two READ queries carries the same value, from the
+// same place, and for the same reason it does on the mutations below: the
+// gateway sets it from a verified token, and nil means "no session", not "the
+// owner".
+//
+// It is on the reads because leaving it off was a hole rather than a
+// simplification. `GET /worlds/{id}` answered 200 to a caller with no
+// credentials at all, for a world that had an owner and had never been
+// published - so anybody holding an id could read a stranger's private world,
+// including its nickname, its role, every variant and the whole DNA snapshot,
+// which is strictly more than the share page deliberately redacts down to.
+//
+// The rule these two fields buy is `WorldReadPermitted`, and it is the SAME
+// predicate as the mutation rule on purpose: an owned world is readable only by
+// its owner, and an UNOWNED world stays readable by anyone holding its id.
+// The second half is not a compromise, it is the product: every world made
+// before ownership existed is unowned, as is every world made by a visitor who
+// has not signed up.
 type WorldQueryData struct {
-	WorldID string `json:"worldId"`
+	WorldID             string  `json:"worldId"`
+	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
 }
 
+// WorldListQueryData is the gallery's batch read. It carries the caller for the
+// same reason WorldQueryData does, and its refusal is a FILTER rather than an
+// error: a caller asking for 25 ids gets back only the worlds they may read.
+// That is not a new behaviour to absorb - the gallery has always had to render
+// a page of 25 from fewer than 25 answers, because an id the family service
+// does not know is simply absent from the result.
 type WorldListQueryData struct {
-	WorldIDs []string `json:"worldIds"`
+	WorldIDs            []string `json:"worldIds"`
+	RequestingAccountID *string  `json:"requestingAccountId,omitempty"`
 }
 
 // RequestingAccountID appears on all three world mutations and answers one

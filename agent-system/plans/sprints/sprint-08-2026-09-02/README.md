@@ -206,6 +206,21 @@ every path in CI and none of the logic.
       mutation added later without a check fails the build —
       `TestEveryWorldMutationHonoursOwnership` in each family service, and
       `TestEveryWorldMutationCarriesTheTokensAccount` at the gateway.
+      **The word doing the damage here is "mutation".** This item was met in
+      full and the sprint's ownership work was still incomplete, because the
+      ratchet behind it classified every `Store` method by whether it WRITES.
+      `GetWorld` answered no and was asked nothing further. See the item below
+      and `S8-IDENTITY-021`.
+- [x] A non-owner is rejected for every world **READ**, by the same predicate
+      and with the same shape of ratchet — `TestEveryWorldReadHonoursOwnership`
+      and `TestTheBatchReadDropsWorldsTheCallerMayNotReadInsteadOfFailing` in
+      each family service, `TestEveryWorldReadCarriesTheTokensAccount` and
+      `TestTheByIdWorldReadIsNeverServedFromCache` at the gateway. Added
+      2026-09-04 with `S8-IDENTITY-021`, after the owner found the hole in the
+      running product. `TestEveryStoreMethodThatReturnsAWorldIsOwnershipFiltered`
+      is the part that would have caught it: it asks the type system which
+      methods hand back a `WorldBundle` rather than trusting a hand-kept list,
+      so a read added later is forced to declare itself.
 - [x] An **unowned** world stays mutable by anyone holding its id — the
       pre-existing anonymous behaviour is not broken by the ownership check
       (`TestAWorldWithNoOwnerStaysMutable`). Deletion is the one exception, and

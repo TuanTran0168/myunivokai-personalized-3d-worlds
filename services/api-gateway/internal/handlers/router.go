@@ -165,26 +165,43 @@ type worldRouteHandler interface {
 // registerWorldRoutes splits a family's routes by whether the server reads the
 // caller's identity, and the split is the point rather than a tidy-up.
 //
-// The reads are open, and one of them must be: `/share/worlds/{slug}` is the
-// URL a visitor sends to a friend, so it has to answer a stranger, a signed-in
-// stranger and somebody holding a seven-day-old token identically. Attaching
-// the identity middleware to the whole group made a public page 401 for anybody
-// whose session had gone stale — the session being irrelevant to the page is
-// exactly what made the failure invisible in every other test.
+// **Exactly one route is outside it**, and it is the only one that can be:
+// `/share/worlds/{slug}` is the URL a visitor sends to a friend, so it has to
+// answer a stranger, a signed-in stranger and somebody holding a seven-day-old
+// token identically. Attaching the identity middleware to the whole group made
+// a public page 401 for anybody whose session had gone stale — the session
+// being irrelevant to the page is exactly what made the failure invisible in
+// every other test, and TestThePublicSharePageIgnoresTheVisitorsSessionEntirely
+// is what keeps it out.
 //
-// The writes carry it, because each one either sets the owner or is checked
-// against it.
+// **The reads used to be outside it too, and that was the bug.** The comment
+// here read "the reads are open, and one of them must be" — true of the share
+// route, and quietly extended to the two beside it. What it bought was
+// `GET /worlds/{id}` answering 200 to a caller with no credentials at all, for
+// a world that had an owner and had never been published: the nickname, the
+// role, every variant and the whole DNA snapshot of somebody else's private
+// world, which is strictly more than the share response is redacted down to.
+// One route needing no session is not the same fact as three routes not
+// wanting one.
+//
+// So every route but the share page carries the caller now. The writes carry it
+// because each one either sets the owner or is checked against it; the reads
+// carry it because each one is checked against it too. What a caller may READ
+// is decided by the family service, in WorldReadPermitted, using the same
+// predicate as the writes: an owned world is its owner's, an unowned world
+// stays open to anyone holding its id — which is every world made before
+// ownership existed, and every world made by a visitor who has not signed up.
 func registerWorldRoutes(router chi.Router, handler worldRouteHandler, attachProductIdentity func(http.Handler) http.Handler) {
-	router.Get("/worlds", handler.GetWorlds)
-	router.Get("/worlds/{worldID}", handler.GetWorld)
 	router.Get("/share/worlds/{shareSlug}", handler.GetShare)
-	router.Group(func(writeRouter chi.Router) {
-		writeRouter.Use(attachProductIdentity)
-		writeRouter.Post("/worlds", handler.CreateWorld)
-		writeRouter.Post("/worlds/{worldID}/variants", handler.CreateVariant)
-		writeRouter.Post("/worlds/{worldID}/variants/{variantID}/select", handler.SelectVariant)
-		writeRouter.Post("/worlds/{worldID}/publish", handler.PublishWorld)
-		writeRouter.Post("/worlds/{worldID}/delete", handler.DeleteWorld)
+	router.Group(func(identifiedRouter chi.Router) {
+		identifiedRouter.Use(attachProductIdentity)
+		identifiedRouter.Get("/worlds", handler.GetWorlds)
+		identifiedRouter.Get("/worlds/{worldID}", handler.GetWorld)
+		identifiedRouter.Post("/worlds", handler.CreateWorld)
+		identifiedRouter.Post("/worlds/{worldID}/variants", handler.CreateVariant)
+		identifiedRouter.Post("/worlds/{worldID}/variants/{variantID}/select", handler.SelectVariant)
+		identifiedRouter.Post("/worlds/{worldID}/publish", handler.PublishWorld)
+		identifiedRouter.Post("/worlds/{worldID}/delete", handler.DeleteWorld)
 	})
 }
 

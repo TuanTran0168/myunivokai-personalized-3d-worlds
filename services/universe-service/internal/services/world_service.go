@@ -104,21 +104,46 @@ func (service *WorldService) ClaimWorlds(ctx context.Context, envelope contracts
 	return nil
 }
 
-func (service *WorldService) GetWorld(ctx context.Context, worldID string) (models.WorldResponse, error) {
+// GetWorld answers the maker's own world page, and it is an OWNERSHIP-CHECKED
+// read rather than an open one. What it returns is strictly more than the share
+// page is allowed to show - the nickname, the role, every variant and the whole
+// DNA snapshot, where a share response is redacted down to PublicWorld,
+// PublicVariant and PublicDNA - so serving it to whoever holds the id handed a
+// stranger the private version of a world the redaction exists to protect.
+//
+// The public way to see somebody else's world is the share slug, which is what
+// the world page's own Share panel copies. `/worlds/{id}` is the maker's
+// editing surface: it carries Regenerate, Publish and Delete.
+func (service *WorldService) GetWorld(ctx context.Context, worldID string, requestingAccountID *string) (models.WorldResponse, error) {
 	bundle, err := service.store.GetWorld(ctx, worldID)
 	if err != nil {
+		return models.WorldResponse{}, err
+	}
+	if err := repositories.WorldReadPermitted(bundle.World.OwnerAccountID, requestingAccountID); err != nil {
 		return models.WorldResponse{}, err
 	}
 	return worldResponse(bundle), nil
 }
 
-func (service *WorldService) GetWorlds(ctx context.Context, worldIDs []string) (models.WorldListResponse, error) {
+// GetWorlds is the gallery's batch read, and it FILTERS where GetWorld refuses.
+//
+// The difference is not a softer rule, it is the same rule applied to a request
+// that names many worlds instead of one. A single unreadable id must not blank
+// a whole gallery - and the client already handles a short answer, because an
+// id the family service does not know has always been absent from the result
+// rather than an error. Fixing this by refusing the batch would have turned one
+// stale entry in localStorage, on a shared device or after signing into a
+// second account, into an empty page with nothing to explain it.
+func (service *WorldService) GetWorlds(ctx context.Context, worldIDs []string, requestingAccountID *string) (models.WorldListResponse, error) {
 	bundles, err := service.store.GetWorldsByIDs(ctx, worldIDs)
 	if err != nil {
 		return models.WorldListResponse{}, err
 	}
 	worlds := make([]models.WorldResponse, 0, len(bundles))
 	for _, bundle := range bundles {
+		if repositories.WorldReadPermitted(bundle.World.OwnerAccountID, requestingAccountID) != nil {
+			continue
+		}
 		worlds = append(worlds, worldResponse(bundle))
 	}
 	return models.WorldListResponse{Worlds: worlds}, nil

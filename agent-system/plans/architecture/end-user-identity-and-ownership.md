@@ -21,6 +21,10 @@
 > quietly folded in. Several
 > decisions cut scope rather than adding it, so read §16 before any other
 > section: it supersedes parts of §3.4, §5, §9, §10, §11 and §17 in place.
+> **Decision 23 was added on 2026-09-04, after the owner found an
+> authorization defect in the shipped product**: this plan specified ownership
+> for the WRITE path and left the READ path unspecified, and unspecified became
+> open. It corrects a premise §6.3 and §7 both lean on. Read it before §6.5.
 > **Scheduled:** [Sprint 08 — starts 2026-09-02](../sprints/sprint-08-2026-09-02/README.md),
 > as [`EPIC-S8-IDENTITY-001`](../backlog/engineering-backlog.md#epic-s8-identity-001--end-user-identity-and-world-ownership).
 > The sprint covers Phases A-C; Phase D and Phase E are explicitly out of its
@@ -99,6 +103,14 @@ There is none. There is a capability URL and a browser-local list:
   who clears their browser loses every world they made. Both are facts about
   the product today, and the second is the strongest product argument for this
   plan.
+
+  **The first is no longer true, as of 2026-09-04 — and it should have stopped
+  being true when Phase B shipped.** It is left standing above because it
+  correctly describes the baseline this plan was written against. What went
+  wrong is that this bullet reads as a fact to preserve rather than a defect to
+  close: Phase B gave `owner_account_id` to the write path and never asked the
+  read path anything, so an owned, never-published world stayed readable by
+  anybody holding its id. See decision 23.
 
 ### What this plan overrides if it is approved
 
@@ -636,10 +648,19 @@ one of them is the owner's own quota decision:
    is the only per-visitor handle that exists before login, so **the quota needs
    it whether or not the claim does.** That alone pays for the column.
 2. **The claim cannot be proven.** "These world ids are mine" is not a proof:
-   `/worlds/{worldId}` is the URL a visitor sends to a friend, so a world id is
-   public by design. Claiming by id would let the recipient of a shared link
-   take the world. The `anonymousId` is the one identifier that never appears in
-   a URL, which is the whole reason it is a separate value.
+   a world id is not a secret — it sits in a URL, in browser history, in a
+   screenshot — so claiming by id would let whoever received one take the
+   world. The `anonymousId` is the one identifier that never appears in a URL,
+   which is the whole reason it is a separate value.
+
+   **Narrowed 2026-09-04 (decision 23).** This paragraph used to say
+   `/worlds/{worldId}` "is the URL a visitor sends to a friend, so a world id
+   is public by design", and the conclusion above survives that being wrong
+   twice over. It is not the URL a visitor sends: the product mints a separate
+   `/share/{slug}` for that, which is what the world page's own Share panel
+   copies. And "not a secret" was never a licence to serve the private payload
+   to anybody holding one — an id being weak proof of ownership is a different
+   claim from an id being sufficient authorization.
 
 It is one `UUID` column, one response field, one request header and one
 `WHERE` clause — and it is what makes the difference between "sign up and your
@@ -661,6 +682,11 @@ mutation. RLS would add a second place for the same rule to be wrong, and a
 Neon-specific coupling, for no additional guarantee.
 
 ### 6.5 The write path gains one behaviour and one endpoint
+
+> **The section title is the defect.** This is the only place the plan says
+> what ownership *does*, and it says it about writes. The read path was never
+> specified, so it shipped unchanged — open. Decision 23 specifies it, and the
+> rule it lands on is the first bullet below applied verbatim to reads.
 
 - `POST /worlds/{id}/publish`, `/variants`, `/variants/{id}/select`: reject with
   `403 NOT_WORLD_OWNER` when the world **has** an owner and the caller is not
@@ -771,10 +797,12 @@ Properties that matter:
   no traffic from anybody for a week would lose the claim, and the fix would be
   `--max-age`, not code.
 - **It cannot be replaced by the world ids the client already stores.** A world
-  id is not a secret: `/worlds/{worldId}` is the URL a visitor sends to a
-  friend. "Claim these ids" would let the recipient of a shared link claim
-  someone else's world. The minted `anonymousId` is never in a URL, which is
-  the whole reason it exists.
+  id is not a secret — it sits in a URL, in browser history, in a screenshot —
+  so "claim these ids" would let whoever received one claim someone else's
+  world. The minted `anonymousId` is never in a URL, which is the whole reason
+  it exists. (This bullet also said `/worlds/{worldId}` is the URL a visitor
+  sends to a friend. It is not, and the correction is decision 23; the argument
+  here does not depend on it.)
 - **Unclaimed anonymous worlds have no one who can ever ask for their erasure.**
   They hold raw personal input and no owner. Given the §10 decision that
   nothing is physically purged, this stays an open gap rather than a solved
@@ -2084,6 +2112,48 @@ because deciding them now would be deciding them wrongly:
 | --- | --- | --- |
 | 21 | **The account gets a page of its own** — full name, gender, and the create-form fields as saved defaults — **in `auth-service`, in one new table** (§19) | The first migration this plan has cost. Buys a second visit that does not mean retyping everything, and one place where the display name lives. Costs a table in `auth-service` that is not about authentication, which §19 argues is still the least-bad home |
 | 22 | **A saved preference is shown in the thing it changes** (§19): the create page's canvas follows the profile's family, and the profile page's backdrop IS the world the create form would open with | Costs one more WebGL context, on a form page, and makes the create page's two family states a single-writer invariant. Buys a setting somebody can confirm by looking rather than by trusting — which is what `S8-IDENTITY-020` exists to fix |
+| 23 | **A world READ is checked against its owner, by the same rule as a write** (2026-09-04, after the owner found the defect in the running product): an owned world is readable only by its owner, an unowned world stays readable by anyone holding its id, and the refusal is `403 NOT_WORLD_OWNER` | Costs the gateway's `world:v1` cache, because an answer that depends on the caller cannot live under a key that cannot name one. Buys the thing §6 was for: `owner_account_id` now decides who may *see* a world and not only who may change it |
+
+### Decision 23 — the read path, which this plan left unspecified
+
+**What the owner reported.** A `/worlds/{id}` URL for an unpublished world
+belonging to another account rendered the world, signed out, with no error —
+"đáng lẽ phải 401 hay 403 gì chứ?". It did: `GET /api/{family}/worlds/{id}`
+answered 200 to a caller with no credentials at all.
+
+**Why it happened, which is the part worth keeping.** Nothing here was
+bypassed. Phase B put ownership on every mutation, wrote the rule down once in
+`worldMutationPermitted`, and proved it with a table and a reflective ratchet
+over every `Store` method. The ratchet asked one question — *does this method
+mutate a world?* — and `GetWorld` answered no. **A read that hands a stranger
+somebody's private world is not a mutation**, so it was filed under "the rest
+of the Store" and asked nothing further. The category was the blind spot, not
+the coverage; and three documents recorded the open read as settled design
+rather than as an unclosed hole.
+
+**The rule taken.** The same predicate as the writes, and deliberately not a
+second one to keep in step: `WorldReadPermitted` delegates to
+`worldMutationPermitted`. An unowned world stays readable by anybody holding
+its id — that is not a compromise, it is every world made before ownership
+existed and every world made by a visitor who has not signed up, and refusing
+them would have broken the product to fix it.
+
+**403, not 404**, though 404 would hide the world's existence. The write path
+already answers 403 `NOT_WORLD_OWNER` for the same world, so a 404 on the read
+alone would be a half-measure: it would cost a real visitor — somebody who
+followed a pasted URL — the one sentence that explains what happened, and buy a
+stranger nothing a POST would not give them.
+
+**The batch read filters instead of refusing.** `?ids=` drops what the caller
+may not see rather than failing, because the gallery hydrates from ids the
+browser holds and one stale entry on a shared device would otherwise blank a
+whole page. §8 already established that a page of 25 can render fewer than 25.
+
+**What publishing does and does not mean.** It opens the share door, not the id
+door. A published world is readable by anybody at `/share/{slug}`, redacted to
+`PublicWorld`/`PublicVariant`/`PublicDNA`; its `/worlds/{id}` payload stays
+owner-only. Those were the same answer before this, which is what made the leak
+worth a decision rather than a patch.
 
 ## 17. Renaming `myunivokai-web`
 

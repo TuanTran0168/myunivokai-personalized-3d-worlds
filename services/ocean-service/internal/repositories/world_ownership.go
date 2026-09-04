@@ -47,6 +47,28 @@ func worldMutationPermitted(ownerAccountID, requestingAccountID *string) error {
 	return nil
 }
 
+// WorldReadPermitted decides whether a caller may READ a world, and it is
+// deliberately the same predicate as worldMutationPermitted rather than a
+// second rule kept in step with it by hand.
+//
+// It is a function of two pointers, with no database in it, because the read
+// path has no transaction to run inside and needs none. A mutation takes the
+// row `FOR UPDATE` and checks the owner there, so a claim landing at the same
+// moment cannot change the answer between the check and the write it
+// authorises. A read authorises nothing, so the owner already loaded with the
+// world is enough - and loading it costs nothing extra, because
+// `worldSelectColumns` has always selected `owner_account_id`.
+//
+// The refusal is ErrNotWorldOwner, which the transport turns into
+// 403 NOT_WORLD_OWNER: the same answer the write path already gives for the
+// same world. A 404 would hide the world's existence instead, but the write
+// path discloses it anyway, so a 404 on the read alone would be a half-measure
+// - it would cost a real visitor the one sentence that explains what happened,
+// and buy a stranger nothing they could not get from a POST.
+func WorldReadPermitted(ownerAccountID, requestingAccountID *string) error {
+	return worldMutationPermitted(ownerAccountID, requestingAccountID)
+}
+
 // ErrWorldNotOwned is returned when a mutation that requires an owner is asked
 // of a world that has none. Only deletion is in that category.
 var ErrWorldNotOwned = errors.New("world has no owner")
