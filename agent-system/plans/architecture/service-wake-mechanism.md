@@ -8,7 +8,49 @@
 > started normally, in 7-13 seconds, when the same URL was requested from
 > outside Render. Everything below describes the design accurately and the code
 > matches it; the premise it rests on — *"the wake happened when the connection
-> arrived"* — is what does not hold. Read
+> arrived"* — is what does not hold.
+>
+> **Re-measured 2026-09-04 after the `staging` → `main` release (PR #159), and
+> the premise is now confirmed false rather than suspected.** The observability
+> this document's own fix added is deployed, and the defect survived the
+> release. Reduced to one variable — the same URL from two places, nothing else
+> changed — `ocean` answered `503 SERVICE_WAKING` in **0.48-0.81 s** through the
+> gateway on seven consecutive attempts across ~84 s and never started, then
+> started in **12.46 s** on one request to that identical `/healthz` from
+> outside Render, after which the gateway answered a truthful `404` in 1.18 s.
+> So gateway → NATS → service → Postgres all work and the wake is the only
+> broken part.
+>
+> **And the mechanism is now known, from the log fields this document's own fix
+> added: `wake_status` is `429`, returned in 46 and 106 milliseconds, against
+> the correct host.** A 429 is Render's edge declining the request **without
+> passing it to the origin**, which is the exact refutation of the premise
+> quoted above: the connection arrived and the wake did not happen. It is not a
+> private-network block — the request reaches the routing layer and comes back
+> with an HTTP status. It is also not self-inflicted: the gateway made 23 wake
+> calls in six days across six services, and the single-flight lock is visibly
+> working (eight requests in 96 s produced two wake calls). The refusal is
+> **source-dependent** — the same URL from an external IP returns 200 and starts
+> the instance — and the likeliest reading, recorded as an unmeasured hypothesis,
+> is a limit applied per shared free-tier egress address rather than per account.
+>
+> **One rule in the code was provably too coarse, and it is now split — 2026-09-04.**
+> The rule is `platforms/http.go`'s *"the status code still decides nothing —
+> the wake happened when the connection arrived"* (and the same sentence on
+> `WakeObservation`). Not §Status code contract below, which is about the codes
+> the gateway returns to a client and is unaffected.
+>
+> That rule is right about **readiness** and wrong about **delivery**. A 502 is
+> a booting instance and must not count as a failure —
+> `TestHTTPWakeIgnoresTheResponseStatus` keeps that and should. A **429 is a
+> refusal**: the origin was never asked, and calling it a wake sent is what made
+> `"wake call sent"` false twenty-one times before the fields existed to show
+> it. `WakeObservation.Refused()` now reads the status as a delivery verdict
+> only, `Coordinator` logs `"wake call refused"` at **warn**, and readiness
+> stays undecidable — `Refused() == false` means delivered, never awake. The
+> classification is in the log and deliberately **not** in the control flow: the
+> give-up tally was already correct, because `RecordWakeSent` counts the
+> decision to call and only `RecordServiceSeen` clears it. Read
 > [DEFECT-WAKE-001](../backlog/engineering-backlog.md#defect-wake-001--the-wake-mechanism-reports-waking-services-it-does-not-wake)
 > before changing anything here: it records what was ruled out (instance-hour
 > limits, wrong target URLs, the 5s timeout, NATS, Redis, CORS) so the same

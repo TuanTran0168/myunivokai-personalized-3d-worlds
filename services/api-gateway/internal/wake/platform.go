@@ -91,6 +91,7 @@ package wake
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -188,6 +189,35 @@ type WakeObservation struct {
 	StatusCode int
 	// Elapsed from sending the request to reading the response.
 	Elapsed time.Duration
+}
+
+// refusedWakeStatusCode is the status that proves the origin was never asked.
+//
+// Measured against production on 2026-09-04, once the three fields above
+// reached it: every wake call this gateway makes comes back
+// `429` in 46-106 ms, against the correct host. A 429 is the hosting edge
+// declining the request before it routes anywhere, so the connection arrived
+// and the instance was never asked to start. See DEFECT-WAKE-001.
+//
+// **One member, and deliberately not a range.** The doc comment above is
+// right that a status cannot mean readiness — a booting instance may answer
+// 502, and a router that has not attached it yet may answer 404 — and both of
+// those are wakes that DID happen. Widening this to `>= 400` would reclassify
+// them as refusals and lose exactly the distinction this constant exists to
+// draw. Add a status here only when it has been observed and its meaning is
+// "the origin was not asked".
+const refusedWakeStatusCode = http.StatusTooManyRequests
+
+// Refused reports whether the observed status proves the wake never reached
+// the origin, which is a different question from whether the service is
+// ready. Readiness is still not decidable here and this does not try:
+// `Refused() == false` means the call was delivered, not that anything woke.
+//
+// It exists because "wake call sent" was logged twenty-one times for calls
+// that were refused, and a log line that cannot tell a refusal from a slow
+// cold start is how a fleet that never woke went unnoticed for weeks.
+func (observation WakeObservation) Refused() bool {
+	return observation.StatusCode == refusedWakeStatusCode
 }
 
 const querySubjectPrefix = "myunivokai.queries."

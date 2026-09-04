@@ -67,3 +67,35 @@ func TestEveryListedServiceIsResolvable(t *testing.T) {
 		}
 	}
 }
+
+// TestRefusedSeparatesADeclinedCallFromABootingInstance is the guard on the
+// one distinction DEFECT-WAKE-001 turned on. Production answered every wake
+// call 429, and "wake call sent" was logged for all of them; the fix was to
+// classify the status as a DELIVERY verdict while leaving readiness
+// undecidable. Both halves are asserted here, because widening Refused to
+// "any 4xx or 5xx" is the natural-looking change that breaks the useful half.
+func TestRefusedSeparatesADeclinedCallFromABootingInstance(t *testing.T) {
+	testCases := map[string]struct {
+		statusCode      int
+		expectedRefused bool
+		reason          string
+	}{
+		"429 measured in production": {429, true, "the edge declined before routing; the origin was never asked"},
+		"502 from a booting instance": {502, false, "a wake that DID happen - the instance is starting"},
+		"503 while starting":          {503, false, "same as 502: the origin was reached"},
+		"504 upstream timeout":        {504, false, "the origin was reached and was slow, which is a cold start"},
+		"404 router not attached yet": {404, false, "documented on WakeObservation as a wake that happened"},
+		"200 something answered":      {200, false, "delivered; whether it woke anything is not knowable here"},
+		"no response at all":          {0, false, "no status means no verdict, not a refusal"},
+	}
+
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			observation := WakeObservation{StatusCode: testCase.statusCode}
+			if refused := observation.Refused(); refused != testCase.expectedRefused {
+				t.Errorf("status %d: Refused() = %t, want %t — %s",
+					testCase.statusCode, refused, testCase.expectedRefused, testCase.reason)
+			}
+		})
+	}
+}

@@ -195,6 +195,27 @@ func (coordinator *Coordinator) wakeDetached(service string) {
 	// that reached the right host and started an instance, and for one that
 	// was answered instantly by something else, which is how a fleet that
 	// never woke went unnoticed for weeks. See wake.WakeObservation.
+	//
+	// Split into two lines on 2026-09-04, when the fields above were first
+	// read off production and every wake came back 429 in tens of
+	// milliseconds. "Sent" was false for all of them: the edge declined the
+	// request before routing it, so nothing was ever asked to start. The
+	// classification is deliberately in the LOG and not in the control flow —
+	// the tally above is already correct, because RecordWakeSent counts the
+	// decision to call and only RecordServiceSeen clears it, so a refused
+	// wake already counts as unanswered without any change here. Turning a
+	// refusal into a returned error would instead undercount the slow cold
+	// starts the comment above protects.
+	if observation.Refused() {
+		log.Warn().
+			Str("service", service).
+			Str("wake_platform", string(coordinator.platform.Name())).
+			Str("wake_host", observation.Host).
+			Int("wake_status", observation.StatusCode).
+			Dur("wake_elapsed", observation.Elapsed).
+			Msg("wake call refused")
+		return
+	}
 	log.Info().
 		Str("service", service).
 		Str("wake_platform", string(coordinator.platform.Name())).
