@@ -89,6 +89,17 @@ services:
         value: 60s
       - key: SHARE_CACHE_TTL
         value: 60s
+      # The identity endpoints' own token bucket (S8-IDENTITY-002). Far
+      # tighter than RATE_LIMIT_* above because the traffic is different: a
+      # person signs in a handful of times a day, while the product bucket has
+      # to absorb every world read. The gateway refuses to start if this is
+      # the looser of the two. The per-email failure counter that backs it up
+      # is a Go constant with no key here on purpose — see
+      # services/api-gateway/internal/config/config.go's identityFailureLimit.
+      - key: AUTH_RATE_LIMIT_REQUESTS_PER_SECOND
+        value: "1"
+      - key: AUTH_RATE_LIMIT_BURST
+        value: "10"
       # Turned on 2026-08-22 for the full production deploy. Requires BOTH
       # ADMIN_ALLOWED_ORIGIN and ADMIN_ACCESS_PUBLIC_KEYS (below, sync:false)
       # to already hold real values on the live Render dashboard — an
@@ -114,6 +125,12 @@ services:
       # private key itself. Comma-separated for key rotation (S4-AUTH-005):
       # list the new key alongside the outgoing one until every session has
       # re-authenticated, then remove the old one.
+      #
+      # No longer admin-only, despite the name. Since S8-IDENTITY-002 the same
+      # key verifies the product session on /api/auth and /api/me, so the
+      # gateway now requires it whether or not ADMIN_ROUTES_ENABLED is true.
+      # The key name is kept because it is a live secret in this account's
+      # environment; the gateway's Go field is AccessTokenPublicKeys.
       - key: ADMIN_ACCESS_PUBLIC_KEYS
         sync: false
       - key: ADMIN_TOKEN_VERSION_CACHE_TTL
@@ -163,8 +180,25 @@ services:
         sync: false
       - key: TELEMETRY_SERVICE_URL
         sync: false
+      # Raised from 5s to 45s on 2026-09-04, and set live on the dashboard the
+      # same day — this line exists so the next blueprint sync does not put
+      # 5s back. 5s could not cover a cold start: measured first-byte on a
+      # sleeping instance's /healthz was 7.3s (dna), 12.7s (nature), 13.3s
+      # (universe), so every wake call was abandoned before the host had
+      # finished starting anything.
+      #
+      # It costs nothing on the request path. Coordinator.Wake runs detached
+      # (`go wakeDetached`) and the client response has already been written,
+      # so this bounds one goroutine and one outbound connection, never the
+      # gateway's own 8s WriteTimeout.
+      #
+      # Raising it did NOT fix the fleet, which is worth knowing before
+      # somebody raises it further: with 45s available the wake still returned
+      # inside one second and ocean-service still never started. Whatever
+      # answers these calls is not the sleeping instance. See
+      # DEFECT-WAKE-001 in agent-system/plans/backlog/engineering-backlog.md.
       - key: SERVICE_WAKE_TIMEOUT
-        value: 5s
+        value: 45s
       - key: SERVICE_WAKE_LOCK_TTL
         value: 60s
       - key: SERVICE_WAKE_RETRY_AFTER

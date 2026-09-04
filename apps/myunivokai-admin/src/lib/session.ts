@@ -51,7 +51,9 @@ export const PERMISSIONS = {
   accountManage: "account:manage",
   auditRead: "audit:read",
   roleRead: "role:read",
-  roleManage: "role:manage"
+  roleManage: "role:manage",
+  settingsRead: "settings:read",
+  settingsManage: "settings:manage"
 } as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

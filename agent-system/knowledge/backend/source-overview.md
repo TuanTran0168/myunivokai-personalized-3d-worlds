@@ -79,7 +79,23 @@ Source: `services/api-gateway`.
 - `internal/broker`: JetStream publish and Core NATS request-reply.
 - `internal/edge`: Redis cache and atomic distributed token bucket.
 - `internal/middleware`: request identity, headers, CORS, body limit, logging,
-  recovery, and Redis-first rate limit with local fallback.
+  recovery, and Redis-first rate limit with local fallback. Two product-session
+  middlewares, and the difference between them is a routing decision:
+  `RequireProductAccessToken` guards `/api/me`, while
+  `OptionalProductAccessToken` attaches claims where a session may be absent
+  and is registered on every world route **except one**:
+  `/api/{family}/share/worlds/{slug}`. That page is a public URL and answered
+  401 to anybody holding an expired token while the middleware reached it.
+
+  **Corrected 2026-09-04.** This bullet used to say the middleware was on the
+  five WRITE routes only, and that it "must not reach the reads" — the share
+  route's requirement, generalised to all three reads. The consequence was
+  `GET /api/{family}/worlds/{id}` answering 200 with no credentials at all for
+  an owned, never-published world: its nickname, role, every variant and the
+  whole DNA snapshot, which is strictly more than the share response is
+  redacted down to. One route needing no session is not the same fact as three
+  routes not wanting one. Both reads now carry the caller and are filtered by
+  `WorldReadPermitted` in the family service.
 - `internal/config`: NATS/Redis/cache/edge configuration and production CORS
   validation.
 
@@ -125,9 +141,101 @@ random-index strategy is injected in tests, preserving deterministic assertions
 without removing runtime variety. Variant regeneration remains inside family
 services and does not call AI.
 
-## Universe and Nature services
+### The daily AI quota, and how a world says it was built
 
-Sources: `services/universe-service` and `services/nature-service`.
+Design: §9 and §9.1 of
+`agent-system/plans/architecture/end-user-identity-and-ownership.md`, and
+decisions 8, 17 and 17b.
+
+**The counter is the gateway's and the reason is this service's**, because
+those are the two places the facts live. The gateway increments
+`<REDIS_KEY_PREFIX>:quota:ai:daily:<utc day>:<caller>` before publishing the
+generate command, compares it against a settings row, and puts the verdict on
+the command as `contracts.AIQuotaState`. This service computes the reason,
+because it is the only place all three facts exist at once: the verdict
+arrived on the command, the configured primary is its own config, and the
+fallback is its own runtime outcome.
+
+**Over the limit never refuses.** The world is still created, from the preset
+provider, and it is real, deterministic and the visitor's. There is no 429 on
+the create path.
+
+The orchestrator holds THREE providers. The preset one is `providers.NewMock()`
+built from no configuration at all, and it is not the fallback: `aifactory`
+constructs a fallback only when it differs from the primary, so production —
+with `AI_PROVIDER` and `AI_FALLBACK_PROVIDER` both `mock` — has none, and a
+degrade that reached for it would fail the job rather than degrade it.
+
+`Orchestrator.GenerateProfileDNA` is four ordered branches, and **the order is
+the decision**:
+
+| # | Condition | Reason |
+| --- | --- | --- |
+| 1 | the primary is not an AI provider | `mock_configured` |
+| 2 | the AI tier was withheld | `quota_exhausted` |
+| 3 | the primary answered | `ai_generated` |
+| 4 | the primary failed, a distinct fallback answered | `ai_failed_fallback` |
+
+Swapping 1 and 2 announces a limit on an AI tier that is switched off, on every
+sixth create, in the only environment that currently exists — production runs
+`AI_PROVIDER: mock`. A primary failure with no distinct fallback stays a FAILED
+job and carries no reason: a reason describes how a world was produced, so a
+job with no world has none.
+
+`primaryProviderCallsAI()` is written as "is not the mock" rather than as a list
+of the paid providers, so a provider added later counts as AI on the day it is
+added rather than being silently free.
+
+The reason and the limit it was measured against are stored on
+`generation_jobs`, in the SAME statement as the DNA version — two statements
+could lose the reason to a crash between them. Both columns are nullable with
+no default: NULL is the honest value for every job that predates the quota and
+for every failed one. **No world table learns the reason**, which is §9.1's
+rule: the truth is owed once, to the person who hit the limit, not permanently
+to the friend who opens their share link.
+
+The enum is declared in Go (`contracts.DeclaredGenerationReasons`), in a CHECK
+constraint, and in a TypeScript union.
+`TestTheGenerationReasonCheckAdmitsEveryDeclaredReason` reads the first and
+fails in both directions against the second — the same trap a new world family
+has, where the code compiles and the CHECK is the thing nobody edits.
+
+### The account's own world list
+
+`myunivokai.queries.dna.library.list.v1`, one keyset page, answered from
+`generation_jobs` joined to `profiles`. §3.1 is why this is a query here rather
+than a `library-service`: the link it would own already exists.
+
+The owner arrives on the query and there is no other parameter for whose worlds
+to list, so no request shape asks for a stranger's. The response is three
+fields — world id, family, creation time — asserted on the TYPE by
+`TestTheWorldListRowCarriesNothingSensitive`, so a fourth fails the build
+rather than shipping unset.
+
+Two things about this query that read as omissions and are decisions:
+
+- **It cannot exclude a deleted world.** The flag lives in the family service's
+  own database and a deletion emits no event, so nothing here is ever told. The
+  filter's one home is the family service's read, which the web app already
+  goes through to hydrate each card.
+- **It is keyset but not constant-cost.** The filter is on
+  `profiles.owner_account_id` and the order on `generation_jobs.created_at`, so
+  no single index serves both and Postgres sorts the account's matching jobs.
+  Never `OFFSET`, so a page boundary is stable; affordable because one create
+  makes one profile. The threshold where that stops holding, and the
+  denormalisation that would fix it, are in `postgres_library.go`.
+
+The cursor is base64 of `<unix nanoseconds>:<job id>`, and the job id is not
+redundant: two jobs can share a `created_at` because a retry writes its row
+with the same statement's clock, so the tie-break has to be part of the cursor.
+The first page uses a SEPARATE statement, because `(created_at, job_id) <
+(NULL, NULL)` is NULL in Postgres and would answer every first request with an
+empty page.
+
+## Universe, Nature and Ocean services
+
+Sources: `services/universe-service`, `services/nature-service` and
+`services/ocean-service`.
 
 Both use the same layers:
 
@@ -147,6 +255,89 @@ Each service:
 - supports idempotent compose redelivery and AI-free variants;
 - stores `profileId`, `dnaVersionId`, source job, visual intent, and DNA
 snapshot in its own database.
+
+`ocean-service` is a third copy of this shape and is described by every line
+above.
+
+### Ownership and deletion
+
+Each family's `worlds` table carries `owner_account_id`, `anonymous_id` and
+`deleted_at`, all nullable, none backfilled. A world with no owner is the
+normal case and describes every world made before 2026-09-03.
+
+**Exactly one of the two identity columns is ever set on a new world.** The
+gateway drops the visitor's `X-Anonymous-Id` the moment a verified token gives
+it an account to name instead, because a world that has an owner can never be
+claimed. `owner_account_id IS NULL` answers "is this anonymous"; `anonymous_id`
+answers "*which* anonymous visitor", and only the second can be turned into
+ownership later.
+
+`internal/repositories/world_ownership.go` holds the rules, and there are two
+of them because deletion does not follow the others:
+
+- `worldMutationPermitted` — a world with **no** owner is mutable by anyone
+  holding its id; a world with an owner is mutable only by that owner.
+- `worldDeletionPermitted` — a world with no owner is deletable by **nobody**,
+  which is `ErrWorldNotOwned` and reaches the client as `403
+  WORLD_NOT_CLAIMED`.
+
+Both are applied by a `SELECT ... FOR UPDATE` inside the mutation's own
+transaction, never against a read model. The mutation lookup also filters
+`deleted_at IS NULL`; the deletion lookup deliberately does not, so deleting
+twice answers the way deleting once did.
+
+Deletion sets a timestamp and never removes a row. Every product read filters
+it — the world read, the `?ids=` batch and share resolution — with exactly one
+exception, `getWorldBySourceJob`, the create path's idempotency lookup, which
+must still find a deleted world or a JetStream redelivery repeats for ever.
+`deletedWorldPolicy` is what makes that exception a name rather than a missing
+clause.
+
+A deletion bumps no revision and stages no outbox row: `analytics-service` is
+deliberately untouched, so the snapshot it would emit is identical to the last
+one.
+
+### The claim
+
+One command in, one to three out. The gateway is admitted on exactly one
+command subject and it is DNA's, and `dna-service` is the only service that
+knows which FAMILIES a visitor used — its own `generation_jobs` rows name one
+each. So `POST /api/me/worlds/claim` publishes
+`commands.dna.world.claim.v1`, and `dna-service` publishes
+`commands.<family>.world.claim.v1` only for the families that visitor actually
+used.
+
+`dna-service`'s `ClaimWorlds` reads those families **before** the `UPDATE`,
+while `anonymous_id` still points at the rows, and discards them if the update
+claimed nothing — that last line is the concurrent loser's path, and without it
+a claim that took no rows would still fan out.
+
+Each family's `ClaimWorlds` is one statement:
+`SET owner_account_id = $1, anonymous_id = NULL WHERE anonymous_id = $2 AND
+owner_account_id IS NULL`. The guard is the whole of the idempotency and of the
+two-device race, and clearing `anonymous_id` is not tidiness — it is a bearer
+credential in a JS-readable cookie, useless once an account owns the worlds it
+named. No revision bump and no outbox row, for the same reason a deletion has
+none.
+
+**The claim consumers carry no delivery limit**, because a claim that gave up
+would leave somebody's worlds anonymous for ever with nothing anywhere saying
+so. That makes a message which can never be applied a message the fleet retries
+until the stream drops it, so a transport-level failure is told apart by its
+error: `ErrInvalidWorldClaimCommand` is `Term()`ed, everything else nacked. The
+gateway also refuses to publish an unapplicable one, including when the fault is
+its own — a verified token whose subject is not an account id is a 500 there.
+
+Only `dna-service` is woken. The gateway owns the only waker and cannot know
+which families were used; the family claim commands wait in
+`MYUNIVOKAI_COMMANDS` until each service next runs. The bound that leaves is the
+stream's 168-hour retention.
+
+`nats_publish_permissions_test.go` in the gateway is where the whole command
+boundary is checked: `commandSubjectRoutes` names every command subject with its
+one permitted publisher and its one permitted subscriber, and the tests fail on
+an extra publisher, a missing subscriber, a subject in the config the table does
+not name, and any command wildcard.
 
 The runtime owns connection lifecycle, deterministic subscription registration,
 pull/ack/retry policy, and outbox polling. Fetch size/wait, retry delay,
@@ -180,6 +371,60 @@ per-request round trip.
 (`PostgresStore`, `MemoryStore`) like every other service; what is split per
 concern is the *file* (`postgres_accounts.go`, `postgres_audit.go`, …), not
 the type.
+
+### System settings
+
+Nine operator-changeable policy numbers — two quota ceilings, four token
+lifetimes, an invite lifetime and the lockout pair. Design: §9.3 of
+`agent-system/plans/architecture/end-user-identity-and-ownership.md`.
+
+**The registry is `contracts.DeclaredSettings()`, not anything in this
+service.** It declares each setting's key, type, description, bounds and
+default, and it lives in `contracts` because both sides read it: this service
+validates every write against it, and the gateway needs the two `quota.*`
+defaults to answer a cache miss. A registry inside `auth-service` would mean
+the gateway declaring its own copy of the number 5.
+
+`system_settings` holds only OVERRIDES. Every setting has a default in code and
+the platform is required to boot and behave correctly with the table empty and
+Redis flushed, which is what `TestAnEmptySettingsTableIsAWorkingPlatform`
+asserts — the screen AND a real sign-up, because a list assertion alone would
+not notice a zero-length session. Defaults are held as text so that a default
+and an operator's value go through the same parser and the same bounds check.
+
+Bounds are code and are enforced on write. Two of them are load-bearing rather
+than tidy: `auth.lockout.max_failed_attempts` has a floor of 1, because 0 locks
+every account on its zeroth failed attempt including the one that would put the
+value back; and each audience's access-lifetime range ends exactly where its
+refresh range begins, so no pair of values anybody can write leaves an access
+token outliving its refresh token.
+
+**The two sides read different sources, deliberately.** This service reads
+Postgres at the moment of use — it owns the table, and going through its own
+Redis mirror would let a flushed cache silently revert its policy to the
+defaults while the rows said otherwise. The gateway reads the mirror only, and
+a miss uses its compiled-in default rather than a NATS request: see
+`services/api-gateway/internal/settings/reader.go`, which is the one place this
+repository inverts `RevocationChecker` and the one place a reflection test
+guards the shape of a type rather than its behaviour.
+
+A write goes row → audit → mirror, in that order. The audit line is
+`<key>: <old> -> <new>` with `default` for an absent previous row, and it is
+written before the mirror so the transition it records survives a Redis
+failure. A failed mirror write is reported to the operator rather than
+swallowed: the row is committed, but the gateway is still enforcing the old
+value.
+
+An orphan row — one whose key has left the registry — is listed and never
+deleted, which is the deliberate opposite of `SyncPermissions`' trailing
+`DELETE FROM permissions WHERE NOT (codename = ANY($1))`. It reaches the admin
+screen with no type, no default and no bounds, because there is no declaration
+left to take them from.
+
+Two permissions gate the two routes (`settings:read`, `settings:manage`), both
+in `enforcedPermissions`, and the admin screen renders the registry rather than
+a hand-written form — so a tenth setting is a backend-only change, in a new
+section of its own if its key prefix is new.
 
 ## Analytics Service
 
@@ -356,8 +601,14 @@ never do.
 
 ## Internal access boundary
 
-The product API still has no end-user accounts; `auth-service` is staff-only
-identity for the admin console (`agent-system/plans/services/auth-and-admin-plan.md`).
+`auth-service` serves BOTH audiences as of Sprint 8: staff identity for the
+admin console (`agent-system/plans/services/auth-and-admin-plan.md`) and
+end-user identity for the product (`aud=web`, decision 1 of
+`agent-system/plans/architecture/end-user-identity-and-ownership.md`). One
+`accounts` table, two audiences, and the separation between them is therefore
+not a table boundary: it is the audience claim on the token plus the repository
+refusing a role to a non-staff account.
+
 Direct browser-to-domain access is prevented structurally:
 
 - domain services have no HTTP listener or published host port;

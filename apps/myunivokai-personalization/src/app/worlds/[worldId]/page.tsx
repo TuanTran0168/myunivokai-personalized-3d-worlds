@@ -2,15 +2,21 @@
 
 import Link from "next/link";
 import { Suspense, use, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { Copy, Download, ExternalLink, Loader2, RefreshCw, Rocket } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Copy, Download, ExternalLink, Loader2, RefreshCw, Rocket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, apiErrorMessage } from "@/lib/api";
 import { exportSceneCanvasAsPng } from "@/lib/exportImage";
-import { addWorldIdentifierToGallery, recordLastViewedWorld } from "@/lib/savedWorlds";
+import {
+  addWorldIdentifierToGallery,
+  recordLastViewedWorld,
+  removeWorldIdentifierFromGallery
+} from "@/lib/savedWorlds";
+import { resolveGalleryOwnerKey } from "@/lib/galleryOwner";
 import { isForestScene, pointsOfInterestFromScene, sceneFromVariant, selectedVariant } from "@/lib/scene";
 import { sharePagePath, worldFamilyFromQueryValue, WORLD_FAMILY_QUERY_PARAMETER } from "@/lib/worldRoutes";
 import type { PlanetSceneConfig, World, WorldFamily, WorldVariant } from "@/lib/types";
+import { ReturnDestinationLinks } from "@/components/ReturnDestinationLinks";
 import { StatusMessage } from "@/components/StatusMessage";
 import { PlanetDetailsPanel } from "@/components/PlanetDetailsPanel";
 import { RareFeatureBadge } from "@/components/RareFeatureBadge";
@@ -47,7 +53,7 @@ export default function WorldPage({ params }: PageProps) {
   return (
     <Suspense
       fallback={
-        <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-[57px] pt-[57px]">
+        <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-footer-height pt-header-height">
           <StatusMessage tone="loading">Loading world...</StatusMessage>
         </main>
       }
@@ -68,7 +74,15 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
   const [activeVariantId, setActiveVariantId] = useState<string>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [action, setAction] = useState<"variant" | "publish" | "select" | "copy" | null>(null);
+  const router = useRouter();
+  const currentPath = usePathname();
+  const [action, setAction] = useState<"variant" | "publish" | "select" | "copy" | "delete" | null>(null);
+  // Deleting takes two clicks on the same button rather than a dialog. A world
+  // is not recoverable from this screen once it is gone - the row survives, but
+  // only staff can bring it back - and a toolbar sitting under a canvas is
+  // exactly where a stray click lands. The armed state clears itself, so a
+  // button left armed and forgotten cannot delete a world on a later visit.
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const [selectedPlanetKey, setSelectedPlanetKey] = useState<string | null>(null);
   // No errorMessage: this page reports failures as toasts, which sit outside the
   // collapsing region, so hiding the panels can never swallow one.
@@ -136,7 +150,12 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
         // The first variant this page ever shows has nothing to transition out
         // of, so the canvas is allowed to draw it straight away.
         setRenderedVariantId(selectedVariant(nextWorld)?.id);
-        addWorldIdentifierToGallery(nextWorld.id, family);
+        // Fire-and-forget, unlike the create page's awaited save: this
+        // handler is not async and the page has nothing to do with the answer.
+        // A world already on any shelf is not moved - see the cross-shelf
+        // dedupe in addWorldIdentifierToGallery, which is what keeps opening
+        // an anonymous world while signed in from quietly claiming it.
+        void resolveGalleryOwnerKey().then((ownerKey) => addWorldIdentifierToGallery(nextWorld.id, family, ownerKey));
         // Unconditional, unlike the add above: this is the one signal the
         // gallery's ambient backdrop uses to know which world the visitor
         // last had open, and a re-view has to update it every time.
@@ -273,6 +292,31 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     }
   }
 
+  async function deleteWorld() {
+    if (!deleteArmed) {
+      setDeleteArmed(true);
+      return;
+    }
+    setDeleteArmed(false);
+    setAction("delete");
+    try {
+      await api.deleteWorld(worldId, family);
+      // The cached gallery entry goes too. The server has stopped serving the
+      // world, so a reference left behind would be a card that loads nothing.
+      //
+      // Since S8-IDENTITY-016 this is a cache rather than the only record: the
+      // gallery replaces it from /api/me/worlds on its next visit, which would
+      // drop this entry anyway. Doing it here is what keeps the grid correct
+      // for a visitor who navigates back before that happens.
+      removeWorldIdentifierFromGallery(worldId);
+      toast.success("World deleted.");
+      router.push("/gallery");
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+      setAction(null);
+    }
+  }
+
   function exportSceneImage() {
     const exportFileName = `myunivokai-${renderedScene.sceneName ?? world?.id ?? "universe"}`;
     const exportSucceeded = exportSceneCanvasAsPng(sceneContainerReference.current, exportFileName);
@@ -300,7 +344,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
 
   if (loading) {
     return (
-      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-[57px] pt-[57px]">
+      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-footer-height pt-header-height">
         <StatusMessage tone="loading">Loading world...</StatusMessage>
       </main>
     );
@@ -308,8 +352,22 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
 
   if (!world) {
     return (
-      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-[57px] pt-[57px]">
-        <StatusMessage tone="error">{error || "World not found"}</StatusMessage>
+      <main className="mx-auto grid min-h-screen w-full max-w-7xl place-items-center px-4 pb-footer-height pt-header-height">
+        {/* The ways out are here because this fix created a new way IN.
+            `GET /worlds/{id}` is ownership-checked now, so a link that arrived
+            by way of a screenshot, a pasted URL or somebody else's browser
+            history lands on this screen with "This world belongs to another
+            account." — a visitor who has done nothing wrong, on a page whose
+            only previous outcome was a world. An error with no way out is a
+            dead end; this one is reachable by accident.
+
+            The share slug is not offered, and cannot be: it only exists in the
+            private payload this read just refused. The public door to somebody
+            else's world is the /share link its maker sends, not this page. */}
+        <div className="flex flex-col items-center gap-5 text-center">
+          <StatusMessage tone="error">{error || "World not found"}</StatusMessage>
+          <ReturnDestinationLinks currentPath={currentPath} presentation="control" />
+        </div>
       </main>
     );
   }
@@ -497,6 +555,21 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
             >
               <Download className="h-4 w-4" aria-hidden="true" />
               Export Image
+            </button>
+            <button
+              type="button"
+              onClick={deleteWorld}
+              onBlur={() => setDeleteArmed(false)}
+              disabled={action !== null}
+              aria-label={deleteArmed ? "Confirm deleting this world" : "Delete this world"}
+              className={`focus-ring inline-flex min-h-10 items-center gap-2 rounded-xl border px-4 py-2 text-sm tappable disabled:opacity-45 ${
+                deleteArmed
+                  ? "border-error/60 bg-error-container/80 text-on-surface"
+                  : "border-hairline bg-black/30 text-on-surface-variant hover:border-error/40 hover:text-on-surface"
+              }`}
+            >
+              {action === "delete" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+              {deleteArmed ? "Confirm delete" : "Delete"}
             </button>
             <button
               type="button"

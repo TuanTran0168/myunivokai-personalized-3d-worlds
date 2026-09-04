@@ -2,6 +2,8 @@ package edge
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,7 +21,35 @@ const (
 	rateLimitKeySegment     = "rate"
 	cacheKeySegment         = "cache"
 	authTokenVersionSegment = "auth:tokenversion"
-	wakeKeySegment          = "wake"
+	// settingKeySegment matches auth-service's own constant. It is singular
+	// because the key names ONE setting, and it is why a setting key may not
+	// contain a colon (contracts.settingKeyPattern refuses one): the colon is
+	// this keyspace's separator.
+	settingKeySegment = "setting"
+	// identityFailureSegment counts failed sign-in attempts PER EMAIL, which
+	// is a different question from the per-IP token bucket under
+	// rateLimitKeySegment and must never share a key with it: the attack this
+	// counts is one account probed from many addresses, and the attack that
+	// counts is one address probing many accounts. Both exist, and a single
+	// counter answers neither.
+	identityFailureSegment = "auth:identity:failures"
+	// dailyGenerationQuotaSegment holds one counter per caller per UTC day.
+	//
+	// A key PREFIX and not policy, which is the distinction section 9.3 draws:
+	// the two limits this counter is compared against are settings rows an
+	// operator changes, and where the count lives is not. So this stays a
+	// named constant here while the numbers stay out of this file entirely.
+	dailyGenerationQuotaSegment = "quota:ai:daily"
+	// dailyGenerationQuotaDayFormat is the same UTC day stamp
+	// wakeStatsDayFormat uses, and deliberately a separate constant: these
+	// two counters answer unrelated questions and a shared constant would
+	// invite a change to one to be made for the other's sake.
+	dailyGenerationQuotaDayFormat = "2006-01-02"
+	// dailyGenerationQuotaExpirySlack keeps a counter alive slightly past the
+	// day it names, so the last caller before UTC midnight cannot be handed a
+	// fresh allowance by an expiry that fired a moment early.
+	dailyGenerationQuotaExpirySlack = time.Hour
+	wakeKeySegment                  = "wake"
 	// Distinct segments rather than a suffix on wakeKeySegment, so a wake
 	// lock for a service can never be mistaken for a counter or the reverse.
 	wakeCountKeySegment    = "wake:count"
@@ -144,6 +175,120 @@ func (store *RedisStore) GetTokenVersion(ctx context.Context, accountID string) 
 
 func (store *RedisStore) SetTokenVersion(ctx context.Context, accountID string, tokenVersion int, timeToLive time.Duration) error {
 	return store.client.Set(ctx, store.key(authTokenVersionSegment, accountID), strconv.Itoa(tokenVersion), timeToLive).Err()
+}
+
+// RecordIdentityFailure increments the failure count for one identity and
+// returns the new value. The window is refreshed on every failure, so a
+// steady trickle of attempts stays counted while a genuine typo ages out.
+//
+// identityKey is a HASH of the email address, never the address itself - see
+// IdentityFailureKey. The counter needs to distinguish identities, not to be
+// able to read them back, and Redis is shared infrastructure whose keyspace
+// is visible to anything holding the connection string.
+//
+// A pipeline rather than two round trips, and INCR before EXPIRE so a key
+// that already exists cannot lose its count to a race with its own refresh.
+func (store *RedisStore) RecordIdentityFailure(ctx context.Context, identityKey string, window time.Duration) (int, error) {
+	key := store.key(identityFailureSegment, sanitizeKeyPart(identityKey))
+	pipeline := store.client.Pipeline()
+	increment := pipeline.Incr(ctx, key)
+	pipeline.Expire(ctx, key, window)
+	if _, err := pipeline.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return int(increment.Val()), nil
+}
+
+// GetSetting reads one mirrored setting. auth-service is the only writer, and
+// it writes with NO TTL — so a miss means a flushed or unreachable Redis
+// rather than an expired value, which is what lets settings.Reader answer a
+// miss from its compiled-in default instead of asking auth-service. See that
+// type's comment for why this is the one cache in the gateway whose miss must
+// NOT fall back to a NATS request.
+func (store *RedisStore) GetSetting(ctx context.Context, key contracts.SettingKey) (string, error) {
+	value, err := store.client.Get(ctx, store.key(settingKeySegment, string(key))).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrCacheMiss
+	}
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+// IncrementDailyGenerationCount counts one world creation against one caller
+// and returns the count INCLUDING this one, so the caller compares it against
+// the limit directly rather than remembering to add one.
+//
+// The key names its own UTC day, so a new day starts a new counter with no
+// reset to perform, and the TTL only has to outlive that day - which is what
+// removes the cleanup job section 9 says there must not be. The expiry is
+// refreshed on every increment, which is harmless: every increment that
+// touches this key belongs to the day the key names.
+//
+// UTC and not local time, for the reason wakeStatsDayFormat gives: the process
+// runs in whatever region the host picked, and a daily allowance that resets
+// at a different moment after a redeploy is worse than one that never matches
+// anybody's midnight.
+//
+// callerKey is an account id or an anonymous id, NEVER an address. A per-IP
+// counter is shared by everyone behind one NAT and is bypassed by anyone with
+// a second address, which is why the anonymous id exists at all (section 6.3).
+func (store *RedisStore) IncrementDailyGenerationCount(ctx context.Context, callerKey string, at time.Time) (int, error) {
+	utcMoment := at.UTC()
+	key := store.key(dailyGenerationQuotaSegment, utcMoment.Format(dailyGenerationQuotaDayFormat), sanitizeKeyPart(callerKey))
+	pipeline := store.client.Pipeline()
+	increment := pipeline.Incr(ctx, key)
+	pipeline.Expire(ctx, key, timeRemainingInUTCDay(utcMoment))
+	if _, err := pipeline.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return int(increment.Val()), nil
+}
+
+// timeRemainingInUTCDay is how long is left of the UTC day a moment falls in,
+// which is exactly how long its counter has to survive.
+//
+// Plus one hour of slack, and the slack is not superstition: a counter that
+// expired a few milliseconds before the day it names ended would give the last
+// caller of the day a fresh allowance. An hour of overlap costs one key per
+// caller per hour and closes that seam without a clock assumption.
+func timeRemainingInUTCDay(moment time.Time) time.Duration {
+	utcMoment := moment.UTC()
+	startOfNextDay := time.Date(utcMoment.Year(), utcMoment.Month(), utcMoment.Day(), 0, 0, 0, 0, time.UTC).
+		AddDate(0, 0, 1)
+	return startOfNextDay.Sub(utcMoment) + dailyGenerationQuotaExpirySlack
+}
+
+// IdentityFailureCount reads the tally without touching it. A missing key is
+// zero rather than an error: never having failed and having aged out of the
+// window are the same state as far as the next attempt is concerned.
+func (store *RedisStore) IdentityFailureCount(ctx context.Context, identityKey string) (int, error) {
+	raw, err := store.client.Get(ctx, store.key(identityFailureSegment, sanitizeKeyPart(identityKey))).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(raw)
+}
+
+// ClearIdentityFailures drops the tally after a successful sign-in, so a
+// person who mistyped their password four times and then got it right is not
+// one attempt away from being throttled on their next visit.
+func (store *RedisStore) ClearIdentityFailures(ctx context.Context, identityKey string) error {
+	return store.client.Del(ctx, store.key(identityFailureSegment, sanitizeKeyPart(identityKey))).Err()
+}
+
+// IdentityFailureKey derives the counter key for an email address: lowercased
+// and trimmed to match auth-service's own normalizeEmail, so "A@b.com " and
+// "a@b.com" share one tally rather than giving an attacker two, then hashed
+// so the address itself never lands in the keyspace.
+func IdentityFailureKey(emailAddress string) string {
+	normalized := strings.ToLower(strings.TrimSpace(emailAddress))
+	digest := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(digest[:])
 }
 
 // AcquireWakeLock reports whether the caller is the one that should wake a

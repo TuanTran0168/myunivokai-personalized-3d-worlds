@@ -29,9 +29,9 @@ func newFakePlatform(supported ...string) *fakePlatform {
 func (platform *fakePlatform) Name() PlatformName           { return PlatformName("fake") }
 func (platform *fakePlatform) Supports(service string) bool { return platform.supported[service] }
 
-func (platform *fakePlatform) Wake(_ context.Context, service string) error {
+func (platform *fakePlatform) Wake(_ context.Context, service string) (WakeObservation, error) {
 	platform.woken <- service
-	return platform.wakeError
+	return WakeObservation{}, platform.wakeError
 }
 
 type fakeLock struct {

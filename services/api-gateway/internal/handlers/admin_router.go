@@ -45,8 +45,8 @@ func newAdminRouter(serviceConfig config.Config, brokerClient broker.Client, edg
 	adminRouter.With(middleware.RequireAdminRefreshCookie).Post("/auth/logout", authHandler.Logout)
 
 	requireAccessToken := middleware.RequireAdminAccessToken(
-		auth.NewTokenVerifier(serviceConfig.AdminAccessPublicKeys),
-		auth.NewRevocationChecker(edgeStore, brokerClient, serviceConfig.NATSRequestTimeout, serviceConfig.AdminTokenVersionCacheTTL),
+		auth.NewTokenVerifier(serviceConfig.AccessTokenPublicKeys),
+		auth.NewRevocationChecker(edgeStore, brokerClient, serviceConfig.NATSRequestTimeout, serviceConfig.TokenVersionCacheTTL),
 	)
 	requirePermission := func(code contracts.PermissionCode) func(http.Handler) http.Handler {
 		return middleware.RequireAdminPermission(transport, code)
@@ -59,6 +59,7 @@ func newAdminRouter(serviceConfig config.Config, brokerClient broker.Client, edg
 	analyticsHandler := NewAdminAnalyticsHandler(transport)
 	telemetryHandler := NewAdminTelemetryHandler(transport)
 	wakeHandler := NewAdminWakeHandler(edgeStore, waker, serviceConfig.ServiceWakePlatform)
+	settingsHandler := NewAdminSettingsHandler(transport)
 
 	adminRouter.Group(func(managementRouter chi.Router) {
 		managementRouter.Use(requireAccessToken)
@@ -80,6 +81,17 @@ func newAdminRouter(serviceConfig config.Config, brokerClient broker.Client, edg
 
 		managementRouter.With(requirePermission(contracts.PermissionRoleRead)).Get("/permissions", permissionsHandler.List)
 		managementRouter.With(requirePermission(contracts.PermissionAuditRead)).Get("/audit", auditHandler.List)
+
+		// The settings control plane. Two codes rather than one, because
+		// reading a policy number and changing it are different acts:
+		// settings:manage can shorten every session on the platform from a web
+		// form, so it is not something a reader of the screen holds by
+		// default.
+		//
+		// The key is a path segment carrying dots. It needs no encoding — a
+		// dot is an ordinary path character — and the route needs no wildcard.
+		managementRouter.With(requirePermission(contracts.PermissionSettingsRead)).Get("/settings", settingsHandler.List)
+		managementRouter.With(requirePermission(contracts.PermissionSettingsManage)).Patch("/settings/{"+settingKeyURLParameter+"}", settingsHandler.Update)
 
 		// The analytics-backed read screens. These replace
 		// auth-and-admin-plan.md's original phase-4 domain-service aggregate

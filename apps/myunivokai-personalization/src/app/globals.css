@@ -52,6 +52,41 @@
   --glass-tint: rgba(15, 14, 19, 0.08);
   --glass-blur: saturate(125%);
 
+  /* The SECOND Liquid-Glass material, and the reason there are two.
+     iOS 26 does not ship one glass, it ships `regular` and `clear`, and the
+     split is not a style choice: clear glass is for glass laid over MEDIA,
+     where a separate dimming layer carries legibility, and regular glass is
+     for glass laid over the rest of the INTERFACE.
+
+     This file had only the clear one, so a floating menu opened over a panel
+     and the two read as a single tangled surface — you could see the create
+     form's live-preview text straight through the account menu. Stacking two
+     invisible materials does not produce depth, it produces a collision.
+
+     The rule this establishes: **clear where the world is the subject, regular
+     where the panel is the subject.** The create form's rail keeps its clear
+     material, because the world behind it is the thing being configured and
+     has to read through. A menu, a toast and the sign-in card are the subject
+     themselves — the world behind those is decoration, and blurring it is what
+     makes them look like a pane of glass in front of it rather than a hole. */
+  /* 0.84, not the 0.72 that looks right on a GPU. The tint has to carry this
+     material ON ITS OWN, because `backdrop-filter` is the first thing a
+     compositor drops: software rendering skips the blur and some mobile
+     browsers do too, and at 0.72 with no blur the create form's live-preview
+     text was still readable straight through the open account menu — the exact
+     defect this material exists to fix, back again on the machines least able
+     to spare a second render. The blur is what makes it beautiful. The tint is
+     what makes it correct. */
+  --glass-overlay-tint: rgba(12, 11, 16, 0.84);
+  --glass-overlay-blur: saturate(150%) blur(28px);
+
+  /* Where a message about something that just happened appears, declared once
+     because two toast systems have to agree on it: sonner's stack (mounted in
+     layout.tsx) and components/Toast.tsx. It used to be 72px in a prop and
+     `bottom-20` in a class name, which is how a confirmation ended up sitting
+     on top of the Save button it was confirming. */
+  --toast-inset-top: calc(var(--header-height) + 15px);
+
   /* Motion. --glass-easing is not a new curve: it is the value this file already
      wrote twice (the panel transition and the glass-rise entrance), hoisted so
      the create form's rail closes on the identical curve it arrived on. */
@@ -168,8 +203,12 @@ textarea {
    sits on a sharp, busy, moving scene rather than on a smoothed-out wash, which
    is a far harder background than the one the palette was tuned against. This
    is the trade that buys genuine transparency. */
+/* The same treatment is needed by text with NO panel under it at all — the
+   sign-in screen's editorial column sits straight on the world — so the rule
+   is named as what it does and the two materials opt into it. */
 .glass-panel,
-.liquid-glass {
+.liquid-glass,
+.text-on-world {
   /* Three layers, each doing a different job: a tight 1px drop that separates
      the glyph from whatever is directly under it, a 4px halo that carries the
      counters and thin strokes, and a wide 12px pool that darkens the region so
@@ -194,6 +233,88 @@ textarea {
     inset 0 1px 0 0 rgba(255, 255, 255, 0.28),
     inset 0 0 0 1px rgb(var(--brass-rgb) / 0.14),
     0 36px 80px -24px rgba(0, 0, 0, 0.82);
+}
+
+/* ---------- The regular Liquid-Glass material ---------- */
+/* For anything that floats ABOVE other interface: the account menu, a toast,
+   the sign-in card. It refracts what is behind it instead of showing it, which
+   is the whole difference between "on top of" and "tangled with".
+
+   Its specular rim is a gradient border rather than an even 1px line: brightest
+   at the top-left where the light is, fading through nothing, and picking up
+   brass at the bottom-right. That is what reads as a thick, rounded edge
+   catching light — the single detail that makes glass look like glass. */
+/* No `position` here, and that is load-bearing rather than an omission.
+   This file is loaded AFTER `@tailwind utilities`, so a `position` declared by
+   a material out-ranks `absolute` or `fixed` on the element that wears it — the
+   account menu's dropdown became `position: relative`, laid itself out inside
+   the 57px header bar and hung off the top of the viewport. A material decides
+   how a surface LOOKS. Its call site decides where the surface is, and the
+   two rules below need it to be positioned, so every call site says so. */
+.glass-overlay {
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02) 38%, rgba(255, 255, 255, 0) 62%),
+    var(--glass-overlay-tint);
+  -webkit-backdrop-filter: var(--glass-overlay-blur);
+  backdrop-filter: var(--glass-overlay-blur);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 40px 90px -28px rgba(0, 0, 0, 0.88);
+  /* One tight drop, not the clear material's three-layer pool: the ground
+     under this text is already dark and already blurred, and the heavy
+     treatment tuned for a sharp star field only muddies it here. */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.glass-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.52),
+    rgba(255, 255, 255, 0.06) 28%,
+    rgba(255, 255, 255, 0) 58%,
+    rgb(var(--brass-rgb) / 0.34)
+  );
+  /* Border-only fill: paint the padding box, then punch the content box out of
+     it. `border-radius: inherit` is what keeps the rim on the corner curve. */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Additive, mirroring .glass-panel-glow: the hero surface of a screen gets a
+   specular sheen across its top-left shoulder. Only ONE panel per screen may
+   wear it — a sheen on every card is a gradient, not a highlight. */
+.glass-overlay-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    120% 80% at 8% -10%,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0.04) 38%,
+    transparent 62%
+  );
+  pointer-events: none;
+}
+
+/* The alert tone of the regular material. A modifier rather than a Tailwind
+   `bg-*` on the call site, because .glass-overlay sets the `background`
+   shorthand and would win — the same reason .glass-panel-glow is a class. */
+.glass-overlay-alert {
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 55%),
+    rgba(84, 26, 16, 0.88);
 }
 
 /* ---------- Brass controls ---------- */
@@ -262,10 +383,14 @@ textarea {
 }
 
 /* ---------- Sonner toasts as Liquid Glass ---------- */
+/* The REGULAR material, not the clear one. A toast is the definitive case for
+   it: it appears over whatever the page already put there, and at 8% tint with
+   no blur the sentence it carries was competing with the panel underneath it
+   for the same pixels. */
 .lg-toast {
-  background: var(--glass-tint) !important;
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--glass-overlay-tint) !important;
+  -webkit-backdrop-filter: var(--glass-overlay-blur);
+  backdrop-filter: var(--glass-overlay-blur);
   border: 1px solid rgba(255, 255, 255, 0.12) !important;
   border-radius: 14px !important;
   color: var(--paper) !important;
@@ -284,8 +409,46 @@ textarea {
 
 /* ---------- Liquid-Glass motion (Apple-style) ---------- */
 .glass-panel,
-.liquid-glass {
+.liquid-glass,
+.glass-overlay {
   transition: transform 320ms var(--glass-easing), box-shadow 320ms var(--glass-easing);
+}
+
+/* Entrance for a menu that opens FROM a control: it grows out of the corner it
+   is anchored to rather than rising like a floating island, so the panel and
+   the button it came from read as one gesture. */
+@keyframes glass-unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.glass-unfold {
+  animation: glass-unfold 220ms var(--glass-easing) both;
+  transform-origin: top right;
+}
+
+/* Entrance for something that arrives from the top edge — a toast. It travels
+   the way it came, which .glass-rise does not: rising up into a slot below the
+   header reads as a panel settling, not as a message arriving. */
+@keyframes glass-descend {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.glass-descend {
+  animation: glass-descend 320ms var(--glass-easing) both;
 }
 
 /* Entrance: floating glass islands settle up into place. */
@@ -1037,11 +1200,14 @@ body[data-world-immersive="true"] .immersive-exit-right {
   .btn-gradient:active {
     transform: none;
   }
-  .glass-rise {
+  .glass-rise,
+  .glass-unfold,
+  .glass-descend {
     animation: none;
   }
   .glass-panel,
   .liquid-glass,
+  .glass-overlay,
   .glass-lift:hover,
   .glass-lift:focus-visible {
     transition: none;

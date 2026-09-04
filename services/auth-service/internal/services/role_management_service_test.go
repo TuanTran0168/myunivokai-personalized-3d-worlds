@@ -8,7 +8,6 @@ import (
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/myunivokai/myunivokai/services/auth-service/internal/repositories"
-	"github.com/myunivokai/myunivokai/services/auth-service/internal/security"
 )
 
 func TestAuthService_InviteAccount_CreatesAccountWithRolesAndReturnsToken(t *testing.T) {
@@ -127,21 +126,26 @@ func TestAuthService_AcceptInvite_SetsPasswordAndLogsIn(t *testing.T) {
 	}
 }
 
+// The expiry is written straight into the row rather than configured, and the
+// change is the point: this test used to set InviteTokenTTL to minus one hour.
+// auth.token.invite_ttl now declares a floor of one hour, so no configuration
+// and no operator can produce an invite that is expired when it is created —
+// the bounds refuse it. What is left to test is the row, which is what an
+// expired invite actually is, and reaching it through the store is more honest
+// than a lifetime nothing could ever set.
 func TestAuthService_AcceptInvite_RejectsAnExpiredToken(t *testing.T) {
-	store := repositories.NewMemoryStore()
-	cfg := testConfig()
-	cfg.InviteTokenTTL = -time.Hour // already expired the instant it's created
-	passwordHasher := security.NewPasswordHasher(64*1024, 1, 1, 16, 32)
-	tokenIssuer := security.NewTokenIssuer(cfg.AccessTokenPrivateKey, cfg.AccessTokenTTL)
-	authService, err := NewAuthService(store, passwordHasher, tokenIssuer, newFakeTokenVersionCache(), cfg)
+	authService, store, _ := newTestAuthService(t)
+	rawInviteToken, inviteTokenHash, err := generateInviteToken()
 	if err != nil {
-		t.Fatalf("construct auth service: %v", err)
+		t.Fatalf("generate invite token: %v", err)
 	}
-	invite, err := authService.InviteAccount(context.Background(), contracts.InviteCreateData{Email: "new-staff@example.com"})
-	if err != nil {
-		t.Fatalf("invite account: %v", err)
+	if _, err := store.CreateInvite(context.Background(), repositories.InviteAccountParams{
+		Email: "new-staff@example.com", InviteTokenHash: inviteTokenHash,
+		InviteExpiresAt: time.Now().UTC().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("create expired invite: %v", err)
 	}
-	if _, err := authService.AcceptInvite(context.Background(), contracts.InviteAcceptData{InviteToken: invite.InviteToken, Password: "a-strong-password-1"}); !errors.Is(err, ErrInvalidInviteToken) {
+	if _, err := authService.AcceptInvite(context.Background(), contracts.InviteAcceptData{InviteToken: rawInviteToken, Password: "a-strong-password-1"}); !errors.Is(err, ErrInvalidInviteToken) {
 		t.Fatalf("expected ErrInvalidInviteToken for an expired invite, got %v", err)
 	}
 }

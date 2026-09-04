@@ -36,8 +36,8 @@ func TestOrchestratorRepairsInvalidOutputAndRecordsTraceMetadata(t *testing.T) {
 		}
 		return contracts.ProfileDNA{SchemaVersion: contracts.SchemaVersionV1}, nil
 	}
-	orchestrator := NewOrchestrator(provider, nil, validator, time.Second, 2*time.Second, 1)
-	result, err := orchestrator.GenerateProfileDNA(context.Background(), StructuredRequest{Task: "profile_dna", PromptVersion: "profile-dna-v1", UserPrompt: "sensitive input", RepairPrompt: "repair"})
+	orchestrator := NewOrchestrator(provider, nil, provider, validator, time.Second, 2*time.Second, 1)
+	result, err := orchestrator.GenerateProfileDNA(context.Background(), StructuredRequest{Task: "profile_dna", PromptVersion: "profile-dna-v1", UserPrompt: "sensitive input", RepairPrompt: "repair"}, AITierAllowed)
 	if err != nil {
 		t.Fatal(err)
 	}

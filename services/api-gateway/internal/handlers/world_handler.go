@@ -16,12 +16,24 @@ import (
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/config"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/edge"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/httpx"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/middleware"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/quota"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/wake"
 	"github.com/oklog/ulid/v2"
 	"github.com/rs/zerolog/log"
 )
 
 const maximumBatchWorldIdentifiers = 50
+
+// anonymousIdentifierHeaderName carries the id the browser minted for itself
+// and keeps in its own cookie. A header rather than a body field, because it is
+// a credential the browser holds rather than data about this particular
+// request - the same reason Authorization is a header.
+//
+// It must also be listed in the product CORS policy's AllowedHeaders, or the
+// browser refuses the preflight and every server-side test still passes. See
+// productCORSOptions.
+const anonymousIdentifierHeaderName = "X-Anonymous-Id"
 
 type GenerationPublisher interface {
 	PublishGeneration(context.Context, contracts.Envelope[contracts.GenerateDNAData]) error
@@ -33,6 +45,7 @@ type worldSubjects struct {
 	variantCreate string
 	variantSelect string
 	worldPublish  string
+	worldDelete   string
 	shareGet      string
 }
 
@@ -46,18 +59,23 @@ type WorldHandler struct {
 	// rather than from the family string so that the two never drift apart -
 	// and derived once, here, because family-to-subject routing is
 	// constructor-owned throughout this type.
-	familyService        string
-	generationPublisher  GenerationPublisher
+	familyService       string
+	generationPublisher GenerationPublisher
+	// dailyAIQuota is shared by all three family handlers, because the
+	// allowance is per CALLER and not per family: five worlds is five worlds
+	// whether they are oceans or forests. A quota per handler would silently
+	// triple every limit.
+	dailyAIQuota         quota.DailyAIQuota
 	transport            *RPCTransport
 	publishTimeout       time.Duration
 	worldCacheTimeToLive time.Duration
 	shareCacheTimeToLive time.Duration
 }
 
-func newWorldHandler(serviceConfig config.Config, family contracts.WorldFamily, subjects worldSubjects, generationPublisher GenerationPublisher, transport *RPCTransport) *WorldHandler {
+func newWorldHandler(serviceConfig config.Config, family contracts.WorldFamily, subjects worldSubjects, generationPublisher GenerationPublisher, dailyAIQuota quota.DailyAIQuota, transport *RPCTransport) *WorldHandler {
 	return &WorldHandler{
 		family: family, subjects: subjects, familyService: wake.ServiceForSubject(subjects.worldGet),
-		generationPublisher: generationPublisher, transport: transport,
+		generationPublisher: generationPublisher, dailyAIQuota: dailyAIQuota, transport: transport,
 		publishTimeout: serviceConfig.NATSPublishTimeout, worldCacheTimeToLive: serviceConfig.WorldCacheTimeToLive,
 		shareCacheTimeToLive: serviceConfig.ShareCacheTimeToLive,
 	}
@@ -98,7 +116,26 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 	job := contracts.Job{JobID: jobID, Family: handler.family, Status: contracts.JobStatusQueued, CreatedAt: createdAt, UpdatedAt: createdAt}
 	publishContext, cancel := context.WithTimeout(request.Context(), handler.publishTimeout)
 	defer cancel()
-	command := contracts.NewEnvelope(jobID, contracts.GenerateDNAData{Family: handler.family, Input: input})
+	ownerAccountIdentifier := requestingAccountIdentifier(request)
+	anonymousIdentifier, anonymousIdentifierAcceptable := anonymousIdentifierFromRequest(responseWriter, request, ownerAccountIdentifier)
+	if !anonymousIdentifierAcceptable {
+		return
+	}
+	// Counted BEFORE the publish, which is what section 9 asks for and what
+	// makes the ceiling real: counting afterwards lets a burst of concurrent
+	// creates all pass the check before any of them lands. The cost of this
+	// order is that a create whose publish then fails has still spent one of
+	// the day's generations - one, for a caller who is about to see a 503 and
+	// retry, against a burst that would otherwise bypass the limit entirely.
+	quotaState := handler.dailyAIQuota.Evaluate(request.Context(), quota.Caller{
+		AccountIdentifier:   ownerAccountIdentifier,
+		AnonymousIdentifier: anonymousIdentifier,
+	}, createdAt)
+	command := contracts.NewEnvelope(jobID, contracts.GenerateDNAData{
+		Family: handler.family, Input: input,
+		OwnerAccountID: ownerAccountIdentifier, AnonymousID: anonymousIdentifier,
+		AIQuota: &quotaState,
+	})
 	if err := handler.generationPublisher.PublishGeneration(publishContext, command); err != nil {
 		log.Error().Err(err).Str("request_id", httpx.RequestID(request.Context())).Msg("publish generation command")
 		httpx.WriteError(responseWriter, request, http.StatusServiceUnavailable, "GENERATION_UNAVAILABLE", "Generation could not be accepted right now.")
@@ -106,6 +143,40 @@ func (handler *WorldHandler) CreateWorld(responseWriter http.ResponseWriter, req
 	}
 	handler.wakeReadModel()
 	httpx.WriteJSON(responseWriter, http.StatusAccepted, job)
+}
+
+// anonymousIdentifierFromRequest reads X-Anonymous-Id, and returns nil in two
+// situations that are worth telling apart even though the caller treats them
+// the same.
+//
+// There is a SESSION, so the header is ignored without even being looked at.
+// Exactly one of the two identity fields is ever set: a world that has an owner
+// can never be claimed, so an anonymous id stored beside one would be a
+// personal-data trail with no reader — and a signed-in visitor whose 180-day
+// cookie has gone stale must not have their create rejected over a value
+// nothing will use.
+//
+// There is no header, which is an ordinary anonymous create from a browser
+// with cookies disabled, or any non-browser caller. That world is anonymous and
+// unclaimable, which is what it was before this shipped.
+//
+// A header that is present and NOT a UUID is refused, rather than ignored. The
+// world would otherwise be created with no anonymous id and be unclaimable for
+// ever, silently — a permanent loss reported as a 202.
+func anonymousIdentifierFromRequest(responseWriter http.ResponseWriter, request *http.Request, ownerAccountIdentifier *string) (*string, bool) {
+	if ownerAccountIdentifier != nil {
+		return nil, true
+	}
+	anonymousIdentifier := strings.TrimSpace(request.Header.Get(anonymousIdentifierHeaderName))
+	if anonymousIdentifier == "" {
+		return nil, true
+	}
+	if !contracts.IsUUID(anonymousIdentifier) {
+		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "INVALID_ANONYMOUS_ID",
+			"The anonymous identifier is not in the expected format.")
+		return nil, false
+	}
+	return &anonymousIdentifier, true
 }
 
 func (handler *WorldHandler) GetWorlds(responseWriter http.ResponseWriter, request *http.Request) {
@@ -119,21 +190,46 @@ func (handler *WorldHandler) GetWorlds(responseWriter http.ResponseWriter, reque
 		httpx.WriteError(responseWriter, request, http.StatusBadRequest, "VALIDATION_ERROR", fmt.Sprintf("Too many ids; request at most %d worlds per call.", maximumBatchWorldIdentifiers))
 		return
 	}
-	handler.transport.Proxy(responseWriter, request, handler.subjects.worldList, contracts.WorldListQueryData{WorldIDs: worldIdentifiers}, cachePolicy{})
+	handler.transport.Proxy(responseWriter, request, handler.subjects.worldList,
+		contracts.WorldListQueryData{WorldIDs: worldIdentifiers, RequestingAccountID: requestingAccountIdentifier(request)}, cachePolicy{})
 }
 
+// GetWorld is an ownership-checked read, and it is NOT cached. The second half
+// is the part that is easy to leave out, and leaving it out would have undone
+// the first.
+//
+// The world cache key is `family:worldID`, with no room for who asked. With an
+// ownership check downstream and that key above it, the owner's own first read
+// would store their private world under a name a stranger's request resolves
+// to — so the check would hold for one request and Redis would answer the next
+// sixty seconds of them. A fix the layer above it silently defeats is worse
+// than no fix, because it tests green.
+//
+// **Putting the caller into the key was the alternative, and it was rejected.**
+// The cacheStore this gateway holds can Get, Set and Delete one exact key, and
+// S8-IDENTITY-010's guarantee is that deleting a world drops that world's entry
+// SYNCHRONOUSLY, before the visitor's own response returns. With an audience in
+// the key there is no longer a single entry to drop, and no prefix delete to
+// reach the rest — so the choice was between a correct cache key and a
+// deletion that takes effect immediately, and the deletion wins.
+//
+// **What removing it costs, stated rather than assumed.** A 60-second TTL
+// (defaultWorldCacheTimeToLive) on a read whose fanout is one person looking at
+// their own page — and every mutation on that same page already invalidates it,
+// so it is cold for most of the traffic that reaches here anyway. The SHARE
+// read keeps its cache, because that is the genuinely public path, one link
+// sent to many people, and its answer does not depend on who is asking.
+//
+// InvalidateWorld still deletes this key. Nothing writes it any more, but an
+// older gateway serving alongside a rolling deploy does, and an entry it left
+// behind has to stay reachable.
 func (handler *WorldHandler) GetWorld(responseWriter http.ResponseWriter, request *http.Request) {
 	worldID, validWorldID := worldIdentifierFromRequest(responseWriter, request)
 	if !validWorldID {
 		return
 	}
-	cacheIdentifier := edge.WorldCacheIdentifier(string(handler.family), worldID)
-	if handler.transport.WriteCacheHit(responseWriter, request, worldCacheNamespace, cacheIdentifier) {
-		return
-	}
-	handler.transport.Proxy(responseWriter, request, handler.subjects.worldGet, contracts.WorldQueryData{WorldID: worldID}, cachePolicy{
-		namespace: worldCacheNamespace, identifier: cacheIdentifier, timeToLive: handler.worldCacheTimeToLive,
-	})
+	handler.transport.Proxy(responseWriter, request, handler.subjects.worldGet,
+		contracts.WorldQueryData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, cachePolicy{})
 }
 
 func (handler *WorldHandler) CreateVariant(responseWriter http.ResponseWriter, request *http.Request) {
@@ -141,7 +237,8 @@ func (handler *WorldHandler) CreateVariant(responseWriter http.ResponseWriter, r
 	if !validWorldID {
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantCreate, contracts.VariantCreateData{WorldID: worldID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantCreate,
+		contracts.VariantCreateData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
 }
 
 func (handler *WorldHandler) SelectVariant(responseWriter http.ResponseWriter, request *http.Request) {
@@ -154,7 +251,8 @@ func (handler *WorldHandler) SelectVariant(responseWriter http.ResponseWriter, r
 		httpx.WriteError(responseWriter, request, http.StatusNotFound, "NOT_FOUND", "The requested resource was not found.")
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantSelect, contracts.VariantSelectData{WorldID: worldID, VariantID: variantID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.variantSelect,
+		contracts.VariantSelectData{WorldID: worldID, VariantID: variantID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
 }
 
 func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, request *http.Request) {
@@ -162,7 +260,32 @@ func (handler *WorldHandler) PublishWorld(responseWriter http.ResponseWriter, re
 	if !validWorldID {
 		return
 	}
-	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldPublish, contracts.PublishWorldData{WorldID: worldID})
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldPublish,
+		contracts.PublishWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesReadModelEvent)
+}
+
+// DeleteWorld routes through proxyWorldMutation, and that is S8-IDENTITY-010's
+// recorded decision rather than an accident of reuse.
+//
+// The gateway could learn of a deletion two ways: from this response, or from
+// the `world.changed` event. The response wins, for two reasons. It is
+// SYNCHRONOUS - both cache entries are dropped before the visitor's own
+// response returns, so their very next request cannot hit a stale one, which an
+// event arriving through the outbox and JetStream could not promise. And the
+// gateway consumes no event at all today; making it one for this would add a
+// consumer, a durable, and a redelivery story to invalidate two keys it is
+// already holding the answer for.
+//
+// The share key is the half that only fails in production. It is keyed by SLUG,
+// which the gateway cannot derive from a world id - which is why the family
+// service returns it in the deletion response.
+func (handler *WorldHandler) DeleteWorld(responseWriter http.ResponseWriter, request *http.Request) {
+	worldID, validWorldID := worldIdentifierFromRequest(responseWriter, request)
+	if !validWorldID {
+		return
+	}
+	handler.proxyWorldMutation(responseWriter, request, worldID, handler.subjects.worldDelete,
+		contracts.DeleteWorldData{WorldID: worldID, RequestingAccountID: requestingAccountIdentifier(request)}, mutationProducesNoReadModelEvent)
 }
 
 func (handler *WorldHandler) GetShare(responseWriter http.ResponseWriter, request *http.Request) {
@@ -184,7 +307,18 @@ func (handler *WorldHandler) GetShare(responseWriter http.ResponseWriter, reques
 // the public share page renders, and without this the share served the previous
 // variant for a whole cache TTL — long enough for a seed-derived rare feature to
 // appear on the dashboard and be missing from the shared link.
-func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWriter, request *http.Request, worldID, subject string, data any) {
+// readModelEventPolicy says whether this mutation leaves an event behind for
+// analytics-service to consume. Every mutation did until deletion, which
+// deliberately emits nothing - so the wake below would otherwise start a
+// service to consume a message that will never arrive.
+type readModelEventPolicy bool
+
+const (
+	mutationProducesReadModelEvent   readModelEventPolicy = true
+	mutationProducesNoReadModelEvent readModelEventPolicy = false
+)
+
+func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWriter, request *http.Request, worldID, subject string, data any, readModelEvent readModelEventPolicy) {
 	handler.transport.InvalidateWorld(request.Context(), handler.family, worldID)
 	response, ok := handler.transport.Request(responseWriter, request, subject, data)
 	if !ok {
@@ -192,7 +326,9 @@ func (handler *WorldHandler) proxyWorldMutation(responseWriter http.ResponseWrit
 	}
 	handler.transport.InvalidateWorld(request.Context(), handler.family, worldID)
 	handler.transport.InvalidateShare(request.Context(), handler.family, shareSlugFromMutationPayload(response.Data.Payload))
-	handler.wakeReadModel()
+	if readModelEvent == mutationProducesReadModelEvent {
+		handler.wakeReadModel()
+	}
 	httpx.WriteRawJSON(responseWriter, response.Data.StatusCode, response.Data.Payload)
 }
 
@@ -245,6 +381,27 @@ func shareSlugFromMutationPayload(payload []byte) string {
 		return ""
 	}
 	return mutation.ShareSlug
+}
+
+// requestingAccountIdentifier is the ONE place a world command learns who is
+// asking, and it reads the verified claims the optional identity middleware
+// attached - never the request body, never a header the client controls. That
+// is what makes the id trustworthy by the time it reaches a family service,
+// which has no way to verify it and does not try.
+//
+// nil means "no session", and on this surface that is ordinary rather than an
+// error: it produces an anonymous world, and it leaves an unowned world
+// mutable, which is every world made before ownership existed.
+func requestingAccountIdentifier(request *http.Request) *string {
+	claims, present := middleware.ProductClaims(request.Context())
+	if !present {
+		return nil
+	}
+	accountIdentifier := strings.TrimSpace(claims.Subject)
+	if accountIdentifier == "" {
+		return nil
+	}
+	return &accountIdentifier
 }
 
 func worldIdentifierFromRequest(responseWriter http.ResponseWriter, request *http.Request) (string, bool) {

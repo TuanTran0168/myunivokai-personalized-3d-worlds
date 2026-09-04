@@ -237,6 +237,20 @@ allow list. Nothing may be added to it without a matching line here.
 | `world_variants.config` | universe/nature | Large scene payload; no analytical value |
 | `ai_generation_attempts.request_json` / `.response_json` | dna-service | Raw prompts and completions |
 | `world_shares.share_slug` | universe/nature | A public capability URL; counting publishes does not require it |
+| `worlds.owner_account_id` | universe/nature/ocean | Who owns a world. Staff have no business reading it, and `end-user-identity-and-ownership.md` §15 names this the boundary's first hard rule under that plan |
+| `worlds.anonymous_id` | universe/nature/ocean | Which anonymous visitor made a world. Stronger than the row above: it is the claim's only proof, so a second copy of it in a second database is a second place it can leak from |
+
+**On `owner_account_id`, the plan asked for a field and got a decision instead.**
+`end-user-identity-and-ownership.md` §15 says `contracts.WorldSnapshot` gains
+`OwnerAccountID *uuid.UUID` and that this table records it as *excluded*. It was
+not added. The snapshot has exactly two consumers — `dna-service`, which reads
+`WorldID` and nothing else from it, and `analytics-service`, which is required
+to drop the field — so adding it would move personal data across a service
+boundary for no reader at all. The safest form of "excluded from analytics" is
+"never sent", and it is enforced by a test in each family service rather than by
+this line. The two rows above stay, because the rule they state outlives the
+field's absence: the day something does need the owner on an event, this is
+where the argument has to be made.
 
 Only flat, aggregate-shaped values cross: identifiers, an archetype, a scene
 name, a mood, a style, hex colors, five integers, three counters, two

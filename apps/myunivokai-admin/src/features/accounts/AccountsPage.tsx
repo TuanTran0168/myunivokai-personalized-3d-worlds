@@ -11,16 +11,27 @@ import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { FilterBar } from "@/components/ui/filter-bar";
+import { FilterSelect } from "@/components/ui/filter-select";
 import { SearchInput } from "@/components/ui/search-input";
 import { accountsApi } from "./api";
+import {
+  ACCOUNT_KIND_FILTER_OPTIONS,
+  ALL_ACCOUNT_KINDS,
+  accountKindLabel,
+  type AccountKindFilter
+} from "./types";
 import { CreateAccountDialog } from "./CreateAccountDialog";
 import { AccountRowActions } from "./AccountRowActions";
 
 export function AccountsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [kindFilter, setKindFilter] = useState<AccountKindFilter>(ALL_ACCOUNT_KINDS);
   const queryClient = useQueryClient();
-  const accountsQuery = useQuery({ queryKey: ["accounts", search], queryFn: () => accountsApi.list(search) });
+  const accountsQuery = useQuery({
+    queryKey: ["accounts", search, kindFilter],
+    queryFn: () => accountsApi.list(search, kindFilter)
+  });
 
   const disableMutation = useMutation({
     mutationFn: accountsApi.disable,
@@ -43,7 +54,7 @@ export function AccountsPage() {
     <div>
       <PageHeader
         title="Accounts"
-        description="Staff accounts, their roles and status."
+        description="Staff and end-user accounts, their roles and status."
         sources={["Auth Service"]}
         action={
           <Button size="sm" onClick={() => setIsCreateOpen(true)}>
@@ -55,13 +66,25 @@ export function AccountsPage() {
 
       <FilterBar>
         <SearchInput value={search} onChange={setSearch} placeholder="Email or name…" />
+        <FilterSelect
+          label="Kind"
+          value={kindFilter}
+          onChange={(nextValue) => setKindFilter(nextValue as AccountKindFilter)}
+          options={ACCOUNT_KIND_FILTER_OPTIONS}
+        />
       </FilterBar>
       <Card>
         <CardContent className="pt-2">
           {accountsQuery.isLoading ? (
-            <TableSkeleton columnCount={5} headers={["Name", "Email", "Roles", "Status", ""]} />
+            <TableSkeleton columnCount={6} headers={["Name", "Email", "Kind", "Roles", "Status", ""]} />
           ) : accountsQuery.isError ? (
             <p className="py-6 text-center text-sm text-destructive">{(accountsQuery.error as Error).message}</p>
+          ) : accountsQuery.data?.accounts.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              {kindFilter === ALL_ACCOUNT_KINDS
+                ? "No accounts match this search."
+                : `No ${accountKindLabel(kindFilter as Exclude<AccountKindFilter, typeof ALL_ACCOUNT_KINDS>).toLowerCase()} accounts match this search.`}
+            </p>
           ) : (
             <>
               {/* Desktop table — hidden on mobile */}
@@ -71,6 +94,7 @@ export function AccountsPage() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
+                      <TableHead>Kind</TableHead>
                       <TableHead>Roles</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="w-10" />
@@ -81,6 +105,15 @@ export function AccountsPage() {
                       <TableRow key={account.accountId}>
                         <TableCell className="text-sm">{account.name || "—"}</TableCell>
                         <TableCell className="text-sm">{account.email}</TableCell>
+                        {/* An end-user row is distinguishable at a glance and
+                            not only by the absence of roles: "no roles yet"
+                            and "cannot hold a role" are different facts, and
+                            the second one is the invariant. */}
+                        <TableCell>
+                          <Badge variant={account.kind === "staff" ? "outline" : "secondary"}>
+                            {accountKindLabel(account.kind)}
+                          </Badge>
+                        </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
                             {account.isSuperAdmin ? <Badge variant="outline">super admin</Badge> : null}
@@ -124,6 +157,9 @@ export function AccountsPage() {
                       <p className="truncate text-sm font-medium">{account.name || account.email}</p>
                       {account.name ? <p className="truncate text-xs text-muted-foreground">{account.email}</p> : null}
                       <div className="mt-1.5 flex flex-wrap gap-1">
+                        <Badge variant={account.kind === "staff" ? "outline" : "secondary"}>
+                          {accountKindLabel(account.kind)}
+                        </Badge>
                         {account.isSuperAdmin ? <Badge variant="outline">super admin</Badge> : null}
                         {account.roles.map((role) => (
                           <Badge key={role} variant="secondary">

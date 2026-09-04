@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	composeDurableName = "nature-compose-v1"
-	queryQueueName     = "nature-service-v1"
+	composeDurableName    = "nature-compose-v1"
+	worldClaimDurableName = "nature-world-claim-v1"
+	queryQueueName        = "nature-service-v1"
 )
 
 type queryBinding struct {
@@ -78,12 +79,34 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		return fmt.Errorf("subscribe nature commands: %w", err)
 	}
 	runtime.subscriptions = append(runtime.subscriptions, composeSubscription)
+	// Its own durable, not a second filter on the compose consumer:
+	// MYUNIVOKAI_COMMANDS is a WorkQueue stream, so one subject is served by
+	// exactly one consumer, and a claim queued behind a composition would wait
+	// on work it has nothing to do with.
+	claimSubscription, err := runtime.jetStream.PullSubscribe(
+		contracts.ClaimNatureWorldsCommandSubject,
+		worldClaimDurableName,
+		nats.BindStream(contracts.CommandsStream),
+		nats.ManualAck(),
+		nats.AckWait(runtime.config.ConsumerAckWait),
+		// Unbounded, unlike the compose consumer. A composition that keeps
+		// failing has a job to mark failed and a visitor to tell; a claim has
+		// neither, so giving up would silently cost somebody their worlds.
+		nats.MaxDeliver(-1),
+		nats.MaxAckPending(1000),
+	)
+	if err != nil {
+		runtime.unsubscribeAll()
+		return fmt.Errorf("subscribe nature world claims: %w", err)
+	}
+	runtime.subscriptions = append(runtime.subscriptions, claimSubscription)
 	queryBindings := []queryBinding{
 		{subject: contracts.NatureWorldListQuerySubject, handler: runtime.natsHandler.HandleWorldListQuery},
 		{subject: contracts.NatureWorldGetQuerySubject, handler: runtime.natsHandler.HandleWorldGetQuery},
 		{subject: contracts.NatureVariantCreateSubject, handler: runtime.natsHandler.HandleVariantCreateQuery},
 		{subject: contracts.NatureVariantSelectSubject, handler: runtime.natsHandler.HandleVariantSelectQuery},
 		{subject: contracts.NatureWorldPublishSubject, handler: runtime.natsHandler.HandleWorldPublishQuery},
+		{subject: contracts.NatureWorldDeleteSubject, handler: runtime.natsHandler.HandleWorldDeleteQuery},
 		{subject: contracts.NatureShareGetQuerySubject, handler: runtime.natsHandler.HandleShareGetQuery},
 	}
 	for _, binding := range queryBindings {
@@ -98,8 +121,9 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		runtime.unsubscribeAll()
 		return fmt.Errorf("flush nature subscriptions: %w", err)
 	}
-	runtime.waitGroup.Add(2)
+	runtime.waitGroup.Add(3)
 	go runtime.consumeCompositions(ctx, composeSubscription)
+	go runtime.consumeWorldClaims(ctx, claimSubscription)
 	go runtime.publishOutbox(ctx)
 	return nil
 }
@@ -151,6 +175,54 @@ func (runtime *Runtime) consumeCompositions(ctx context.Context, subscription *n
 				continue
 			}
 			log.Info().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Msg("nature message processed")
+			_ = message.Ack()
+		}
+	}
+}
+
+// consumeWorldClaims is consumeCompositions without the terminal-failure
+// branch, written as a sibling rather than as one loop taking a handler.
+//
+// The two differ in the part that matters: a composition that has failed too
+// many times must publish a failure event so the visitor's job stops saying
+// "processing", while a claim must never stop retrying. Folding them together
+// would mean a nil terminal handler standing in for that whole argument.
+func (runtime *Runtime) consumeWorldClaims(ctx context.Context, subscription *nats.Subscription) {
+	defer runtime.waitGroup.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		messages, err := subscription.Fetch(runtime.config.ConsumerFetchBatchSize, nats.MaxWait(runtime.config.ConsumerFetchMaximumWait))
+		if err != nil {
+			if errors.Is(err, nats.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
+				continue
+			}
+			log.Error().Err(err).Msg("fetch nature world claim")
+			continue
+		}
+		for _, message := range messages {
+			messageStartTime := time.Now()
+			if err := runtime.natsHandler.HandleWorldClaim(ctx, message); err != nil {
+				// Unreadable rather than merely failed, so it is discarded.
+				// This loop naks for ever by design, which is right for a
+				// database that is down and wrong for a message no future
+				// attempt could apply.
+				if errors.Is(err, handlers.ErrInvalidWorldClaimCommand) {
+					log.Error().Err(err).Str("subject", message.Subject).Msg("discard invalid world claim command")
+					_ = message.Term()
+					continue
+				}
+				// Subject only, never the payload: this payload is an account
+				// id and an anonymous id, which together are the one pair that
+				// ties a person to their worlds.
+				log.Warn().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Err(err).Msg("nature world claim failed, will retry")
+				_ = message.NakWithDelay(runtime.config.ConsumerRetryDelay)
+				continue
+			}
+			log.Info().Str("subject", message.Subject).Dur("duration", time.Since(messageStartTime)).Msg("nature world claim processed")
 			_ = message.Ack()
 		}
 	}

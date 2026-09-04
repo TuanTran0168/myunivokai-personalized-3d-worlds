@@ -28,19 +28,37 @@ type accessTokenClaims struct {
 // edge verifies locally with the public key, so no network hop is required
 // per request, and login still works when auth-service is cold - see
 // agent-system/plans/services/auth-and-admin-plan.md#tokens.
+//
+// It holds NO lifetime of its own. It used to hold one per audience, chosen
+// here from the audience already stamped into the claims — which was the right
+// shape while both numbers were compiled in. S8-IDENTITY-012 made both
+// `system_settings` rows (`auth.token.admin.access_ttl` and
+// `auth.token.web.access_ttl`), and a value an operator can change takes
+// effect on the NEXT REQUEST rather than at the next restart, so it can no
+// longer be captured when this struct is built.
+//
+// The audience-to-lifetime choice moved to AuthService.accessTokenLifetime,
+// where it sits beside refreshTokenLifetime — the two halves of one audience's
+// session policy, in one place, both resolved per call. This type went back to
+// being what its name says: the thing that signs.
 type TokenIssuer struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
-	accessTTL  time.Duration
 }
 
-func NewTokenIssuer(privateKey ed25519.PrivateKey, accessTTL time.Duration) TokenIssuer {
-	return TokenIssuer{privateKey: privateKey, publicKey: privateKey.Public().(ed25519.PublicKey), accessTTL: accessTTL}
+func NewTokenIssuer(privateKey ed25519.PrivateKey) TokenIssuer {
+	return TokenIssuer{
+		privateKey: privateKey,
+		publicKey:  privateKey.Public().(ed25519.PublicKey),
+	}
 }
 
-func (issuer TokenIssuer) IssueAccessToken(accountID string, roles []string, audience contracts.AccountAudience, tokenVersion int) (string, time.Time, error) {
+// IssueAccessToken signs a token that expires accessTokenLifetime from now.
+// The lifetime is a parameter rather than a field: see the type's comment for
+// why, and AuthService.accessTokenLifetime for the audience that chooses it.
+func (issuer TokenIssuer) IssueAccessToken(accountID string, roles []string, audience contracts.AccountAudience, tokenVersion int, accessTokenLifetime time.Duration) (string, time.Time, error) {
 	issuedAt := time.Now().UTC()
-	expiresAt := issuedAt.Add(issuer.accessTTL)
+	expiresAt := issuedAt.Add(accessTokenLifetime)
 	claims := accessTokenClaims{
 		Roles:        roles,
 		Audience:     audience,

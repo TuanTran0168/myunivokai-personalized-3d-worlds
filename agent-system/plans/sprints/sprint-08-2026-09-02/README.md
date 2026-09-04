@@ -1,10 +1,71 @@
 # Sprint 08 — End-user identity and world ownership
 
 > **Starts:** 2026-09-02
-> **Status:** Planned. The stories below are committed scope; they execute
+> **Status:** **Phase A implemented** on
+> `feat/fe-be/end-user-identity-phase-a` (one branch per phase, by the owner's
+> grouping — the plan's one-story-per-branch task lines are superseded by it).
+> **Every story is implemented.** Phase A on
+> `feat/fe-be/end-user-identity-phase-a` (merged), Phase B's first four on
+> `feat/be/end-user-identity-phase-b` (merged), the claim and the settings on
+> `feat/be/end-user-identity-phase-b-continued` (merged), and the quota, its
+> one toast and both of Phase C on
+> `feat/fe-be/end-user-identity-quota-and-server-gallery`.
+>
+> **Implemented is not deployed, and on 2026-09-04 none of this was in
+> production.** `origin/main` was 46 commits behind `staging`; the deployed app
+> answered 404 on `/sign-in`, `/sign-up`, `/account` and `/worlds`, sent no
+> `Content-Security-Policy` header at all, and `src/middleware.ts` did not exist
+> on `main`. Two consequences worth keeping separate from the story list:
+> `S3-CSP-001` (nothing hydrates on a production build) was a **release blocker
+> for this sprint** rather than a City footnote, and per
+> [`sprints/README.md`](../README.md)'s evidence ladder this sprint is
+> *Implemented*, not *Verified* — the DoD items below were measured in tests and
+> against a local stack, never against the deployed product.
+>
+> What that adds up to: a person holds an account, a world has an owner, the
+> owner travels on the commands and is enforced inside each mutation's own
+> transaction, signing in claims every world the browser made anonymously,
+> nine policy numbers changed without a deploy, the AI spend has a ceiling that
+> degrades instead of refusing, and the gallery is the account's rather than
+> the browser's. **One task is deliberately still open**: §9.2's per-create
+> cost, which needs `AI_PROVIDER` flipped to a real provider first — which this
+> sprint is the precondition for rather than the occasion of.
+>
+> **Read [user-stories.md](user-stories.md)'s two corrections sections before
+> changing any of it** — Phase B has twenty-four entries, Phase C has three,
+> and four of them change what the code IS rather than what was built:
+>
+> - **8, then 22.** A single struct literal in `dna-service` dropped the owner
+>   that `007` and `008` existed to establish, so both stories shipped inert
+>   with every test in the repository passing. Entry 22 is its second copy,
+>   eleven lines away in the same file, which fixing the first one did not
+>   find.
+> - **20.** §9.3 asked for a comment to stop a later reader reintroducing a
+>   20-60 second cold start on the create path. A comment cannot, because every
+>   behavioural test would still pass — so the reader's SHAPE is asserted.
+> - **25.** `dna-service` **cannot** exclude a deleted world from the account's
+>   list. The flag is in the family service's database and a deletion emits no
+>   event, so the filter's one home is the hydration call that already has it.
+> - **26.** §8's own merge rule brings deleted worlds back for ever. The cache
+>   is replaced, not merged.
+> The stories execute
 > [`end-user-identity-and-ownership.md`](../../architecture/end-user-identity-and-ownership.md),
-> whose twenty decisions are all taken and which awaits the owner's approval.
-> **Last source review:** 2026-09-02
+> whose twenty decisions are all taken.
+> **Read [user-stories.md](user-stories.md)'s Phase A corrections section**
+> before that phase's own stories: five of its claims turned out to be wrong,
+> and one requirement — a signup response that hides whether an address is
+> already registered — is not achievable before email exists.
+> Phase A also gained **three stories after it was implemented**, all asked for
+> by the owner and all on the same branch: `S8-IDENTITY-018` (the gallery shows
+> the signed-in account's worlds rather than the browser's), `S8-IDENTITY-019`
+> (an account page, and a create form that starts filled in) and
+> `S8-IDENTITY-020` (a saved preference that changes the world rather than only
+> the form). `019` spent this sprint's first migration, and
+> [decision 21](../../architecture/end-user-identity-and-ownership.md#19-the-accounts-own-page-decision-21)
+> is where it is argued; `020` spent nothing but is the one to read first, for
+> correction 8 — a preference the profile page saved and the create page's
+> canvas ignored.
+> **Last source review:** 2026-09-03
 
 ## Sprint goal
 
@@ -66,6 +127,9 @@ nullable columns per family plus one new table in an existing database.
   composition rules, the Have I Been Pwned range check on signup only, and one
   new `register` audit action. **Zero migrations** — `system_settings` arrives
   in Phase B, not here, and identity itself needs no schema change at all.
+  (Phase A did spend one migration in the end, for `S8-IDENTITY-019`'s account
+  profiles; `system_settings` is Phase B's, as written. Both raises are
+  recorded in `auth-service`'s own migration-count ratchet.)
 - The gateway's `/api/auth` + `/api/me` route group as a **bearer-token** flow:
   a `RequireProductAccessToken` middleware mirroring `admin_auth.go`, its own
   third rate-limit bucket, per-email failure counters in Redis.
@@ -75,18 +139,27 @@ nullable columns per family plus one new table in an existing database.
 - A login button that tells the truth about a cold `auth-service`.
 - The admin account list showing `kind = 'end_user'` rows, so a staff member
   can mark one inactive. The service side of that already works.
+- Added after the fact, on the owner's word: an account's own gallery, its own
+  profile page, a create form that opens already filled from it, and — the
+  correction to that — a canvas that actually renders the family the profile
+  prefers, on both pages.
 
 **Phase B — worlds are owned.**
 
 - Two nullable columns and two partial indexes in each of `universe`, `nature`,
   `ocean` and `dna-service`. **No backfill** (decision 16).
 - Identity fields on the two commands, the ~3 NATS ACL lines, and write-path
-  authorization inside the same transaction as each mutation.
+  authorization inside the same transaction as each mutation. **The ACL lines
+  turned out to be already there** for the commands that existed; the four the
+  claim needed are the ones that were actually added, and the test that reads
+  the config is now a table naming every command subject's one publisher and
+  its one subscriber.
 - The owner-only world delete as a flag, filtered server-side — and **its Redis
   cache invalidation as a separate story with its own test through the
   gateway**, because that is the half that only fails in production.
 - The anonymous claim: gateway → `dna-service` → only the families that
-  visitor actually used.
+  visitor actually used. **And the browser's own gallery shelf, without which
+  the claim changes four databases and nothing a visitor can see.**
 - **A `system_settings` mechanism in `auth-service`**, with **nine settings —
   `auth-service`'s own values only** (the two quota limits, the two new web
   token TTLs, the two lockout values, and three token TTLs), so a policy number
@@ -119,48 +192,116 @@ every path in CI and none of the logic.
 
 ## Definition of Done
 
-- [ ] A person can sign up, log in, refresh and log out, and a staff member can
+- [x] A person can sign up, log in, refresh and log out, and a staff member can
       mark that account inactive — after which the account's next request fails
       within the stated Redis `tokenVersion` window.
-- [ ] Every route under `/api/me` and `/api/auth` is proven to carry its
+- [x] Every route under `/api/me` and `/api/auth` is proven to carry its
       middleware by an enumerating router test, in the shape
-      `admin_router_test.go` already uses.
-- [ ] **The audience separation is proven in both directions**: a `web` token
+      `admin_router_test.go` already uses. **Plus one the plan did not ask
+      for:** the four PUBLIC identity routes carry no auth middleware by
+      design, so each is asserted to charge the identity rate-limit bucket —
+      without it, a route registered in the wrong group passes every other
+      assertion in the file.
+- [x] **The audience separation is proven in both directions**: a `web` token
       is rejected by the admin edge (exists) and an `admin` token is rejected
       by the product edge (new). Either both, or the separation is not proven.
-- [ ] An `end_user` account cannot hold a permission row, enforced at the
-      repository level with a test.
-- [ ] A non-owner is rejected for every world mutation, table-driven so that a
-      mutation added later without a check fails the build.
-- [ ] An **unowned** world stays mutable by anyone holding its id — the
-      pre-existing anonymous behaviour is not broken by the ownership check.
-- [ ] Deleting a world removes it from the gallery, from `?ids=` and from its
-      share slug **through the gateway**, verified by a test that goes through
-      the gateway rather than the service.
-- [ ] A replayed claim, and a second device's claim, each update zero rows.
-- [ ] The 6th anonymous creation of a day is served by the mock provider and
-      still produces a real world.
-- [ ] **On a deployment configured with `AI_PROVIDER: mock` — which is what
+      Both are asserted across every registered route, not only against the
+      middleware in isolation — and beneath both,
+      `contracts.AudienceForAccountKind` makes the audience a function of
+      `accounts.kind` rather than of the endpoint reached or a field in the
+      request, so it cannot be asked for.
+- [x] An `end_user` account cannot hold a permission row, enforced at the
+      repository level with a test — `ErrRoleNotGrantableToAccountKind`, in
+      both stores, with the memory store mirroring Postgres deliberately.
+- [x] A non-owner is rejected for every world mutation, table-driven so that a
+      mutation added later without a check fails the build —
+      `TestEveryWorldMutationHonoursOwnership` in each family service, and
+      `TestEveryWorldMutationCarriesTheTokensAccount` at the gateway.
+      **The word doing the damage here is "mutation".** This item was met in
+      full and the sprint's ownership work was still incomplete, because the
+      ratchet behind it classified every `Store` method by whether it WRITES.
+      `GetWorld` answered no and was asked nothing further. See the item below
+      and `S8-IDENTITY-021`.
+- [x] A non-owner is rejected for every world **READ**, by the same predicate
+      and with the same shape of ratchet — `TestEveryWorldReadHonoursOwnership`
+      and `TestTheBatchReadDropsWorldsTheCallerMayNotReadInsteadOfFailing` in
+      each family service, `TestEveryWorldReadCarriesTheTokensAccount` and
+      `TestTheByIdWorldReadIsNeverServedFromCache` at the gateway. Added
+      2026-09-04 with `S8-IDENTITY-021`, after the owner found the hole in the
+      running product. `TestEveryStoreMethodThatReturnsAWorldIsOwnershipFiltered`
+      is the part that would have caught it: it asks the type system which
+      methods hand back a `WorldBundle` rather than trusting a hand-kept list,
+      so a read added later is forced to declare itself.
+- [x] An **unowned** world stays mutable by anyone holding its id — the
+      pre-existing anonymous behaviour is not broken by the ownership check
+      (`TestAWorldWithNoOwnerStaysMutable`). Deletion is the one exception, and
+      it is stricter on purpose: `403 WORLD_NOT_CLAIMED`, per Phase B
+      correction 5.
+- [x] Deleting a world removes it from the gallery, from `?ids=` and from its
+      share slug **through the gateway** —
+      `TestDeletingAWorldDropsBothCachedResponsesThroughTheGateway`, which goes
+      through the gateway precisely because the bug it guards IS the Redis
+      entry.
+- [x] A replayed claim, and a second device's claim, each update zero rows.
+      **Structural rather than observed**, and stated that way because there is
+      no Postgres in CI: `TestAProfileOwnerIsNeverOverwritten` (and its twin in
+      each family service) scans every SQL literal and fails any statement
+      assigning `owner_account_id` without `WHERE owner_account_id IS NULL` in
+      the same statement. The guard is the whole of the idempotency.
+- [x] The 6th anonymous creation of a day is served by the mock provider and
+      still produces a real world — the gateway half is
+      `TestTheSixthAnonymousCreateOfADayIsWithheldAndStillAccepted`, and the
+      half that matters more is `TestAWithheldJobStillProducesValidatedDNA`:
+      the degrade has to be a WORLD, not a shrug.
+- [x] **On a deployment configured with `AI_PROVIDER: mock` — which is what
       production runs today — no quota toast appears at all**, and the reason
       code is `mock_configured` rather than `quota_exhausted`. All four reason
       values are covered by a table-driven test, because three of them cannot
       be observed in production until the AI tier is switched on.
-- [ ] A quota limit changed in the admin app takes effect on the next create
+      Mutation-tested: inverting the two no-AI branches makes
+      `TestTheGenerationReasonCoversAllFourRoutesToAWorld` fail naming both
+      wrong answers. The frontend's own table is typed
+      `Record<GenerationReason, …>`, so a fifth reason without a decision is a
+      compile error rather than a fourth kind of silence.
+- [x] A quota limit changed in the admin app takes effect on the next create
       with **no service restart**, is audited with its old and new value, and
       is rejected if outside its declared bounds.
-- [ ] **The platform serves correct traffic with an empty `system_settings`
+      Both halves now: the settings half from `S8-IDENTITY-012` (audited as
+      `<key>: <old> -> <new>`, refused outside its bounds by the gateway and
+      again by `auth-service`), and the create half from `S8-IDENTITY-013` —
+      `TestALimitChangedInTheAdminAppBindsOnTheNextCreate` drives it through
+      the router, and a mirrored value outside its declared bounds falls back
+      to the compiled-in default, because bounds are code.
+- [x] **The platform serves correct traffic with an empty `system_settings`
       table and an empty Redis**, every setting resolving to its named default
       constant — and a world creation never contacts `auth-service` to learn a
       quota number.
-- [ ] `GET /api/me/worlds` returns no DNA, no raw input and no email — the same
-      response-model test the share endpoint already has.
-- [ ] No `owner_account_id` reaches `myunivokai_analytics`, checked against the
-      data-boundary allow list in
-      [`analytics-service-plan.md`](../../services/analytics-service-plan.md#data-boundary--what-crosses-into-analytics-and-what-never-does).
-- [ ] A visitor sees their worlds on a device that has never seen them.
-- [ ] `go test ./...`, `go vet ./...`, `npm run typecheck`, `npm run lint` and
+      `TestAnEmptySettingsTableIsAWorkingPlatform` asserts both halves of the
+      first clause, the screen and a real sign-up. The second is structural
+      rather than tested-by-observation: `settings.Reader` holds one field, a
+      one-method cache interface, so there is nothing in it to ask with —
+      correction 20 explains why a behavioural test could not have carried
+      that.
+- [x] `GET /api/me/worlds` returns no DNA, no raw input and no email — and
+      **asserted on the TYPE rather than on a sample response**, which is
+      stronger than the share endpoint's own test: a fourth field on
+      `LibraryWorldSummary` fails the build instead of shipping unset.
+- [x] No `owner_account_id` reaches `myunivokai_analytics`. Stronger than the
+      allow list asked for: the field was never added to
+      `contracts.WorldSnapshot` at all (Phase B correction 1), so "never sent"
+      replaces "dropped on arrival", and
+      `TestTheAnalyticsSnapshotCarriesNoOwnership` in each of the three family
+      services is what holds it.
+- [x] A visitor sees their worlds on a device that has never seen them —
+      `it("finds an account's worlds on a device whose storage is empty")`,
+      which is a real unit test only because the source decision was pulled out
+      of the React hook (Phase C correction 26's neighbourhood).
+- [x] `go test ./...`, `go vet ./...`, `npm run typecheck`, `npm run lint` and
       `npm run build` pass, and the three CI gates in
       [`ci-quality-gates.md`](../../../rules/ci-quality-gates.md) are green.
+      Measured at the end of the last branch: eight Go modules vet-clean with
+      no failures, 792 frontend tests across 57 files, 62 admin tests across 9,
+      both apps building.
 
 ## Known accepted risks
 

@@ -660,25 +660,249 @@ generation was withheld.
 
 Epic exit:
 
-- [ ] Every Sprint 8 `S8-IDENTITY-*` story is Verified.
-- [ ] The audience separation is proven in **both** directions, not one.
-- [ ] A deleted world's share URL stops resolving **through the gateway**
+- [x] Every Sprint 8 `S8-IDENTITY-*` story is Implemented. **Not Verified**:
+      the two remain different words here, and what separates them is a
+      deployment — nothing in this epic has run against Postgres, because CI
+      has none. Read both corrections sections in
+      [user-stories.md](../sprints/sprint-08-2026-09-02/user-stories.md) before
+      calling any of it verified.
+- [x] The audience separation is proven in **both** directions, not one.
+- [x] A deleted world's share URL stops resolving **through the gateway**
       immediately, proven by a test that goes through the gateway.
-- [ ] A replayed claim and a second device's claim each update zero rows.
-- [ ] A visitor sees their worlds on a device that has never seen them.
-- [ ] A quota limit is changed from the admin app, audited, with no service
+- [x] A replayed claim and a second device's claim each update zero rows.
+      Structural rather than observed: every SQL literal assigning
+      `owner_account_id` is scanned for its `WHERE owner_account_id IS NULL`
+      guard, which is the whole of the idempotency and the only thing checkable
+      without a database.
+- [x] A visitor sees their worlds on a device that has never seen them.
+- [x] A quota limit is changed from the admin app, audited, with no service
       restart — and the platform still behaves correctly with an empty
       `system_settings` table, every setting resolving to its named default.
-- [ ] A world creation never contacts `auth-service` to learn a quota number.
-- [ ] No new service, no new database and no new third-party account was added.
+      Both halves are in: the mechanism and the empty-table invariant from
+      `S8-IDENTITY-012`, and the reader on the create path from
+      `S8-IDENTITY-013`. A number nothing enforces is not a quota, and now
+      something enforces it.
+- [x] A world creation never contacts `auth-service` to learn a quota number.
+      Guaranteed by the shape of `settings.Reader` rather than by observation
+      — it holds one field, a one-method cache interface, so it has nothing to
+      ask with. See `S8-IDENTITY-012`'s correction 20.
+- [x] No new service, no new database and no new third-party account was
+      added. Two migrations were: `system_settings` in `auth-service` and the
+      two generation-reason columns in `dna-service`, both additive over
+      existing databases.
 
-Sprint stories: [S8-IDENTITY-001 through S8-IDENTITY-017](../sprints/sprint-08-2026-09-02/user-stories.md#epic-s8-identity-001--end-user-identity-and-world-ownership)
+**What this epic did NOT do, so it is not mistaken for finished:**
+
+- **`AI_PROVIDER` is still `mock` in production.** The ceiling exists, which
+  makes flipping it safe, and §9.2's per-create cost is meant to be measured
+  from `ai_generation_attempts` AFTER the flip rather than read off a rate
+  card. That is the one open task in the sprint and it is open by design.
+- **Nothing has run against Postgres.** Every SQL guarantee in this epic is a
+  ratchet over the statement text, which is what CI can check. The first
+  deployment is the first execution.
+- **A caller minting a fresh anonymous id per request defeats the quota.** §9's
+  "never on the address" rule makes that unfixable at this layer; the per-IP
+  token bucket is what still stands against it. Named in Phase B correction 24
+  rather than worked around.
+
+Sprint stories: [S8-IDENTITY-001 through S8-IDENTITY-020](../sprints/sprint-08-2026-09-02/user-stories.md#epic-s8-identity-001--end-user-identity-and-world-ownership)
+— seventeen planned, plus `018`, `019` and `020`, which the owner added to
+Phase A after using it.
 
 Source: [end-user-identity-and-ownership.md](../architecture/end-user-identity-and-ownership.md)
 — **read its §16 first.** Twenty decisions taken on 2026-09-02 supersede
 parts of §3.4, §5, §9, §10, §11 and §17 in place, and most of them cut scope:
 there is no account-deletion feature, no mail provider, no password reset, no
 passkeys and no `library-service` in this epic.
+
+## DEFECT-CSP-001 — Nothing hydrates on a production build of the web app
+
+Status: **Closed 2026-09-04** on `fix/fe/content-security-policy-hydration`.
+Every route segment now renders per request (`export const dynamic =
+"force-dynamic"` in `src/app/layout.tsx`), the CSP suite passes 8 of 8 from 1 of
+8, and the policy itself was not weakened to get there.
+Priority: Was P0/P2 pending one measurement, and the measurement came back
+**latent** — production answered 404 on every Phase A route, sent no CSP header,
+and `src/middleware.ts` did not exist on `origin/main`, which was 46 commits
+behind `staging`. So it was latent only because none of Sprint 08 was deployed:
+**the first `staging` → `main` merge would have made it a live total outage**,
+which is what made it a release blocker rather than a P2.
+Found: 2026-09-03, by the `SHOOT_PORT` override added while folding chrome work
+into [Sprint 3](../sprints/sprint-03-2026-09-09/user-stories.md#the-defect-this-work-uncovered-and-did-not-fix)
+
+As a visitor loading any page of a production build,
+I want the page to become interactive,
+so that the account menu, the 3D world and every form on it work at all.
+
+Scenario: A prerendered page carries no nonce and the policy demands one
+
+Given `next build` prerenders every route except the three share pages
+And the prerendered HTML is written with no `nonce` attribute on any of its
+twenty script tags
+When `src/middleware.ts` answers the document request with
+`script-src 'self' 'nonce-<per-request>' 'strict-dynamic'`
+Then `'strict-dynamic'` disables the `'self'` allowance
+And the browser refuses every application chunk
+And nothing on the page hydrates — no account menu, no canvas, no client-side
+validation.
+
+Reproduce, from `apps/myunivokai-personalization`:
+
+```bash
+SHOOT_PORT=41399 npm run shoot -- e2e/content-security-policy.spec.ts --project=desktop
+# 7 of 8 fail; the one that passes only reads the header
+```
+
+Why it was invisible: `playwright.config.ts` defaults to port 41300 with
+`reuseExistingServer`, which is `npm run dev`'s port and the local compose
+stack's port, so `npm run check:csp` has been measuring a development server —
+and `next dev` injects the nonce correctly.
+
+Scenario: The fix is a choice, which is why this is not a one-line commit
+
+Given Next's nonce mechanism requires dynamic rendering
+When the fix is chosen
+Then it is either opting the app out of static prerendering, or giving the
+policy something a prerender can carry
+And it is NOT `'unsafe-inline'` — `lib/contentSecurityPolicy.ts` already
+records why that would be a policy permitting the attack it exists to stop
+And the first step is establishing whether the Vercel deployment (see the note
+in `render.yaml`) serves the prerender with this header, because that decides
+whether this is a live outage or a latent one.
+
+Scenario: Resolved — the app opts out of static prerendering
+
+Given a nonce can only match HTML produced by the request that produced the
+header
+When `src/app/layout.tsx` declares `export const dynamic = "force-dynamic"`
+Then every segment below it inherits per-request rendering, `next build` marks
+all ten page routes `ƒ`, and the browser refuses nothing
+And the policy is unchanged: `'strict-dynamic'` stays and `'unsafe-inline'` is
+still absent from `script-src`
+And the cost is +3 to +5 ms median time-to-first-byte per document, measured on
+a local production server over 25 samples per route, excluding the platform
+effect of Vercel serving these as functions rather than CDN static
+And the guard against its removal is a unit test in
+`src/lib/contentSecurityPolicy.test.ts` rather than the e2e suite, because CI
+runs no Playwright — it fails if the export goes, and fails naming the file if
+any route segment asks to be prerendered again.
+
+The full write-up, including what the browser was measured to refuse and the two
+rejected alternatives, is
+[`S3-CSP-001`](../sprints/sprint-03-2026-09-09/user-stories.md#the-defect-this-work-uncovered-and-did-not-fix).
+
+## DEFECT-WAKE-001 — The wake mechanism reports waking services it does not wake
+
+Status: **Open.** Measured against production on 2026-09-04. One contributing
+cause is fixed — `SERVICE_WAKE_TIMEOUT` 5s → 45s, set live on the dashboard and
+written into `render.yaml` so a blueprint sync cannot revert it — and that fix
+was then measured **not to be sufficient**. The instrument the next step needs
+ships on `fix/be/wake-response-visibility`.
+Priority: P1. Every family service is spun down after roughly fifteen minutes
+idle, and on current traffic that is almost always, so almost every visitor
+opening a world pays this. It is P1 rather than P0 only because the deployed
+frontend predates Sprint 08; the first `staging` → `main` release puts
+`/sign-in`, `/account` and `/worlds` on the same mechanism, which is why this
+belongs in the release conversation.
+Found: 2026-09-04, while verifying whether `staging` → `main` needed new
+environment configuration. It needed none; it needed this.
+
+As a visitor opening a world after the fleet has been idle,
+I want the page to load,
+so that a link I was sent resolves to a world instead of an error.
+
+Scenario: The gateway reports a wake it did not perform
+
+Given every family service is a pure NATS consumer with no inbound HTTP
+And Render free spins an idle instance down after roughly fifteen minutes
+And `SERVICE_WAKE_PLATFORM=http`, with all seven `*_SERVICE_URL` verified
+correct — public `https://myunivokai-<name>.onrender.com`, no path
+When a query returns `no-responders` and the gateway calls `Coordinator.Wake`
+Then the gateway logs `"wake call sent"` **within one second**
+And the target container does not start at all
+And after `consecutiveFailedWakesBeforeGivingUp` calls the client is told
+`SERVICE_UNAVAILABLE` — *"repeated attempts to start it have failed"* — while
+the service is simply asleep.
+
+Measured three times, on two services, by reading both sides of the same clock:
+
+| Window | Gateway | Target service |
+| --- | --- | --- |
+| 13:34:32 – 13:36:41 | 3 × `"wake call sent"` for `nature` | **0 log lines** |
+| 14:50:34 – 14:53:47 | 4 × `"wake call sent"` for `universe` | **0 log lines** |
+| 15:36:19 (+45s timeout live) | 1 × `"wake call sent"` for `ocean` | **0 log lines in the next 100s** |
+
+`universe` then started at 14:55:09 — 13.3 seconds after a request sent to the
+same URL **from outside Render**, and answered the gateway's query 373 ms after
+`"universe service ready"`. So the chain works; only the wake does not.
+
+What was ruled out, each by measurement rather than by reasoning:
+
+- **Instance-hour exhaustion.** 9.38 of 750 free hours used. Also 11 of 25
+  services and 13 MB of 5 GB bandwidth. Nothing is near a limit.
+- **Wrong wake targets.** All seven read back from the live dashboard as the
+  exact public URLs. This was the leading hypothesis and it is wrong.
+- **The 5s timeout being the whole cause.** Raising it to 45s changed nothing:
+  the call still returned inside a second and `ocean` still never started. The
+  raise is kept because it is independently necessary — a sleeping instance's
+  `/healthz` needs 7.3s (dna), 12.7s (nature) or 13.3s (universe) to answer —
+  but it is not the defect.
+- **NATS, Redis, credentials, CORS, migrations.** `readyz` reports both
+  dependencies ready, the env group is linked to all eight services, and a
+  woken service answers correctly. Nothing else about the fleet is broken.
+
+The remaining explanation, **not yet confirmed**: a request from one Render
+service to a sibling free service's public `.onrender.com` URL does not reach
+the public edge that performs the spin-up. This file's top comment already
+records the neighbouring fact — *"Render free web services cannot receive
+private network traffic at all, so a request there would never wake anything"*
+— which would make the ping arrive somewhere that answers instantly.
+
+Why it stayed invisible for weeks, and the one line that has to change:
+[`platforms/http.go`](../../../services/api-gateway/internal/wake/platforms/http.go)
+deliberately discarded the response. That was right about the *verdict* — a
+booting instance may legitimately answer 502, so a status code cannot mean
+readiness — but it also discarded the *evidence*, and so a call that held the
+connection for twelve seconds while starting an instance and a call answered
+instantly by something else produced the identical log line. The elapsed time
+is the discriminator, and on a host that starts an instance by holding the
+request, **a fast wake call is the suspicious one.**
+
+Reproduce, with a Render API key for the account:
+
+```bash
+# 1. pick a service with no recent traffic, note it has no logs
+# 2. one request through the gateway, which fires exactly one wake
+curl -s https://myunivokai-gateway.onrender.com/api/ocean/worlds/00000000-0000-4000-8000-000000000000
+# 3. wait 100s, touching nothing, then read both sides
+#    gateway: "wake call sent"   target: nothing
+# 4. now request the target's own public URL and let it finish
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://myunivokai-ocean.onrender.com/healthz
+# 200 ~12s — the host does hold the connection and start the instance
+```
+
+Scenario: The give-up tally expires, so this is not permanent per service
+
+Given the unanswered-wake tally lives in Redis and is cleared only by
+`RecordServiceSeen`
+When a service has already failed the threshold
+Then a later request still fires a wake before the tally is consulted
+([rpc_transport.go](../../../services/api-gateway/internal/handlers/rpc_transport.go)'s
+*"The wake goes out either way"*)
+And the tally was observed to have expired after roughly ninety minutes, so a
+visitor is not refused for ever — only for the window after a failed burst.
+
+Next steps, in order:
+
+1. Merge `fix/be/wake-response-visibility` so `wake_host`, `wake_status` and
+   `wake_elapsed` reach production logs. One request then answers what is
+   replying to these calls.
+2. If the reply comes from inside Render's network, the mechanism's premise
+   fails on this host and the choice is between a paid plan
+   (`SERVICE_WAKE_PLATFORM=none`, no code change) and a wake that leaves and
+   re-enters Render.
+3. An external keep-warm cron was costed and rejected: seven services awake
+   continuously is ~5,110 instance-hours a month against a 750-hour allowance.
 
 ## DEFERRED-AUTH-001 — Define identity before authentication
 

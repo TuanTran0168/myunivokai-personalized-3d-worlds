@@ -10,6 +10,7 @@ import {
   Server,
   ShieldAlert,
   Shield,
+  SlidersHorizontal,
   Sparkles,
   Users
 } from "lucide-react";
@@ -151,6 +152,17 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ScrollText,
         permission: PERMISSIONS.auditRead,
         summary: "Every administrative action, oldest retained first."
+      },
+      {
+        href: "/settings",
+        label: "Settings",
+        icon: SlidersHorizontal,
+        // settingsRead rather than settingsManage: the nav entry should
+        // appear for somebody who may look, and the screen itself says so
+        // and disables its inputs. Gating the link on the write permission
+        // would hide a readable screen from a reader.
+        permission: PERMISSIONS.settingsRead,
+        summary: "Quota ceilings, token lifetimes and the lockout window — changeable without a deploy."
       }
     ]
   }

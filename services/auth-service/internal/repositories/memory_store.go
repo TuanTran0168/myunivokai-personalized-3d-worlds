@@ -34,6 +34,8 @@ type MemoryStore struct {
 	refreshTokensByID          map[string]RefreshToken
 	refreshTokenIDByHash       map[string]string
 	auditEvents                []AuditEvent
+	accountProfilesByAccountID map[string]AccountProfile
+	systemSettingsByKey        map[contracts.SettingKey]SystemSetting
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -47,5 +49,7 @@ func NewMemoryStore() *MemoryStore {
 		accountRoleIDs:             map[string]map[string]struct{}{},
 		refreshTokensByID:          map[string]RefreshToken{},
 		refreshTokenIDByHash:       map[string]string{},
+		accountProfilesByAccountID: map[string]AccountProfile{},
+		systemSettingsByKey:        map[contracts.SettingKey]SystemSetting{},
 	}
 }

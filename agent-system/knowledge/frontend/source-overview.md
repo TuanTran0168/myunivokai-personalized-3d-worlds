@@ -1,7 +1,7 @@
 # FE Source Overview — apps/myunivokai-personalization
 
 > **Document status:** Active
-> **Last source review:** 2026-08-14
+> **Last source review:** 2026-09-03
 
 Next.js 15 App Router + React 19 + TypeScript + Tailwind + React Three Fiber v9.
 Every page is a client component because of WebGL and localStorage.
@@ -27,15 +27,73 @@ itself.
 | --- | --- | --- |
 | `/` | `src/app/page.tsx` | Landing + family picker. Submit -> `202 + jobId` -> queued/processing polling -> completed world redirect; pending polling resumes after refresh |
 | `/worlds/[worldId]` | `src/app/worlds/[worldId]/page.tsx` | Dashboard: 3D canvas, POI panel, variants, publish/share, PNG export. Reads `?family=` to pick the API + renderer |
-| `/gallery` | `src/app/gallery/page.tsx` | Worlds saved on this device (localStorage), family-aware, loaded in parallel |
+| `/gallery` | `src/app/gallery/page.tsx` | Signed in: **every world the account owns**, from `GET /api/me/worlds` (`lib/galleryWorldSources.ts`). Signed out: worlds saved on this device (`lib/savedWorlds.ts`). Family-aware, loaded in parallel. Backdrop via `components/AmbientBackdrop` |
+| `/sign-in`, `/sign-up` | `src/app/sign-in/page.tsx`, `src/app/sign-up/page.tsx` | Both render `features/identity/AuthCredentialsForm`: a two-column screen from `lg` — what an account gives you on the left, the card on the right — over a world of its own (`features/identity/authBackdropScene.ts`, a DIFFERENT one per mode, because the two screens are one route apart). Sign-up also takes a display name |
+| `/account` | `src/app/account/page.tsx` | The account's own page: name, full name, gender, and the defaults the create form is filled from. `AccountProfileForm` owns the whole layout, heading included, because it also renders the world behind it — the scene the create form would open with, rebuilt as the fields change |
 | `/share/worlds/[shareSlug]` | `src/app/share/worlds/[shareSlug]/page.tsx` | Public **universe** share page |
 | `/nature/share/worlds/[shareSlug]` | `src/app/nature/share/worlds/[shareSlug]/page.tsx` | Public **nature** share page (twin route; nature-service prints share URLs with the `/nature` prefix) |
+| `/ocean/share/worlds/[shareSlug]` | `src/app/ocean/share/worlds/[shareSlug]/page.tsx` | Public **ocean** share page, same twin-route reason |
+
+`src/middleware.ts` sits in front of all of them and sets the
+Content-Security-Policy with a per-request nonce (`lib/contentSecurityPolicy.ts`).
+`npm run check:csp` is the only thing that can catch a hole in it — `tsc`, lint,
+build and the unit tests all passed against a policy that produced fourteen
+`connect-src blocked blob` violations per scene.
+
+**And it was catching that hole on a development server, not on a build.**
+Found 2026-09-03, fixed 2026-09-04. `playwright.config.ts` defaults to port
+41300 with `reuseExistingServer`, which is also `npm run dev`'s port and the
+port the local compose stack serves this app on — so `check:csp` attaches to
+whatever is already running rather than to the production build the config's own
+comment says it measures. Against a real build it failed 7 of 8, because a
+prerendered page's HTML is written with no nonce while the policy demands one.
+**Pass `SHOOT_PORT` to measure a build**, which is what the defect needed and
+what any future CSP change needs:
+
+```bash
+SHOOT_PORT=41399 npm run shoot -- e2e/content-security-policy.spec.ts --project=desktop
+```
+
+`next dev` injects the nonce and hid it. The fix is `S3-CSP-001`: **every route
+segment renders per request**, declared once as `export const dynamic =
+"force-dynamic"` in `src/app/layout.tsx` and inherited by every segment below
+it. That line is not a data-freshness preference and must not be removed — a
+nonce can only match HTML produced by the request that produced the header, so
+`'strict-dynamic'` plus a nonce REQUIRES per-request rendering. `next build`
+should show `ƒ` against every route but `/icon.svg` and `/icon1.png`, which the
+middleware matcher excludes by extension and which need no nonce.
+
+Measured cost, since the line reads like a performance regression to anyone who
+finds it later: **+3 to +5 ms** median time-to-first-byte per document on a
+local production server (`/` 3.1 → 7.7, `/sign-in` 2.8 → 6.0, `/gallery` 2.9 →
+5.6, medians of 25). These pages fetch nothing server-side, so per-request
+rendering only rebuilds the shell. What that number does NOT include is the
+platform effect: on Vercel these documents become function invocations instead
+of CDN static hits, which localhost cannot show.
+
+The regression guard is in `src/lib/contentSecurityPolicy.test.ts`, not in the
+e2e suite, because **CI runs no Playwright at all** — `.github/workflows/ci.yml`
+has typecheck, lint, test and build and no browser step. It asserts the root
+layout's export and fails any route segment that asks to be prerendered again
+(`force-static`, `dynamic = "error"`, or any `revalidate`).
 
 ## The lib layer — every piece of data passes through here
 
 - `lib/api.ts` — the single API client, now **family-aware and asynchronous**:
   `request(family, path, init)` picks the gateway route by `WorldFamily`
-  (`API_BASE_URLS_BY_FAMILY`), and every method takes a family. The `normalize*`
+  (`API_PATH_PREFIXES_BY_FAMILY`) and sends it through
+  `authorizedGatewayRequest`, so a world call carries the session and refreshes
+  once on expiry. It carried none until 2026-09-03, which meant a signed-in
+  visitor's world reached the gateway anonymous and was stamped with no owner.
+  The generation poll is the deliberate exception and stays unauthenticated: a
+  job belongs to whoever holds its id, and an expired token there would fail a
+  poll on a world being generated at that moment.
+
+  `createWorld` also sends `X-Anonymous-Id`, and only when signed OUT
+  (`anonymousCreateHeaders`) — the gateway drops it whenever it has a verified
+  account instead, so sending it while signed in would be a value nothing
+  reads. That call is where the id is first minted, rather than on page load,
+  so a visitor who only ever looked is never given an identifier. Every method takes a family. The `normalize*`
   functions matter most: the BE returns `{ world, selectedVariant, variants }`
   (variant list at the response ROOT) and normalize maps everything onto the
   unified `World` / `WorldVariant` types. **The FE's worst historical bug lived
@@ -43,8 +101,16 @@ itself.
   response shape changes, fix normalize first. Creation stores the pending job
   in session storage, polls `/api/jobs/{jobId}` with bounded backoff/deadline,
   supports `AbortSignal`, and loads the world only after completion.
+- `lib/gatewayRequest.ts` — the transport, with nothing about worlds or
+  identity in it: `ApiError`, the 429 and `SERVICE_WAKING` retry loops,
+  `requestGatewayJson`, `waitForDelay`. It is a separate module for a
+  structural reason rather than a tidy one — `api.ts` needs the session and
+  `productAuth.ts` needs the transport, so leaving it inside `api.ts` made the
+  two import each other. `api.ts` re-exports `ApiError`, `requestGatewayJson`
+  and `GatewayRequestHooks`, so the rest of the app has one import path.
 - `lib/gateway.ts` — validates the one configured gateway origin and owns the
-  family-to-public-prefix map. Browser requests and both server-rendered share
+  family-to-public-prefix map (`apiPathPrefixForFamily` for browser calls,
+  `apiBaseUrlForFamily` where a full base URL is still wanted). Browser requests and both server-rendered share
   metadata routes use this same helper. It deliberately has no direct-service
   fallback.
 - `lib/types.ts` — mirrors the BE JSON contract. `WorldSceneConfig` (universe,
@@ -64,8 +130,146 @@ itself.
 - `lib/worldRoutes.ts` — family-aware path/query helpers (`worldPagePath`,
   `sharePagePath`, `worldFamilyFromQueryValue`, `WORLD_FAMILY_QUERY_PARAMETER`).
 - `lib/savedWorlds.ts` — localStorage key `myunivokai.savedWorldIds`, now
-  `SavedWorldReference { worldIdentifier, family }` (legacy plain-string entries
-  read as universe). IDs saved automatically on create and when opening a world.
+  `SavedWorldReference { worldIdentifier, family, ownerKey }`. IDs saved
+  automatically on create and when opening a world.
+
+  **`ownerKey` is the whole of "whose worlds are these".** It is
+  `account:<accountId>` for a world made while signed in and the constant
+  `anonymous` for one made without an account; an entry with no `ownerKey`
+  (saved before accounts existed) reads as anonymous, and a legacy plain-string
+  entry as an anonymous universe world. The anonymous key is a CONSTANT and not
+  the anonymous-id cookie on purpose: `localStorage` is already per-browser, so
+  an id distinguishes nothing and can be lost when the cookie expires.
+
+  Every read is filtered to one owner, which is why a brand-new account no
+  longer opens onto a gallery full of the worlds the browser made before it
+  existed. The duplicate check on write spans EVERY shelf, so opening an
+  anonymous world while signed in does not quietly claim it — claiming is
+  `S8-IDENTITY-011`, by anonymous id, deliberately not by world id.
+  `moveAnonymousWorldsToOwner(ownerKey)` is the local half of the claim, and
+  the reason the claim is visible at all: this gallery renders from
+  `localStorage` filtered by owner, so a claim that moved five worlds in four
+  databases would otherwise still show an empty grid. It runs only after the
+  server accepted.
+
+  **Since `S8-IDENTITY-016` this is a CACHE for a signed-in visitor**, not the
+  list. `replaceCachedWorldReferences(ownerKey, serverReferences)` is the only
+  thing that ever writes it from a server answer, and it REPLACES that owner's
+  entries rather than merging with them — §8 asks for a merge and a merge
+  brings deleted worlds back for ever, because winning a conflict only decides
+  ids present in both lists and an id only the cache holds is exactly a
+  deleted world. The anonymous shelf is never touched by it: no server answer
+  can speak about worlds the server does not know the owner of.
+- `lib/galleryWorldSources.ts` — where the gallery's list comes from, as pure
+  functions with their IO passed in. `resolveGalleryWorldList` is the three-way
+  decision (server, cache, browser), and it is pure precisely so that the case
+  `S8-IDENTITY-016` calls its whole point — a signed-in visitor on a browser
+  whose storage was just cleared — is a unit test: this app's vitest runs
+  `environment: "node"` with no React testing library, so a decision left
+  inside the hook would have been untestable in practice.
+
+  `splitIntoHydrationBatches` keeps `?ids=` requests under the gateway's
+  fifty-identifier cap. That cap was unreachable while the list was whatever
+  one browser held; a server list has no such accidental ceiling, so a visitor
+  with sixty worlds of one family would have got a 400 and fallen into the
+  per-id fallback path. `MAXIMUM_GALLERY_SERVER_PAGES` is four, so the gallery
+  shows the newest two hundred worlds — a stated ceiling rather than a silently
+  truncated first page, since there is no paging control.
+- `lib/generationNotice.ts` — the one thing this app says about how a world
+  was built, and the three things it deliberately does not.
+  `generationNoticeFor(job)` returns a sentence for `quota_exhausted` and
+  `null` for the other three reasons: `ai_generated` (nothing happened),
+  `mock_configured` (there was no AI tier to lose — **what production returns
+  today**), and `ai_failed_fallback` (an incident, and staff's). It reads the
+  REASON CODE and never a provider name, which would arrive as `mock` in three
+  unrelated situations and force this module to guess which. Only a COMPLETED
+  job speaks: the reason is written when the DNA is stored, before composition,
+  so a `processing` job already carries it. The limit in the sentence comes off
+  the job — a `5` in TypeScript would be a second declaration of a settings
+  value. Fired from `src/app/page.tsx` on both generation paths, keyed on the
+  job id so "a single toast" is structural.
+- `lib/anonymousWorldClaim.ts` — `claimAnonymousWorldsForAccount()`, both
+  halves of the claim in the one order they are safe in: ask the server, clear
+  the anonymous cookie, then move the shelf. Its own module for the reason
+  `galleryOwner.ts` is one — `savedWorlds.ts` is pure storage with no network
+  in it. A failure leaves BOTH halves untouched, which makes the next sign-in
+  the retry; the server's own `owner_account_id IS NULL` guard makes that retry
+  a no-op if the first attempt actually worked.
+- `lib/galleryOwner.ts` — `resolveGalleryOwnerKey()`, the async form of the
+  above. `currentOwnerKey()` answers synchronously except in one case, a live
+  session whose account copy was evicted from `localStorage`; this asks
+  `GET /api/me` to recover it. Both answer `null` rather than guessing, and
+  every caller shows and saves nothing on `null` — showing a signed-in person
+  somebody else's worlds is worse than showing them none.
+- `lib/productSession.ts` — the three client-written cookies
+  (`myunivokai_access`, `myunivokai_refresh`, `myunivokai_anonymous`) plus the
+  account copy in `localStorage`. **None is `httpOnly` and none can be**, so
+  the CSP is the control, not the cookie flags.
+
+  The anonymous id is minted HERE, by `crypto.randomUUID`, not by the gateway —
+  the plan's §7 says the gateway mints it and is corrected: two tabs creating
+  at once would each be handed a different id and one world would be orphaned.
+  It is cleared in exactly one place, `clearAnonymousIdentifier`, after a claim
+  succeeds; `clearProductSession` deliberately leaves it alone, because signing
+  out is not becoming a different visitor. `ANONYMOUS_IDENTIFIER_HEADER_NAME`
+  lives here too, and must stay in the gateway's product CORS `AllowedHeaders`
+  or every request carrying it fails in a browser and passes in every test.
+- `lib/productAuth.ts` — `signUp` / `signIn` / `signOut` /
+  `refreshProductSession` / `authorizedGatewayRequest` / `fetchSignedInAccount`
+  / `claimAnonymousWorlds`. The claim reads the anonymous id rather than
+  read-or-creating it — minting one in order to claim with it would name worlds
+  that cannot exist — and clears the cookie only after the server answered.
+  Refresh is single-flight at module scope because the refresh token is
+  single-use with family-wide reuse detection: two parallel refreshes would
+  present the same token twice and revoke the whole family.
+- `lib/accountProfile.ts` — `GET`/`PATCH /api/me/profile`. `creationDefaults`
+  is `CreateWorldInput`, the same type the generate call takes, so the profile
+  cannot express something the create form could not hold.
+- `features/world-form/worldFormOptions.ts` — every vocabulary the create
+  form offers (families, interests, traits, per-family moods and styles,
+  palette), plus `FAMILY_COPY`, `defaultStyleForFamily` and
+  `CREATE_FORM_INITIAL_VALUES`. Moved out of `app/page.tsx` when the account
+  page started offering the same fields; each list mirrors a backend vocabulary
+  (`allowedMoods`, `allowedWorldStylesByFamily`), so a second copy is how the
+  two screens come to offer a value the other cannot render.
+- `features/world-form/profileAutofill.ts` — the pure functions that decide
+  whether and how a saved profile fills the create form, plus
+  `profileWithCreateFormDefaults`, which is how the account page can mirror the
+  create form's MINIMUMS (3 interests, 3 traits, 1 colour) without being
+  unusable on a first visit: an unanswered list is shown holding what the
+  create form itself opens with. The server stays permissive — it bounds what
+  may be stored, and a row written before the rule still has to load.
+  `isCreateFormPristine` is the guard (the profile arrives from the network a
+  moment after mount, and must never overwrite something already typed) and it
+  deliberately IGNORES the nickname, because the display name is filled from
+  storage before the profile answers. `createFormValuesFromProfile` overrides
+  only where the profile has an answer — an empty saved field stops overriding
+  rather than clearing the form's own default.
+- `features/world-form/createWorldPayload.ts` — `buildCreateWorldPayload`, the
+  form's ten values as the request the backend receives, fallbacks and all. The
+  live preview is built from THIS rather than from the raw fields, so the scene
+  on screen has the planet count and names the generated world will have; that
+  coupling is why the sanitising is one function and not two.
+- `features/world-form/previewScene.ts` — which family's scene builder runs.
+  `buildPreviewSceneForFamily` is the create page's live preview (keyed on the
+  canvas's lagging family, not the form's), and `buildCreateFormPreviewScene`
+  is the whole account-page backdrop: the world the create form would open with,
+  from the profile on screen.
+- `components/AmbientBackdrop.tsx` — the fixed z-0 world behind a page, with the
+  dpr cap, parked entry, dim and vignette. Shared by `/gallery` and `/account`;
+  its content column carries `relative z-10` and the backdrop is its SIBLING,
+  never its child, or the fixed layer paints over the heading. Ambient sound is
+  opt-in and off by default, because a backdrop rebuilt as somebody types would
+  restart its soundscape on every rebuild.
+- `lib/useDebouncedValue.ts` — the hook and
+  `PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS`, shared by both previews so they
+  cannot drift apart.
+- `components/Toast.tsx` — one message about something that has already
+  finished, over the page rather than beside a control. `StatusMessage` still
+  reports on the control it sits next to (a save in progress, a field that will
+  not do); this reports on an action that is over, which is why it is not
+  anchored. `toastLifetimeMilliseconds` is the tested part: a success leaves on
+  its own, a failure waits to be dismissed.
 - `lib/exportImage.ts` — downloads the WebGL canvas as PNG
   (requires `preserveDrawingBuffer`, already set on the Canvas).
 - `lib/formRailCollapse.ts` + `components/WorldChromeToggle.tsx` — the one-button
@@ -80,6 +284,57 @@ itself.
   CSS with no compiler between them, so `formRailCollapse.test.ts` parses
   `globals.css` and fails if either drifts. See
   [../user-stories/world-chrome.md](../../plans/backlog/world-chrome.md).
+
+## The two glass materials, and which surface gets which
+
+`src/app/globals.css` holds two, not one, and the rule between them is the whole
+of it: **clear where the world is the subject, regular where the panel is the
+subject.**
+
+| Material | What it is | Where |
+| --- | --- | --- |
+| `.glass-panel` / `.liquid-glass` | `--glass-tint` at 8%, saturate only, NO blur, and a heavy three-layer text-shadow doing all the legibility work | Panels over a live world that is being configured or looked at: the create form's rail, the live-preview island, a world page's HUD |
+| `.glass-overlay` (+ `.glass-overlay-sheen`, `.glass-overlay-alert`) | `--glass-overlay-tint` at 84%, `blur(28px)`, a gradient specular rim, one tight text-shadow | Anything floating over other INTERFACE: the account menu, `components/Toast.tsx`, the sign-in card, `.lg-toast` |
+
+This is iOS 26's own split (`clear` and `regular`) and it arrived because there
+was only the clear one: an open account menu and the create form's live-preview
+panel were legible through each other, which is not depth, it is a collision.
+Three things a later reader will otherwise undo:
+
+- **The material declares no `position`.** This file loads after
+  `@tailwind utilities`, so a `position` here out-ranks `absolute`/`fixed` on the
+  element wearing it — which is exactly how the dropdown once laid itself out
+  inside the 57px header bar. Its rim and sheen are pseudo-elements, so every
+  call site positions itself.
+- **84% is not a taste setting.** `backdrop-filter` is the first thing a
+  compositor drops (software rendering, some mobile browsers), and the tint has
+  to hold on its own when it does. The blur makes it beautiful; the tint makes
+  it correct.
+- **A tone is a modifier class, never a Tailwind `bg-*`.** `.glass-overlay` sets
+  the `background` shorthand and wins against any utility, which is why the
+  error tone is `.glass-overlay-alert`.
+
+`text-on-world` is the third piece: the same heavy text-shadow, for text with no
+panel under it at all — the sign-in screen's editorial column sits straight on
+the world.
+
+## Where a finished action reports itself
+
+One inset, `--toast-inset-top`, for the two toast surfaces this app has: the
+`sonner` stack mounted in `app/layout.tsx` and `components/Toast.tsx`. It used
+to be `72px` in a prop and `bottom-20` in a class name, and that is how a save
+confirmation ended up on top of the Save button that produced it and over the
+fixed footer.
+
+- `components/Toast.tsx` is the held, dismissible one: a success fades after
+  seven seconds, a failure waits. `toastLifetimeMilliseconds` is that rule.
+- `sonner` is the brief one, for a share link copied or a world deleted.
+- `lib/returnDestinations.ts` names the only two places anybody is sent back to
+  — the create form ("your personalization", the owner's word for it) and the
+  gallery — and `returnDestinationsFrom(pathname)` drops the page being looked
+  at, so a toast on the gallery never offers the gallery.
+  `components/ReturnDestinationLinks.tsx` renders them in a toast or as form
+  controls.
 
 ## The 3D part
 
@@ -98,13 +353,26 @@ No Redux/Zustand. Each page owns its state with `useState`/`useMemo`; planet
 selection syncs between canvas and panel via props (`selectedPlanetKey` +
 `onSelectPlanet`). Reach for a store only if state starts spanning pages.
 
+The create page has the one piece of state worth knowing before editing it:
+`worldFamily` is what the form says and `renderedWorldFamily` is what the
+canvas shows, and the second lags the first by the length of the departure
+animation on purpose (`features/transitions/worldChangeStages.ts`). They are
+two halves of one invariant, so **`showWorldFamilyOnCanvas` is the only place
+`setWorldFamily` is called** — a second writer is exactly how a profile's
+preferred family came to fill the picker while the canvas stayed a universe.
+
 ## Known upgrade boundaries
 
 - `SceneConfig` is a broad optional interface and API normalization still uses
   `any`; it is not yet a schema-derived discriminated union with runtime
   validation.
 - Both family renderers are statically imported by `registry.ts`; lazy family
-  chunks remain pending.
+  chunks remain pending. `components/AmbientBackdrop` is the one canvas that IS
+  lazy, and it is worth knowing how much that was worth: `/gallery` fell from
+  509 kB of first-load JS to 131 kB and `/account` from 510 kB to 138 kB, which
+  also let the credential screens gain a 3D world for nothing (121 kB, from
+  116 kB). Pages where the world is the subject keep the static import, because
+  there the canvas is not what the visitor is waiting past.
 - The main canvas allows DPR up to 3 and has no adaptive quality profile or
   recoverable WebGL error boundary.
 - Nature GLBs are self-hosted, but Drei still uses its default external Draco

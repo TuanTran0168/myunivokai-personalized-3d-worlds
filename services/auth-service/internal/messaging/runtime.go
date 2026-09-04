@@ -63,6 +63,12 @@ func (runtime *Runtime) Run(_ context.Context) error {
 		{subject: contracts.AuthLoginQuerySubject, handler: runtime.natsHandler.HandleLoginQuery},
 		{subject: contracts.AuthRefreshQuerySubject, handler: runtime.natsHandler.HandleRefreshQuery},
 		{subject: contracts.AuthLogoutQuerySubject, handler: runtime.natsHandler.HandleLogoutQuery},
+		{subject: contracts.AuthWebSignupQuerySubject, handler: runtime.natsHandler.HandleWebSignupQuery},
+		{subject: contracts.AuthWebLoginQuerySubject, handler: runtime.natsHandler.HandleWebLoginQuery},
+		{subject: contracts.AuthWebRefreshQuerySubject, handler: runtime.natsHandler.HandleWebRefreshQuery},
+		{subject: contracts.AuthWebLogoutQuerySubject, handler: runtime.natsHandler.HandleWebLogoutQuery},
+		{subject: contracts.AuthWebProfileGetQuerySubject, handler: runtime.natsHandler.HandleWebProfileGetQuery},
+		{subject: contracts.AuthWebProfileUpdateQuerySubject, handler: runtime.natsHandler.HandleWebProfileUpdateQuery},
 		{subject: contracts.AuthTokenVersionQuerySubject, handler: runtime.natsHandler.HandleTokenVersionQuery},
 		{subject: contracts.AuthAccountDisableQuerySubject, handler: runtime.natsHandler.HandleAccountDisableQuery},
 		{subject: contracts.AuthAccountEnableQuerySubject, handler: runtime.natsHandler.HandleAccountEnableQuery},
@@ -81,6 +87,8 @@ func (runtime *Runtime) Run(_ context.Context) error {
 		{subject: contracts.AuthRoleRevokeQuerySubject, handler: runtime.natsHandler.HandleRoleRevokeQuery},
 		{subject: contracts.AuthPermissionListQuerySubject, handler: runtime.natsHandler.HandlePermissionListQuery},
 		{subject: contracts.AuthAuditListQuerySubject, handler: runtime.natsHandler.HandleAuditListQuery},
+		{subject: contracts.AuthSettingListQuerySubject, handler: runtime.natsHandler.HandleSettingListQuery},
+		{subject: contracts.AuthSettingUpdateQuerySubject, handler: runtime.natsHandler.HandleSettingUpdateQuery},
 	}
 	for _, binding := range queryBindings {
 		subscription, err := runtime.connection.QueueSubscribe(binding.subject, queryQueueName, runtime.loggedQuery(binding.handler))

@@ -1,8 +1,18 @@
 # End-user identity and world ownership
 
-> **Document status:** Proposed. **No code exists.** Twenty numbered decisions
-> (25 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
-> were taken on 2026-09-02 across **eight rounds** — most by the owner, five
+> **Document status:** **Phase A is implemented** on
+> `feat/fe-be/end-user-identity-phase-a`; Phases B and C are proposed, and
+> Phases D and E are out of the sprint's scope. The "no code exists" this
+> header carried until 2026-09-02 is no longer true, and
+> [the sprint's Phase A corrections section](../sprints/sprint-08-2026-09-02/user-stories.md#phase-a--corrected-during-execution-2026-09-02)
+> is the record of which of this document's claims survived contact — read it
+> before acting on §5 or §12. Two decisions were ADDED after Phase A shipped,
+> both by the owner and both in §19: 21 (the account's page) on 2026-09-02, and
+> 22 (a preference is shown in the thing it changes) on 2026-09-03, after using
+> what 21 built.
+> Twenty-two numbered decisions
+> (27 rows, counting the five amendments `4b`, `17b`, `20b`, `20c` and `20d`)
+> were taken on 2026-09-02 across **eight rounds plus two after implementation** — most by the owner, five
 > delegated to me and argued in place — and all of them are recorded in §16,
 > where **nothing is left open**. Four of the last five rounds exist because
 > the owner read a decision back and found it wrong, too broad, or badly
@@ -11,12 +21,16 @@
 > quietly folded in. Several
 > decisions cut scope rather than adding it, so read §16 before any other
 > section: it supersedes parts of §3.4, §5, §9, §10, §11 and §17 in place.
+> **Decision 23 was added on 2026-09-04, after the owner found an
+> authorization defect in the shipped product**: this plan specified ownership
+> for the WRITE path and left the READ path unspecified, and unspecified became
+> open. It corrects a premise §6.3 and §7 both lean on. Read it before §6.5.
 > **Scheduled:** [Sprint 08 — starts 2026-09-02](../sprints/sprint-08-2026-09-02/README.md),
 > as [`EPIC-S8-IDENTITY-001`](../backlog/engineering-backlog.md#epic-s8-identity-001--end-user-identity-and-world-ownership).
 > The sprint covers Phases A-C; Phase D and Phase E are explicitly out of its
 > scope.
 > **Raised:** 2026-09-02 by the owner
-> **Last source review:** 2026-09-02
+> **Last source review:** 2026-09-03
 > **Answers:** [`DEFERRED-AUTH-001`](../backlog/engineering-backlog.md#deferred-auth-001--define-identity-before-authentication),
 > deferred by owner decision on 2026-07-22 and never revisited.
 > **Graduates:** [`evolution/platform-evolution-research.md` Track A](../../evolution/platform-evolution-research.md#track-a--end-user-identity-and-world-ownership),
@@ -89,6 +103,14 @@ There is none. There is a capability URL and a browser-local list:
   who clears their browser loses every world they made. Both are facts about
   the product today, and the second is the strongest product argument for this
   plan.
+
+  **The first is no longer true, as of 2026-09-04 — and it should have stopped
+  being true when Phase B shipped.** It is left standing above because it
+  correctly describes the baseline this plan was written against. What went
+  wrong is that this bullet reads as a fact to preserve rather than a defect to
+  close: Phase B gave `owner_account_id` to the write path and never asked the
+  read path anything, so an owned, never-published world stayed readable by
+  anybody holding its id. See decision 23.
 
 ### What this plan overrides if it is approved
 
@@ -626,10 +648,19 @@ one of them is the owner's own quota decision:
    is the only per-visitor handle that exists before login, so **the quota needs
    it whether or not the claim does.** That alone pays for the column.
 2. **The claim cannot be proven.** "These world ids are mine" is not a proof:
-   `/worlds/{worldId}` is the URL a visitor sends to a friend, so a world id is
-   public by design. Claiming by id would let the recipient of a shared link
-   take the world. The `anonymousId` is the one identifier that never appears in
-   a URL, which is the whole reason it is a separate value.
+   a world id is not a secret — it sits in a URL, in browser history, in a
+   screenshot — so claiming by id would let whoever received one take the
+   world. The `anonymousId` is the one identifier that never appears in a URL,
+   which is the whole reason it is a separate value.
+
+   **Narrowed 2026-09-04 (decision 23).** This paragraph used to say
+   `/worlds/{worldId}` "is the URL a visitor sends to a friend, so a world id
+   is public by design", and the conclusion above survives that being wrong
+   twice over. It is not the URL a visitor sends: the product mints a separate
+   `/share/{slug}` for that, which is what the world page's own Share panel
+   copies. And "not a secret" was never a licence to serve the private payload
+   to anybody holding one — an id being weak proof of ownership is a different
+   claim from an id being sufficient authorization.
 
 It is one `UUID` column, one response field, one request header and one
 `WHERE` clause — and it is what makes the difference between "sign up and your
@@ -652,6 +683,11 @@ Neon-specific coupling, for no additional guarantee.
 
 ### 6.5 The write path gains one behaviour and one endpoint
 
+> **The section title is the defect.** This is the only place the plan says
+> what ownership *does*, and it says it about writes. The read path was never
+> specified, so it shipped unchanged — open. Decision 23 specifies it, and the
+> rule it lands on is the first bullet below applied verbatim to reads.
+
 - `POST /worlds/{id}/publish`, `/variants`, `/variants/{id}/select`: reject with
   `403 NOT_WORLD_OWNER` when the world **has** an owner and the caller is not
   it. An **unowned** world stays mutable by anyone holding its id — that is
@@ -659,6 +695,19 @@ Neon-specific coupling, for no additional guarantee.
   every anonymous visitor.
 - `POST /api/{family}/worlds/{id}/delete`: **new**, owner-only, and the first
   time a visitor can delete anything. Today only staff can unpublish.
+
+  **Amended 2026-09-03, while implementing `S8-IDENTITY-009`: "owner-only" is
+  stricter here than everywhere else on this page, and the difference had to be
+  decided rather than inherited.** The bullet above leaves an UNOWNED world
+  mutable by anyone holding its id, which is deliberate and describes every
+  world in production. Deletion does not follow it: an unowned world is
+  deletable by **nobody**. A stranger adding a variant to a world they were
+  sent a link to is annoying and reversible; a stranger deleting it takes the
+  world out of its maker's gallery and the maker cannot put it back, and nobody
+  can prove they made an unowned world — the same reasoning decision 16 uses to
+  leave a pre-plan world unclaimable. The refusal is `403 WORLD_NOT_CLAIMED`,
+  distinct from `NOT_WORLD_OWNER`, because "this is nobody's yet" has a next
+  step and "this is not yours" does not. §7's claim is that next step.
 
 ---
 
@@ -668,6 +717,7 @@ Neon-specific coupling, for no additional guarantee.
 1. POST /api/{family}/worlds with no session
    → gateway mints anonymousId=<uuid> and RETURNS IT IN THE 202 BODY
      (the client writes it to its own myunivokai_anonymous cookie)
+     [CORRECTED 2026-09-03: the CLIENT mints it. See below.]
    → rides the generate command → profiles.anonymous_id → compose → worlds.anonymous_id
    → a subsequent create sends X-Anonymous-Id and reuses the same one
 
@@ -697,15 +747,62 @@ Properties that matter:
   claimable exactly once, forever.
 - **No new event type.** `revision` + outbox + `world.changed` are all in
   production.
+
+  **Corrected 2026-09-03, while implementing `S8-IDENTITY-009`: the claim
+  should emit no event at all, and neither should a deletion.** Decision 4b
+  keeps `analytics-service` untouched, and §15's correction above keeps
+  ownership off the snapshot — so the `world.changed` a claim or a deletion
+  would publish is byte-identical to the last one. It would make the event stop
+  meaning "something you can see changed": a consumer added later would be woken
+  for nothing, and the read model would rewrite identical values. Deletion
+  therefore bumps no revision and stages no outbox row, and `S8-IDENTITY-011`'s
+  own transaction should do the same — the `UPDATE` and the `IS NULL` guard
+  stay exactly as written above; only the outbox line goes.
 - **The `anonymousId` is a bearer credential.** Whoever holds it owns those
   worlds, and under §4.2 it sits in a JS-readable cookie, so an XSS can take
   it. Same exposure as the refresh token, same mitigation — the CSP. 180 days
   bounds it, and the cookie's own `max-age` is what enforces that.
+
+  **Corrected 2026-09-03, while implementing `S8-IDENTITY-011`: the client
+  mints it, and the gateway validates it.** Step 1 above has the gateway
+  minting the id into the 202 body; Phase A had already shipped the opposite,
+  and the opposite is right. The deciding case is two tabs creating at once:
+  gateway-minting hands each create a different id, the client can keep only
+  one, and the other world is orphaned under an id nobody holds.
+  Read-or-create against one cookie has no such race, needs no field on
+  `contracts.Job`, and leaves one minting site instead of two.
+
+  What the gateway does instead is the part it is placed to do. A malformed
+  `X-Anonymous-Id` is refused with `400 INVALID_ANONYMOUS_ID` rather than
+  ignored — ignoring it would create a world that is unclaimable for ever and
+  answer 202 — and **exactly one of `ownerAccountId` and `anonymousId` is ever
+  set**, because a world that has an owner can never be claimed and the
+  anonymous id beside it would be a personal-data trail with no reader.
+- **A claim retries until it is applied, so an unapplicable one must not be
+  published.** Added 2026-09-03. The claim consumers carry no delivery limit,
+  because a claim that gave up would leave somebody's worlds anonymous for ever
+  with nothing anywhere saying so — which makes a message that can never
+  succeed one the fleet retries until the stream drops it. Two things follow:
+  the consumers discard a message the transport itself cannot read
+  (`ErrInvalidWorldClaimCommand`, terminated rather than nacked), and the
+  gateway refuses to publish one at all, including when the fault is its own —
+  a verified token whose subject is not an account id is a 500 at the edge.
+- **Only `dna-service` is woken.** Added 2026-09-03. "Only the families the
+  visitor used are woken" holds, but not by waking them: the gateway owns the
+  only waker and cannot know which families were used, while `dna-service`
+  knows and has no waker. The family claim commands wait in
+  `MYUNIVOKAI_COMMANDS` until each service next runs, which on this tier is the
+  next time anybody opens a world of that family. The bound that leaves is the
+  stream's 168-hour retention, named here so it is a known state: a family with
+  no traffic from anybody for a week would lose the claim, and the fix would be
+  `--max-age`, not code.
 - **It cannot be replaced by the world ids the client already stores.** A world
-  id is not a secret: `/worlds/{worldId}` is the URL a visitor sends to a
-  friend. "Claim these ids" would let the recipient of a shared link claim
-  someone else's world. The minted `anonymousId` is never in a URL, which is
-  the whole reason it exists.
+  id is not a secret — it sits in a URL, in browser history, in a screenshot —
+  so "claim these ids" would let whoever received one claim someone else's
+  world. The minted `anonymousId` is never in a URL, which is the whole reason
+  it exists. (This bullet also said `/worlds/{worldId}` is the URL a visitor
+  sends to a friend. It is not, and the correction is decision 23; the argument
+  here does not depend on it.)
 - **Unclaimed anonymous worlds have no one who can ever ask for their erasure.**
   They hold raw personal input and no owner. Given the §10 decision that
   nothing is physically purged, this stays an open gap rather than a solved
@@ -732,6 +829,28 @@ no card redesign.
 cache, and the two lists are merged newest-first with the server list winning
 on conflict. A logged-in visitor on a new device sees their worlds; a visitor
 with no account sees exactly what they see today.
+
+**Corrected 2026-09-03, while implementing `S8-IDENTITY-016`: the merge rule
+resurrects deleted worlds, so the cache is REPLACED.** Winning a conflict only
+decides ids present in BOTH lists. An id present only in the cache survives a
+merge — and that id is exactly a world its owner deleted, on this device or
+another one. So merging brings deleted worlds back, and brings them back
+permanently, because the cache is then the only thing that still remembers
+them. `replaceCachedWorldReferences` replaces this owner's entries instead,
+which is what makes the stored list a cache rather than a second opinion, and
+the invalidation rule is one sentence: a successful server read replaces this
+owner's entries and nothing else ever does. The anonymous shelf is untouched by
+it, because no server answer can speak about worlds the server does not know
+the owner of.
+
+**And what this list cannot exclude.** A world its owner has deleted is still
+in this response, because the deleted flag lives in the family service's
+database and (§10, and Phase B correction 6) a deletion emits no event — so
+`dna-service` is never told. The filter's one home is the `?ids=` hydration
+above, which already drops it: a page of 25 can render 24 cards, which the
+gallery has always had to handle. Giving `dna-service` the ability to filter
+would mean a deletion event and a projection, which is a second copy of a fact
+kept in step across two databases to save one card's worth of layout.
 
 ---
 
@@ -789,6 +908,38 @@ than the only copy of the value: **where those numbers are stored is §9.3**,
 and the owner decided on 2026-09-02 that it is not `.env`. The daily window
 resets at UTC midnight and the Redis key expires with it, so there is no
 cleanup job.
+
+#### Which way this fails — decided 2026-09-03, while implementing `S8-IDENTITY-013`
+
+Two cases the section above does not cover, with the same answer and different
+reasons. In both, **the AI tier is withheld and the visitor still gets a
+world**, which is the whole reason either is affordable.
+
+- **A caller with no identity at all.** No account and no anonymous id means no
+  key, so a counter would never rise and the allowance would be unlimited —
+  precisely the script §9.2 says this exists to bound. A browser always sends
+  one of the two; a caller that sends neither is not a browser.
+- **A counter that cannot be read.** If Redis is unreachable the count is
+  unknowable, and a ceiling that fails open is not a ceiling: every create
+  during the outage would be a paid call with nothing bounding it. This is the
+  **inverse of `settings.Reader`**, which answers the same outage from its
+  compiled-in default (§9.3), and the asymmetry is the decision: a setting has
+  a known-good default, a spent allowance has none.
+
+**The bound this leaves, named rather than discovered.** A caller that mints a
+fresh anonymous id per request is counted as a new visitor each time. The
+"never on the address" rule above is what makes that unfixable at this layer,
+and the per-IP token bucket is what still stands against it. Closing it would
+mean a per-IP counter shared by everyone behind one NAT — the thing this
+section rejected on purpose.
+
+**And the degrade needs its own provider.** `aifactory` builds a fallback only
+when it differs from the primary, so production — with both set to `mock` — has
+none at all. A degrade that reached for the fallback would fail the job instead
+of degrading it, so the orchestrator holds a THIRD provider, built from no
+configuration whatsoever. A quota whose degrade depends on something somebody
+has to configure stops enforcing itself in exactly the environment nobody
+configured.
 
 ### 9.1 Decided 2026-09-02: one toast, no permanent marker — and the library already exists
 
@@ -1003,6 +1154,18 @@ and waking a service for it costs 20-60 s on the create path. **Write this
 divergence down in the code**, because a later reader will otherwise "fix" it
 into consistency with `RevocationChecker` and reintroduce the cold start.
 
+**Corrected 2026-09-03, while implementing `S8-IDENTITY-012`. The comment is
+necessary and it is not sufficient.** Every behavioural test of the reader — a
+miss answered from the default, a bad mirrored value ignored, a Redis outage
+survived — would still pass if somebody gave it a requester field and used it
+only on a miss. A test that observes a miss being answered from the default
+cannot tell "asks nobody" from "asks nobody today". So the SHAPE is asserted
+instead: `settings.Reader` has exactly one field, it is a one-method
+`SettingCache` interface, and
+`TestTheSettingsReaderHasNoWayToAskAuthService` fails on a second dependency.
+A reader with nothing to ask with cannot reintroduce the cold start, comment or
+no comment.
+
 Writes go the other way and never touch the hot path:
 
 ```txt
@@ -1017,11 +1180,38 @@ auth-service startup → re-mirror every setting into Redis
     default-constant fallback covers the window in between)
 ```
 
+#### Where the registry lives — decided 2026-09-03, while implementing `S8-IDENTITY-012`
+
+Not stated above, and the story's "pin it as `enforcedPermissions` is pinned"
+implies `auth-service`, where that list lives. **The registry is in
+`contracts/go/contracts_settings.go`**, and the reason is the number `5`.
+
+`auth-service` owns the table and validates every write, but the gateway needs
+the two `quota.*` defaults precisely because the table above forbids it from
+asking. They are separate Go modules that cannot import each other's
+internals, so a registry inside `auth-service` means the gateway declares its
+own copy of the anonymous daily limit — two declarations of one number that
+must agree, failing silently if they do not: a fresh environment would enforce
+one value while the admin screen showed another. `contracts` is already where
+this repository puts a vocabulary both sides read.
+
+What stayed in `auth-service` is what only it can do: the rows, the audit line,
+the Redis mirror, and the four call sites.
+
 #### The invariant that stops a settings table becoming the new hiding place
 
 **Every setting has a named default constant in code, and the platform must
 boot and behave correctly with an empty `system_settings` table and an empty
 Redis.** A setting is an *override*, never the only copy of a value.
+
+**Extended 2026-09-03, while implementing `S8-IDENTITY-012`: the defaults are
+held as TEXT, which is what turns this paragraph from a promise into a test.**
+Held as typed values, a default and an operator's value would travel through
+different code and the invariant would stay a sentence. Held as the text an
+operator would type, both go through one parser and one bounds check — so
+`TestEveryDefaultIsInsideItsOwnDeclaredRange` proves the shipped
+out-of-the-box behaviour is a value the platform would accept, rather than
+leaving that for the first environment with an empty table to discover.
 
 This is not bureaucracy — it is what keeps `coding-style.md` §1 satisfied (the
 default is still a named constant) and it is what stops a fresh environment
@@ -1221,7 +1411,7 @@ gateway's equivalents would each need their component restructured first.
 | `auth.token.admin.access_ttl` | duration | `10m` | `AUTH_ACCESS_TOKEN_TTL` | The only one not already per-call — see the note below, where it turns out to be free anyway |
 | `auth.token.admin.refresh_ttl` | duration | `14d` | `AUTH_REFRESH_TOKEN_TTL` | One line; already read per call |
 | `auth.token.web.access_ttl` | duration | `7d` (§4.4) | — | **New in this sprint**, and see the note below |
-| `auth.token.web.refresh_ttl` | duration | `3mo` (§4.4) | — | **New.** Free |
+| `auth.token.web.refresh_ttl` | duration | `3mo` (§4.4) — declared as `90d`, see below | — | **New.** Free |
 | `auth.token.invite_ttl` | duration | `7d` | `AUTH_INVITE_TOKEN_TTL` | One line; already read per call |
 | `auth.lockout.max_failed_attempts` | int | `5` | `AUTH_MAX_FAILED_ATTEMPTS` | One line; already read per call |
 | `auth.lockout.duration` | duration | `15m` | `AUTH_LOCKOUT_DURATION` | One line, same call site |
@@ -1235,6 +1425,25 @@ They are grouped under `auth.lockout.*` for exactly that reason.
 Two types, one service: **three `int` values and six durations**, across three
 groups. That is enough to prove a registry and to prove the grouping, which a
 single setting would not have been.
+
+**Corrected 2026-09-03: `3mo` is not a duration, and `168h` is not readable.**
+Go's duration syntax stops at hours, so the registry's accepts one unit more —
+a whole number of days, `7d` — and `3mo` is declared as `90d` for the reason
+the deleted `config.WebRefreshTokenTTL` already gave: a duration cannot express
+a calendar month, and rounding it explicitly beats leaving a reader to work out
+which month was meant. The extension is not cosmetic: an operator asked to type
+`2160h` for three months cannot check it at a glance and is one keystroke from
+`21600h`, which is the class of mistake the declared bounds then have to catch.
+Whole days only — `1.5d` is refused rather than rounded.
+
+**And a bound that no single key can express.** A 30-day web access token with
+a 1-day refresh token is two values inside their own ranges and a session that
+expires before it can be renewed. Rather than build cross-key validation for
+one case, each audience's access range ENDS where its refresh range begins
+(admin `1m…24h` against `24h…90d`; web `5m…30d` against `30d…365d`), which
+makes the violation unexpressible.
+`TestAccessLifetimeRangesCannotCrossTheirRefreshRanges` is what fails when
+somebody widens one maximum without moving the matching minimum.
 
 **The note, and it is a piece of luck.** `AccessTokenTTL` is the *only* auth
 value baked in at construction:
@@ -1539,14 +1748,24 @@ repo already uses:
 - **Ownership on the write path** — a non-owner is rejected for every mutation,
   table-driven so a new mutation without a check fails.
 - **The response-model test** — `GET /api/me/worlds` returns no DNA, no raw
-  input, no email. Mirrors the existing share-response test.
+  input, no email. Mirrors the existing share-response test. **Sharpened
+  2026-09-03: it asserts the TYPE, not a sample response.** A test over one
+  handler's output passes while a new field sits unset in it;
+  `TestTheWorldListRowCarriesNothingSensitive` fails the moment a fourth field
+  is declared, which is the point at which somebody should have to argue for
+  it.
 - **Cache invalidation on world delete** — flag a world, then assert its share
   slug and its `?ids=` entry are gone **through the gateway**, not through the
   service. A test that bypasses the gateway passes while the bug ships, because
   the bug *is* the Redis entry (§10).
 - **The quota tier** — the 6th anonymous creation of a day is served by the
   mock provider and still returns a world; the 26th for an account likewise; and
-  a client cannot request the AI tier by sending the flag itself.
+  a client cannot request the AI tier by sending the flag itself. **Extended
+  2026-09-03 with the half that is about money rather than about a reason
+  string:** `TestAWithheldJobNeverReachesThePaidProvider` asserts the paid
+  primary is called ZERO times. A reason of `quota_exhausted` on a world the
+  primary was still asked to generate would be a ceiling that reports itself
+  while spending.
 - **The reason code, all four values, table-driven** (§9.1). This is the
   guardrail that would have caught the mistake the owner caught by reading:
   with `AI_PROVIDER=mock` the 6th creation returns `mock_configured` and **not**
@@ -1758,13 +1977,20 @@ above are guesses at what was on it.
 ## 15. What must not happen
 
 - **No `owner_account_id` in `myunivokai_analytics`.** Staff have no business
-  reading who owns what. One event, two consumers, two allow lists. And because
-  `contracts.WorldSnapshot` gains `OwnerAccountID *uuid.UUID` (a pointer, so
-  messages already on the stream decode to `nil` rather than a misleading zero
-  UUID), the baseline's standing rule applies: **no field is added to
-  `WorldSnapshot` without the matching line in the data boundary in
-  [`analytics-service-plan.md`](../services/analytics-service-plan.md)** — and
-  here that line says *excluded*.
+  reading who owns what. One event, two consumers, two allow lists. The
+  standing rule still applies: **no field is added to `WorldSnapshot` without
+  the matching line in the data boundary in
+  [`analytics-service-plan.md`](../services/analytics-service-plan.md)**.
+
+  **Corrected 2026-09-03, while implementing `S8-IDENTITY-008`.** This bullet
+  said `WorldSnapshot` *gains* `OwnerAccountID *uuid.UUID` and that the boundary
+  line would read *excluded*. **The field was not added.** The snapshot has
+  exactly two consumers — `dna-service`, which reads `WorldID` and nothing else
+  from it, and `analytics-service`, which is required to drop the owner — so
+  adding it moves personal data across a service boundary for no reader at all.
+  "Never sent" is a stronger guarantee than "dropped on arrival", and it is
+  enforced by a reflection test in each family service rather than by a
+  sentence. The boundary line exists and says so.
 - **No authorization decision from the read model.** §6.1.
 - **No `end_user` account holding a permission row**, and no `web` token
   accepted by the admin edge — in both directions, with tests.
@@ -1792,6 +2018,14 @@ above are guesses at what was on it.
   stays as the **default**. A setting is an override, never the only copy of a
   value: the platform must boot and behave correctly with an empty settings
   table and an empty Redis.
+
+  **Refined 2026-09-03, while implementing `S8-IDENTITY-012`.** "The named
+  constant stays" holds for the five settings migrated FROM an environment
+  variable — that variable is still their default, and a test now keeps the two
+  sides agreeing. For a value BORN as a setting it would mean two copies of the
+  same number: so `internal/config/web_token_lifetimes.go` was deleted and the
+  registry's default is the only declaration. The constant did not survive; the
+  invariant did, because a registry default is a named constant in code.
 - **No settings read on the create path that can wake `auth-service`** (§9.3).
   A Redis miss uses the compiled-in default. This is the one place the plan
   deliberately diverges from `RevocationChecker`, and the divergence is
@@ -1871,6 +2105,55 @@ because deciding them now would be deciding them wrongly:
 2. **The pricing numbers** (§14.3) — blocked on the quota existing and on
    per-create cost being *measured* from `ai_generation_attempts` rather than
    read off a rate card (§9.2).
+
+### Added after Phase A was implemented (2026-09-02, 2026-09-03)
+
+| # | Decision | Consequence, recorded on purpose |
+| --- | --- | --- |
+| 21 | **The account gets a page of its own** — full name, gender, and the create-form fields as saved defaults — **in `auth-service`, in one new table** (§19) | The first migration this plan has cost. Buys a second visit that does not mean retyping everything, and one place where the display name lives. Costs a table in `auth-service` that is not about authentication, which §19 argues is still the least-bad home |
+| 22 | **A saved preference is shown in the thing it changes** (§19): the create page's canvas follows the profile's family, and the profile page's backdrop IS the world the create form would open with | Costs one more WebGL context, on a form page, and makes the create page's two family states a single-writer invariant. Buys a setting somebody can confirm by looking rather than by trusting — which is what `S8-IDENTITY-020` exists to fix |
+| 23 | **A world READ is checked against its owner, by the same rule as a write** (2026-09-04, after the owner found the defect in the running product): an owned world is readable only by its owner, an unowned world stays readable by anyone holding its id, and the refusal is `403 NOT_WORLD_OWNER` | Costs the gateway's `world:v1` cache, because an answer that depends on the caller cannot live under a key that cannot name one. Buys the thing §6 was for: `owner_account_id` now decides who may *see* a world and not only who may change it |
+
+### Decision 23 — the read path, which this plan left unspecified
+
+**What the owner reported.** A `/worlds/{id}` URL for an unpublished world
+belonging to another account rendered the world, signed out, with no error —
+"đáng lẽ phải 401 hay 403 gì chứ?". It did: `GET /api/{family}/worlds/{id}`
+answered 200 to a caller with no credentials at all.
+
+**Why it happened, which is the part worth keeping.** Nothing here was
+bypassed. Phase B put ownership on every mutation, wrote the rule down once in
+`worldMutationPermitted`, and proved it with a table and a reflective ratchet
+over every `Store` method. The ratchet asked one question — *does this method
+mutate a world?* — and `GetWorld` answered no. **A read that hands a stranger
+somebody's private world is not a mutation**, so it was filed under "the rest
+of the Store" and asked nothing further. The category was the blind spot, not
+the coverage; and three documents recorded the open read as settled design
+rather than as an unclosed hole.
+
+**The rule taken.** The same predicate as the writes, and deliberately not a
+second one to keep in step: `WorldReadPermitted` delegates to
+`worldMutationPermitted`. An unowned world stays readable by anybody holding
+its id — that is not a compromise, it is every world made before ownership
+existed and every world made by a visitor who has not signed up, and refusing
+them would have broken the product to fix it.
+
+**403, not 404**, though 404 would hide the world's existence. The write path
+already answers 403 `NOT_WORLD_OWNER` for the same world, so a 404 on the read
+alone would be a half-measure: it would cost a real visitor — somebody who
+followed a pasted URL — the one sentence that explains what happened, and buy a
+stranger nothing a POST would not give them.
+
+**The batch read filters instead of refusing.** `?ids=` drops what the caller
+may not see rather than failing, because the gallery hydrates from ids the
+browser holds and one stale entry on a shared device would otherwise blank a
+whole page. §8 already established that a page of 25 can render fewer than 25.
+
+**What publishing does and does not mean.** It opens the share door, not the id
+door. A published world is readable by anybody at `/share/{slug}`, redacted to
+`PublicWorld`/`PublicVariant`/`PublicDNA`; its `/worlds/{id}` payload stays
+owner-only. Those were the same answer before this, which is what made the leak
+worth a decision rather than a patch.
 
 ## 17. Renaming `myunivokai-web`
 
@@ -1996,3 +2279,111 @@ rather than luck.
 
 **The one change with a large file count and no logic in it is the rename**
 (§17). That is why it is sequenced outside the phases.
+
+## 19. The account's own page (decision 21)
+
+Added by the owner on 2026-09-02, after Phase A was implemented and on the same
+branch. It is a product feature rather than an identity one, and it is recorded
+here because it took a table, two subjects and two routes, which is the kind of
+thing this document exists to hold.
+
+### Why `auth-service` and not `dna-service`
+
+`dna-service` already has a `profiles` table holding exactly these fields, so
+reusing that shape is the obvious answer and it is the wrong one for now, for a
+reason that is about sequencing rather than taste:
+
+- `dna-service`'s profiles are **per generation** and immutable — the inputs
+  that produced one world. An account's saved defaults are neither. Putting
+  both in one table would mean a nullable `account_id` on rows that are
+  historical facts, and a second meaning for a table Phase B is about to add
+  ownership columns to.
+- More decisively: **`dna-service` does not yet know who the caller is.**
+  Identity over NATS is `S8-IDENTITY-008`, in Phase B. `auth-service` is the
+  service that mints the token, so it is the only one that can answer "my
+  profile" today without the plumbing Phase B has not built.
+
+§3.1's rule against inventing a service still holds — nothing new was created.
+The cost is honest: `auth-service` now owns a table that has nothing to do with
+authentication. If Phase E's "one evolving profile per account" (decision 6)
+lands, this table is the thing it absorbs, and the move is a migration with no
+logic in it.
+
+### The rules the page follows
+
+- **One name.** `accounts.name` is the display name, and `account_profiles` has
+  **no nickname column**. It is projected into
+  `AccountProfileData.CreationDefaults.Nickname` on read and written back on
+  update, so the header menu and the create form cannot greet the same person
+  differently. A test refuses the column outright.
+- **A draft, not a submission — at the API.**
+  `WorldInput.ValidateAsCreationDefaults` enforces every ceiling and every
+  vocabulary and **not one minimum**. The generate path's minimums are right
+  for a world and wrong for a stored row: enforcing them there would refuse a
+  profile until it was a complete world, and would make a row written before
+  the rule existed unreadable.
+  **The FORM enforces the minimums anyway** (owner's instruction, 2026-09-03),
+  and the two are not in conflict: the API bounds what may be stored, the page
+  holds itself to what the create form needs, and the page can do that only
+  because an unanswered list is shown holding the create form's own default.
+  A profile saved with one interest would otherwise produce a create form
+  sitting below its own floor with nothing on screen to explain why.
+- **The account id comes from the token.** Neither route takes an account id
+  and neither body has a field for one — and the gateway disallows unknown
+  fields, so the attempt is a 400 rather than an ignored value.
+- **The response model is re-marshalled**, not forwarded, per §12: a field
+  added to `AccountProfileData` later must not reach a browser by accident.
+- **Nothing authorizes on it**, per §15. Gender, full name and every default
+  are display data; the only field with any behaviour behind it is
+  `autofill_create_form`, and its behaviour is entirely in the browser.
+
+### The preview is part of the page, not decoration (decision 22)
+
+Added 2026-09-03, after the owner used the page: choosing a preferred world
+family filled the create form's picker and left its canvas rendering a
+universe. The setting was saved, read back and applied — and there was no way
+to see that from either screen.
+
+**A saved preference has to be visible in the thing it changes.** Two rules
+follow, and both are cheap because the browser already knows how to build every
+family's scene locally — that mirror exists for the create page's live preview
+and predates accounts entirely.
+
+- **The create page's canvas follows the profile.** It keeps two family states
+  on purpose: what the form says, and what the canvas shows, the second lagging
+  the first by the length of the departure animation so that a family's ~2.5s
+  first-mount shader compile happens inside an animation that can absorb it.
+  The autofill wrote only the first. One function now owns both, and it is the
+  only writer of either.
+- **The profile page stands in front of the world it describes.** The backdrop
+  is not a decorative scene chosen for the route; it is the world the create
+  form would open with, built from the fields as they stand on screen. Picking
+  Ocean turns the page into an ocean before it is saved.
+
+The cost is one more WebGL context on a form page, held down by the same
+low-dpr, parked-entry, no-audio backdrop the gallery already uses. The audio is
+the one deliberate difference: this backdrop is REBUILT as somebody types, and
+a soundscape that restarts on every rebuild is worse than none.
+
+What this does not become is a second create form. The profile page has no
+generate button and posts nothing to a family service; the preview is local,
+and the only thing it proves is what the create form will do next time.
+
+**A save is reported by a toast rather than by a line under the button**, and
+the rule worth keeping is the lifetime rather than the component: a success
+leaves on its own after seven seconds, a failure stays until it is dismissed.
+A confirmation nobody read still happened; an error nobody read is an error
+nobody can act on, and one that vanishes mid-sentence is worse than one that
+was never shown. The failure is ALSO left inline beside the button it belongs
+to, because that is where somebody returns to try again. The toast carries the
+way out — back to the worlds — and so does a button beside Save, permanently:
+a page reached from the header menu has no back of its own, and the toast's
+copy is gone seven seconds later.
+
+### What it does not do
+
+No avatar and no upload — that is storage, a bucket and a content-type
+allowlist, and none of it is in this sprint. No uniqueness on the display name:
+"that name is taken" would be a second failure mode on a form that already has
+one, and a name people choose to be greeted by is the wrong thing to make
+unique.

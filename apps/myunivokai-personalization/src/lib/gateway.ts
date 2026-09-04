@@ -45,6 +45,13 @@ export function buildGatewayApiBaseUrl(gatewayBaseUrl: string, family: WorldFami
   return `${normalizeGatewayBaseUrl(gatewayBaseUrl)}${API_PATH_PREFIX_BY_FAMILY[family]}`;
 }
 
+// The path a family's routes live under, without an origin. The session-aware
+// request helper prefixes the origin itself, so world calls and identity calls
+// resolve it in exactly one place.
+export function apiPathPrefixForFamily(family: WorldFamily): string {
+  return API_PATH_PREFIX_BY_FAMILY[family];
+}
+
 export function apiBaseUrlForFamily(family: WorldFamily): string {
   return `${GATEWAY_BASE_URL}${API_PATH_PREFIX_BY_FAMILY[family]}`;
 }

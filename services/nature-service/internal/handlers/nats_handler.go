@@ -25,13 +25,21 @@ const (
 
 var ErrInvalidCompositionCommand = errors.New("invalid nature composition command")
 
+// ErrInvalidWorldClaimCommand marks a claim that can never be applied, as
+// distinct from one that failed this time. The claim consumer has no delivery
+// limit - a claim must keep retrying until the database answers - so an
+// unreadable message needs a way to be discarded that is not a delivery count.
+var ErrInvalidWorldClaimCommand = errors.New("invalid nature world claim command")
+
 type WorldService interface {
 	ComposeWorld(context.Context, contracts.Envelope[contracts.ComposeWorldData]) (models.CreateWorldResponse, error)
-	GetWorlds(context.Context, []string) (models.WorldListResponse, error)
-	GetWorld(context.Context, string) (models.WorldResponse, error)
-	RegenerateVariant(context.Context, string) (models.VariantResponse, error)
-	SelectVariant(context.Context, string, string) (models.VariantResponse, error)
-	PublishWorld(context.Context, string) (models.PublishResponse, error)
+	GetWorlds(context.Context, []string, *string) (models.WorldListResponse, error)
+	GetWorld(context.Context, string, *string) (models.WorldResponse, error)
+	RegenerateVariant(context.Context, string, *string) (models.VariantResponse, error)
+	SelectVariant(context.Context, string, string, *string) (models.VariantResponse, error)
+	PublishWorld(context.Context, string, *string) (models.PublishResponse, error)
+	DeleteWorld(context.Context, string, *string) (models.DeleteResponse, error)
+	ClaimWorlds(context.Context, contracts.Envelope[contracts.WorldClaimData]) error
 	GetPublicWorld(context.Context, string) (models.PublicWorldResponse, error)
 }
 
@@ -58,6 +66,25 @@ func NewNATSHandler(worldService WorldService, responsePublisher ResponsePublish
 		eventPublisher:    eventPublisher,
 		queryTimeout:      queryTimeout,
 	}
+}
+
+// HandleWorldClaim applies the claim dna-service fanned out to this family.
+//
+// No terminal-failure path, unlike HandleComposition's: a composition has a
+// visitor watching a job and so has to be recorded as failed somewhere they
+// can see it, while a claim has nobody waiting and nowhere to report to. A
+// plain error return keeps the message on the stream, which is what should
+// happen - the claim is idempotent, and a claim that gave up would leave
+// somebody's worlds anonymous for ever with nothing anywhere saying so.
+func (handler *NATSHandler) HandleWorldClaim(ctx context.Context, message *nats.Msg) error {
+	var envelope contracts.Envelope[contracts.WorldClaimData]
+	if err := decodeEnvelope(message.Data, &envelope); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidWorldClaimCommand, err)
+	}
+	if err := envelope.Data.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidWorldClaimCommand, err)
+	}
+	return handler.worldService.ClaimWorlds(ctx, envelope)
 }
 
 func (handler *NATSHandler) HandleComposition(ctx context.Context, message *nats.Msg) error {
@@ -97,7 +124,7 @@ func (handler *NATSHandler) HandleWorldListQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.WorldListResponse, error) {
-		return handler.worldService.GetWorlds(ctx, envelope.Data.WorldIDs)
+		return handler.worldService.GetWorlds(ctx, envelope.Data.WorldIDs, envelope.Data.RequestingAccountID)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
@@ -108,7 +135,7 @@ func (handler *NATSHandler) HandleWorldGetQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.WorldResponse, error) {
-		return handler.worldService.GetWorld(ctx, envelope.Data.WorldID)
+		return handler.worldService.GetWorld(ctx, envelope.Data.WorldID, envelope.Data.RequestingAccountID)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
@@ -119,7 +146,7 @@ func (handler *NATSHandler) HandleVariantCreateQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.VariantResponse, error) {
-		return handler.worldService.RegenerateVariant(ctx, envelope.Data.WorldID)
+		return handler.worldService.RegenerateVariant(ctx, envelope.Data.WorldID, envelope.Data.RequestingAccountID)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusCreated, response, err)
 }
@@ -130,7 +157,7 @@ func (handler *NATSHandler) HandleVariantSelectQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.VariantResponse, error) {
-		return handler.worldService.SelectVariant(ctx, envelope.Data.WorldID, envelope.Data.VariantID)
+		return handler.worldService.SelectVariant(ctx, envelope.Data.WorldID, envelope.Data.VariantID, envelope.Data.RequestingAccountID)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
@@ -141,7 +168,18 @@ func (handler *NATSHandler) HandleWorldPublishQuery(message *nats.Msg) {
 		return
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.PublishResponse, error) {
-		return handler.worldService.PublishWorld(ctx, envelope.Data.WorldID)
+		return handler.worldService.PublishWorld(ctx, envelope.Data.WorldID, envelope.Data.RequestingAccountID)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
+func (handler *NATSHandler) HandleWorldDeleteQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.DeleteWorldData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.DeleteResponse, error) {
+		return handler.worldService.DeleteWorld(ctx, envelope.Data.WorldID, envelope.Data.RequestingAccountID)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
@@ -184,6 +222,20 @@ func withQueryTimeout[ResponseType any](handler *NATSHandler, query func(context
 func (handler *NATSHandler) respondWithResult(message *nats.Msg, jobID string, successStatus int, payload any, err error) {
 	if errors.Is(err, repositories.ErrNotFound) {
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusNotFound, "NOT_FOUND", "The requested resource was not found."))
+		return
+	}
+	// A world that exists and belongs to somebody else is a 403, never a 404.
+	// Hiding it as "not found" would be a lie the share URL contradicts one
+	// click later, and it would make an owner's own 404 unreadable.
+	if errors.Is(err, repositories.ErrNotWorldOwner) {
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "NOT_WORLD_OWNER", "This world belongs to another account."))
+		return
+	}
+	// Distinct from NOT_WORLD_OWNER on purpose. "This is not yours" and "this
+	// is nobody's yet" are different situations with different next steps, and
+	// only one of them has an answer the visitor can act on.
+	if errors.Is(err, repositories.ErrWorldNotOwned) {
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "WORLD_NOT_CLAIMED", "This world has no owner yet. Claim it to your account, then delete it."))
 		return
 	}
 	if errors.Is(err, repositories.ErrConflict) {

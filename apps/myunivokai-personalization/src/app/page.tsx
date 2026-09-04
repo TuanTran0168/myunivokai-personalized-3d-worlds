@@ -2,37 +2,12 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  ArrowRight,
-  Check,
-  CircleDashed,
-  CircuitBoard,
-  Cloud,
-  CloudFog,
-  Eclipse,
-  Fish,
-  Flame,
-  Flower2,
-  Gem,
-  Lamp,
-  Leaf,
-  Loader2,
-  Moon,
-  Orbit,
-  Rainbow,
-  Satellite,
-  Shell,
-  Snowflake,
-  Sparkles,
-  Sprout,
-  Sun,
-  TreePine,
-  Trees,
-  Waves,
-  Wheat
-} from "lucide-react";
+import { ArrowRight, Check, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { api, apiErrorMessage } from "@/lib/api";
+import { generationNoticeFor } from "@/lib/generationNotice";
 import { addWorldIdentifierToGallery } from "@/lib/savedWorlds";
+import { resolveGalleryOwnerKey } from "@/lib/galleryOwner";
 import { UniverseCanvas } from "@/components/UniverseCanvas";
 import { GeneratingOverlay } from "@/components/GeneratingOverlay";
 import { StatusMessage } from "@/components/StatusMessage";
@@ -44,165 +19,44 @@ import {
   isWorldChangeWorthPlaying,
   worldChangeDirectionBetween
 } from "@/features/transitions/worldChangeDirection";
-import { ensureRange, toggleItem } from "@/lib/formSelection";
+import { toggleItem } from "@/lib/formSelection";
 import { activeSectionIndex, isScrolledToEnd, resolveActiveSectionId } from "@/lib/formSectionProgress";
 import { FORM_RAIL_ELEMENT_ID } from "@/lib/formRailCollapse";
 import { useWorldChromeCollapse, WorldChromeToggle } from "@/components/WorldChromeToggle";
-import { buildPreviewSceneConfig, pointsOfInterestFromScene } from "@/lib/scene";
-import { buildPreviewForestSceneConfig } from "@/lib/forestScene";
-import { buildPreviewOceanSceneConfig } from "@/lib/oceanScene";
+import { PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS, useDebouncedValue } from "@/lib/useDebouncedValue";
+import { pointsOfInterestFromScene } from "@/lib/scene";
 import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { prefetchSceneRendererForFamily } from "@/features/scene-renderers/registry";
 import { worldPagePath } from "@/lib/worldRoutes";
-import type { GenerationJobStatus, PlanetSceneConfig, WorldFamily } from "@/lib/types";
+import type { GenerationJob, GenerationJobStatus, PlanetSceneConfig, WorldFamily } from "@/lib/types";
 
-// The world-family picker: which backend curates the portrait. Universe =
-// universe-service (solar system), Forest = nature-service (living forest),
-// Ocean = ocean-service (a sea at one depth). Same inputs, same mechanism —
-// only the scene family differs.
-const familyOptions: { label: string; value: WorldFamily; description: string; Icon: typeof Orbit }[] = [
-  { label: "Universe", value: "universe", description: "A solar system of you", Icon: Orbit },
-  { label: "Forest", value: "nature", description: "A living forest of you", Icon: Trees },
-  { label: "Ocean", value: "ocean", description: "A sea of you, at depth", Icon: Waves }
-];
-
-const interestOptions = ["Technology", "Art", "Science", "Design", "Music", "AI", "Storytelling", "Product"];
-const traitOptions = ["curious", "builder", "focused", "creative", "calm", "explorer"];
-// Same four mood VALUES for every family (the backend contract keys off
-// them); only the label/swatch changes so the card reads in the family's own
-// language — universe moods are cosmic, forest moods are seasonal (each label
-// names the season that mood leans toward in the forest builder).
-const moodOptions: readonly SwatchOption[] = [
-  { label: "Cybernetic", value: "focused", swatch: "#3b82f6", Icon: CircuitBoard },
-  { label: "Nebula", value: "dreamy", swatch: "#a855f7", Icon: Sparkles },
-  { label: "Solar", value: "energetic", swatch: "#eab308", Icon: Sun },
-  { label: "Void", value: "reflective", swatch: "#ef4444", Icon: CircleDashed }
-];
-const natureMoodOptions: readonly SwatchOption[] = [
-  { label: "Frostwood", value: "focused", swatch: "#93C5FD", Icon: Snowflake },
-  { label: "Blossom", value: "dreamy", swatch: "#F9A8D4", Icon: Flower2 },
-  { label: "Summer Meadow", value: "energetic", swatch: "#4ADE80", Icon: Wheat },
-  { label: "Amber Autumn", value: "reflective", swatch: "#F59E0B", Icon: Leaf }
-];
-// Each ocean label names the depth that mood IS — a coordinate on the
-// family's one axis, not a character bias the way the forest's seasons are.
-// Named from the real oceanography, not invented: epipelagic ("Sunlight
-// Zone") down to "Glass Shallows"/"Reef Crest", the mesophotic edge of it to
-// "Mesophotic Current", and the bathypelagic ("Midnight Zone") to "The
-// Abyss" — kept colloquial rather than renamed to "Midnight", because that is
-// how documentaries and aquariums actually talk about it. Three of the four
-// still pin their zone every seed; "Glass Shallows" is a weighted MOSTLY
-// rather than an absolute promise — see AboveWaterProbability in
-// ocean_scene_profile.go for why turning that pin into a lean was deliberate.
-// See OCEAN_MOOD_PROFILES in lib/oceanScene.ts and oceanMoodProfiles in
-// ocean_scene_profile.go.
-const oceanMoodOptions: readonly SwatchOption[] = [
-  // The icons here name the DEPTH, because that is what these four options
-  // actually are: sun at the surface, the twilight edge of the light, the reef
-  // where the fauna is, and the moon for the midnight zone.
-  { label: "Glass Shallows", value: "focused", swatch: "#5EEAD4", Icon: Sun },
-  { label: "Mesophotic Current", value: "dreamy", swatch: "#A78BFA", Icon: Eclipse },
-  { label: "Reef Crest", value: "energetic", swatch: "#F2B24C", Icon: Fish },
-  { label: "The Abyss", value: "reflective", swatch: "#1E3A5F", Icon: Moon }
-];
-
-// World Style, one vocabulary per family, mirroring allowedWorldStylesByFamily
-// in contracts/go/contracts.go. Posting one family's style to another is a 400.
-//
-// It used to be these five for everyone, and nature-service and ocean-service
-// stored whichever arrived and never read it — so the picker was hidden for
-// both rather than left offering a control that changed nothing. Each family
-// now has its own axis and its own service reads it.
-//
-// THE FIRST ENTRY OF EVERY FAMILY IS ITS NEUTRAL STYLE: the world as the
-// builder already made it. That is what lets the picker come back without
-// changing a single stored world.
-const universeStyleOptions: readonly SwatchOption[] = [
-  { label: "Cosmic", value: "cosmic-galaxy", swatch: "#8B5CF6", Icon: Orbit },
-  // A cloud, not the sparkles the Nebula MOOD carries. The two have shared a
-  // name in this form since it was written, and until now they also looked
-  // identical in a list of coloured dots.
-  { label: "Nebula", value: "nebula", swatch: "#a855f7", Icon: Cloud },
-  { label: "Crystal", value: "crystal", swatch: "#22d3ee", Icon: Gem },
-  { label: "Aurora", value: "aurora", swatch: "#34d399", Icon: Rainbow },
-  { label: "Cyber Orbit", value: "cyber-orbit", swatch: "#38bdf8", Icon: Satellite }
-];
-
-// Mood decides the forest's season; style decides how it is grown and lit.
-// See forest_style_profile.go and the mirror in lib/forestScene.ts.
-const natureStyleOptions: readonly SwatchOption[] = [
-  { label: "Wildwood", value: "wildwood", swatch: "#7CB463", Icon: Trees },
-  { label: "Ancient Grove", value: "ancient-grove", swatch: "#4E7A54", Icon: TreePine },
-  { label: "Mistwood", value: "mistwood", swatch: "#B8C7CE", Icon: CloudFog },
-  { label: "Emberfall", value: "emberfall", swatch: "#E07A3C", Icon: Flame },
-  { label: "Lanternwood", value: "lanternwood", swatch: "#F2C464", Icon: Lamp }
-];
-
-// Mood decides the ocean's depth; style decides the water and what lives in it.
-// See ocean_style_profile.go and the mirror in lib/oceanScene.ts.
-const oceanStyleOptions: readonly SwatchOption[] = [
-  { label: "Open Water", value: "open-water", swatch: "#38A7C7", Icon: Waves },
-  { label: "Coral Garden", value: "coral-garden", swatch: "#F2775A", Icon: Shell },
-  { label: "Kelp Cathedral", value: "kelp-cathedral", swatch: "#5A9E6F", Icon: Sprout },
-  { label: "Crystal Shoal", value: "crystal-shoal", swatch: "#7DD3FC", Icon: Gem },
-  { label: "Silt Drift", value: "silt-drift", swatch: "#9CA3AF", Icon: CloudFog }
-];
-// Everything the create page says differently per family, in one record typed
-// by WorldFamily. It replaced a run of `worldFamily === "nature" ? ... : ...`
-// ternaries, each of which quietly treated a third family as "universe" — the
-// compiler now refuses to let a family be added without answering all of this.
-const FAMILY_COPY: Record<
-  WorldFamily,
-  {
-    noun: string;
-    moodLabel: string;
-    moodOptions: readonly SwatchOption[];
-    /** The field label for World Style — each family styles a different thing. */
-    styleLabel: string;
-    styleOptions: readonly SwatchOption[];
-    chromeClassName: string;
-    submitLabel: string;
-  }
-> = {
-  universe: {
-    noun: "Universe",
-    moodLabel: "Atmospheric Mood",
-    moodOptions,
-    styleLabel: "World Style",
-    styleOptions: universeStyleOptions,
-    chromeClassName: "",
-    submitLabel: "Curate this universe"
-  },
-  nature: {
-    noun: "Forest",
-    moodLabel: "Forest Mood",
-    moodOptions: natureMoodOptions,
-    styleLabel: "Forest Style",
-    styleOptions: natureStyleOptions,
-    chromeClassName: "forest-chrome",
-    submitLabel: "Curate this forest"
-  },
-  ocean: {
-    noun: "Ocean",
-    moodLabel: "Depth & Mood",
-    moodOptions: oceanMoodOptions,
-    styleLabel: "Water & Life",
-    styleOptions: oceanStyleOptions,
-    chromeClassName: "forest-chrome",
-    submitLabel: "Curate this ocean"
-  }
-};
-
-/**
- * The neutral style of a family — its first option, which every family's
- * service treats as a no-op. Switching family has to swap the stored style with
- * it, because a style belongs to exactly one family now and posting the wrong
- * one is a 400 from the gateway.
- */
-function defaultStyleForFamily(family: WorldFamily): string {
-  return FAMILY_COPY[family].styleOptions[0].value;
-}
-const colorOptions = ["#8B5CF6", "#06B6D4", "#F97316", "#22C55E", "#F43F5E", "#EAB308"];
+import {
+  COLOR_OPTIONS,
+  CREATE_FORM_INITIAL_VALUES,
+  FAMILY_COPY,
+  FAMILY_OPTIONS,
+  INTEREST_OPTIONS,
+  MAXIMUM_CHALLENGE_LENGTH,
+  MAXIMUM_CUSTOM_CHIP_CHARACTERS,
+  MAXIMUM_FAVORITE_COLORS,
+  MAXIMUM_GOAL_LENGTH,
+  MAXIMUM_INTERESTS,
+  MAXIMUM_ROLE_LENGTH,
+  MAXIMUM_TRAITS,
+  MINIMUM_CUSTOM_CHIP_CHARACTERS,
+  MINIMUM_FAVORITE_COLORS,
+  MINIMUM_INTERESTS,
+  MINIMUM_TRAITS,
+  TRAIT_OPTIONS,
+  defaultStyleForFamily,
+  type CreateFormValues
+} from "@/features/world-form/worldFormOptions";
+import { buildCreateWorldPayload } from "@/features/world-form/createWorldPayload";
+import { buildPreviewSceneForFamily } from "@/features/world-form/previewScene";
+import { createFormValuesFromProfile, isCreateFormPristine } from "@/features/world-form/profileAutofill";
+import { fetchAccountProfile } from "@/lib/accountProfile";
+import { MAXIMUM_DISPLAY_NAME_LENGTH } from "@/features/identity/authCredentialsFormState";
+import { useProductSession } from "@/features/identity/useProductSession";
 
 // One entry per scrollable field group in the rail, in DOM order — the single
 // source of truth for both each group's `data-form-section` marker below and
@@ -220,33 +74,40 @@ const PROGRESS_SECTION_IDS = [
   "palette"
 ] as const;
 
-// The live preview rebuilds the WebGL scene whenever its inputs change. Debounce
-// so a burst of keystrokes/toggles only rebuilds the canvas once the user pauses,
-// instead of tearing down and recreating the GL context on every character.
-const PREVIEW_REBUILD_DEBOUNCE_MILLISECONDS = 300;
-
 // The submit button is pinned in the rail footer, outside the <form> element, so
 // it stays visible while the field column scrolls; this id wires it back to the
 // form via the HTML `form` attribute.
 const CREATE_FORM_ELEMENT_ID = "create-universe-form";
 
-// Custom chip-group limits mirror the backend validation exactly
-// (contracts/go/contracts.go: interests 3-8 items, traits 3-6, both 2-32
-// characters each), so a value accepted here is never rejected server-side.
-const MINIMUM_CUSTOM_CHIP_CHARACTERS = 2;
-const MAXIMUM_CUSTOM_CHIP_CHARACTERS = 32;
-const MINIMUM_INTERESTS = 3;
-const MAXIMUM_INTERESTS = 8;
-const MINIMUM_TRAITS = 3;
-const MAXIMUM_TRAITS = 6;
+/**
+ * Longer than the Toaster's app-wide 2600 ms, and only for this toast.
+ *
+ * That default is sized for a confirmation - "Share link copied." is read in a
+ * glance and the visitor is already looking at the button they pressed. This
+ * one is two sentences of explanation, and it arrives at the moment a new
+ * world is animating in, which is exactly where the visitor is NOT looking. A
+ * message that is owed once and missed is the same as one that was never
+ * shown.
+ */
+const GENERATION_NOTICE_DURATION_MILLISECONDS = 7000;
 
-function useDebouncedValue<ValueType>(value: ValueType, delayMilliseconds: number): ValueType {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const timeoutId = setTimeout(() => setDebouncedValue(value), delayMilliseconds);
-    return () => clearTimeout(timeoutId);
-  }, [value, delayMilliseconds]);
-  return debouncedValue;
+/**
+ * One toast, on the stack that is already mounted app-wide, for exactly one of
+ * the four reasons a world can be built (lib/generationNotice.ts decides
+ * which). Zero new dependencies: `sonner` is already here and `.lg-toast` is
+ * already the Liquid-Glass material.
+ *
+ * Keyed on the JOB ID, which is what makes "a single toast" structural rather
+ * than a matter of where this is called from: both generation paths poll, both
+ * report progress, and sonner replaces a toast that shares an id instead of
+ * stacking a second one.
+ */
+function announceGenerationNotice(job: GenerationJob) {
+  const notice = generationNoticeFor(job);
+  if (!notice) {
+    return;
+  }
+  toast(notice, { id: job.jobId, duration: GENERATION_NOTICE_DURATION_MILLISECONDS });
 }
 
 /**
@@ -297,16 +158,51 @@ function IdentityPlacardBody({
 
 export default function HomePage() {
   const router = useRouter();
-  const [nickname, setNickname] = useState("");
-  const [role, setRole] = useState("");
-  const [goal, setGoal] = useState("");
-  const [challenge, setChallenge] = useState("");
-  const [interests, setInterests] = useState(["Technology", "Design", "AI"]);
-  const [traits, setTraits] = useState(["curious", "builder", "focused"]);
-  const [mood, setMood] = useState("focused");
-  const [worldFamily, setWorldFamily] = useState<WorldFamily>("universe");
-  const [preferredWorldStyle, setPreferredWorldStyle] = useState("cosmic-galaxy");
-  const [favoriteColors, setFavoriteColors] = useState<string[]>(["#8B5CF6", "#06B6D4"]);
+  const [nickname, setNickname] = useState(CREATE_FORM_INITIAL_VALUES.nickname);
+  const [role, setRole] = useState(CREATE_FORM_INITIAL_VALUES.role);
+  const [goal, setGoal] = useState(CREATE_FORM_INITIAL_VALUES.goal);
+  const [challenge, setChallenge] = useState(CREATE_FORM_INITIAL_VALUES.challenge);
+  const [interests, setInterests] = useState<string[]>(CREATE_FORM_INITIAL_VALUES.interests);
+  const [traits, setTraits] = useState<string[]>(CREATE_FORM_INITIAL_VALUES.traits);
+  const [mood, setMood] = useState(CREATE_FORM_INITIAL_VALUES.mood);
+  const [worldFamily, setWorldFamily] = useState<WorldFamily>(CREATE_FORM_INITIAL_VALUES.worldFamily);
+  const [preferredWorldStyle, setPreferredWorldStyle] = useState(CREATE_FORM_INITIAL_VALUES.preferredWorldStyle);
+  const [favoriteColors, setFavoriteColors] = useState<string[]>(CREATE_FORM_INITIAL_VALUES.favoriteColors);
+
+  /**
+   * The ten fields as the one shape everything else takes: the payload, the
+   * preview, and the profile-autofill rule.
+   */
+  const currentFormValues: CreateFormValues = useMemo(
+    () => ({
+      nickname,
+      role,
+      goal,
+      challenge,
+      interests,
+      traits,
+      mood,
+      worldFamily,
+      preferredWorldStyle,
+      favoriteColors
+    }),
+    [challenge, favoriteColors, goal, interests, mood, nickname, preferredWorldStyle, role, traits, worldFamily]
+  );
+  /**
+   * The same values, readable from a callback created several renders ago.
+   *
+   * The account profile arrives from the network, so the effect that applies
+   * it resolves long after the render that started it — and the question it
+   * asks, "has the visitor typed anything yet", has to be answered about the
+   * form as it is NOW rather than as it was when the request went out. Reading
+   * the closed-over state instead would let a family picked while auth-service
+   * was waking up be overwritten by the profile a second later.
+   */
+  const currentFormValuesReference = useRef(currentFormValues);
+  useEffect(() => {
+    currentFormValuesReference.current = currentFormValues;
+  }, [currentFormValues]);
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [generationStatus, setGenerationStatus] = useState<GenerationJobStatus | undefined>();
@@ -315,6 +211,117 @@ export default function HomePage() {
     toggleCollapse,
     toggleButtonReference: formRailToggleButtonReference
   } = useWorldChromeCollapse({ errorMessage: error, worldFamily });
+
+  // Who is signed in, for the two autofills below. Read from storage rather
+  // than fetched, so the name appears on the first render with no request.
+  const { sessionState } = useProductSession();
+  // True once a profile has been applied to this form, so a re-render or a
+  // session event cannot apply it twice and clobber an edit in between.
+  const hasAppliedAccountProfile = useRef(false);
+  const [wasFilledFromProfile, setWasFilledFromProfile] = useState(false);
+
+  /**
+   * The name fills by DEFAULT, with no request and no toggle.
+   *
+   * That is the owner's rule and it is the right one: a name is not a
+   * preference somebody opts into being called by. It comes from the session
+   * copy already in `localStorage`, so it is there on the first render rather
+   * than a moment later — and it is only applied to an untouched field, so it
+   * never overwrites a nickname somebody typed for this particular world.
+   */
+  useEffect(() => {
+    if (sessionState.status !== "signed-in") {
+      return;
+    }
+    const accountDisplayName = sessionState.account.name?.trim();
+    if (!accountDisplayName) {
+      return;
+    }
+    setNickname((currentNickname) =>
+      currentNickname === CREATE_FORM_INITIAL_VALUES.nickname ? accountDisplayName : currentNickname
+    );
+  }, [sessionState]);
+
+  /**
+   * Everything else fills only when the account's own toggle says so.
+   *
+   * The guard is isCreateFormPristine rather than a "has the visitor typed"
+   * flag threaded through a dozen change handlers: the question is exactly
+   * "does this form still hold what it opened with", and comparing against
+   * CREATE_FORM_INITIAL_VALUES answers it in one place that a test can reach.
+   *
+   * A failure is swallowed. The profile is a convenience on this screen, and a
+   * cold auth-service must not put an error banner on the page somebody came
+   * here to create a world on.
+   */
+  useEffect(() => {
+    if (sessionState.status !== "signed-in" || hasAppliedAccountProfile.current) {
+      return;
+    }
+    hasAppliedAccountProfile.current = true;
+    let isMounted = true;
+    fetchAccountProfile()
+      .then((accountProfile) => {
+        if (!isMounted || !accountProfile.autofillCreateForm) {
+          return;
+        }
+        const currentValues = currentFormValuesReference.current;
+        if (!isCreateFormPristine(currentValues)) {
+          return;
+        }
+        const filledValues = createFormValuesFromProfile(accountProfile, currentValues);
+        setNickname(filledValues.nickname);
+        setRole(filledValues.role);
+        setGoal(filledValues.goal);
+        setChallenge(filledValues.challenge);
+        setInterests(filledValues.interests);
+        setTraits(filledValues.traits);
+        setMood(filledValues.mood);
+        // Through showWorldFamilyOnCanvas, never setWorldFamily on its own:
+        // the canvas follows a SECOND piece of state, and a family set without
+        // it leaves the form saying ocean while the world stays a universe.
+        // That was the bug — a preferred family that filled the picker and
+        // changed nothing anybody could see.
+        showWorldFamilyOnCanvas(currentValues.worldFamily, filledValues.worldFamily);
+        setPreferredWorldStyle(filledValues.preferredWorldStyle);
+        setFavoriteColors(filledValues.favoriteColors);
+        setWasFilledFromProfile(true);
+      })
+      .catch(() => {
+        // Deliberately silent - see this effect's own comment.
+      });
+    return () => {
+      isMounted = false;
+    };
+    // Depends on the session only, and now honestly so: the field values are
+    // read from currentFormValuesReference at the moment the profile answers,
+    // rather than closed over from the render that started the request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState.status]);
+
+  /**
+   * Empties the form for this world only, leaving the saved profile alone.
+   *
+   * Not a second copy of the profile page's toggle: that one is the account's
+   * standing preference, this is "not this time". Two controls for one setting
+   * would be worse than one control and one escape hatch.
+   */
+  function startFromBlankForm() {
+    setNickname(CREATE_FORM_INITIAL_VALUES.nickname);
+    setRole(CREATE_FORM_INITIAL_VALUES.role);
+    setGoal(CREATE_FORM_INITIAL_VALUES.goal);
+    setChallenge(CREATE_FORM_INITIAL_VALUES.challenge);
+    setInterests(CREATE_FORM_INITIAL_VALUES.interests);
+    setTraits(CREATE_FORM_INITIAL_VALUES.traits);
+    setMood(CREATE_FORM_INITIAL_VALUES.mood);
+    // Same rule as the autofill above: emptying the form has to carry the
+    // canvas back to the family the form opens with, or the world keeps
+    // showing the profile's ocean under a blank universe form.
+    showWorldFamilyOnCanvas(worldFamily, CREATE_FORM_INITIAL_VALUES.worldFamily);
+    setPreferredWorldStyle(CREATE_FORM_INITIAL_VALUES.preferredWorldStyle);
+    setFavoriteColors(CREATE_FORM_INITIAL_VALUES.favoriteColors);
+    setWasFilledFromProfile(false);
+  }
 
   // Each chip group manages its own custom-value draft internally; these refs
   // exist only so the rail can force an in-progress draft to commit before it
@@ -354,10 +361,23 @@ export default function HomePage() {
    * chrome tint — still follows `worldFamily` immediately, so the picker itself
    * never feels like it lagged.
    */
-  const [renderedWorldFamily, setRenderedWorldFamily] = useState<WorldFamily>("universe");
+  const [renderedWorldFamily, setRenderedWorldFamily] = useState<WorldFamily>(CREATE_FORM_INITIAL_VALUES.worldFamily);
 
   /**
-   * Change family, and carry the old world off to do it.
+   * Move the form to a family AND move the canvas with it, carrying the old
+   * world off on the way.
+   *
+   * THE ONLY PLACE `setWorldFamily` IS CALLED. That is the invariant this
+   * function exists to hold: `worldFamily` is what the form says and
+   * `renderedWorldFamily` is what the canvas shows, they are allowed to differ
+   * only for the length of a departure, and every path that changes the first
+   * has to be a path that eventually changes the second. Two paths were not —
+   * the profile autofill and the "start from a blank form" button — which is
+   * how an account whose preferred family was ocean got a filled-in picker
+   * over an unchanged universe.
+   *
+   * `fromFamily` is passed rather than read from state because one caller is a
+   * network callback whose closure may be several renders old.
    *
    * The still is captured HERE, before the state update, and that ordering is
    * the whole trick: one render later React may have swapped the canvas for the
@@ -365,8 +385,8 @@ export default function HomePage() {
    * comes back null (no canvas yet, a cleared GL buffer, a zero-size box)
    * simply means no transition — the family still changes, immediately.
    */
-  function handleSelectWorldFamily(nextFamily: WorldFamily) {
-    if (!isWorldChangeWorthPlaying(worldFamily, nextFamily)) {
+  function showWorldFamilyOnCanvas(fromFamily: WorldFamily, nextFamily: WorldFamily) {
+    if (!isWorldChangeWorthPlaying(fromFamily, nextFamily)) {
       return;
     }
     const still = captureSceneStill(sceneContainerReference.current);
@@ -376,8 +396,8 @@ export default function HomePage() {
       setTransitionRequest({
         still,
         direction: worldChangeDirectionBetween(
-          familyOptions.findIndex((option) => option.value === worldFamily),
-          familyOptions.findIndex((option) => option.value === nextFamily)
+          FAMILY_OPTIONS.findIndex((option) => option.value === fromFamily),
+          FAMILY_OPTIONS.findIndex((option) => option.value === nextFamily)
         ),
         family: nextFamily,
         token: transitionTokenReference.current
@@ -387,11 +407,22 @@ export default function HomePage() {
       setRenderedWorldFamily(nextFamily);
     }
     setWorldFamily(nextFamily);
+  }
+
+  /** The picker's own handler: the family change, plus the style that goes with it. */
+  function handleSelectWorldFamily(nextFamily: WorldFamily) {
+    if (!isWorldChangeWorthPlaying(worldFamily, nextFamily)) {
+      return;
+    }
+    showWorldFamilyOnCanvas(worldFamily, nextFamily);
     // A style belongs to exactly one family now, and the gateway returns 400
     // for one family's style posted to another. Reset to the family's own
     // neutral style rather than carrying the old value across — the neutral is
     // a no-op in its builder, so this is the least surprising landing point as
     // well as the only valid one.
+    //
+    // The autofill does NOT come through here: it has a saved style of its own
+    // to apply, and this line would throw it away.
     setPreferredWorldStyle(defaultStyleForFamily(nextFamily));
   }
 
@@ -478,6 +509,11 @@ export default function HomePage() {
         onProgress: (job) => {
           setLoading(true);
           setGenerationStatus(job.status);
+          // The resumed path speaks too. A visitor who reloaded mid-generation
+          // is exactly the one who would otherwise never be told, and the
+          // reason survives the reload because it lives on the job rather than
+          // in the 202 this page no longer has.
+          announceGenerationNotice(job);
         }
       })
       .then((result) => {
@@ -488,7 +524,17 @@ export default function HomePage() {
           }
           return;
         }
-        addWorldIdentifierToGallery(result.world.id, result.family);
+        // The shelf is resolved rather than assumed: a world made while
+        // signed in belongs to the account, and one made signed out belongs to
+        // the anonymous shelf.
+        //
+        // Not awaited here, unlike onSubmit's save: this callback is not async
+        // and the navigation below must not wait on it. The write lands either
+        // way — a client-side navigation does not tear down this module — and
+        // the gallery is not the screen being navigated to.
+        void resolveGalleryOwnerKey().then((ownerKey) =>
+          addWorldIdentifierToGallery(result.world.id, result.family, ownerKey)
+        );
         // Success: keep the overlay up through navigation (same reason as
         // onSubmit); do NOT clear loading here.
         router.push(worldPagePath(result.world.id, result.family));
@@ -502,25 +548,7 @@ export default function HomePage() {
     return () => controller.abort();
   }, [router]);
 
-  const payload = useMemo(() => {
-    const safeInterests = ensureRange(interests, ["Technology", "Design", "AI"], MINIMUM_INTERESTS, MAXIMUM_INTERESTS);
-    const safeTraits = ensureRange(traits, ["curious", "builder", "focused"], MINIMUM_TRAITS, MAXIMUM_TRAITS);
-    const safeGoal =
-      goal.trim() ||
-      `Build a personal universe around ${safeInterests.slice(0, 3).join(", ")} with a ${safeTraits[0]} energy.`;
-
-    return {
-      nickname: nickname.trim() || "Neo",
-      role: role.trim() || "Explorer",
-      interests: safeInterests,
-      traits: safeTraits,
-      goal: safeGoal.slice(0, 220),
-      challenge: challenge.trim() || undefined,
-      mood,
-      favoriteColors: favoriteColors.length ? favoriteColors : ["#8B5CF6"],
-      preferredWorldStyle
-    };
-  }, [challenge, favoriteColors, goal, interests, mood, nickname, preferredWorldStyle, role, traits]);
+  const payload = useMemo(() => buildCreateWorldPayload(currentFormValues), [currentFormValues]);
 
   // Captured once, from the very first render, so it is exactly the payload
   // every field's own initial state produces — the "nobody has typed anything
@@ -542,31 +570,21 @@ export default function HomePage() {
     () => JSON.stringify(debouncedPayload) === JSON.stringify(initialPayloadReference.current),
     [debouncedPayload]
   );
-  const previewScene = useMemo(() => {
-    const previewInput = {
-      nickname: debouncedPayload.nickname,
-      interests: debouncedPayload.interests,
-      traits: debouncedPayload.traits,
-      mood: debouncedPayload.mood,
-      preferredWorldStyle: debouncedPayload.preferredWorldStyle,
-      favoriteColors: debouncedPayload.favoriteColors
-    };
-    // Same inputs, family-specific mirror: the preview always renders with the
-    // exact renderer the generated world will use.
-    //
-    // Keyed on renderedWorldFamily, NOT worldFamily. During a transition the
-    // two differ, and this is the seam where that matters: recomputing the
-    // scene the moment the picker is clicked would mount the destination
-    // straight into the departure animation, which is precisely what the
-    // deferred commit exists to prevent.
-    if (renderedWorldFamily === "nature") {
-      return buildPreviewForestSceneConfig(previewInput);
-    }
-    if (renderedWorldFamily === "ocean") {
-      return buildPreviewOceanSceneConfig(previewInput, { showCalmSurfaceDefault: isPreviewUncustomized });
-    }
-    return buildPreviewSceneConfig(previewInput);
-  }, [debouncedPayload, isPreviewUncustomized, renderedWorldFamily]);
+  // Same inputs, family-specific mirror: the preview always renders with the
+  // exact renderer the generated world will use.
+  //
+  // Keyed on renderedWorldFamily, NOT worldFamily. During a transition the
+  // two differ, and this is the seam where that matters: recomputing the
+  // scene the moment the picker is clicked would mount the destination
+  // straight into the departure animation, which is precisely what the
+  // deferred commit exists to prevent.
+  const previewScene = useMemo(
+    () =>
+      buildPreviewSceneForFamily(renderedWorldFamily, debouncedPayload, {
+        showCalmSurfaceDefault: isPreviewUncustomized
+      }),
+    [debouncedPayload, isPreviewUncustomized, renderedWorldFamily]
+  );
 
   // The preview mounts the selected family immediately, so that chunk is already
   // in flight. Warm the others as well: this is the one page whose whole job is
@@ -575,7 +593,7 @@ export default function HomePage() {
   // paint. The world and share routes, which know their family for certain,
   // still fetch exactly one renderer.
   useEffect(() => {
-    for (const option of familyOptions) {
+    for (const option of FAMILY_OPTIONS) {
       prefetchSceneRendererForFamily(option.value);
     }
   }, []);
@@ -604,9 +622,12 @@ export default function HomePage() {
     setGenerationStatus("queued");
     try {
       const world = await api.createWorld(payload, worldFamily, {
-        onProgress: (job) => setGenerationStatus(job.status)
+        onProgress: (job) => {
+          setGenerationStatus(job.status);
+          announceGenerationNotice(job);
+        }
       });
-      addWorldIdentifierToGallery(world.id, worldFamily);
+      addWorldIdentifierToGallery(world.id, worldFamily, await resolveGalleryOwnerKey());
       // Keep the overlay up THROUGH the navigation. router.push is async: it
       // returns before the world route mounts and its scene renders. Clearing
       // loading here (the old `finally`) hid the overlay while this create page
@@ -622,7 +643,7 @@ export default function HomePage() {
   }
 
   function toggleColor(color: string) {
-    setFavoriteColors((current) => toggleItem(current, color, 1, 4));
+    setFavoriteColors((current) => toggleItem(current, color, MINIMUM_FAVORITE_COLORS, MAXIMUM_FAVORITE_COLORS));
   }
 
   // Every section renders for every family now that World Style does, so the
@@ -810,12 +831,30 @@ export default function HomePage() {
                 scrollport spent on nothing. 14px still separates the groups
                 clearly and gives back about a field and a half. */}
             <form id={CREATE_FORM_ELEMENT_ID} className="grid gap-3.5 px-5 py-4 sm:px-7" onSubmit={onSubmit}>
+              {/* Said out loud rather than left to be noticed. A form that
+                  silently arrives full is a form somebody has to reverse-
+                  engineer; one sentence turns that into a fact, and the escape
+                  hatch beside it means the answer to "not this time" is not
+                  "go and change your profile". */}
+              {wasFilledFromProfile ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline bg-black/30 px-3.5 py-2.5 text-xs text-on-surface-variant">
+                  <span>Filled in from your profile.</span>
+                  <button
+                    type="button"
+                    onClick={startFromBlankForm}
+                    className="focus-ring rounded text-secondary underline-offset-4 hover:underline"
+                  >
+                    Start from a blank form
+                  </button>
+                </div>
+              ) : null}
+
               <div className="grid gap-2.5" data-form-section={PROGRESS_SECTION_IDS[0]}>
                 <span className="font-mono text-xs uppercase tracking-widest text-brass">World Family</span>
                 {/* grid-cols-3, not -2: with exactly 3 options a 2-column grid always
                     orphans the third card alone on its own row. */}
                 <div className="grid grid-cols-3 gap-2">
-                  {familyOptions.map((option) => {
+                  {FAMILY_OPTIONS.map((option) => {
                     const selected = worldFamily === option.value;
                     return (
                       <button
@@ -874,7 +913,7 @@ export default function HomePage() {
                     onChange={(event) => setNickname(event.target.value)}
                     className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                     placeholder="e.g. Neo"
-                    maxLength={32}
+                    maxLength={MAXIMUM_DISPLAY_NAME_LENGTH}
                   />
                 </label>
                 <label className="grid min-w-0 gap-1.5" data-form-section={PROGRESS_SECTION_IDS[2]}>
@@ -884,7 +923,7 @@ export default function HomePage() {
                     onChange={(event) => setRole(event.target.value)}
                     className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                     placeholder="e.g. Explorer"
-                    maxLength={80}
+                    maxLength={MAXIMUM_ROLE_LENGTH}
                   />
                 </label>
               </div>
@@ -893,7 +932,7 @@ export default function HomePage() {
                 <ChipGroupWithCustom
                   ref={interestsChipGroupReference}
                   fieldLabel="Core Interests"
-                  predefinedOptions={interestOptions}
+                  predefinedOptions={INTEREST_OPTIONS}
                   selected={interests}
                   onChange={setInterests}
                   minimumItems={MINIMUM_INTERESTS}
@@ -909,7 +948,7 @@ export default function HomePage() {
                 <ChipGroupWithCustom
                   ref={traitsChipGroupReference}
                   fieldLabel="Traits"
-                  predefinedOptions={traitOptions}
+                  predefinedOptions={TRAIT_OPTIONS}
                   selected={traits}
                   onChange={setTraits}
                   minimumItems={MINIMUM_TRAITS}
@@ -931,7 +970,7 @@ export default function HomePage() {
                   onChange={(event) => setGoal(event.target.value)}
                   className="focus-ring input-dark min-h-[60px] resize-y rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                   placeholder="Build a beautiful AI product that feels personal and useful."
-                  maxLength={220}
+                  maxLength={MAXIMUM_GOAL_LENGTH}
                 />
               </label>
 
@@ -942,7 +981,7 @@ export default function HomePage() {
                   onChange={(event) => setChallenge(event.target.value)}
                   className="focus-ring input-dark w-full min-w-0 rounded-xl px-3.5 py-2 text-on-surface placeholder:text-outline"
                   placeholder="e.g. I overthink product direction"
-                  maxLength={220}
+                  maxLength={MAXIMUM_CHALLENGE_LENGTH}
                 />
               </label>
 
@@ -977,7 +1016,7 @@ export default function HomePage() {
               <div className="grid gap-2" data-form-section={PROGRESS_SECTION_IDS[9]}>
                 <span className="font-mono text-xs uppercase tracking-widest text-brass">Palette</span>
                 <div className="flex flex-wrap gap-2">
-                  {colorOptions.map((color) => {
+                  {COLOR_OPTIONS.map((color) => {
                     const selected = favoriteColors.includes(color);
                     return (
                       <button

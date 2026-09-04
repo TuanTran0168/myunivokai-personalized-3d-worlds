@@ -65,7 +65,7 @@ func (service *AuthService) InviteAccount(ctx context.Context, data contracts.In
 	if err != nil {
 		return contracts.InviteCreateResponseData{}, err
 	}
-	expiresAt := time.Now().UTC().Add(service.cfg.InviteTokenTTL)
+	expiresAt := time.Now().UTC().Add(service.resolveDurationSetting(ctx, contracts.SettingKeyAuthTokenInviteTTL))
 	account, err := service.store.CreateInvite(ctx, repositories.InviteAccountParams{
 		Email: normalizeEmail(data.Email), RoleIDs: data.RoleIDs, InviteTokenHash: tokenHash, InviteExpiresAt: expiresAt,
 	})
@@ -165,8 +165,8 @@ func generateInviteToken() (raw, hash string, err error) {
 	return raw, security.HashRefreshToken(raw), nil
 }
 
-func (service *AuthService) ListAccounts(ctx context.Context, cursor string, pageSize int, search string) (contracts.AccountListResponseData, error) {
-	accounts, nextCursor, err := service.store.ListAccounts(ctx, cursor, clampListPageSize(pageSize), search)
+func (service *AuthService) ListAccounts(ctx context.Context, cursor string, pageSize int, search string, kind contracts.AccountKind) (contracts.AccountListResponseData, error) {
+	accounts, nextCursor, err := service.store.ListAccounts(ctx, cursor, clampListPageSize(pageSize), search, kind)
 	if err != nil {
 		return contracts.AccountListResponseData{}, err
 	}

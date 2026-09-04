@@ -34,6 +34,20 @@ export function AccountDetailPage({ params }: { params: Promise<{ accountId: str
   });
 
   const account = accountQuery.data;
+  /**
+   * Whether this account may hold a role at all.
+   *
+   * `undefined` while the account is loading, which is why this is a
+   * three-state check rather than `account?.kind === "staff"`: the second
+   * would render the role controls as ENABLED for one frame before the answer
+   * arrives, on the one screen where that is the wrong default.
+   *
+   * The server refuses the write regardless (auth-service's
+   * ErrRoleNotGrantableToAccountKind, asserted at the repository level by
+   * S8-IDENTITY-003), so this is not the enforcement — it is the screen not
+   * offering an action that cannot succeed.
+   */
+  const canHoldARole = account === undefined ? undefined : account.kind === "staff";
 
   return (
     <div className="flex flex-col gap-4">
@@ -55,6 +69,12 @@ export function AccountDetailPage({ params }: { params: Promise<{ accountId: str
       <h2 className="text-sm font-medium text-muted-foreground">Roles</h2>
       <Card>
         <CardContent className="flex flex-col gap-3 pt-2">
+          {canHoldARole === false ? (
+            <p className="text-sm text-muted-foreground">
+              End-user accounts hold no roles and no permissions. Staff and end users share one accounts table, so that
+              separation is enforced by auth-service rather than by this screen — a role granted here would be refused.
+            </p>
+          ) : null}
           {rolesQuery.isLoading ? (
             Array.from({ length: 3 }).map((_, index) => (
               <div key={index} className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
@@ -66,6 +86,7 @@ export function AccountDetailPage({ params }: { params: Promise<{ accountId: str
               </div>
             ))
           ) : (
+            canHoldARole !== false &&
             rolesQuery.data?.roles.map((role) => {
               const isAssigned = account?.roles.includes(role.name) ?? false;
               return (
@@ -79,7 +100,7 @@ export function AccountDetailPage({ params }: { params: Promise<{ accountId: str
                   </div>
                   <Checkbox
                     checked={isAssigned}
-                    disabled={account?.isSuperAdmin}
+                    disabled={account?.isSuperAdmin || canHoldARole !== true}
                     onCheckedChange={(checked) => {
                       if (checked) assignMutation.mutate(role.roleId);
                       else revokeMutation.mutate(role.roleId);

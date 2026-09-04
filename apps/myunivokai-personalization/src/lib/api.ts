@@ -1,21 +1,34 @@
 import type {
   ApiErrorPayload,
   CreateWorldInput,
+  DeleteResult,
   GenerationJob,
+  OwnedWorldPage,
   PublishResult,
   ShareWorld,
   World,
   WorldFamily,
   WorldVariant
 } from "./types";
-import { apiBaseUrlForFamily, gatewayOriginUrl } from "./gateway";
+import { apiPathPrefixForFamily, gatewayOriginUrl } from "./gateway";
+import { ApiError, requestGatewayJson, waitForDelay } from "./gatewayRequest";
+import { authorizedGatewayRequest } from "./productAuth";
+import {
+  ANONYMOUS_IDENTIFIER_HEADER_NAME,
+  hasProductSession,
+  readOrCreateAnonymousIdentifier
+} from "./productSession";
+
+// Re-exported so the transport keeps one import path for the rest of the app
+// even though it now lives beside this module rather than inside it.
+export { ApiError, requestGatewayJson, type GatewayRequestHooks } from "./gatewayRequest";
 
 // The browser knows one gateway origin. Family prefixes select the public
 // gateway contract; the gateway translates those requests into NATS traffic.
-const API_BASE_URLS_BY_FAMILY: Record<WorldFamily, string> = {
-  universe: apiBaseUrlForFamily("universe"),
-  nature: apiBaseUrlForFamily("nature"),
-  ocean: apiBaseUrlForFamily("ocean")
+const API_PATH_PREFIXES_BY_FAMILY: Record<WorldFamily, string> = {
+  universe: apiPathPrefixForFamily("universe"),
+  nature: apiPathPrefixForFamily("nature"),
+  ocean: apiPathPrefixForFamily("ocean")
 };
 
 const PENDING_GENERATION_STORAGE_KEY = "myunivokai:pending-generation:v1";
@@ -23,6 +36,16 @@ const GENERATION_POLL_INITIAL_DELAY_MILLISECONDS = 500;
 const GENERATION_POLL_MAXIMUM_DELAY_MILLISECONDS = 2500;
 const GENERATION_POLL_DEADLINE_MILLISECONDS = 120_000;
 const GENERATION_POLL_BACKOFF_MULTIPLIER = 1.5;
+
+/**
+ * The page size asked for by the world list, and it is the server's MAXIMUM
+ * rather than its default of 25.
+ *
+ * The gallery is one grid with no paging control, so a smaller page would mean
+ * more round trips for the same screen - and the server caps this at 50
+ * anyway, because that is what one `?ids=` batch can hydrate.
+ */
+const OWNED_WORLD_PAGE_SIZE = 50;
 
 type PendingGeneration = {
   jobId: string;
@@ -37,13 +60,14 @@ export type GenerationOptions = {
   onProgress?: GenerationProgressHandler;
 };
 
+
 export const DEFAULT_WORLD_FAMILY: WorldFamily = "universe";
 
 /**
  * Whether a value read back out of sessionStorage names a family this build
  * knows.
  *
- * Derived from API_BASE_URLS_BY_FAMILY rather than written out as a literal
+ * Derived from API_PATH_PREFIXES_BY_FAMILY rather than written out as a literal
  * comparison. The literal it replaces (`family === "universe" || family ===
  * "nature"`) failed no build when the ocean family was added — a resumed
  * generation would simply be discarded on reload, silently, for the newest
@@ -51,124 +75,51 @@ export const DEFAULT_WORLD_FAMILY: WorldFamily = "universe";
  * compiler now refuses to let the two drift.
  */
 function isKnownWorldFamily(value: unknown): value is WorldFamily {
-  return typeof value === "string" && Object.prototype.hasOwnProperty.call(API_BASE_URLS_BY_FAMILY, value);
-}
-export class ApiError extends Error {
-  code: string;
-  details: unknown[];
-  requestId?: string;
-  status: number;
-
-  constructor(status: number, payload: ApiErrorPayload) {
-    const error = payload.error ?? {};
-    super(error.message || `Request failed with status ${status}`);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = error.code || "request_failed";
-    this.details = error.details || [];
-    this.requestId = error.requestId;
-  }
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(API_PATH_PREFIXES_BY_FAMILY, value);
 }
 
-// Idempotent GETs retry once on 429: the backend's token bucket refills within
-// about a second (and says so via Retry-After), so a transient burst should not
-// become a permanent error tile. Mutating requests are never retried — a
-// duplicate POST could create a second world/variant.
-const MAXIMUM_GET_RETRIES_ON_RATE_LIMIT = 1;
-const DEFAULT_RATE_LIMIT_RETRY_MILLISECONDS = 1000;
-
-// A service that was asleep answers instantly with SERVICE_WAKING while the
-// gateway starts it in the background. That needs a far larger budget than the
-// rate-limit retry: a container cold start runs tens of seconds, and unlike a
-// 429 there is nothing the caller can do except wait for it.
-//
-// Retried for every method, not only GET. SERVICE_WAKING is produced by one
-// condition — the broker reporting that no subscriber existed — which means
-// the request provably never reached a service, so a repeat cannot create a
-// second world or variant. That is a stronger guarantee than the 429 above,
-// whose conservative GET-only rule is left as it was.
-const MAXIMUM_RETRIES_ON_SERVICE_WAKING = 6;
-const DEFAULT_SERVICE_WAKING_RETRY_MILLISECONDS = 10_000;
-const SERVICE_WAKING_ERROR_CODE = "SERVICE_WAKING";
-
-function retryDelayMilliseconds(response: Response, fallbackMilliseconds: number): number {
-  const retryAfterSeconds = Number(response.headers.get("Retry-After"));
-  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-    return retryAfterSeconds * 1000;
-  }
-  return fallbackMilliseconds;
-}
-
-function isServiceWaking(status: number, payload: ApiErrorPayload): boolean {
-  return status === 503 && payload?.error?.code === SERVICE_WAKING_ERROR_CODE;
-}
-
-async function requestUrl<T>(url: string, init?: RequestInit): Promise<T> {
-  const isIdempotentGet = !init?.method || init.method.toUpperCase() === "GET";
-  let rateLimitRetriesLeft = isIdempotentGet ? MAXIMUM_GET_RETRIES_ON_RATE_LIMIT : 0;
-  let serviceWakingRetriesLeft = MAXIMUM_RETRIES_ON_SERVICE_WAKING;
-
-  for (;;) {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {})
-      },
-      cache: "no-store"
-    });
-
-    if (response.status === 429 && rateLimitRetriesLeft > 0) {
-      rateLimitRetriesLeft -= 1;
-      await waitForDelay(
-        retryDelayMilliseconds(response, DEFAULT_RATE_LIMIT_RETRY_MILLISECONDS),
-        init?.signal ?? undefined
-      );
-      continue;
-    }
-
-    const text = await response.text();
-    const payload = text ? JSON.parse(text) : {};
-
-    // Checked against the body, not the status: 503 also carries
-    // SERVICE_UNAVAILABLE, which means a real fault that retrying will not fix.
-    if (isServiceWaking(response.status, payload) && serviceWakingRetriesLeft > 0) {
-      serviceWakingRetriesLeft -= 1;
-      await waitForDelay(
-        retryDelayMilliseconds(response, DEFAULT_SERVICE_WAKING_RETRY_MILLISECONDS),
-        init?.signal ?? undefined
-      );
-      continue;
-    }
-
-    if (!response.ok) {
-      throw new ApiError(response.status, payload);
-    }
-
-    return payload as T;
-  }
-}
-
+/**
+ * One world-family request, with the session attached.
+ *
+ * Every route reached through here still works with no session at all -
+ * anonymous creation is the product's first impression - but a signed-in
+ * visitor's create has to arrive carrying their token, or the world it
+ * produces belongs to nobody and can never be claimed. The one transparent
+ * refresh inside matters for the same reason: a seven-day access token is
+ * expired at a fair share of visits, and without the refresh each of those
+ * creates would quietly lose its owner.
+ */
 async function request<T>(family: WorldFamily, path: string, init?: RequestInit): Promise<T> {
-  return requestUrl<T>(`${API_BASE_URLS_BY_FAMILY[family]}${path}`, init);
+  return authorizedGatewayRequest<T>(`${API_PATH_PREFIXES_BY_FAMILY[family]}${path}`, init);
 }
 
-function waitForDelay(delayMilliseconds: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
-      return;
-    }
-    const handleAbort = () => {
-      clearTimeout(timeoutIdentifier);
-      reject(signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
-    };
-    const timeoutIdentifier = setTimeout(() => {
-      signal?.removeEventListener("abort", handleAbort);
-      resolve();
-    }, delayMilliseconds);
-    signal?.addEventListener("abort", handleAbort, { once: true });
-  });
+
+
+
+
+/**
+ * The anonymous id, sent on a create and on nothing else, and only when there
+ * is nobody signed in.
+ *
+ * Only a CREATE, because it is the only request that decides who a world
+ * belongs to. The other mutations are checked against an owner the world
+ * already has, and an unowned world is mutable by anyone holding its id
+ * anyway.
+ *
+ * Only when signed OUT, because the gateway drops the header whenever it has a
+ * verified account to name instead — exactly one of the two identity fields is
+ * ever stored. Sending it anyway would work and would be a value nothing
+ * reads.
+ *
+ * This is also where the id is first minted, by the read-or-create: the first
+ * anonymous create is precisely when a visitor first needs one. Minting it on
+ * page load instead would give an identifier to somebody who only ever looked.
+ */
+function anonymousCreateHeaders(): Record<string, string> {
+  if (hasProductSession()) {
+    return {};
+  }
+  return { [ANONYMOUS_IDENTIFIER_HEADER_NAME]: readOrCreateAnonymousIdentifier() };
 }
 
 function savePendingGeneration(pendingGeneration: PendingGeneration): void {
@@ -220,8 +171,12 @@ async function waitForGeneratedWorld(
     }
     let job: GenerationJob;
     try {
-      job = await requestUrl<GenerationJob>(
-        `${gatewayOriginUrl()}/api/jobs/${encodeURIComponent(pendingGeneration.jobId)}`,
+      // Deliberately unauthenticated, unlike the world calls above: a job
+      // belongs to whoever holds its id, and attaching a session here would
+      // turn an expired token into a failed poll on a world that is being
+      // generated right now.
+      job = await requestGatewayJson<GenerationJob>(
+        `/api/jobs/${encodeURIComponent(pendingGeneration.jobId)}`,
         { signal: options.signal }
       );
     } catch (error) {
@@ -348,6 +303,7 @@ export const api = {
   ): Promise<World> {
     const job = await request<GenerationJob>(family, "/worlds", {
       method: "POST",
+      headers: anonymousCreateHeaders(),
       body: JSON.stringify(input),
       signal: options.signal
     });
@@ -419,6 +375,37 @@ export const api = {
       { method: "POST", body: "{}" }
     );
     return { shareSlug: payload.shareSlug ?? payload.share_slug ?? "", shareUrl: payload.shareUrl ?? "" };
+  },
+
+  // Owner-only, and the server decides that: a world nobody has claimed cannot
+  // be deleted by anybody, which the gateway answers with WORLD_NOT_CLAIMED
+  // rather than pretending the world is not there.
+  async deleteWorld(worldId: string, family: WorldFamily = DEFAULT_WORLD_FAMILY): Promise<DeleteResult> {
+    return request<DeleteResult>(family, `/worlds/${worldId}/delete`, { method: "POST" });
+  },
+
+  /**
+   * One keyset page of the signed-in account's own worlds.
+   *
+   * Not scoped to a family, unlike every other call in this object: the list
+   * spans all three, and which family each world belongs to is what the
+   * response is for - the gallery hydrates each one from its own backend
+   * afterwards.
+   *
+   * The account is never a parameter. It comes off the access token the
+   * gateway verifies, so there is no shape of this call that asks for
+   * somebody else's worlds. Requires a session, and `authorizedGatewayRequest`
+   * refreshes one transparently: a seven-day access token is expired at a fair
+   * share of visits, and without the refresh the gallery would fall back to
+   * its cache while a perfectly good session sat in the browser.
+   */
+  async getOwnedWorlds(cursor?: string, signal?: AbortSignal): Promise<OwnedWorldPage> {
+    const query = new URLSearchParams({ limit: String(OWNED_WORLD_PAGE_SIZE) });
+    if (cursor) {
+      query.set("cursor", cursor);
+    }
+    const page = await authorizedGatewayRequest<OwnedWorldPage>(`/api/me/worlds?${query.toString()}`, { signal });
+    return { worlds: Array.isArray(page.worlds) ? page.worlds : [], nextCursor: page.nextCursor };
   },
 
   async getShareWorld(shareSlug: string, family: WorldFamily = DEFAULT_WORLD_FAMILY): Promise<ShareWorld> {

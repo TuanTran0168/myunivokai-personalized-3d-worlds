@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,16 +22,25 @@ type fakeBroker struct {
 	publishedEnvelope contracts.Envelope[contracts.GenerateDNAData]
 	requestedSubject  string
 	requestedSubjects []string
-	response          contracts.Envelope[contracts.RPCResponseData]
+	// requestedPayloadsBySubject keeps what was SENT, not only which subject
+	// was asked. A test that the account id comes from the access token rather
+	// than from the request body cannot be written without it.
+	requestedPayloadsBySubject map[string]any
+	response                   contracts.Envelope[contracts.RPCResponseData]
 	// responsesBySubject lets a test answer two different NATS subjects
 	// differently in one request (e.g. RequireAdminPermission's
 	// AuthAccountPermissionsQuerySubject vs. the route's own subject) — a
 	// subject missing from this map falls back to `response`, so every
 	// existing single-response test keeps working unchanged.
 	responsesBySubject map[string]contracts.Envelope[contracts.RPCResponseData]
-	publishError       error
-	requestError       error
-	pingError          error
+	// claimedEnvelopes is a slice, not a single value like publishedEnvelope
+	// above: the claim's own tests assert that a repeated request publishes a
+	// second command rather than being swallowed, which a single field cannot
+	// show.
+	claimedEnvelopes []contracts.Envelope[contracts.WorldClaimData]
+	publishError     error
+	requestError     error
+	pingError        error
 }
 
 func (brokerClient *fakeBroker) PublishGeneration(_ context.Context, envelope contracts.Envelope[contracts.GenerateDNAData]) error {
@@ -40,11 +50,25 @@ func (brokerClient *fakeBroker) PublishGeneration(_ context.Context, envelope co
 	return brokerClient.publishError
 }
 
-func (brokerClient *fakeBroker) Request(_ context.Context, subject string, _ any) (contracts.Envelope[contracts.RPCResponseData], error) {
+func (brokerClient *fakeBroker) PublishWorldClaim(_ context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) error {
+	brokerClient.mutex.Lock()
+	defer brokerClient.mutex.Unlock()
+	if brokerClient.publishError != nil {
+		return brokerClient.publishError
+	}
+	brokerClient.claimedEnvelopes = append(brokerClient.claimedEnvelopes, envelope)
+	return nil
+}
+
+func (brokerClient *fakeBroker) Request(_ context.Context, subject string, payload any) (contracts.Envelope[contracts.RPCResponseData], error) {
 	brokerClient.mutex.Lock()
 	defer brokerClient.mutex.Unlock()
 	brokerClient.requestedSubject = subject
 	brokerClient.requestedSubjects = append(brokerClient.requestedSubjects, subject)
+	if brokerClient.requestedPayloadsBySubject == nil {
+		brokerClient.requestedPayloadsBySubject = map[string]any{}
+	}
+	brokerClient.requestedPayloadsBySubject[subject] = payload
 	if response, found := brokerClient.responsesBySubject[subject]; found {
 		return response, brokerClient.requestError
 	}
@@ -68,13 +92,86 @@ type fakeEdgeStore struct {
 
 	wakeStats      map[string]edge.ServiceWakeStats
 	wakeStatsError error
+
+	// identityFailures is the per-email sign-in tally. Keyed by the hashed
+	// identity key the handler passes, exactly as Redis is, so a test can
+	// assert on edge.IdentityFailureKey(email) without knowing the hash.
+	identityFailures      map[string]int
+	identityFailuresError error
+
+	rateLimitRouteKeys map[string]int
+
+	// mirroredSettings is the settings mirror auth-service writes and
+	// settings.Reader reads. Empty by default, which is the state a fresh
+	// environment is in and therefore the one every route must work in.
+	mirroredSettings map[contracts.SettingKey]string
+
+	// dailyGenerationCounts is the AI quota counter, keyed exactly as Redis
+	// keys it: "<callerKey>|<utc day>". A test asserting the sixth create of
+	// a day degrades has to be able to seed the first five without making
+	// five requests.
+	dailyGenerationCounts     map[string]int
+	dailyGenerationCountError error
 }
 
 func newFakeEdgeStore() *fakeEdgeStore {
 	return &fakeEdgeStore{
 		values: make(map[string][]byte), timeToLives: make(map[string]time.Duration),
 		deleteCounts: make(map[string]int), tokenVersions: make(map[string]int),
+		identityFailures:      make(map[string]int),
+		mirroredSettings:      make(map[contracts.SettingKey]string),
+		dailyGenerationCounts: make(map[string]int),
 	}
+}
+
+// GetSetting answers the settings mirror. A miss is the DEFAULT state of this
+// fake on purpose: settings.Reader must resolve every value from its
+// compiled-in default without asking anything, so a fake that pre-populated
+// the mirror would hide the case every environment starts in.
+func (store *fakeEdgeStore) GetSetting(_ context.Context, key contracts.SettingKey) (string, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.getError != nil {
+		return "", store.getError
+	}
+	value, found := store.mirroredSettings[key]
+	if !found {
+		return "", edge.ErrCacheMiss
+	}
+	return value, nil
+}
+
+// IncrementDailyGenerationCount counts, and returns the count INCLUDING this
+// one, exactly as the Redis pipeline does. The day is part of the key so that
+// a test can prove a new UTC day starts a new allowance without moving a
+// clock.
+func (store *fakeEdgeStore) IncrementDailyGenerationCount(_ context.Context, callerKey string, at time.Time) (int, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.dailyGenerationCountError != nil {
+		return 0, store.dailyGenerationCountError
+	}
+	key := dailyGenerationCountKey(callerKey, at)
+	store.dailyGenerationCounts[key]++
+	return store.dailyGenerationCounts[key], nil
+}
+
+// seedDailyGenerationCount puts a caller partway through their allowance, so a
+// test about the sixth create of a day costs one request rather than six.
+func (store *fakeEdgeStore) seedDailyGenerationCount(callerKey string, at time.Time, generations int) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	store.dailyGenerationCounts[dailyGenerationCountKey(callerKey, at)] = generations
+}
+
+func dailyGenerationCountKey(callerKey string, at time.Time) string {
+	return callerKey + "|" + at.UTC().Format("2006-01-02")
+}
+
+func (store *fakeEdgeStore) setMirroredSetting(key contracts.SettingKey, value string) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	store.mirroredSettings[key] = value
 }
 
 func (store *fakeEdgeStore) GetTokenVersion(_ context.Context, accountID string) (int, error) {
@@ -94,8 +191,47 @@ func (store *fakeEdgeStore) SetTokenVersion(_ context.Context, accountID string,
 	return nil
 }
 
-func (store *fakeEdgeStore) Allow(context.Context, string, string, float64, int) (bool, time.Duration, error) {
+// Allow always allows, and records which bucket was asked. The route key is
+// the whole of the guarantee that two route groups are policed independently
+// (middleware.RateLimit's own comment says why), so a test asserting the
+// identity group has its own bucket has to be able to see it.
+func (store *fakeEdgeStore) Allow(_ context.Context, routeKey, _ string, _ float64, _ int) (bool, time.Duration, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.rateLimitRouteKeys == nil {
+		store.rateLimitRouteKeys = make(map[string]int)
+	}
+	store.rateLimitRouteKeys[routeKey]++
 	return true, 0, nil
+}
+
+func (store *fakeEdgeStore) RecordIdentityFailure(_ context.Context, identityKey string, _ time.Duration) (int, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.identityFailuresError != nil {
+		return 0, store.identityFailuresError
+	}
+	store.identityFailures[identityKey]++
+	return store.identityFailures[identityKey], nil
+}
+
+func (store *fakeEdgeStore) IdentityFailureCount(_ context.Context, identityKey string) (int, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.identityFailuresError != nil {
+		return 0, store.identityFailuresError
+	}
+	return store.identityFailures[identityKey], nil
+}
+
+func (store *fakeEdgeStore) ClearIdentityFailures(_ context.Context, identityKey string) error {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	if store.identityFailuresError != nil {
+		return store.identityFailuresError
+	}
+	delete(store.identityFailures, identityKey)
+	return nil
 }
 
 func (store *fakeEdgeStore) Get(_ context.Context, namespace, identifier string) ([]byte, error) {
@@ -381,8 +517,14 @@ func testGatewayConfig() config.Config {
 	return config.Config{
 		AppEnvironment: "test", AppName: "Gateway Test", AllowedOrigins: []string{"http://localhost:41300"},
 		RateLimitRequestsPerSecond: 1000, RateLimitBurst: 1000, MaximumRequestBodyBytes: 64 * 1024,
+		AuthRateLimitRequestsPerSecond: 1000, AuthRateLimitBurst: 1000,
 		NATSPublishTimeout: time.Second, NATSRequestTimeout: time.Second, JobCacheTimeToLive: time.Minute,
 		WorldCacheTimeToLive: time.Minute, ShareCacheTimeToLive: time.Minute,
+		// The identity edge is not gated by ADMIN_ROUTES_ENABLED, so every
+		// gateway test needs a key it can verify with - unlike Sprint 4, where
+		// only testAdminGatewayConfig did.
+		AccessTokenPublicKeys: []ed25519.PublicKey{productTestPublicKey},
+		TokenVersionCacheTTL:  time.Minute,
 	}
 }
 

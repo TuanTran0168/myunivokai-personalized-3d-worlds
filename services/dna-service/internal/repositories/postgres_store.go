@@ -19,6 +19,14 @@ const (
 	composeMessageIDSuffix      = ":compose"
 	dnaGeneratedMessageSuffix   = ":dna-generated"
 	dnaFailedMessageSuffix      = ":dna-failed"
+	// The family claim messages are keyed on the claim's own correlation id
+	// and the family, NOT on the anonymous id. A JetStream redelivery carries
+	// the same correlation id and so dedupes; a genuinely new claim request
+	// gets a new one and so is not swallowed by ON CONFLICT DO NOTHING — which
+	// matters because a browser that failed to clear its anonymous cookie can
+	// legitimately claim the same anonymous id twice, for worlds it made in
+	// between.
+	familyClaimMessageIDFormat = "%s:%s-claim"
 )
 
 type PostgresStore struct {
@@ -47,7 +55,12 @@ func (store *PostgresStore) EnsureJob(ctx context.Context, envelope contracts.En
 	}
 	defer transaction.Rollback(ctx)
 	var profileID string
-	if err := transaction.QueryRow(ctx, `INSERT INTO profiles (raw_input) VALUES ($1) RETURNING id::text`, inputJSON).Scan(&profileID); err != nil {
+	// The owner comes from the command the gateway published, which set it
+	// from a verified token. It is written here, on the profile, before any
+	// family service hears about the world - so a create that crashes between
+	// the two still has an owner recorded where the claim looks for it.
+	if err := transaction.QueryRow(ctx, `INSERT INTO profiles (raw_input, owner_account_id, anonymous_id) VALUES ($1,$2,$3) RETURNING id::text`,
+		inputJSON, envelope.Data.OwnerAccountID, envelope.Data.AnonymousID).Scan(&profileID); err != nil {
 		return JobRecord{}, err
 	}
 	job := contracts.Job{JobID: envelope.JobID, Family: envelope.Data.Family, Status: contracts.JobStatusQueued, ProfileID: profileID}
@@ -85,7 +98,7 @@ func (store *PostgresStore) MarkJobProcessing(ctx context.Context, jobID string)
 	return nil
 }
 
-func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, jobID string, input contracts.WorldInput, profileDNA contracts.ProfileDNA, attempts []ai.Attempt) (contracts.Job, error) {
+func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, jobID string, input contracts.WorldInput, profileDNA contracts.ProfileDNA, attempts []ai.Attempt, outcome GenerationOutcome) (contracts.Job, error) {
 	transaction, err := store.pool.Begin(ctx)
 	if err != nil {
 		return contracts.Job{}, err
@@ -109,7 +122,20 @@ func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, job
 	}
 	job.DNAVersionID = dnaVersionID
 	job.Status = contracts.JobStatusProcessing
-	if _, err := transaction.Exec(ctx, `UPDATE generation_jobs SET dna_version_id=$2, status='processing', updated_at=NOW() WHERE job_id=$1`, jobID, dnaVersionID); err != nil {
+	// The reason is written in the SAME statement and the same transaction as
+	// the DNA version, because the two facts are one fact: this DNA exists and
+	// it was produced this way. Written as a second UPDATE it could be lost to
+	// a crash between them, leaving a world whose maker is told nothing about
+	// why it looks the way it does.
+	//
+	// An absent reason is stored as SQL NULL rather than as '', which is what
+	// generationReasonColumnValue is for: an empty reason is not a reason, and
+	// the column's CHECK would refuse the empty string anyway. The limit is
+	// already a pointer for the same distinction one level up.
+	if _, err := transaction.Exec(ctx, `UPDATE generation_jobs
+		SET dna_version_id=$2, status='processing', generation_reason=$3, daily_ai_generation_limit=$4, updated_at=NOW()
+		WHERE job_id=$1`, jobID, dnaVersionID,
+		generationReasonColumnValue(outcome.Reason), outcome.DailyAIGenerationLimit); err != nil {
 		return contracts.Job{}, err
 	}
 	if err := insertAttempts(ctx, transaction, jobID, attempts); err != nil {
@@ -119,13 +145,31 @@ func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, job
 	if err != nil {
 		return contracts.Job{}, err
 	}
+	// Read from the profile row rather than carried in memory from the generate
+	// command: this method runs on a JetStream redelivery too, and a world
+	// composed on the second attempt has to end up owned by the same account as
+	// one composed on the first.
+	//
+	// Both identity fields, and reading them together is what keeps the
+	// invariant true downstream: a claim that lands between the generate and
+	// the compose has already set the owner and cleared the anonymous id on
+	// this very row, so the compose command carries the claimed owner rather
+	// than an anonymous id nobody holds any more.
+	var ownerAccountID *string
+	var anonymousID *string
+	if err := transaction.QueryRow(ctx, `SELECT owner_account_id::text, anonymous_id::text FROM profiles WHERE id = $1`,
+		job.ProfileID).Scan(&ownerAccountID, &anonymousID); err != nil {
+		return contracts.Job{}, err
+	}
 	composeEnvelope := contracts.NewEnvelope(jobID, contracts.ComposeWorldData{
-		Family:       job.Family,
-		ProfileID:    job.ProfileID,
-		DNAVersionID: dnaVersionID,
-		Profile:      contracts.ProfileSummary{Nickname: input.Nickname, Role: input.Role},
-		VisualIntent: contracts.VisualIntent{Mood: input.Mood, FavoriteColors: input.FavoriteColors, PreferredWorldStyle: input.PreferredWorldStyle},
-		ProfileDNA:   profileDNA,
+		Family:         job.Family,
+		ProfileID:      job.ProfileID,
+		DNAVersionID:   dnaVersionID,
+		Profile:        contracts.ProfileSummary{Nickname: input.Nickname, Role: input.Role},
+		VisualIntent:   contracts.VisualIntent{Mood: input.Mood, FavoriteColors: input.FavoriteColors, PreferredWorldStyle: input.PreferredWorldStyle},
+		ProfileDNA:     profileDNA,
+		OwnerAccountID: ownerAccountID,
+		AnonymousID:    anonymousID,
 	})
 	dnaGeneratedEnvelope := contracts.NewEnvelope(jobID, contracts.DNAGeneratedData{Family: job.Family, ProfileID: job.ProfileID, DNAVersionID: dnaVersionID})
 	if err := insertOutbox(ctx, transaction, jobID+composeMessageIDSuffix, composeSubject, composeEnvelope); err != nil {
@@ -138,6 +182,84 @@ func (store *PostgresStore) StoreDNAAndQueueComposition(ctx context.Context, job
 		return contracts.Job{}, err
 	}
 	return store.GetJob(ctx, jobID)
+}
+
+// ClaimWorlds gives one account every profile an anonymous visitor made, and
+// stages one command per family that visitor actually used.
+//
+// The fan-out narrows here and nowhere else, because this is the only service
+// that knows which families were used: `generation_jobs` names one per job. A
+// visitor who only ever made a forest costs one woken service instead of three.
+//
+// Two plain statements in one transaction rather than a data-modifying CTE or
+// an array parameter, for the reason the deletion in each family service gives:
+// there is no Postgres in CI, so the SQL that ships is the SQL somebody has to
+// be able to check by reading it.
+func (store *PostgresStore) ClaimWorlds(ctx context.Context, envelope contracts.Envelope[contracts.WorldClaimData]) (ClaimResult, error) {
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return ClaimResult{}, err
+	}
+	defer transaction.Rollback(ctx)
+	// The families are read BEFORE the update, while anonymous_id still points
+	// at these rows. Afterwards it is NULL and there is nothing left to join
+	// on - and finding them by their new owner instead would also pick up
+	// profiles claimed by an earlier claim of a different anonymous id, which
+	// is exactly the blind fan-out this narrowing exists to avoid.
+	familyRows, err := transaction.Query(ctx, `SELECT DISTINCT generation_jobs.family
+		FROM generation_jobs
+		JOIN profiles ON profiles.id = generation_jobs.profile_id
+		WHERE profiles.anonymous_id = $1 AND profiles.owner_account_id IS NULL`, envelope.Data.AnonymousID)
+	if err != nil {
+		return ClaimResult{}, err
+	}
+	var families []contracts.WorldFamily
+	for familyRows.Next() {
+		var family contracts.WorldFamily
+		if err := familyRows.Scan(&family); err != nil {
+			familyRows.Close()
+			return ClaimResult{}, err
+		}
+		families = append(families, family)
+	}
+	familyRows.Close()
+	if err := familyRows.Err(); err != nil {
+		return ClaimResult{}, err
+	}
+	// `owner_account_id IS NULL` is the whole of the idempotency, and of the
+	// two-device race: the second claim of one anonymous id updates zero rows.
+	// A world is claimable exactly once, for ever.
+	commandTag, err := transaction.Exec(ctx, `UPDATE profiles SET owner_account_id = $1, anonymous_id = NULL, updated_at = NOW()
+		WHERE anonymous_id = $2 AND owner_account_id IS NULL`, envelope.Data.AccountID, envelope.Data.AnonymousID)
+	if err != nil {
+		return ClaimResult{}, err
+	}
+	claimedProfileCount := commandTag.RowsAffected()
+	// Claimed nothing, so tell nobody. This is the concurrent loser's path:
+	// it read the families a moment before the winner's update took the rows,
+	// and staging a fan-out here would send three services a command that can
+	// only update zero rows. The family services would refuse it correctly,
+	// which is precisely why the mistake would never be noticed.
+	if claimedProfileCount == 0 {
+		if err := transaction.Commit(ctx); err != nil {
+			return ClaimResult{}, err
+		}
+		return ClaimResult{}, nil
+	}
+	for _, family := range families {
+		claimSubject, subjectError := family.ClaimCommandSubject()
+		if subjectError != nil {
+			return ClaimResult{}, subjectError
+		}
+		messageID := fmt.Sprintf(familyClaimMessageIDFormat, envelope.JobID, family)
+		if err := insertOutbox(ctx, transaction, messageID, claimSubject, envelope); err != nil {
+			return ClaimResult{}, err
+		}
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return ClaimResult{}, err
+	}
+	return ClaimResult{ClaimedProfileCount: claimedProfileCount, NotifiedFamilies: families}, nil
 }
 
 func (store *PostgresStore) FailDNAJob(ctx context.Context, jobID string, family contracts.WorldFamily, code, message string, attempts []ai.Attempt) error {
@@ -213,9 +335,15 @@ func (store *PostgresStore) GetJob(ctx context.Context, jobID string) (contracts
 }
 
 func (store *PostgresStore) getJobRecord(ctx context.Context, jobID string) (JobRecord, error) {
+	// generation_reason and daily_ai_generation_limit are NOT wrapped in
+	// COALESCE, unlike the four columns above them. Their NULL is information —
+	// no reason was recorded, no limit was measured — and collapsing it into ''
+	// and 0 would make a job from before the quota indistinguishable from one
+	// the AI tier was switched off for.
 	row := store.pool.QueryRow(ctx, `SELECT j.job_id, j.family, j.status, j.profile_id::text,
 		COALESCE(j.dna_version_id::text,''), COALESCE(j.world_id::text,''), COALESCE(j.error_code,''),
-		COALESCE(j.error_message,''), j.created_at, j.updated_at, p.raw_input
+		COALESCE(j.error_message,''), j.created_at, j.updated_at,
+		j.generation_reason, j.daily_ai_generation_limit, p.raw_input
 		FROM generation_jobs j JOIN profiles p ON p.id=j.profile_id WHERE j.job_id=$1`, jobID)
 	job, input, err := scanJobRecord(row)
 	if err != nil {
@@ -266,7 +394,8 @@ func getJobWithExecutor(ctx context.Context, executor queryExecutor, jobID strin
 	}
 	row := executor.QueryRow(ctx, `SELECT job_id, family, status, profile_id::text,
 		COALESCE(dna_version_id::text,''), COALESCE(world_id::text,''), COALESCE(error_code,''),
-		COALESCE(error_message,''), created_at, updated_at FROM generation_jobs WHERE job_id=$1`+lockingClause, jobID)
+		COALESCE(error_message,''), created_at, updated_at,
+		generation_reason, daily_ai_generation_limit FROM generation_jobs WHERE job_id=$1`+lockingClause, jobID)
 	job, err := scanJob(row)
 	return job, mapNotFound(err)
 }
@@ -274,25 +403,63 @@ func getJobWithExecutor(ctx context.Context, executor queryExecutor, jobID strin
 func scanJob(scanner rowScanner) (contracts.Job, error) {
 	var job contracts.Job
 	var errorCode, errorMessage string
-	if err := scanner.Scan(&job.JobID, &job.Family, &job.Status, &job.ProfileID, &job.DNAVersionID, &job.WorldID, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt); err != nil {
+	var generationReason *string
+	if err := scanner.Scan(&job.JobID, &job.Family, &job.Status, &job.ProfileID, &job.DNAVersionID, &job.WorldID, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt, &generationReason, &job.DailyAIGenerationLimit); err != nil {
 		return contracts.Job{}, err
 	}
 	if errorCode != "" {
 		job.Error = &contracts.RPCError{Code: errorCode, Message: errorMessage}
 	}
+	job.GenerationReason = generationReasonFromColumn(generationReason)
 	return job, nil
+}
+
+// generationReasonColumnValue keeps an unset reason out of the column as NULL,
+// and keeps an UNDECLARED one out of it too.
+//
+// An undeclared reason is dropped rather than written through and refused by
+// the CHECK constraint, and the trade is deliberate: what is at stake on this
+// path is a world that has been generated, is valid, and is the visitor's. A
+// display string the contract does not recognise must not roll that
+// transaction back. The ratchet that keeps the two lists in step
+// (TestTheGenerationReasonCheckAdmitsEveryDeclaredReason) is what makes this
+// branch unreachable rather than load-bearing.
+func generationReasonColumnValue(reason contracts.GenerationReason) *string {
+	if !reason.Valid() {
+		return nil
+	}
+	reasonValue := string(reason)
+	return &reasonValue
+}
+
+// generationReasonFromColumn is the same rule on the way back out. A stored
+// value the contract no longer declares reads as absent, for the reason the
+// settings reader ignores an out-of-bounds row: the code owns the vocabulary,
+// and a value that was legal when it was written is not made legal by being in
+// a database.
+func generationReasonFromColumn(storedReason *string) contracts.GenerationReason {
+	if storedReason == nil {
+		return ""
+	}
+	reason := contracts.GenerationReason(*storedReason)
+	if !reason.Valid() {
+		return ""
+	}
+	return reason
 }
 
 func scanJobRecord(scanner rowScanner) (contracts.Job, contracts.WorldInput, error) {
 	var job contracts.Job
 	var errorCode, errorMessage string
+	var generationReason *string
 	var inputJSON []byte
-	if err := scanner.Scan(&job.JobID, &job.Family, &job.Status, &job.ProfileID, &job.DNAVersionID, &job.WorldID, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt, &inputJSON); err != nil {
+	if err := scanner.Scan(&job.JobID, &job.Family, &job.Status, &job.ProfileID, &job.DNAVersionID, &job.WorldID, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt, &generationReason, &job.DailyAIGenerationLimit, &inputJSON); err != nil {
 		return contracts.Job{}, contracts.WorldInput{}, err
 	}
 	if errorCode != "" {
 		job.Error = &contracts.RPCError{Code: errorCode, Message: errorMessage}
 	}
+	job.GenerationReason = generationReasonFromColumn(generationReason)
 	var input contracts.WorldInput
 	if err := json.Unmarshal(inputJSON, &input); err != nil {
 		return contracts.Job{}, contracts.WorldInput{}, fmt.Errorf("decode profile input: %w", err)

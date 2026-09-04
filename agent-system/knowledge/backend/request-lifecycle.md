@@ -69,7 +69,7 @@ synchronous-feeling experience.
 
 | Route | What it does |
 | --- | --- |
-| `GET /api/{family}/worlds/{id}` | The private dashboard read, cached in Redis. |
+| `GET /api/{family}/worlds/{id}` | The private dashboard read. Ownership-checked, and **not cached** — see below. |
 | `POST /api/{family}/worlds/{id}/variants` | New seed, new scene, **zero AI cost**. |
 | `POST /api/{family}/worlds/{id}/variants/{variantId}/select` | Pick what is shown. |
 | `POST /api/{family}/worlds/{id}/publish` | Mint the share slug once, then reuse it. |
@@ -82,6 +82,33 @@ Frontend share pages live at `/universe/share/worlds/{slug}` and
 
 Three Redis namespaces: `job:v1`, `world:v1`, `share:v1`. `world:v1` is keyed
 by world id; `share:v1` is keyed by share slug.
+
+**`world:v1` is no longer written, as of 2026-09-04, and the reason generalises
+past this one key.** The by-id world read became ownership-checked, so its
+answer depends on who asked — and `family:worldID` has no room to say. Left
+cached, the owner's own first read would have stored their private world under
+a name a stranger's request resolves to: the check holds for one request, and
+Redis answers the next sixty seconds of them. **A response whose correctness
+depends on the caller cannot be cached under a key that cannot name the
+caller** — and a security check the layer above silently defeats is worse than
+none, because it tests green.
+
+Putting the caller into the key was the alternative and was rejected: the
+gateway's `cacheStore` can Get, Set and Delete one exact key, and the deletion
+guarantee below is that a world's entry is dropped SYNCHRONOUSLY, before the
+visitor's own response returns. With an audience in the key there is no single
+entry to drop and no prefix delete to reach the others — so the choice was
+between a correct cache key and an immediate deletion, and the deletion won.
+What that costs is a 60-second TTL on a read whose fanout is one person looking
+at their own page, which every mutation on that page already invalidated.
+
+The mutations still delete `world:v1`. Nothing writes it now, but an older
+gateway serving alongside a rolling deploy does, and an entry it leaves has to
+stay reachable.
+
+`share:v1` keeps its cache, and the distinction is the whole rule: it is the
+genuinely public path — one link sent to many people — and its answer is the
+same for everybody who asks.
 
 Every mutation deletes `world:v1` before **and** after the call. The
 before-and-after pair is not belt-and-braces: deleting only afterwards leaves a

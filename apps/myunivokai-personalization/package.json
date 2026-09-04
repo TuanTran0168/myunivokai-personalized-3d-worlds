@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "shoot": "playwright test",
-    "shoot:report": "playwright show-report"
+    "shoot:report": "playwright show-report",
+    "check:csp": "playwright test e2e/content-security-policy.spec.ts --project=desktop"
   },
   "dependencies": {
     "@react-three/drei": "10.7.8",

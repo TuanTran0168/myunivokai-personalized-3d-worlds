@@ -176,7 +176,22 @@ func (store *PostgresStore) CountAccountsWithRole(ctx context.Context, roleID st
 	return count, err
 }
 
+// AssignRole refuses any account whose kind is not staff - see
+// ErrRoleNotGrantableToAccountKind.
+//
+// Two statements rather than one clever INSERT ... SELECT, deliberately: with
+// ON CONFLICT DO NOTHING, "zero rows affected" would mean both "already
+// assigned" and "not a staff account", and a guard that cannot tell its own
+// refusal from a no-op is not a guard. Role assignment is a low-volume staff
+// action, so the extra read costs nothing worth the ambiguity.
 func (store *PostgresStore) AssignRole(ctx context.Context, accountID, roleID string) error {
+	var kind string
+	if err := store.pool.QueryRow(ctx, `SELECT kind FROM accounts WHERE id = $1`, accountID).Scan(&kind); err != nil {
+		return mapNotFound(err)
+	}
+	if contracts.AccountKind(kind) != contracts.AccountKindStaff {
+		return ErrRoleNotGrantableToAccountKind
+	}
 	_, err := store.pool.Exec(ctx, `INSERT INTO account_roles (account_id, role_id) VALUES ($1,$2)
 		ON CONFLICT (account_id, role_id) DO NOTHING`, accountID, roleID)
 	return mapConstraintViolation(err)

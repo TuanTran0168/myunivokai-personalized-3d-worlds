@@ -15,6 +15,20 @@ import { defineConfig, devices } from "@playwright/test";
  * machine" far more often than "broken scene", and a suite everyone learns to
  * ignore is not coverage.
  */
+/**
+ * The port this suite's own production server listens on.
+ *
+ * 41300 by default, which is `npm run dev`'s port, so `reuseExistingServer`
+ * attaches to a development server if one is already up. That is convenient
+ * until it is wrong: the local compose stack serves this app on 41300 in dev
+ * mode, and a dev server does not pick up a tailwind.config.ts change without a
+ * restart — so a shoot taken beside a running stack can photograph classes that
+ * do not exist yet and look like a layout bug in the code being reviewed. It
+ * happened. `SHOOT_PORT=41399 npm run shoot` gets a build of its own instead.
+ */
+const APPLICATION_PORT = process.env.SHOOT_PORT ?? "41300";
+const APPLICATION_ORIGIN = `http://127.0.0.1:${APPLICATION_PORT}`;
+
 export default defineConfig({
   testDir: "./e2e",
   // One worker, no retries: these produce artefacts to look at, not a verdict
@@ -25,7 +39,7 @@ export default defineConfig({
   reporter: [["list"]],
   timeout: 120_000,
   use: {
-    baseURL: "http://127.0.0.1:41300",
+    baseURL: APPLICATION_ORIGIN,
     // Software GL, not the host's driver. The whole value of these images is
     // that two runs on the same machine differ only by the code between them,
     // and a GPU that schedules work differently under load breaks exactly that.
@@ -57,8 +71,8 @@ export default defineConfig({
     // StrictMode and serves unminified React, which is the difference this
     // upgrade is most likely to move — measuring it would compare two things at
     // once.
-    command: "npm run build && npm run start -- -p 41300 -H 127.0.0.1",
-    url: "http://127.0.0.1:41300",
+    command: `npm run build && npm run start -- -p ${APPLICATION_PORT} -H 127.0.0.1`,
+    url: APPLICATION_ORIGIN,
     reuseExistingServer: !process.env.CI,
     timeout: 300_000
   }
