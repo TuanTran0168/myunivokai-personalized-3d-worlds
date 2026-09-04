@@ -1,16 +1,18 @@
 # Backend source overview
 
 > **Document status:** Implemented; local container smoke passed, deployed smoke pending
-> **Last source review:** 2026-08-13 (added telemetry-service)
+> **Last source review:** 2026-09-05 (family-platform/go; the opening
+> paragraph had been counting six services since before ocean shipped)
 
-The backend consists of one public HTTP edge and six private NATS services.
+The backend consists of one public HTTP edge and seven private NATS services.
 The old gateway-to-domain HTTP proxy, duplicated family AI layers, public
 domain handlers, and `GATEWAY_SHARED_SECRET` runtime have been removed.
 
-Three of the six compose worlds (dna, universe, nature). Two serve the staff
-console: `auth-service` owns identity, and `analytics-service` is a CQRS read
+Four of the seven compose worlds: `dna-service` owns the canonical DNA and
+the AI calls, and `universe`, `nature` and `ocean` each turn it into their
+own family. Two serve the staff console: `auth-service` owns identity, and `analytics-service` is a CQRS read
 model that exists so an admin page never has to wake a domain service. The
-sixth, `telemetry-service`, is a read model for the platform's own behaviour
+seventh, `telemetry-service`, is a read model for the platform's own behaviour
 rather than its business data — and the one process here **written in Rust**;
 see §Telemetry Service below for why, before assuming it is an accident.
 
@@ -68,6 +70,35 @@ Family/profile/world identifiers are inside typed `data`. Subjects carry the
 domain, operation, and V1 version. JSON schemas and fixed examples live in
 `contracts/schemas` and `contracts/fixtures`; the public browser contract is
 `contracts/openapi.yaml`.
+
+## The other shared module — `family-platform/go`
+
+`contracts/go` is not the only shared Go module any more. Since 2026-09-05
+`family-platform/go` holds the code the three family services had three
+copies of, and the two are told apart by one rule: **`contracts/go` holds the
+shapes that cross a service boundary; `family-platform/go` holds behaviour
+that happens to be identical inside several services.** A thing that crosses
+the wire belongs in `contracts/go` even when it is also shared code.
+
+It sits beside `contracts/go` rather than under `services/` because
+everything under `services/` is a deployable and this is not one: no `cmd/`,
+absent from `render.yaml`, deployed nowhere. Consumers reach it exactly as
+they reach `contracts/go`, through a `replace` directive.
+
+| Package | Holds |
+| --- | --- |
+| `config` | `Config`, `Load`, `Validate`. `Load` takes the family and derives the `PUBLIC_WEB_URL` default from it; an unknown family refuses to start |
+| `db` | `Connect` and `Migrate`. Each family still owns its own database and its own migration files — only how they are reached is shared |
+| `ownership` | `MutationPermitted`, `ReadPermitted`, `DeletionPermitted` and the two sentinel errors — the rules with **no database in them** |
+
+What did **not** move is the more useful half of the description.
+`store.go`, `memory_store.go`, `postgres_store.go`, `nats_handler.go` and
+`runtime.go` are just as near-identical — `postgres_store.go` differs in 8
+lines out of 509 — and stayed, because they import each service's own
+`internal/models`, whose world types genuinely differ. Making them shared
+needs a decision nobody has taken. The module's
+[README](../../../family-platform/go/README.md) carries the admission rule;
+read it before adding anything.
 
 ## API Gateway
 
@@ -237,7 +268,7 @@ empty page.
 Sources: `services/universe-service`, `services/nature-service` and
 `services/ocean-service`.
 
-Both use the same layers:
+All three use the same layers:
 
 ```text
 cmd/service -> internal/messaging runtime -> internal/handlers NATS adapters
@@ -272,17 +303,22 @@ claimed. `owner_account_id IS NULL` answers "is this anonymous"; `anonymous_id`
 answers "*which* anonymous visitor", and only the second can be turned into
 ownership later.
 
-`internal/repositories/world_ownership.go` holds the rules, and there are two
-of them because deletion does not follow the others:
+The rules live in `family-platform/go/ownership`, shared by all three
+families since 2026-09-05, and there are two of them because deletion does
+not follow the others:
 
-- `worldMutationPermitted` — a world with **no** owner is mutable by anyone
+- `ownership.MutationPermitted` — a world with **no** owner is mutable by anyone
   holding its id; a world with an owner is mutable only by that owner.
-- `worldDeletionPermitted` — a world with no owner is deletable by **nobody**,
+- `ownership.DeletionPermitted` — a world with no owner is deletable by **nobody**,
   which is `ErrWorldNotOwned` and reaches the client as `403
   WORLD_NOT_CLAIMED`.
 
 Both are applied by a `SELECT ... FOR UPDATE` inside the mutation's own
-transaction, never against a read model. The mutation lookup also filters
+transaction, never against a read model — and that is why the two functions
+holding that SQL, `assertWorldMutable` and `assertWorldDeletable`, stayed in
+each service's `internal/repositories/world_ownership.go` when the rules
+left. **Where the check runs is as load-bearing as what it decides**, and a
+package of pure predicates cannot express it. The mutation lookup also filters
 `deleted_at IS NULL`; the deletion lookup deliberately does not, so deleting
 twice answers the way deleting once did.
 
