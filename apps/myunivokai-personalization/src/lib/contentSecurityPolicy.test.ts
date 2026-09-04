@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   SECURITY_RESPONSE_HEADERS,
@@ -133,5 +135,75 @@ describe("the accompanying headers", () => {
   // not own.
   it("leaves Strict-Transport-Security to the platform", () => {
     expect(SECURITY_RESPONSE_HEADERS["Strict-Transport-Security"]).toBeUndefined();
+  });
+});
+
+/**
+ * The half of this policy that does not live in this module, and could not be
+ * caught anywhere else.
+ *
+ * A nonce only matches if the HTML carrying it came from the same request that
+ * produced the header, so `'strict-dynamic'` plus a nonce is a REQUIREMENT that
+ * every document be rendered per request. Next prerenders by default, and a
+ * prerendered page's scripts carry no nonce — at which point `'strict-dynamic'`
+ * disables the `'self'` beside it and the browser refuses every application
+ * chunk. That was `S3-CSP-001`: on a production build nothing hydrated, with
+ * `tsc`, `next lint`, `next build` and every unit test green, and no page error
+ * thrown anywhere.
+ *
+ * So the pairing is asserted rather than described. A comment in `layout.tsx`
+ * cannot hold this — the failure is silent, and the only other thing that can
+ * see it is `e2e/content-security-policy.spec.ts`, which CI does not run
+ * (`.github/workflows/ci.yml` has no Playwright step). This is the same shape
+ * as `oceanShaderSource.test.ts`: a lint over source text, because the real
+ * verdict only exists in a browser.
+ */
+const ROUTE_SEGMENT_DIRECTORY = join(process.cwd(), "src/app");
+const ROOT_LAYOUT_PATH = join(ROUTE_SEGMENT_DIRECTORY, "layout.tsx");
+const FORCE_DYNAMIC_EXPORT = /export\s+const\s+dynamic\s*=\s*"force-dynamic"/;
+
+/**
+ * Route segment settings that put a page back into the build-time prerender,
+ * which is the exact state that broke hydration. `revalidate` is here because
+ * any numeric value makes a segment statically generated and then refreshed —
+ * still HTML written without a nonce.
+ */
+const STATIC_RENDERING_EXPORTS = [
+  /export\s+const\s+dynamic\s*=\s*"force-static"/,
+  /export\s+const\s+dynamic\s*=\s*"error"/,
+  /export\s+const\s+revalidate\s*=/
+];
+
+function routeSegmentFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return routeSegmentFiles(entryPath);
+    }
+    return /^(page|layout|template)\.tsx$/.test(entry.name) ? [entryPath] : [];
+  });
+}
+
+describe("per-request rendering, which the nonce requires", () => {
+  it("is what the policy asks for, so the premise of the tests below is stated rather than assumed", () => {
+    const scriptSource = directive("script-src");
+    expect(scriptSource).toContain("'strict-dynamic'");
+    expect(scriptSource).toMatch(/'nonce-/);
+  });
+
+  it("is declared once, on the root layout, where every segment inherits it", () => {
+    expect(readFileSync(ROOT_LAYOUT_PATH, "utf8")).toMatch(FORCE_DYNAMIC_EXPORT);
+  });
+
+  it("is not taken back by any route segment", () => {
+    const offendingFiles = routeSegmentFiles(ROUTE_SEGMENT_DIRECTORY).filter((filePath) => {
+      const source = readFileSync(filePath, "utf8");
+      return STATIC_RENDERING_EXPORTS.some((pattern) => pattern.test(source));
+    });
+
+    expect(
+      offendingFiles,
+      "a route segment asks to be prerendered again. Its HTML would then be written at build time with no nonce, and 'strict-dynamic' would make the browser refuse every application chunk on it - silently, with no page error. See S3-CSP-001."
+    ).toEqual([]);
   });
 });

@@ -41,13 +41,21 @@ materials a surface wears.
 Stories, and the five corrections written after the work, are in
 [user-stories.md](user-stories.md#chrome-and-identity-surfaces).
 
-**It also uncovered `S3-CSP-001`, which is not fixed**: nothing hydrates on a
-production build, on `staging` as much as here, because a prerendered page
-carries no nonce and the middleware's policy demands one. That is a decision
-with a cost rather than a patch, and it is written up with its reproduction in
-the same document. Read it before the City slice is verified against a
-production build, because every acceptance test that needs an interactive page
-will fail for that reason and not for City's.
+**It also uncovered `S3-CSP-001`, fixed 2026-09-04 on
+`fix/fe/content-security-policy-hydration`**: nothing hydrated on a production
+build, on `staging` as much as here, because a prerendered page carries no nonce
+and the middleware's policy demands one.
+
+**It was a release blocker for Sprint 08, not a footnote to City**, and this
+paragraph previously undersold it as something to read before verifying the City
+slice. Sprint 08 is marked "every story is implemented", and on 2026-09-04
+`origin/main` was **46 commits** behind `staging` with none of it deployed — so
+the defect was latent purely because production predated the middleware that
+causes it. The first merge of `staging` into `main` would have turned it into a
+total outage: every route but the three share pages, with no error thrown
+anywhere. City's own acceptance still inherits the benefit — an interactive page
+on a production build now works — but the reason to fix it first was the release,
+not the sprint after it.
 
 ## Definition of Done
 

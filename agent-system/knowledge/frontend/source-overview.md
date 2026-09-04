@@ -40,22 +40,42 @@ Content-Security-Policy with a per-request nonce (`lib/contentSecurityPolicy.ts`
 build and the unit tests all passed against a policy that produced fourteen
 `connect-src blocked blob` violations per scene.
 
-**And it has been catching that hole on a development server, not on a build.**
-Corrected 2026-09-03. `playwright.config.ts` defaults to port 41300 with
-`reuseExistingServer`, which is also `npm run dev`'s port and the port the local
-compose stack serves this app on — so `check:csp` attaches to whatever is
-already running rather than to the production build the config's own comment
-says it measures. Against a real build it fails 7 of 8, because a prerendered
-page's HTML is written with no nonce while the policy demands one:
+**And it was catching that hole on a development server, not on a build.**
+Found 2026-09-03, fixed 2026-09-04. `playwright.config.ts` defaults to port
+41300 with `reuseExistingServer`, which is also `npm run dev`'s port and the
+port the local compose stack serves this app on — so `check:csp` attaches to
+whatever is already running rather than to the production build the config's own
+comment says it measures. Against a real build it failed 7 of 8, because a
+prerendered page's HTML is written with no nonce while the policy demands one.
+**Pass `SHOOT_PORT` to measure a build**, which is what the defect needed and
+what any future CSP change needs:
 
 ```bash
 SHOOT_PORT=41399 npm run shoot -- e2e/content-security-policy.spec.ts --project=desktop
 ```
 
-`next dev` injects the nonce and hides this. The defect, its cost and the
-decision it needs are `S3-CSP-001` in
-[sprint-03's user stories](../../plans/sprints/sprint-03-2026-09-09/user-stories.md#the-defect-this-work-uncovered-and-did-not-fix).
-Until it is fixed, every one of these specs measures the dev server.
+`next dev` injects the nonce and hid it. The fix is `S3-CSP-001`: **every route
+segment renders per request**, declared once as `export const dynamic =
+"force-dynamic"` in `src/app/layout.tsx` and inherited by every segment below
+it. That line is not a data-freshness preference and must not be removed — a
+nonce can only match HTML produced by the request that produced the header, so
+`'strict-dynamic'` plus a nonce REQUIRES per-request rendering. `next build`
+should show `ƒ` against every route but `/icon.svg` and `/icon1.png`, which the
+middleware matcher excludes by extension and which need no nonce.
+
+Measured cost, since the line reads like a performance regression to anyone who
+finds it later: **+3 to +5 ms** median time-to-first-byte per document on a
+local production server (`/` 3.1 → 7.7, `/sign-in` 2.8 → 6.0, `/gallery` 2.9 →
+5.6, medians of 25). These pages fetch nothing server-side, so per-request
+rendering only rebuilds the shell. What that number does NOT include is the
+platform effect: on Vercel these documents become function invocations instead
+of CDN static hits, which localhost cannot show.
+
+The regression guard is in `src/lib/contentSecurityPolicy.test.ts`, not in the
+e2e suite, because **CI runs no Playwright at all** — `.github/workflows/ci.yml`
+has typecheck, lint, test and build and no browser step. It asserts the root
+layout's export and fails any route segment that asks to be prerendered again
+(`force-static`, `dynamic = "error"`, or any `revalidate`).
 
 ## The lib layer — every piece of data passes through here
 

@@ -81,8 +81,10 @@ column of bare sentences, and one line of copy used a semicolon.
 
 ### The defect this work uncovered and did NOT fix
 
-- `S3-CSP-001` **(Not started — needs a decision, not a patch)**: **nothing
-  hydrates on a production build.** Every route except the three share pages is
+- `S3-CSP-001` **(Implemented 2026-09-04 on
+  `fix/fe/content-security-policy-hydration`. The heading above stays as
+  written: the chrome work did uncover this and did not fix it — the fix came
+  later, on its own branch)**: **nothing hydrated on a production build.** Every route except the three share pages is
   prerendered (`○` in `next build`), so its HTML is written at build time with no
   nonce, while `src/middleware.ts` sends a per-request
   `script-src 'self' 'nonce-…' 'strict-dynamic'`. `'strict-dynamic'` disables
@@ -110,7 +112,122 @@ column of bare sentences, and one line of copy used a semicolon.
   already explains why it would be a policy that permits the attack it exists to
   stop.
 
-  Verify first whether the deployed app is affected. The personalization app is
-  on Vercel (see the note in `render.yaml`), and whether Vercel's runtime serves
-  the prerender with this header decides whether this is a live outage or a
-  latent one.
+#### What the deployment turned out to be doing — the story's own first step
+
+Measured 2026-09-04 against `https://myunivokai.vercel.app`, confirmed by the
+owner as the personalization app's production domain:
+
+| Probe | Answer |
+| --- | --- |
+| `content-security-policy` header | **absent** |
+| `nonce=` in the returned HTML | **0** |
+| `/sign-in`, `/sign-up`, `/account`, `/worlds` | **404** |
+| `main-app` chunk hash | `be5280ba…`, against `fe39c272…` built from `staging` |
+| `src/middleware.ts` on `origin/main` | **does not exist** (only the admin app's) |
+
+So: **latent, not a live outage** — but latent only because production predated
+the middleware that causes it. `origin/main` was **46 commits** behind `staging`,
+and the whole of Sprint 08's frontend, the CSP included, had never been
+deployed. **The first merge of `staging` into `main` would have made it a total
+outage**, which is why this was fixed ahead of the City slice and recorded as a
+Sprint 08 release blocker in that sprint's README.
+
+#### The decision: every route segment renders per request
+
+`export const dynamic = "force-dynamic"` in `src/app/layout.tsx`, inherited by
+every segment below it — verified by `next build`, which now marks all ten page
+routes `ƒ`. Only `/icon.svg` and `/icon1.png` stay `○`; the middleware matcher
+excludes both by extension, so neither is served a policy or needs a nonce.
+
+Declared explicitly rather than by calling `headers()` somewhere in the tree to
+force dynamic rendering as a side effect. That is how Next's own nonce examples
+read, and it makes an unused-looking call load-bearing — the next reader to tidy
+it away would restore a silent total outage.
+
+The two alternatives named in the original write-up were both rejected on
+evidence rather than on taste:
+
+- **Hash the inline scripts.** The page carries 7 inline `<script>` tags,
+  including the `self.__next_f` flight payload, whose contents change with the
+  route and the build. A hash list would need regenerating by the build that
+  invalidates it.
+- **Add `'unsafe-inline'` as a fallback.** It is not a fallback. A browser that
+  understands nonces ignores `'unsafe-inline'` entirely, so it would apply on
+  exactly the prerendered pages that lack a nonce — granting inline script
+  precisely where the policy is the session's only defence.
+
+#### What the browser was actually refusing, before and after
+
+The original write-up reasoned from the header to the outcome. It was measured
+directly instead, because `output: standalone` prints a `next start` warning
+that stood next to the failure and had to be ruled out as the cause:
+
+| On `/sign-in` | Before | After |
+| --- | --- | --- |
+| script tags | 20 | 15 |
+| refused requests | **12, every one `errorText: csp`** | 0 |
+| React root children | 0 | hydrated |
+| `self.__next_f` present | `false` | `true` |
+| page errors thrown | **none** | none |
+
+Chrome named the mechanism itself: *"'strict-dynamic' is present, so host-based
+allowlisting is disabled"*. The last row is why nothing in the repository could
+see this — no exception is thrown anywhere, so `tsc`, `next lint`, `next build`
+and 801 unit tests were all green over an app that never became interactive.
+
+#### Measured cost, because this line looks like a regression
+
+Median time-to-first-byte on a local production server, 25 samples per route:
+
+| Route | Prerendered | Per-request | Delta |
+| --- | --- | --- | --- |
+| `/` | 3.1 ms | 7.7 ms | +4.6 ms |
+| `/sign-in` | 2.8 ms | 6.0 ms | +3.2 ms |
+| `/gallery` | 2.9 ms | 5.6 ms | +2.7 ms |
+
+These pages fetch nothing server-side, so per-request rendering only rebuilds
+the shell. **What this does not measure** is the platform effect: on Vercel the
+documents become function invocations instead of CDN static hits, and localhost
+cannot show that. Stated rather than estimated.
+
+#### The regression guard, and why it is not the e2e suite
+
+**CI runs no Playwright at all** — `.github/workflows/ci.yml`'s frontend job is
+typecheck, lint, test and build, with no browser step. So the suite that proves
+this is a local verdict, not a gate, and the guard had to be a unit test.
+
+`src/lib/contentSecurityPolicy.test.ts` gains three assertions, next to the
+policy they protect: that the policy does ask for a nonce and `'strict-dynamic'`
+(so the premise is stated rather than assumed), that the root layout declares
+`force-dynamic`, and that **no route segment takes it back** — `force-static`,
+`dynamic = "error"` or any `revalidate`, in any `page`/`layout`/`template`
+under `src/app`. Same shape as `oceanShaderSource.test.ts`: a lint over source
+text, because the real verdict only exists in a browser.
+
+Both halves were verified RED by mutation, not merely green: removing the export
+fails the second, and adding `revalidate = 60` to `gallery/page.tsx` fails the
+third **and names the file**.
+
+#### Done means
+
+- [x] `SHOOT_PORT=41399 npm run shoot -- e2e/content-security-policy.spec.ts
+      --project=desktop` passes **8 of 8**, from 1 of 8.
+- [x] `next build` marks every page route `ƒ`.
+- [x] The policy is unchanged — no directive was weakened to make this pass.
+      `'strict-dynamic'` stays, `'unsafe-inline'` is still absent from
+      `script-src`, and the header is present on `/`, `/sign-in`, `/gallery`
+      and `/account`.
+- [x] typecheck, lint, 804 unit tests (801 + 3) and build all clean.
+- [x] The cost is measured and written down rather than assumed.
+
+#### One thing this branch found and deliberately did not fix
+
+`next.config.mjs` sets `output: "standalone"`, and `next start` responds
+*"'next start' does not work with 'output: standalone' configuration"* — which
+`playwright.config.ts` uses as its web server, so every spec in `e2e/` runs
+against a server Next itself calls misconfigured. It serves correctly enough
+that all 8 CSP assertions pass, and it was ruled out as the cause of this defect
+by direct measurement. But `standalone` is a self-hosting output and this app is
+on Vercel, so the setting appears to buy nothing and cost a warning. Changing
+`output` touches how the app is built for deployment, which is not this
+branch's concern and needs its own decision.
