@@ -1004,11 +1004,15 @@ that actually occurs. The two are opposite events:
 | **429** | the edge refused; the origin was never asked | **the wake did nothing** |
 
 So the fix is to split them: keep ignoring the status as a *readiness* verdict,
-and start reading it as a *delivery* verdict. This does not make the wake work —
-nothing in our code can, if the refusal is per source address — but it makes
-`"wake call sent"` stop being false, it makes the give-up tally count real
-failures, and it turns `/api/admin/wake-stats` into a number that means
-something. Small, testable, and independent of the hosting decision below.
+and start reading it as a *delivery* verdict. **Built the same day** — see step
+3 below, which also records the one thing this paragraph first got wrong.
+
+It does not make the wake work, and nothing in our code can if the refusal is
+per source address. What it buys is that `"wake call sent"` stops being false
+and a refusal is visible at **warn** rather than hidden inside an info line
+that says the opposite. Small, testable, and independent of the hosting
+decision below — which is the argument for doing it regardless of which option
+step 4 picks, because all three of them still want a log that does not lie.
 
 Next steps, in order:
 
@@ -1016,10 +1020,22 @@ Next steps, in order:
 2. ~~Read one wake's log line~~ — **done, 2026-09-04. `wake_status` is 429.**
    The prediction was right about the host and the elapsed time and had no
    guess for the status; the status is the whole answer.
-3. **Split delivery from readiness in the HTTP wake platform** (§One code fix
-   this finding makes concrete). Independent of everything below, and the only
-   item here that is ours to fix. It stops the log lying and makes the give-up
-   tally and `wake-stats` mean something.
+3. ~~Split delivery from readiness in the HTTP wake platform~~ — **done,
+   2026-09-04.** `WakeObservation.Refused()` reads the status as a delivery
+   verdict while leaving readiness undecidable, and `Coordinator` now logs
+   `"wake call refused"` at **warn** for a 429 instead of `"wake call sent"` at
+   info. `TestRefusedSeparatesADeclinedCallFromABootingInstance` pins both
+   halves across seven statuses, because widening the rule to "any 4xx/5xx" is
+   the natural-looking change that would reclassify a booting 502 as a refusal
+   and destroy the useful half.
+
+   **One claim in the paragraph above was wrong and is corrected here rather
+   than edited away:** the give-up tally did **not** need fixing. `RecordWakeSent`
+   is called at the decision to call and only `RecordServiceSeen` clears it, so
+   a refused wake already counted as unanswered. That is also why the
+   classification went into the log and **not** into the control flow — turning
+   a refusal into a returned error would have undercounted the slow cold starts
+   the coordinator's own comment exists to protect.
 4. **Then choose the hosting answer.** The premise is confirmed failed, so this
    is now a decision rather than an investigation:
    - **A paid plan** — `SERVICE_WAKE_PLATFORM=none`, no code change, and the

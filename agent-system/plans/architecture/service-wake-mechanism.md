@@ -34,14 +34,23 @@
 > the instance — and the likeliest reading, recorded as an unmeasured hypothesis,
 > is a limit applied per shared free-tier egress address rather than per account.
 >
-> **One part of the design is now provably too coarse, and it is one this
-> document argues for.** §Status code contract's *"the status code decides
-> nothing"* is right about readiness and wrong about delivery. A 502 is a
-> booting instance and must not count as a failure — `TestHTTPWakeIgnoresTheResponseStatus`
-> keeps that and should. A **429 is a refusal**, the origin was never asked, and
-> counting it as a wake sent is what made `"wake call sent"` false twenty-one
-> times before the fields existed to show it. Split delivery from readiness; do
-> not weaken the readiness rule to do it. Read
+> **One rule in the code was provably too coarse, and it is now split — 2026-09-04.**
+> The rule is `platforms/http.go`'s *"the status code still decides nothing —
+> the wake happened when the connection arrived"* (and the same sentence on
+> `WakeObservation`). Not §Status code contract below, which is about the codes
+> the gateway returns to a client and is unaffected.
+>
+> That rule is right about **readiness** and wrong about **delivery**. A 502 is
+> a booting instance and must not count as a failure —
+> `TestHTTPWakeIgnoresTheResponseStatus` keeps that and should. A **429 is a
+> refusal**: the origin was never asked, and calling it a wake sent is what made
+> `"wake call sent"` false twenty-one times before the fields existed to show
+> it. `WakeObservation.Refused()` now reads the status as a delivery verdict
+> only, `Coordinator` logs `"wake call refused"` at **warn**, and readiness
+> stays undecidable — `Refused() == false` means delivered, never awake. The
+> classification is in the log and deliberately **not** in the control flow: the
+> give-up tally was already correct, because `RecordWakeSent` counts the
+> decision to call and only `RecordServiceSeen` clears it. Read
 > [DEFECT-WAKE-001](../backlog/engineering-backlog.md#defect-wake-001--the-wake-mechanism-reports-waking-services-it-does-not-wake)
 > before changing anything here: it records what was ruled out (instance-hour
 > limits, wrong target URLs, the 5s timeout, NATS, Redis, CORS) so the same
