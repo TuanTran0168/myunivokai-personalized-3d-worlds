@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
 )
@@ -70,8 +71,8 @@ func TestEveryWorldReadHonoursOwnership(t *testing.T) {
 		{description: "an unowned world, and nobody signed in", worldOwnerAccountID: nil, requestingAccountID: nil, expectedError: nil},
 		{description: "an unowned world, and a signed-in stranger", worldOwnerAccountID: nil, requestingAccountID: &stranger, expectedError: nil},
 		{description: "an owned world, and its owner", worldOwnerAccountID: &owner, requestingAccountID: &owner, expectedError: nil},
-		{description: "an owned world, and a stranger", worldOwnerAccountID: &owner, requestingAccountID: &stranger, expectedError: repositories.ErrNotWorldOwner},
-		{description: "an owned world, and nobody signed in", worldOwnerAccountID: &owner, requestingAccountID: nil, expectedError: repositories.ErrNotWorldOwner},
+		{description: "an owned world, and a stranger", worldOwnerAccountID: &owner, requestingAccountID: &stranger, expectedError: ownership.ErrNotWorldOwner},
+		{description: "an owned world, and nobody signed in", worldOwnerAccountID: &owner, requestingAccountID: nil, expectedError: ownership.ErrNotWorldOwner},
 	}
 
 	for _, caller := range callers {

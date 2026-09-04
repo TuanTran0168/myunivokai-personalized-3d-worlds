@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
+	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 )
 
@@ -107,7 +108,7 @@ func (s *MemoryStore) AddVariant(ctx context.Context, worldID string, variant mo
 	if !ok || s.isDeleted(worldID) {
 		return models.WorldVariant{}, ErrNotFound
 	}
-	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
+	if err := ownership.MutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
 		return models.WorldVariant{}, err
 	}
 	for _, existingVariant := range s.variants[worldID] {
@@ -134,7 +135,7 @@ func (s *MemoryStore) SelectVariant(ctx context.Context, worldID, variantID stri
 	if !ok || s.isDeleted(worldID) {
 		return models.WorldVariant{}, ErrNotFound
 	}
-	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
+	if err := ownership.MutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
 		return models.WorldVariant{}, err
 	}
 	selectedVariantIndex := -1
@@ -167,7 +168,7 @@ func (s *MemoryStore) PublishWorld(ctx context.Context, worldID, slug string, re
 	if !ok || s.isDeleted(worldID) {
 		return models.World{}, ErrNotFound
 	}
-	if err := worldMutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
+	if err := ownership.MutationPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
 		return models.World{}, err
 	}
 	alreadyPublished := world.ShareSlug != nil
@@ -241,7 +242,7 @@ func (s *MemoryStore) DeleteWorld(ctx context.Context, worldID string, requestin
 	if !ok {
 		return models.WorldDeletion{}, ErrNotFound
 	}
-	if err := worldDeletionPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
+	if err := ownership.DeletionPermitted(world.OwnerAccountID, requestingAccountID); err != nil {
 		return models.WorldDeletion{}, err
 	}
 	// Mirrors the Postgres COALESCE: a second deletion keeps the first

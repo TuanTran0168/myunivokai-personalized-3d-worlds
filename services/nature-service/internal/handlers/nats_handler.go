@@ -10,6 +10,7 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
+	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/repositories"
 	"github.com/nats-io/nats.go"
@@ -227,14 +228,14 @@ func (handler *NATSHandler) respondWithResult(message *nats.Msg, jobID string, s
 	// A world that exists and belongs to somebody else is a 403, never a 404.
 	// Hiding it as "not found" would be a lie the share URL contradicts one
 	// click later, and it would make an owner's own 404 unreadable.
-	if errors.Is(err, repositories.ErrNotWorldOwner) {
+	if errors.Is(err, ownership.ErrNotWorldOwner) {
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "NOT_WORLD_OWNER", "This world belongs to another account."))
 		return
 	}
 	// Distinct from NOT_WORLD_OWNER on purpose. "This is not yours" and "this
 	// is nobody's yet" are different situations with different next steps, and
 	// only one of them has an answer the visitor can act on.
-	if errors.Is(err, repositories.ErrWorldNotOwned) {
+	if errors.Is(err, ownership.ErrWorldNotOwned) {
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusForbidden, "WORLD_NOT_CLAIMED", "This world has no owner yet. Claim it to your account, then delete it."))
 		return
 	}

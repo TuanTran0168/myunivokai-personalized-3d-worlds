@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/services/ocean-service/internal/config"
+	"github.com/myunivokai/myunivokai/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/seed"
@@ -19,6 +20,18 @@ const (
 	interestLandmarkType         = "Interest Landmark"
 	traitLandmarkType            = "Trait Landmark"
 )
+
+// sharePagePathPrefix is where the web app serves a published world, BELOW the
+// family prefix that PUBLIC_WEB_URL already carries. The full route is
+// /{family}/share/worlds/{slug}, declared once in
+// apps/myunivokai-personalization/src/lib/worldRoutes.ts.
+//
+// It is a named constant because the literal it replaces was written three
+// times, in three services, and all three were missing the `worlds/` segment -
+// so every share link this platform has ever handed out was a 404. A path that
+// only the frontend knows the shape of is a path the backend gets to guess at.
+const sharePagePathPrefix = "/share/worlds/"
+
 
 type WorldService struct {
 	config  config.Config
@@ -119,7 +132,7 @@ func (service *WorldService) GetWorld(ctx context.Context, worldID string, reque
 	if err != nil {
 		return models.WorldResponse{}, err
 	}
-	if err := repositories.WorldReadPermitted(bundle.World.OwnerAccountID, requestingAccountID); err != nil {
+	if err := ownership.ReadPermitted(bundle.World.OwnerAccountID, requestingAccountID); err != nil {
 		return models.WorldResponse{}, err
 	}
 	return worldResponse(bundle), nil
@@ -141,7 +154,7 @@ func (service *WorldService) GetWorlds(ctx context.Context, worldIDs []string, r
 	}
 	worlds := make([]models.WorldResponse, 0, len(bundles))
 	for _, bundle := range bundles {
-		if repositories.WorldReadPermitted(bundle.World.OwnerAccountID, requestingAccountID) != nil {
+		if ownership.ReadPermitted(bundle.World.OwnerAccountID, requestingAccountID) != nil {
 			continue
 		}
 		worlds = append(worlds, worldResponse(bundle))
@@ -210,7 +223,7 @@ func (service *WorldService) PublishWorld(ctx context.Context, worldID string, r
 			if world.ShareSlug == nil {
 				return models.PublishResponse{}, errors.New("share slug was not created")
 			}
-			return models.PublishResponse{ShareSlug: *world.ShareSlug, ShareURL: strings.TrimRight(service.config.PublicWebURL, "/") + "/share/" + *world.ShareSlug}, nil
+			return models.PublishResponse{ShareSlug: *world.ShareSlug, ShareURL: strings.TrimRight(service.config.PublicWebURL, "/") + sharePagePathPrefix + *world.ShareSlug}, nil
 		}
 		if !errors.Is(err, repositories.ErrConflict) {
 			return models.PublishResponse{}, err

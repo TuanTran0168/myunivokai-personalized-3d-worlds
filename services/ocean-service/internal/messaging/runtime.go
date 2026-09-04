@@ -9,7 +9,7 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/services/ocean-service/internal/config"
+	"github.com/myunivokai/myunivokai/family-platform/go/config"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/handlers"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/services"

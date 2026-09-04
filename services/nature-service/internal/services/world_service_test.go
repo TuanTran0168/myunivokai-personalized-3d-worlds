@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/services/nature-service/internal/config"
+	"github.com/myunivokai/myunivokai/family-platform/go/config"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/repositories"
 )
