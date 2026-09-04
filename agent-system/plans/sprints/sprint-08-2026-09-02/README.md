@@ -11,6 +11,17 @@
 > one toast and both of Phase C on
 > `feat/fe-be/end-user-identity-quota-and-server-gallery`.
 >
+> **Implemented is not deployed, and on 2026-09-04 none of this was in
+> production.** `origin/main` was 46 commits behind `staging`; the deployed app
+> answered 404 on `/sign-in`, `/sign-up`, `/account` and `/worlds`, sent no
+> `Content-Security-Policy` header at all, and `src/middleware.ts` did not exist
+> on `main`. Two consequences worth keeping separate from the story list:
+> `S3-CSP-001` (nothing hydrates on a production build) was a **release blocker
+> for this sprint** rather than a City footnote, and per
+> [`sprints/README.md`](../README.md)'s evidence ladder this sprint is
+> *Implemented*, not *Verified* — the DoD items below were measured in tests and
+> against a local stack, never against the deployed product.
+>
 > What that adds up to: a person holds an account, a world has an owner, the
 > owner travels on the commands and is enforced inside each mutation's own
 > transaction, signing in claims every world the browser made anonymously,

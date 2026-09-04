@@ -717,9 +717,16 @@ passkeys and no `library-service` in this epic.
 
 ## DEFECT-CSP-001 — Nothing hydrates on a production build of the web app
 
-Status: Open, unfixed, PRE-EXISTING on `staging`
-Priority: P0 if the deployed app is affected, P2 if it is only latent — that is
-the first thing to establish
+Status: **Closed 2026-09-04** on `fix/fe/content-security-policy-hydration`.
+Every route segment now renders per request (`export const dynamic =
+"force-dynamic"` in `src/app/layout.tsx`), the CSP suite passes 8 of 8 from 1 of
+8, and the policy itself was not weakened to get there.
+Priority: Was P0/P2 pending one measurement, and the measurement came back
+**latent** — production answered 404 on every Phase A route, sent no CSP header,
+and `src/middleware.ts` did not exist on `origin/main`, which was 46 commits
+behind `staging`. So it was latent only because none of Sprint 08 was deployed:
+**the first `staging` → `main` merge would have made it a live total outage**,
+which is what made it a release blocker rather than a P2.
 Found: 2026-09-03, by the `SHOOT_PORT` override added while folding chrome work
 into [Sprint 3](../sprints/sprint-03-2026-09-09/user-stories.md#the-defect-this-work-uncovered-and-did-not-fix)
 
@@ -762,6 +769,27 @@ records why that would be a policy permitting the attack it exists to stop
 And the first step is establishing whether the Vercel deployment (see the note
 in `render.yaml`) serves the prerender with this header, because that decides
 whether this is a live outage or a latent one.
+
+Scenario: Resolved — the app opts out of static prerendering
+
+Given a nonce can only match HTML produced by the request that produced the
+header
+When `src/app/layout.tsx` declares `export const dynamic = "force-dynamic"`
+Then every segment below it inherits per-request rendering, `next build` marks
+all ten page routes `ƒ`, and the browser refuses nothing
+And the policy is unchanged: `'strict-dynamic'` stays and `'unsafe-inline'` is
+still absent from `script-src`
+And the cost is +3 to +5 ms median time-to-first-byte per document, measured on
+a local production server over 25 samples per route, excluding the platform
+effect of Vercel serving these as functions rather than CDN static
+And the guard against its removal is a unit test in
+`src/lib/contentSecurityPolicy.test.ts` rather than the e2e suite, because CI
+runs no Playwright — it fails if the export goes, and fails naming the file if
+any route segment asks to be prerendered again.
+
+The full write-up, including what the browser was measured to refuse and the two
+rejected alternatives, is
+[`S3-CSP-001`](../sprints/sprint-03-2026-09-09/user-stories.md#the-defect-this-work-uncovered-and-did-not-fix).
 
 ## DEFERRED-AUTH-001 — Define identity before authentication
 
