@@ -4,8 +4,8 @@ import (
 	"os"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/family-platform/go/config"
-	"github.com/myunivokai/myunivokai/family-platform/go/db"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/db"
 	"github.com/rs/zerolog/log"
 )
 

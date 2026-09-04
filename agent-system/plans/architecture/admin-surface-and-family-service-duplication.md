@@ -524,7 +524,7 @@ two package-level identifiers declared in files that stayed behind. "Moves
 as-is" was false.
 
 So the file **split** instead of moving: the three predicates and two sentinel
-errors went to `family-platform/go/ownership`, and the two functions holding the
+errors went to `shared/family-platform/go/ownership`, and the two functions holding the
 SQL stayed.
 
 That turned out to be the better shape anyway, for a reason worth more than the
@@ -564,7 +564,7 @@ three would have broken production or the gate silently:
 
 - **six Dockerfiles.** `Dockerfile.prod` and `Dockerfile.local` in each family
   service copy `contracts/go` explicitly. Without the same line for
-  `family-platform/go`, `go mod download` fails on the `replace` directive and
+  `shared/family-platform/go`, `go mod download` fails on the `replace` directive and
   every family image stops building.
 - **CI.** This repo runs one job per module. A module without a job is a module
   without a gate, so `family-platform-checks` was added — otherwise the shared
@@ -587,7 +587,7 @@ against a second one, and it belongs next to the argument for the first.
 ### 14.5 What is now done, and what §9 still has open
 
 - **§9 step 1 — done.** The share URL fix, with a test per family.
-- **§9 step 2 — done.** Tier 0 extracted into `family-platform/go`.
+- **§9 step 2 — done.** Tier 0 extracted into `shared/family-platform/go`.
 - **§9 step 3 — still open.** Confirming telemetry data arrives.
 - **§9 step 4 — still open,** and still blocked on decision F5: deletion stages
   no outbox row, so the deleted-world badge has no event to travel on.
@@ -595,6 +595,6 @@ against a second one, and it belongs next to the argument for the first.
   comes first.
 
 Decisions F1 and F2 were taken by the owner on 2026-09-05 by asking for the work.
-F3 was resolved by execution: the module is `family-platform/go`, a sibling of
+F3 was resolved by execution: the module is `shared/family-platform/go`, a sibling of
 `contracts/go`, and the rule that tells the two apart is written in its README.
 F4, F5 and F6 remain open exactly as stated in §11.

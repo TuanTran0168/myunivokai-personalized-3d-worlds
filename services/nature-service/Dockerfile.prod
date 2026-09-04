@@ -1,7 +1,7 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /workspace/services/nature-service
 COPY contracts/go /workspace/contracts/go
-COPY family-platform/go /workspace/family-platform/go
+COPY shared/family-platform/go /workspace/shared/family-platform/go
 COPY services/nature-service/go.mod services/nature-service/go.sum ./
 RUN go mod download
 COPY services/nature-service .
