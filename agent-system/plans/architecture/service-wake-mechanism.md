@@ -19,10 +19,29 @@
 > started in **12.46 s** on one request to that identical `/healthz` from
 > outside Render, after which the gateway answered a truthful `404` in 1.18 s.
 > So gateway → NATS → service → Postgres all work and the wake is the only
-> broken part. What is still *not* established is **why** the inside-Render call
-> returns fast: that needs the `wake_host`/`wake_status`/`wake_elapsed` fields
-> read off a production log, and the behaviour being measured is not the same
-> fact as the mechanism being known. Read
+> broken part.
+>
+> **And the mechanism is now known, from the log fields this document's own fix
+> added: `wake_status` is `429`, returned in 46 and 106 milliseconds, against
+> the correct host.** A 429 is Render's edge declining the request **without
+> passing it to the origin**, which is the exact refutation of the premise
+> quoted above: the connection arrived and the wake did not happen. It is not a
+> private-network block — the request reaches the routing layer and comes back
+> with an HTTP status. It is also not self-inflicted: the gateway made 23 wake
+> calls in six days across six services, and the single-flight lock is visibly
+> working (eight requests in 96 s produced two wake calls). The refusal is
+> **source-dependent** — the same URL from an external IP returns 200 and starts
+> the instance — and the likeliest reading, recorded as an unmeasured hypothesis,
+> is a limit applied per shared free-tier egress address rather than per account.
+>
+> **One part of the design is now provably too coarse, and it is one this
+> document argues for.** §Status code contract's *"the status code decides
+> nothing"* is right about readiness and wrong about delivery. A 502 is a
+> booting instance and must not count as a failure — `TestHTTPWakeIgnoresTheResponseStatus`
+> keeps that and should. A **429 is a refusal**, the origin was never asked, and
+> counting it as a wake sent is what made `"wake call sent"` false twenty-one
+> times before the fields existed to show it. Split delivery from readiness; do
+> not weaken the readiness rule to do it. Read
 > [DEFECT-WAKE-001](../backlog/engineering-backlog.md#defect-wake-001--the-wake-mechanism-reports-waking-services-it-does-not-wake)
 > before changing anything here: it records what was ruled out (instance-hour
 > limits, wrong target URLs, the 5s timeout, NATS, Redis, CORS) so the same

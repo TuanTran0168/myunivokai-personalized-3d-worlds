@@ -936,28 +936,109 @@ a wake that worked would hold the connection for about twelve seconds. The
 by holding the request, a fast wake call is the suspicious one* — and
 production is now producing exactly that shape.
 
-**What this still does not establish.** *Why* the inside-Render call returns
-fast. Something answering it without starting the instance is the remaining
-hypothesis and it is consistent with `render.yaml`'s own note that free
-services cannot receive private network traffic, but the log fields have not
-been read: that needs a Render API key and one look at
-`wake_host`/`wake_status`/`wake_elapsed`. The **behaviour** is measured; the
-**mechanism** is not. Do not collapse those two in a later summary.
+### The mechanism, read from the log — `wake_status` is 429
+
+**The diagnosis is now complete.** The fields shipped with PR #159 were read off
+the production gateway the same day, and they say something no hypothesis in
+this entry predicted:
+
+```json
+{"service":"ocean","wake_host":"myunivokai-ocean.onrender.com",
+ "wake_status":429,"wake_elapsed":105.890907,"message":"wake call sent"}
+{"service":"ocean","wake_host":"myunivokai-ocean.onrender.com",
+ "wake_status":429,"wake_elapsed":45.580116,"message":"wake call sent"}
+```
+
+**`429 Too Many Requests`, in 46 and 106 milliseconds.** Three things follow,
+and the third is the one that changes what to build:
+
+1. **The host is right.** `myunivokai-ocean.onrender.com` is the exact public
+   URL, which retires the "wrong wake target" hypothesis for the third and
+   last time — it is now confirmed from the gateway's own outbound request
+   rather than from reading the dashboard back.
+2. **It is not a private-network block.** The request reaches Render's routing
+   layer and comes back with an HTTP status, not a connection error and not a
+   timeout. `render.yaml`'s note about free services and private network
+   traffic is not what is happening here.
+3. **It is a refusal, and a refusal is not a start.** The premise in
+   [`platforms/http.go`](../../../services/api-gateway/internal/wake/platforms/http.go)
+   is *"the wake happened when the connection arrived"*. A 429 is the edge
+   declining the request **without passing it to the origin**, so the
+   connection arrived and the wake did not happen. That is the premise failing,
+   with a mechanism attached.
+
+**The volume rules out self-infliction, which was the first thing to check.**
+Filtering the gateway log to `"wake call sent"` returns **23 wake calls across
+six days** (2026-08-29 → 2026-09-04) spread over six services — `universe` 8,
+`auth` 5, `nature` 4, `ocean` 4, `dna` 1, `analytics` 1. That is roughly four a
+day. The single-flight lock is visibly working: eight gateway requests inside
+96 seconds produced **two** wake calls, not eight. So this is not our retry
+pattern tripping a limit we could tune our way out of.
+
+**21 of those 23 lines carry no `wake_status` at all**, because they predate the
+observability fix. That is worth stating rather than filtering out: for six days
+the log recorded twenty-one wake calls with no way to tell a refusal from a
+boot, which is precisely the gap PR #159 closed and the reason a defect this
+cheap to diagnose stayed open.
+
+**Why the source matters, stated as the hypothesis it still is.** The same URL
+from an external IP returns 200 and starts the instance in 12.46 s; from the
+gateway it returns 429 in 46 ms. So the refusal is **source-dependent**. The
+likeliest reading is that Render's egress addresses are shared across its
+free-tier fleet and the limit is applied per source address rather than per
+account — which would mean our four calls a day are irrelevant, because the
+address was over the limit before we made any of them. **This is not measured**
+and does not need to be for the decision below: what matters is that the
+refusal is not ours to fix by backing off.
+
+### One code fix this finding makes concrete
+
+`TestHTTPWakeIgnoresTheResponseStatus` asserts that a **502** is not a failure,
+and it is right — *"a booting instance can legitimately answer 502 or nothing
+at all while it starts"*. That test says nothing about 429, and 429 is the case
+that actually occurs. The two are opposite events:
+
+| Response | What it means | What the wake should conclude |
+| --- | --- | --- |
+| 502 / 503 / 504, or a timeout | the origin is starting | **the wake worked** — keep it |
+| **429** | the edge refused; the origin was never asked | **the wake did nothing** |
+
+So the fix is to split them: keep ignoring the status as a *readiness* verdict,
+and start reading it as a *delivery* verdict. This does not make the wake work —
+nothing in our code can, if the refusal is per source address — but it makes
+`"wake call sent"` stop being false, it makes the give-up tally count real
+failures, and it turns `/api/admin/wake-stats` into a number that means
+something. Small, testable, and independent of the hosting decision below.
 
 Next steps, in order:
 
 1. ~~Merge `fix/be/wake-response-visibility`~~ — **done, released in PR #159.**
-   The fields are in production code.
-2. **Read one wake's log line.** With a Render API key, trigger a wake against
-   a sleeping service and read `wake_host`, `wake_status` and `wake_elapsed`
-   off the gateway. The measurement above predicts an elapsed under one second
-   and a host equal to the public URL; what is unknown is the status.
-3. Then choose, because the premise is already known to fail: a paid plan
-   (`SERVICE_WAKE_PLATFORM=none`, no code change) or a wake that leaves and
-   re-enters Render. The behavioural evidence above is sufficient to make this
-   choice without step 2 — step 2 only records *why* for the plan.
-4. An external keep-warm cron was costed and rejected: seven services awake
+2. ~~Read one wake's log line~~ — **done, 2026-09-04. `wake_status` is 429.**
+   The prediction was right about the host and the elapsed time and had no
+   guess for the status; the status is the whole answer.
+3. **Split delivery from readiness in the HTTP wake platform** (§One code fix
+   this finding makes concrete). Independent of everything below, and the only
+   item here that is ours to fix. It stops the log lying and makes the give-up
+   tally and `wake-stats` mean something.
+4. **Then choose the hosting answer.** The premise is confirmed failed, so this
+   is now a decision rather than an investigation:
+   - **A paid plan** — `SERVICE_WAKE_PLATFORM=none`, no code change, and the
+     mechanism retires cleanly by its own design (§Removal when leaving free
+     tier). Costs money; removes the problem rather than working around it.
+   - **A wake that leaves and re-enters Render** — now *justified* rather than
+     speculative, because the 429 is source-dependent: a trigger on any
+     non-Render egress gets the 200-and-start that an external IP already
+     demonstrably gets. Note this is **not** the keep-warm cron rejected in
+     item 5: it fires on a visitor's arrival and wakes only what they asked
+     for, so it buys the same instance-hours the current design intends.
+     Costs one small external component and a shared secret.
+   - **Do nothing and accept it** — a visitor waits out the give-up window and
+     then sees `SERVICE_UNAVAILABLE`. Only defensible while nobody is using
+     the product, and the release removed the thing that made that true.
+5. An external **keep-warm** cron was costed and rejected: seven services awake
    continuously is ~5,110 instance-hours a month against a 750-hour allowance.
+   Item 4's second option is a different mechanism and is not covered by this
+   rejection.
 
 Reproduce the asymmetry, no API key needed:
 
