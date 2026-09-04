@@ -1,3 +1,9 @@
+// Package config loads the runtime configuration every family service shares.
+//
+// The three copies it replaces differed in exactly one line - the
+// PUBLIC_WEB_URL default - and that one line is now derived rather than
+// written, because the difference between the three was never a choice. See
+// defaultPublicWebURLForFamily.
 package config
 
 import (
@@ -7,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/joho/godotenv"
 )
 
@@ -26,6 +33,10 @@ const (
 	defaultOutboxBatchSize            = 50
 	defaultShareSlugLength            = 10
 )
+
+// defaultPublicWebOrigin is where the web app answers in local development.
+// Production supplies PUBLIC_WEB_URL and never reaches this value.
+const defaultPublicWebOrigin = "http://localhost:41300"
 
 type Config struct {
 	AppEnvironment             string
@@ -52,11 +63,32 @@ type Config struct {
 	ShareSlugLength            int
 }
 
-func Load() (Config, error) {
+// defaultPublicWebURLForFamily derives the local web origin a family's share
+// links are built from, instead of leaving each service to spell it out.
+//
+// Every family's share page sits under its own prefix -
+// /{family}/share/worlds/{slug} - so the prefix is a fact about the family, not
+// a per-service preference. When the three services each wrote this literal,
+// universe's copy lost its prefix and nothing noticed, because there was
+// nothing for it to disagree with.
+func defaultPublicWebURLForFamily(family contracts.WorldFamily) string {
+	return defaultPublicWebOrigin + "/" + string(family)
+}
+
+// Load reads the environment for one family service.
+//
+// The family is a parameter rather than an environment variable on purpose:
+// which family a process is cannot be configured, it is decided by which
+// binary is running, and a service that could be told it was a different
+// family would consume the wrong subject.
+func Load(family contracts.WorldFamily) (Config, error) {
+	if !family.Valid() {
+		return Config{}, errors.New("config: unknown world family " + string(family))
+	}
 	loadEnvironmentFiles()
 	loadedConfig := Config{
 		AppEnvironment:             get("APP_ENV", "development"),
-		PublicWebURL:               get("PUBLIC_WEB_URL", "http://localhost:41300/nature"),
+		PublicWebURL:               get("PUBLIC_WEB_URL", defaultPublicWebURLForFamily(family)),
 		DatabaseURL:                get("DATABASE_URL", ""),
 		DatabaseDirectURL:          get("DATABASE_DIRECT_URL", ""),
 		DatabaseMaximumConnections: getInt("DATABASE_MAX_CONNS", defaultDatabaseMaximumConnections),

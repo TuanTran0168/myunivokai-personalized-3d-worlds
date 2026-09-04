@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 )
 
@@ -57,10 +58,10 @@ func TestDeletingIsOwnerOnly(t *testing.T) {
 		expectedError       error
 	}{
 		{description: "the owner", worldOwnerAccountID: &owner, requestingAccountID: &owner, expectedError: nil},
-		{description: "a stranger", worldOwnerAccountID: &owner, requestingAccountID: &stranger, expectedError: ErrNotWorldOwner},
-		{description: "nobody signed in", worldOwnerAccountID: &owner, requestingAccountID: nil, expectedError: ErrNotWorldOwner},
-		{description: "anyone at all, on an unowned world", worldOwnerAccountID: nil, requestingAccountID: &stranger, expectedError: ErrWorldNotOwned},
-		{description: "nobody signed in, on an unowned world", worldOwnerAccountID: nil, requestingAccountID: nil, expectedError: ErrWorldNotOwned},
+		{description: "a stranger", worldOwnerAccountID: &owner, requestingAccountID: &stranger, expectedError: ownership.ErrNotWorldOwner},
+		{description: "nobody signed in", worldOwnerAccountID: &owner, requestingAccountID: nil, expectedError: ownership.ErrNotWorldOwner},
+		{description: "anyone at all, on an unowned world", worldOwnerAccountID: nil, requestingAccountID: &stranger, expectedError: ownership.ErrWorldNotOwned},
+		{description: "nobody signed in, on an unowned world", worldOwnerAccountID: nil, requestingAccountID: nil, expectedError: ownership.ErrWorldNotOwned},
 	}
 
 	for _, caller := range callers {

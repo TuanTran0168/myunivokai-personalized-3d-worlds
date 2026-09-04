@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/myunivokai/myunivokai/services/universe-service/internal/config"
+	"github.com/myunivokai/myunivokai/family-platform/go/config"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
 )

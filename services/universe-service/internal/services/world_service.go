@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/services/universe-service/internal/config"
+	"github.com/myunivokai/myunivokai/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/seed"
@@ -131,7 +132,7 @@ func (service *WorldService) GetWorld(ctx context.Context, worldID string, reque
 	if err != nil {
 		return models.WorldResponse{}, err
 	}
-	if err := repositories.WorldReadPermitted(bundle.World.OwnerAccountID, requestingAccountID); err != nil {
+	if err := ownership.ReadPermitted(bundle.World.OwnerAccountID, requestingAccountID); err != nil {
 		return models.WorldResponse{}, err
 	}
 	return worldResponse(bundle), nil
@@ -153,7 +154,7 @@ func (service *WorldService) GetWorlds(ctx context.Context, worldIDs []string, r
 	}
 	worlds := make([]models.WorldResponse, 0, len(bundles))
 	for _, bundle := range bundles {
-		if repositories.WorldReadPermitted(bundle.World.OwnerAccountID, requestingAccountID) != nil {
+		if ownership.ReadPermitted(bundle.World.OwnerAccountID, requestingAccountID) != nil {
 			continue
 		}
 		worlds = append(worlds, worldResponse(bundle))

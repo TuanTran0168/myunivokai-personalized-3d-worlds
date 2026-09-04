@@ -44,6 +44,27 @@ jobs:
         run: npx --yes @redocly/cli@2.20.0 lint contracts/openapi-admin.yaml
         working-directory: .
 
+  family-platform-checks:
+    name: Family platform (go vet + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: family-platform/go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: family-platform/go/go.mod
+          cache-dependency-path: family-platform/go/go.sum
+      - name: Verify modules
+        run: go mod verify
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build ./...
+
   backend-checks:
     name: Backend (go vet + test)
     runs-on: ubuntu-latest

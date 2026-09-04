@@ -22,7 +22,7 @@ services:
       - ./.env.local
     environment:
       APP_ENV: ${APP_ENV:-development}
-      PUBLIC_WEB_URL: http://localhost:${WEB_PORT:-41300}
+      PUBLIC_WEB_URL: http://localhost:${WEB_PORT:-41300}/universe
       DATABASE_URL: postgresql://${UNIVERSE_DATABASE_USER:-myunivokai_universe_app}:${UNIVERSE_DATABASE_PASSWORD:-myunivokai_local_universe}@postgres:5432/${UNIVERSE_DATABASE_NAME:-myunivokai_universe}?sslmode=disable
       NATS_URL: ${NATS_URL:-nats://nats:4222}
       NATS_USERNAME: ${NATS_UNIVERSE_USERNAME:-myunivokai_universe}

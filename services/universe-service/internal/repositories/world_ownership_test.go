@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
+	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 )
 
@@ -288,7 +289,7 @@ var ownershipAssigningWrites = []string{"CreateWorld", "ClaimWorlds"}
 // caller has to be allowed to see it. The store does not decide that and has no
 // caller in its signature: unlike a mutation, a read has no transaction to
 // check inside, so the rule runs one layer up against the owner already loaded.
-// See WorldReadPermitted, and world_read_authorization_test.go in ../services
+// See ownership.ReadPermitted, and world_read_authorization_test.go in ../services
 // for the proof that the service layer actually applies it.
 var ownershipFilteredReads = []string{"GetWorld", "GetWorldsByIDs"}
 
@@ -342,8 +343,8 @@ func TestEveryWorldMutationHonoursOwnership(t *testing.T) {
 		{description: "an unowned world, and nobody signed in", worldOwnerAccountID: nil, requestingAccountID: nil, expectedError: nil},
 		{description: "an unowned world, and a signed-in stranger", worldOwnerAccountID: nil, requestingAccountID: &stranger, expectedError: nil},
 		{description: "an owned world, and its owner", worldOwnerAccountID: &owner, requestingAccountID: &owner, expectedError: nil},
-		{description: "an owned world, and a stranger", worldOwnerAccountID: &owner, requestingAccountID: &stranger, expectedError: ErrNotWorldOwner},
-		{description: "an owned world, and nobody signed in", worldOwnerAccountID: &owner, requestingAccountID: nil, expectedError: ErrNotWorldOwner},
+		{description: "an owned world, and a stranger", worldOwnerAccountID: &owner, requestingAccountID: &stranger, expectedError: ownership.ErrNotWorldOwner},
+		{description: "an owned world, and nobody signed in", worldOwnerAccountID: &owner, requestingAccountID: nil, expectedError: ownership.ErrNotWorldOwner},
 	}
 
 	for _, mutation := range worldMutations {
