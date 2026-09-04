@@ -791,6 +791,119 @@ The full write-up, including what the browser was measured to refuse and the two
 rejected alternatives, is
 [`S3-CSP-001`](../sprints/sprint-03-2026-09-09/user-stories.md#the-defect-this-work-uncovered-and-did-not-fix).
 
+## DEFECT-WAKE-001 — The wake mechanism reports waking services it does not wake
+
+Status: **Open.** Measured against production on 2026-09-04. One contributing
+cause is fixed — `SERVICE_WAKE_TIMEOUT` 5s → 45s, set live on the dashboard and
+written into `render.yaml` so a blueprint sync cannot revert it — and that fix
+was then measured **not to be sufficient**. The instrument the next step needs
+ships on `fix/be/wake-response-visibility`.
+Priority: P1. Every family service is spun down after roughly fifteen minutes
+idle, and on current traffic that is almost always, so almost every visitor
+opening a world pays this. It is P1 rather than P0 only because the deployed
+frontend predates Sprint 08; the first `staging` → `main` release puts
+`/sign-in`, `/account` and `/worlds` on the same mechanism, which is why this
+belongs in the release conversation.
+Found: 2026-09-04, while verifying whether `staging` → `main` needed new
+environment configuration. It needed none; it needed this.
+
+As a visitor opening a world after the fleet has been idle,
+I want the page to load,
+so that a link I was sent resolves to a world instead of an error.
+
+Scenario: The gateway reports a wake it did not perform
+
+Given every family service is a pure NATS consumer with no inbound HTTP
+And Render free spins an idle instance down after roughly fifteen minutes
+And `SERVICE_WAKE_PLATFORM=http`, with all seven `*_SERVICE_URL` verified
+correct — public `https://myunivokai-<name>.onrender.com`, no path
+When a query returns `no-responders` and the gateway calls `Coordinator.Wake`
+Then the gateway logs `"wake call sent"` **within one second**
+And the target container does not start at all
+And after `consecutiveFailedWakesBeforeGivingUp` calls the client is told
+`SERVICE_UNAVAILABLE` — *"repeated attempts to start it have failed"* — while
+the service is simply asleep.
+
+Measured three times, on two services, by reading both sides of the same clock:
+
+| Window | Gateway | Target service |
+| --- | --- | --- |
+| 13:34:32 – 13:36:41 | 3 × `"wake call sent"` for `nature` | **0 log lines** |
+| 14:50:34 – 14:53:47 | 4 × `"wake call sent"` for `universe` | **0 log lines** |
+| 15:36:19 (+45s timeout live) | 1 × `"wake call sent"` for `ocean` | **0 log lines in the next 100s** |
+
+`universe` then started at 14:55:09 — 13.3 seconds after a request sent to the
+same URL **from outside Render**, and answered the gateway's query 373 ms after
+`"universe service ready"`. So the chain works; only the wake does not.
+
+What was ruled out, each by measurement rather than by reasoning:
+
+- **Instance-hour exhaustion.** 9.38 of 750 free hours used. Also 11 of 25
+  services and 13 MB of 5 GB bandwidth. Nothing is near a limit.
+- **Wrong wake targets.** All seven read back from the live dashboard as the
+  exact public URLs. This was the leading hypothesis and it is wrong.
+- **The 5s timeout being the whole cause.** Raising it to 45s changed nothing:
+  the call still returned inside a second and `ocean` still never started. The
+  raise is kept because it is independently necessary — a sleeping instance's
+  `/healthz` needs 7.3s (dna), 12.7s (nature) or 13.3s (universe) to answer —
+  but it is not the defect.
+- **NATS, Redis, credentials, CORS, migrations.** `readyz` reports both
+  dependencies ready, the env group is linked to all eight services, and a
+  woken service answers correctly. Nothing else about the fleet is broken.
+
+The remaining explanation, **not yet confirmed**: a request from one Render
+service to a sibling free service's public `.onrender.com` URL does not reach
+the public edge that performs the spin-up. This file's top comment already
+records the neighbouring fact — *"Render free web services cannot receive
+private network traffic at all, so a request there would never wake anything"*
+— which would make the ping arrive somewhere that answers instantly.
+
+Why it stayed invisible for weeks, and the one line that has to change:
+[`platforms/http.go`](../../../services/api-gateway/internal/wake/platforms/http.go)
+deliberately discarded the response. That was right about the *verdict* — a
+booting instance may legitimately answer 502, so a status code cannot mean
+readiness — but it also discarded the *evidence*, and so a call that held the
+connection for twelve seconds while starting an instance and a call answered
+instantly by something else produced the identical log line. The elapsed time
+is the discriminator, and on a host that starts an instance by holding the
+request, **a fast wake call is the suspicious one.**
+
+Reproduce, with a Render API key for the account:
+
+```bash
+# 1. pick a service with no recent traffic, note it has no logs
+# 2. one request through the gateway, which fires exactly one wake
+curl -s https://myunivokai-gateway.onrender.com/api/ocean/worlds/00000000-0000-4000-8000-000000000000
+# 3. wait 100s, touching nothing, then read both sides
+#    gateway: "wake call sent"   target: nothing
+# 4. now request the target's own public URL and let it finish
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://myunivokai-ocean.onrender.com/healthz
+# 200 ~12s — the host does hold the connection and start the instance
+```
+
+Scenario: The give-up tally expires, so this is not permanent per service
+
+Given the unanswered-wake tally lives in Redis and is cleared only by
+`RecordServiceSeen`
+When a service has already failed the threshold
+Then a later request still fires a wake before the tally is consulted
+([rpc_transport.go](../../../services/api-gateway/internal/handlers/rpc_transport.go)'s
+*"The wake goes out either way"*)
+And the tally was observed to have expired after roughly ninety minutes, so a
+visitor is not refused for ever — only for the window after a failed burst.
+
+Next steps, in order:
+
+1. Merge `fix/be/wake-response-visibility` so `wake_host`, `wake_status` and
+   `wake_elapsed` reach production logs. One request then answers what is
+   replying to these calls.
+2. If the reply comes from inside Render's network, the mechanism's premise
+   fails on this host and the choice is between a paid plan
+   (`SERVICE_WAKE_PLATFORM=none`, no code change) and a wake that leaves and
+   re-enters Render.
+3. An external keep-warm cron was costed and rejected: seven services awake
+   continuously is ~5,110 instance-hours a month against a 750-hour allowance.
+
 ## DEFERRED-AUTH-001 — Define identity before authentication
 
 Status: **Closed on 2026-09-02 — superseded by

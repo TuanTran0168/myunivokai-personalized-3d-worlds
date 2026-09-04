@@ -28,5 +28,9 @@ func (platform *None) Supports(string) bool { return false }
 
 // Wake is unreachable through Coordinator, which checks Supports first. It
 // returns nil rather than an error so that a caller holding a Platform
-// directly still treats "nothing to do" as success.
-func (platform *None) Wake(context.Context, string) error { return nil }
+// directly still treats "nothing to do" as success, and a zero observation
+// because nothing was observed — no host was requested and no status came
+// back.
+func (platform *None) Wake(context.Context, string) (wake.WakeObservation, error) {
+	return wake.WakeObservation{}, nil
+}

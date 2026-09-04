@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/wake"
 )
@@ -41,27 +42,41 @@ func (platform *HTTP) Supports(service string) bool {
 	return found
 }
 
-// Wake requests the target's health route and discards the answer. The status
-// code is not checked and not reported: the wake happened when the connection
-// arrived, and a booting instance can legitimately answer 502 or nothing at
-// all while it starts. Reading a verdict out of this response would be
-// reading readiness out of a start signal.
-func (platform *HTTP) Wake(ctx context.Context, service string) error {
+// Wake requests the target's health route and discards the body. The status
+// code still decides nothing — the wake happened when the connection arrived,
+// and a booting instance can legitimately answer 502 or nothing at all while
+// it starts, so reading a verdict out of this response would be reading
+// readiness out of a start signal.
+//
+// It is now REPORTED, which is a different thing from being judged. Discarding
+// it made two opposite outcomes indistinguishable in production: a host that
+// held the request for twelve seconds while it started the instance, and a
+// host that answered instantly without starting anything. Both logged
+// "wake call sent". See wake.WakeObservation.
+func (platform *HTTP) Wake(ctx context.Context, service string) (wake.WakeObservation, error) {
 	target, found := platform.targets[service]
 	if !found {
-		return fmt.Errorf("no wake target configured for service %q", service)
+		return wake.WakeObservation{}, fmt.Errorf("no wake target configured for service %q", service)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(target, "/")+HealthPath, nil)
 	if err != nil {
-		return fmt.Errorf("build wake request for %q: %w", service, err)
+		return wake.WakeObservation{}, fmt.Errorf("build wake request for %q: %w", service, err)
 	}
+	// Recorded even on the error path below, because a wake that ran out the
+	// client's whole timeout and one that was refused in a millisecond are
+	// the two cases an operator most needs to tell apart, and both arrive
+	// here as a non-nil error.
+	observation := wake.WakeObservation{Host: request.URL.Host}
+	startedAt := time.Now()
 	response, err := platform.httpClient.Do(request)
+	observation.Elapsed = time.Since(startedAt)
 	if err != nil {
-		return fmt.Errorf("send wake request to %q: %w", service, err)
+		return observation, fmt.Errorf("send wake request to %q: %w", service, err)
 	}
 	defer func() { _ = response.Body.Close() }()
+	observation.StatusCode = response.StatusCode
 	// Drain so the connection returns to the pool instead of being dropped
 	// mid-body; the payload itself is of no interest.
 	_, _ = io.Copy(io.Discard, response.Body)
-	return nil
+	return observation, nil
 }

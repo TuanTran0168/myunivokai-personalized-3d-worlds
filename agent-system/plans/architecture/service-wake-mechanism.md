@@ -1,7 +1,25 @@
 # Service wake mechanism — cold-start handling for free-tier domain services
 
-> **Document status:** Implemented; merged to `staging` in PR #118
-> **Last source review:** 2026-08-12 (statistics, give-up threshold, VPS reuse)
+> **Document status:** Implemented; merged to `staging` in PR #118.
+> **Implemented, and measured not to work on the host it was built for.**
+> On 2026-09-04 the gateway was observed logging `"wake call sent"` for three
+> different services, eleven times across three windows, while not one of the
+> target containers produced a single log line — and each of those services
+> started normally, in 7-13 seconds, when the same URL was requested from
+> outside Render. Everything below describes the design accurately and the code
+> matches it; the premise it rests on — *"the wake happened when the connection
+> arrived"* — is what does not hold. Read
+> [DEFECT-WAKE-001](../backlog/engineering-backlog.md#defect-wake-001--the-wake-mechanism-reports-waking-services-it-does-not-wake)
+> before changing anything here: it records what was ruled out (instance-hour
+> limits, wrong target URLs, the 5s timeout, NATS, Redis, CORS) so the same
+> four hypotheses are not re-tested.
+>
+> One parameter changed as a result: `SERVICE_WAKE_TIMEOUT` is **45s**, not 5s.
+> §Why the gateway must not wait for the wake to finish is unaffected — the
+> wake is detached from the response, so this bounds a goroutine and not a
+> request — but the old 5s could not cover a measured cold start, which made it
+> a second, independent bug hiding behind this one.
+> **Last source review:** 2026-09-04 (status, wake timeout, response visibility)
 > **Owner's framing:** *"giống như fix bẩn cho render free tier vậy"* — a patch
 > for a hosting-tier constraint, not a product feature. Treat it as such: keep
 > it removable in one step (see §Removal when leaving free tier) — as built, that
