@@ -1,11 +1,27 @@
 # Sprint 05 — telemetry-service, the first Rust service
 
 > **Starts:** 2026-08-13
-> **Status:** Implemented, and locally verified end to end — a gateway flush
-> has travelled through JetStream into `myunivokai_telemetry` and been read
-> back over NATS. **Not Verified:** nothing is deployed.
-> See [user-stories.md §Honest status](user-stories.md#honest-status).
-> **Last source review:** 2026-08-13
+> **Status:** **Verified 2026-09-05, in production.** This line said
+> *"**Not Verified:** nothing is deployed"* for three weeks. Everything was
+> deployed; what was missing was one flag, and `TELEMETRY_ENABLED` is now
+> `true` on the gateway with `TELEMETRY_SERVICE_URL` set beside it.
+>
+> Named evidence, read from Render's log API on 2026-09-05, and it is the
+> whole loop rather than either end of it:
+>
+> | When | Where | Line |
+> | --- | --- | --- |
+> | 2026-09-04T17:42:27 | `myunivokai-gateway` | `telemetry rollup published`, `bucket_start` 17:41:00Z, `http_buckets: 2` |
+> | 2026-09-04T17:42:28 | `myunivokai-telemetry` | `telemetry rollup stored`, same bucket |
+>
+> **One second apart.** Gateway aggregation → JetStream → the Rust consumer →
+> `myunivokai_telemetry`, in production, with **zero** `publish telemetry
+> rollup` errors in the same window. That is this sprint's acceptance,
+> observed rather than argued.
+>
+> Read [user-stories.md §Honest status](user-stories.md#honest-status) for
+> what the sprint knew about itself before this.
+> **Last source review:** 2026-09-05
 
 ## Sprint goal
 

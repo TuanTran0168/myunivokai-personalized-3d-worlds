@@ -1,26 +1,50 @@
 # Sprint 08 — End-user identity and world ownership
 
 > **Starts:** 2026-09-02
-> **Status:** **Phase A implemented** on
-> `feat/fe-be/end-user-identity-phase-a` (one branch per phase, by the owner's
-> grouping — the plan's one-story-per-branch task lines are superseded by it).
-> **Every story is implemented.** Phase A on
+> **Status:** **All 21 stories implemented; deployed and observed in production
+> on 2026-09-05 — see the evidence block below.** Corrected 2026-09-05: this
+> line opened with *"Phase A implemented"* long after Phases B and C were
+> merged too, which reads as a third of the sprint to anyone who stops at the
+> first sentence.
+>
+> One branch per phase, by the owner's grouping — the plan's
+> one-story-per-branch task lines are superseded by it. Phase A on
 > `feat/fe-be/end-user-identity-phase-a` (merged), Phase B's first four on
 > `feat/be/end-user-identity-phase-b` (merged), the claim and the settings on
 > `feat/be/end-user-identity-phase-b-continued` (merged), and the quota, its
 > one toast and both of Phase C on
 > `feat/fe-be/end-user-identity-quota-and-server-gallery`.
 >
-> **Implemented is not deployed, and on 2026-09-04 none of this was in
-> production.** `origin/main` was 46 commits behind `staging`; the deployed app
+> **This paragraph described 2026-09-04, and 2026-09-04 is over.** It is kept
+> because it is the record of a real gap, not because it is still true:
+> *"Implemented is not deployed, and on 2026-09-04 none of this was in
+> production."* `origin/main` was 46 commits behind `staging`; the deployed app
 > answered 404 on `/sign-in`, `/sign-up`, `/account` and `/worlds`, sent no
 > `Content-Security-Policy` header at all, and `src/middleware.ts` did not exist
-> on `main`. Two consequences worth keeping separate from the story list:
-> `S3-CSP-001` (nothing hydrates on a production build) was a **release blocker
-> for this sprint** rather than a City footnote, and per
-> [`sprints/README.md`](../README.md)'s evidence ladder this sprint is
-> *Implemented*, not *Verified* — the DoD items below were measured in tests and
-> against a local stack, never against the deployed product.
+> on `main`. One consequence outlived the gap and is worth keeping separate from
+> the story list: `S3-CSP-001` (nothing hydrates on a production build) was a
+> **release blocker for this sprint** rather than a City footnote.
+>
+> **What is true on 2026-09-05, measured against the deployed product:**
+>
+> | Check | Result |
+> | --- | --- |
+> | `GET /sign-in`, `/sign-up`, `/account`, `/gallery`, `/` on `myunivokai.vercel.app` | **200** on all five — they were 404 |
+> | `Content-Security-Policy` nonce, two consecutive requests to `/sign-in` | **Different each time**, which is the proof that matters: a prerendered page would repeat one nonce, so `force-dynamic` is doing its job |
+> | `auth-service` startup, Render log API, 2026-09-04T17:41 | `auth database migrations complete`, `auth permission sync complete`, `auth settings mirrored to redis` — the last is `S8-IDENTITY-012`'s settings mirror running against real Redis |
+>
+> **Correcting a wrong probe rather than hiding it:** the first pass of this
+> check reported `/login` and `/signup` as 404. Those routes do not exist and
+> never did — the app serves `/sign-in` and `/sign-up`. The 404 was the probe
+> being wrong, not a regression, and it is recorded because a wrong probe that
+> agrees with an expected failure is exactly the kind that gets believed.
+>
+> **Still short of `Verified`, deliberately.** Reaching the pages is not
+> exercising them: no account has been observed created, no world claimed, and
+> no quota degrade-to-mock observed **in production**. The DoD items below were
+> measured in tests and against a local stack. What changed is that the
+> deployment gap is closed; what has not changed is that the acceptance
+> criteria have not been re-run against the deployed product.
 >
 > What that adds up to: a person holds an account, a world has an owner, the
 > owner travels on the commands and is enforced inside each mutation's own

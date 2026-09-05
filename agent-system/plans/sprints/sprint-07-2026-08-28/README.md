@@ -1,8 +1,18 @@
 # Sprint 07 — create-form, transitions, gallery and ambient-audio polish
 
 > **Starts:** 2026-08-28
-> **Status:** Planned; scope approved, implementation absent
-> **Last source review:** 2026-08-28
+> **Status:** Implemented — **five of six stories.** Corrected 2026-09-05:
+> this line said "implementation absent" while its own
+> [`user-stories.md`](user-stories.md) had marked five stories `Implemented`
+> since 2026-08-29, on `fix/fe/sprint-07-experience-batch` and
+> `feat/fe/world-entry-cinematics`. Only
+> [`S7-FE-ADAPTIVE-001`](user-stories.md#s7-fe-adaptive-001--adaptive-quality-tiers-pulled-forward-ahead-of-city)
+> is still `Planned`.
+>
+> **Not `Verified`:** the five carry their own caveat — *"Verified needs
+> real-device/browser evidence beyond this session's own Playwright
+> checks"* — and that evidence has not been collected.
+> **Last source review:** 2026-09-05
 
 ## Sprint goal
 
