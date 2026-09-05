@@ -3,13 +3,14 @@ package main
 import (
 	"os"
 
-	"github.com/myunivokai/myunivokai/services/universe-service/internal/config"
-	"github.com/myunivokai/myunivokai/services/universe-service/internal/db"
+	contracts "github.com/myunivokai/myunivokai/contracts/go"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/db"
 	"github.com/rs/zerolog/log"
 )
 
 func main() {
-	cfg, err := config.Load()
+	cfg, err := config.Load(contracts.WorldFamilyUniverse)
 	if err != nil {
 		log.Fatal().Err(err).Msg("load universe service configuration")
 	}

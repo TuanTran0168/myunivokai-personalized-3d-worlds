@@ -9,8 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/myunivokai/myunivokai/services/universe-service/internal/config"
-	"github.com/myunivokai/myunivokai/services/universe-service/internal/db"
+	contracts "github.com/myunivokai/myunivokai/contracts/go"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/db"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/messaging"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/services"
@@ -43,7 +44,7 @@ func startHealthServer() *http.Server {
 
 func main() {
 	processStartedAt := time.Now()
-	serviceConfig, err := config.Load()
+	serviceConfig, err := config.Load(contracts.WorldFamilyUniverse)
 	if err != nil {
 		log.Fatal().Err(err).Msg("load universe service configuration")
 	}

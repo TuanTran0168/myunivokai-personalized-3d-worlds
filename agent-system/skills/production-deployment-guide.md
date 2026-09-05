@@ -119,14 +119,15 @@ Vẫn ở tab **Environment** của từng Service, điền các giá trị đ�
 #### 🚀 Service 3: Universe Service (`myunivokai-universe`)
 - `DATABASE_URL`: Dán chuỗi kết nối Pooled của database `myunivokai_universe`.
 - `DATABASE_DIRECT_URL`: Dán chuỗi kết nối Direct của database `myunivokai_universe`.
-- `PUBLIC_WEB_URL`: `https://<web-origin>/universe` — **có** hậu tố `/universe`,
-  đối xứng với nature. Trang share của universe là `/universe/share/worlds/{slug}`.
+- `PUBLIC_WEB_URL`: **không cần điền nữa.** Từ 2026-09-05 giá trị này được khai
+  báo thẳng trong `render.yaml` (`https://myunivokai.vercel.app/universe`), vì
+  để nó ở dashboard chính là thứ đã hỏng — xem hộp cảnh báo cuối Service 7.
 
 #### 🚀 Service 4: Nature Service (`myunivokai-nature`)
 - `DATABASE_URL`: Dán chuỗi kết nối Pooled của database `myunivokai_nature`.
 - `DATABASE_DIRECT_URL`: Dán chuỗi kết nối Direct của database `myunivokai_nature`.
-- `PUBLIC_WEB_URL`: `https://<web-origin>/nature` — **có** hậu tố `/nature`, vì
-  trang share của forest nằm dưới prefix đó: `/nature/share/worlds/{slug}`.
+- `PUBLIC_WEB_URL`: **không cần điền nữa** — đã khai báo trong `render.yaml`
+  (`https://myunivokai.vercel.app/nature`).
 
 #### 🚀 Service 5: Auth Service (`myunivokai-auth`)
 - `DATABASE_URL`: Dán chuỗi kết nối Pooled của database `myunivokai_auth`.
@@ -204,6 +205,30 @@ Vẫn ở tab **Environment** của từng Service, điền các giá trị đ�
 Sau khi lưu lại, Render sẽ tự động tiến hành build Docker image từ các file `Dockerfile.prod` và khởi động các services. 
 
 ---
+
+
+#### 🚀 Service 7: Ocean Service (`myunivokai-ocean`)
+- `DATABASE_URL`: Dán chuỗi kết nối Pooled của database `myunivokai_ocean`.
+- `DATABASE_DIRECT_URL`: Dán chuỗi kết nối Direct của database `myunivokai_ocean`.
+- `PUBLIC_WEB_URL`: **không cần điền nữa** — đã khai báo trong `render.yaml`
+  (`https://myunivokai.vercel.app/ocean`).
+
+> 🔴 **Mục này thiếu cho tới 2026-09-05, và đó là nguyên nhân của một defect
+> production.** Guide này liệt kê 6 service và dừng ở analytics, nên không có
+> dòng nào bảo operator điền `PUBLIC_WEB_URL` cho ocean — và trên Render nó
+> trống thật. Biến trống rơi về default compile-in, nên **mọi share link ocean
+> trên production đều bắt đầu bằng `http://localhost:41300`**. Operator đã làm
+> đúng những gì guide viết; thứ sai là guide.
+>
+> Cách sửa lâu dài không phải là thêm một dòng nữa vào đây mà là bỏ hẳn bước
+> thủ công: cả ba family giờ khai báo `value:` trong `render.yaml` thay cho
+> `sync: false`. Giá trị này suy ra được từ chính service (route share là
+> `/{family}/share/worlds/{slug}`), nên không có gì để một con người phải nhớ.
+
+> ⚠️ **`myunivokai-telemetry` vẫn chưa có mục riêng trong guide này.** Nó là
+> service Rust duy nhất và không dùng `PUBLIC_WEB_URL`, nên nó không dính
+> defect ở trên — nhưng khoảng trống thì cùng loại. Chưa viết ở đây vì chưa
+> verify lại từng biến của nó; đọc thẳng `render.yaml` cho tới khi có mục này.
 
 ## 5. Database Migrations (Tự Động Chạy Khi Service Khởi Động)
 

@@ -39,7 +39,7 @@ type Store interface {
 	GetWorldsByIDs(ctx context.Context, worldIDs []string) ([]WorldBundle, error)
 	// The three mutations, and the one parameter they all gained: who is
 	// asking. nil means "no session", never "the owner" - see
-	// worldMutationPermitted, which is where the rule lives.
+	// ownership.MutationPermitted, which is where the rule lives.
 	AddVariant(ctx context.Context, worldID string, variant models.WorldVariant, requestingAccountID *string) (models.WorldVariant, error)
 	SelectVariant(ctx context.Context, worldID, variantID string, requestingAccountID *string) (models.WorldVariant, error)
 	PublishWorld(ctx context.Context, worldID, slug string, requestingAccountID *string) (models.World, error)

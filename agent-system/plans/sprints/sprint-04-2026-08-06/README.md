@@ -1,11 +1,30 @@
 # Sprint 04 — auth-service, analytics read model, internal admin app
 
 > **Starts:** 2026-08-06
-> **Status:** Implemented — `EPIC-S4-AUTH-001` and `EPIC-S4-ANALYTICS-001`
-> both shipped. `S4-ANALYTICS-006` landed as configuration only; provisioning
-> the Neon database and the Render environment variables remain manual
-> operator steps, per `services/analytics-service/README.md`.
-> **Last source review:** 2026-08-07
+> **Status:** **Verified 2026-09-05.** `EPIC-S4-AUTH-001` and
+> `EPIC-S4-ANALYTICS-001` both shipped, and both are now running in
+> production. The caveat this line used to carry — *"provisioning the Neon
+> database and the Render environment variables remain manual operator
+> steps"* — is **resolved**: both were done, and the evidence is that the
+> services could not do what follows without them.
+>
+> Named evidence, read from Render's log API on 2026-09-05:
+>
+> - `analytics-service` is **consuming events in production** — 28 structured
+>   log lines on 2026-09-04, including
+>   `myunivokai.events.gateway.service.started.v1` and
+>   `myunivokai.events.universe.service.started.v1` projected with per-message
+>   durations. A read model with no database and no environment could not
+>   have written them.
+> - `auth-service` reached `auth database migrations complete`,
+>   `auth permission sync complete` and `auth settings mirrored to redis`
+>   at 2026-09-04T17:41, which is the RBAC seed and the `system_settings`
+>   mirror doing their startup work against real infrastructure.
+>
+> What is still **not** covered: no staff member has been observed driving
+> `apps/myunivokai-admin` against production in this evidence. The services
+> behind it are verified; the console itself is inferred.
+> **Last source review:** 2026-09-05
 
 ## Sprint goal
 

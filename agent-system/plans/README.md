@@ -39,14 +39,27 @@ read before touching gateway error handling, `/healthz`, the wake platform
 adapters or `/api/admin/wake-stats`.
 
 [admin-surface-and-family-service-duplication.md](architecture/admin-surface-and-family-service-duplication.md)
-is the fourth, and the newest — **a proposal from 2026-09-05, nothing built.**
-It answers "what is left on the admin side, or should the backend be
-refactored", and **its §4 should be read before the rest of it**: surveying for
-it found that every published world in every family hands out a share URL that
-404s, and that `myunivokai-ocean` has no `PUBLIC_WEB_URL` in production, so its
-links point at `localhost`. Read it before proposing any admin feature — it
-records which one is forbidden and why — and before any change that would be
+is the fifth. It answers "what is left on the admin side, or
+should the backend be refactored" by showing the two are one decision, and it is
+now **half executed: read its §14 first.** The share-URL defect it found is
+fixed — every published world in every family was handing out a 404, and
+`myunivokai-ocean` had no `PUBLIC_WEB_URL` in production at all — and the Tier 0
+duplication is extracted into
+[`shared/family-platform/go`](../../shared/family-platform/go/README.md), the second shared Go
+module after `contracts/go`. §14 records the two claims executing it disproved.
+The admin items are all still open. Read it before proposing any admin feature —
+it records which one is forbidden and why — and before any change that would be
 written once per family service.
+
+[phase-e-what-ownership-unlocks.md](architecture/phase-e-what-ownership-unlocks.md)
+is the fourth — written 2026-09-04, brought onto the same branch as the row above
+on 2026-09-05 with a correction note rather than a merge of its own branch's stale
+code changes (that branch's edits to `render.yaml` and the wake package were
+already superseded by other merged work). It splits "ownership means livelier
+staff statistics" from "an owner's own numbers" — the same distinction the row
+above independently reaches for the admin app — and its own §7 is where the
+share-URL defect the row above fixed was first found. **Read its correction note
+before §7**, which still describes that defect as open.
 
 ## services/
 

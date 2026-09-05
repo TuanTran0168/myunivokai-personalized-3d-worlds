@@ -1,8 +1,28 @@
 # Sprint 06 — Ocean, the third family
 
 > **Starts:** 2026-08-19
-> **Status:** Implemented; deployed verification outstanding
-> **Last source review:** 2026-08-15
+> **Status:** Implemented. **Deployed and healthy, but NOT `Verified`** —
+> and the distinction is the point, so it is spelled out rather than left as
+> a phrase.
+>
+> What IS evidenced, from Render's log API on 2026-09-05:
+> `ocean database migrations complete`, `ocean health server listening` and
+> `ocean service ready` at 2026-09-04T17:41:33-36, on commit `2a7cfde4`. The
+> service starts, migrates its own database and subscribes.
+>
+> What is NOT evidenced, and is the whole of this sprint's acceptance:
+> **no ocean world has been observed composed end to end in production.**
+> A service that boots is not a family that works — the depth curve, the
+> stored scene config and the renderer are exactly what a startup log cannot
+> speak to. Creating one to find out writes production data, so it is an
+> owner's call rather than a check to run quietly.
+>
+> One line worth not mistaking for a defect: an
+> `error: nats: invalid subscription` on `fetch ocean composition` at
+> 17:56:36 — the same second the free-tier instance was shutting down, and
+> the consumer losing its subscription during teardown is that shutdown, not
+> a failed composition.
+> **Last source review:** 2026-09-05
 
 ## Sprint goal
 

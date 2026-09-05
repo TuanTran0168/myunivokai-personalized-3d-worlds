@@ -5,10 +5,15 @@
 > **Answers:** "what is left to build on the admin side, or should the backend
 > be refactored to be cleaner instead?"
 
-> **Read this first.** §4 is a production defect found while surveying for this
-> document. It is three lines of code and it outranks everything else here,
-> including the whole of §5 and §6. Do not read this as a roadmap and start at
-> the top.
+> **Read §14 first.** Steps 1 and 2 of §9 were executed on 2026-09-05, and
+> executing them proved two of this document's own claims wrong — including one
+> in §7 that would have sent the next reader down a path that does not exist.
+> §14 records what actually happened; the sections above it are the argument as
+> it was written *before* the work.
+
+> §4 is a production defect found while surveying for this document. It
+> outranked everything else here, including the whole of §5 and §6, and it is
+> now fixed.
 
 ---
 
@@ -236,7 +241,8 @@ it is the reason A1 is not simply "half a day".
 anonymous, accounts holding at least one world, a worlds-per-account histogram.
 This is Phase E's P2 and it needs the periodic rollup event, because the claim
 deliberately publishes nothing and a test enforces that
-(`contracts_world_claim_test.go`). See §13 — that plan is not merged.
+(`contracts_world_claim_test.go`). See
+[`phase-e-what-ownership-unlocks.md`](phase-e-what-ownership-unlocks.md).
 
 **A3 — confirm telemetry actually arrives.** `TELEMETRY_ENABLED: "true"` is
 committed in `render.yaml` (`8cb89a0`, merged). The three telemetry pages have
@@ -467,11 +473,14 @@ Doing it while only Tier 0 is in scope is what keeps it from becoming a project.
 Recorded rather than fixed, because none of it belongs in this document's
 change.
 
-- **`feat/docs/phase-e-what-ownership-unlocks` is not merged.** The Phase E plan
-  (587 lines) and the first drafts of the share defect exist only on that local
-  branch. Anything above that references "Phase E P2" is referring to an
-  unmerged document. Merge it or discard it, but it should not stay
-  half-present.
+- ~~`feat/docs/phase-e-what-ownership-unlocks` is not merged.~~ **Resolved
+  2026-09-05.** Its document is now
+  [`phase-e-what-ownership-unlocks.md`](phase-e-what-ownership-unlocks.md) on
+  this branch, with a correction note recording that this document's §4
+  (not that one's §7) is the one that actually fixed the share-URL defect. The
+  branch's own code changes (to `render.yaml` and the wake package) were
+  discarded rather than merged — they were already superseded by other work
+  that landed in between.
 - **`sprint-07`'s README says "Planned; scope approved, implementation
   absent"** while its own `user-stories.md` marks five of six stories
   `Implemented`. The README is wrong.
@@ -495,3 +504,97 @@ change.
 - **`DEFECT-WAKE-001` needs re-triage.** Its "P1 rather than P0" caveat rested
   on nobody using the product, and the release removed that condition.
 - Around 60 stale local branches.
+
+---
+
+## 14. What executing it found — 2026-09-05
+
+§9's steps 1 and 2 were done on branch
+`refactor/be/family-service-shared-platform`. Four things came out of it that
+this document had wrong or did not know, recorded here rather than edited into
+the sections above, because a plan that quietly agrees with its own outcome
+teaches nobody anything.
+
+### 14.1 §7 Tier 0 was wrong: `world_ownership.go` did not move as-is
+
+The tier was built by reading each file's **imports**, and that is not the same
+question as what a file **references**. `world_ownership.go` imports only
+`context` and `errors` — but it uses `worldSnapshotQuerier` and `mapNotFound`,
+two package-level identifiers declared in files that stayed behind. "Moves
+as-is" was false.
+
+So the file **split** instead of moving: the three predicates and two sentinel
+errors went to `shared/family-platform/go/ownership`, and the two functions holding the
+SQL stayed.
+
+That turned out to be the better shape anyway, for a reason worth more than the
+line count. **Where the check runs is as load-bearing as what it decides.**
+`assertWorldMutable` and `assertWorldDeletable` take the world row `FOR UPDATE`
+inside the mutation's own transaction, so a claim landing at the same moment
+cannot change the answer between the check and the write it authorises. A
+package of pure predicates cannot express that. Both files now say so out loud,
+so that nobody later "finishes the job" and quietly turns a transactional check
+into a separate round trip.
+
+**The lesson generalises to the Tier 1 estimate above, which should be read as
+optimistic for the same reason.** Import lists are a lower bound on coupling.
+
+### 14.2 §4 was worse than measured: there was a fourth copy
+
+The defect was described as two faults (the missing path segment, universe's
+missing prefix) plus one missing dashboard value. There was a fourth:
+`services/universe-service/docker-compose-local.yaml` also carried
+`PUBLIC_WEB_URL` without the `/universe` prefix, so the local stack reproduced
+the bug faithfully and nobody could have caught it by running the product
+locally.
+
+And the **cause** of the ocean gap was in this repo, not on the dashboard:
+`agent-system/skills/production-deployment-guide.md` lists six services and
+stops at analytics. **There has never been an Ocean section**, so no line ever
+told an operator to set it. The runbook was wrong, and the operator was not.
+
+That is why the fix was not "set the value": all three families now declare
+`value:` in `render.yaml` instead of `sync: false`. The value is derivable from
+the service it sits under, so there is nothing for a person to remember.
+
+### 14.3 A new module is three changes outside the Go code, and none of them are optional
+
+The plan discussed module *contents* and never mentioned what builds one. All
+three would have broken production or the gate silently:
+
+- **six Dockerfiles.** `Dockerfile.prod` and `Dockerfile.local` in each family
+  service copy `contracts/go` explicitly. Without the same line for
+  `shared/family-platform/go`, `go mod download` fails on the `replace` directive and
+  every family image stops building.
+- **CI.** This repo runs one job per module. A module without a job is a module
+  without a gate, so `family-platform-checks` was added — otherwise the shared
+  module's tests would run only on a developer's machine.
+- **`docker-compose-local.yaml`**, covered in §14.2.
+
+**Any future shared module pays these three costs too.** That is a real argument
+against a second one, and it belongs next to the argument for the first.
+
+### 14.4 What the numbers turned out to be
+
+| Claim in this document | What executing it produced |
+| --- | --- |
+| Tier 0 is 873 lines → 291 | Held: 873 → 291, plus `db/pool.go` following config as predicted |
+| `world_ownership.go` moves whole | **Wrong.** Split — see §14.1 |
+| "no abstraction is invented" | Held. The only new signature is `config.Load(family)`, and it *removes* a divergence rather than adding a concept |
+| §4 is three lines plus a dashboard value | **Understated.** Four copies, and a missing runbook section as the cause |
+| No behaviour change | Held, and it is checkable: the three `share_url_test.go` files were written before the extraction and pass unchanged after it; every pre-existing ownership test still asserts through the store with only the sentinel's package qualifier changed |
+
+### 14.5 What is now done, and what §9 still has open
+
+- **§9 step 1 — done.** The share URL fix, with a test per family.
+- **§9 step 2 — done.** Tier 0 extracted into `shared/family-platform/go`.
+- **§9 step 3 — still open.** Confirming telemetry data arrives.
+- **§9 step 4 — still open,** and still blocked on decision F5: deletion stages
+  no outbox row, so the deleted-world badge has no event to travel on.
+- **§9 step 5 — still open,** and unchanged: if the answer is A2 or A4, Tier 1
+  comes first.
+
+Decisions F1 and F2 were taken by the owner on 2026-09-05 by asking for the work.
+F3 was resolved by execution: the module is `shared/family-platform/go`, a sibling of
+`contracts/go`, and the rule that tells the two apart is written in its README.
+F4, F5 and F6 remain open exactly as stated in §11.
