@@ -1,4 +1,4 @@
-module github.com/myunivokai/myunivokai/family-platform/go
+module github.com/myunivokai/myunivokai/shared/family-platform/go
 
 go 1.25.1
 
@@ -21,4 +21,4 @@ require (
 	golang.org/x/text v0.27.0 // indirect
 )
 
-replace github.com/myunivokai/myunivokai/contracts/go => ../../contracts/go
+replace github.com/myunivokai/myunivokai/contracts/go => ../../../contracts/go

@@ -3,10 +3,10 @@ package repositories
 import (
 	"context"
 
-	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 )
 
-// The ownership RULES moved to family-platform/go/ownership on 2026-09-05: they
+// The ownership RULES moved to shared/family-platform/go/ownership on 2026-09-05: they
 // were byte-identical in three services, and the file they lived in already
 // argued for the move without naming it - "the rule with no database in it, so
 // both stores enforce one implementation of it".

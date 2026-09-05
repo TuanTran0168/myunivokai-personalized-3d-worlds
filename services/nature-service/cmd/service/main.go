@@ -10,8 +10,8 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/family-platform/go/config"
-	"github.com/myunivokai/myunivokai/family-platform/go/db"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/db"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/messaging"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/services"

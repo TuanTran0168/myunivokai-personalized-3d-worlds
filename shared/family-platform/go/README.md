@@ -1,4 +1,4 @@
-# `family-platform/go` — the code the three family services share
+# `shared/family-platform/go` — the code the three family services share
 
 > **Document status:** Implemented
 > **Last source review:** 2026-09-05

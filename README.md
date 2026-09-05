@@ -378,6 +378,13 @@ make local-down
 
 ## Repository Layout
 
+Nine Go modules, and two of them are not services: `contracts/go` is the wire
+surface every service speaks, and `shared/family-platform/go` is behaviour the
+three family services compile in. Both are consumed through a `replace`
+directive rather than published, so **a new one needs a `COPY` line in every
+consumer's Dockerfile and its own CI job** — [`shared/README.md`](shared/README.md)
+lists all four steps, written from the ones that were missed the first time.
+
 ```txt
 .
 ├── apps/
@@ -392,7 +399,12 @@ make local-down
 │   ├── auth-service/                 # Staff identity, RBAC & token rotation (Go)
 │   ├── analytics-service/            # Admin CQRS read model (Go)
 │   └── telemetry-service/            # Platform metrics read model (Rust)
-├── contracts/                        # Cross-service schemas, Go contracts & OpenAPI specifications
+├── contracts/                        # The WIRE surface: message shapes, JSON schemas, OpenAPI specs,
+│                                     #   fixtures, and the Go + Rust bindings for them
+├── shared/                           # Code several services COMPILE IN but never send over the wire
+│   └── family-platform/go/           #   Config, database and world-ownership rules shared by the
+│                                     #   three family services. See shared/README.md for the rule
+│                                     #   that decides shared/ vs contracts/
 ├── infra/                            # Local development Docker Compose, NATS & PostgreSQL configs
 └── agent-system/                     # Knowledge base + the wiring that runs it
     ├── rules/                        # Gates: git convention, coding style, CI
@@ -416,6 +428,7 @@ make local-down
 | `render.yaml` | Infrastructure-as-Code (IaC) configuration for deploying services and databases to Render. |
 | `.env.example` | Template demonstrating all required environment variables for the system. |
 | `.gitignore` / `.gitattributes` | Source control definitions for ignored paths and git text handling. |
+| `shared/README.md` | The rule for what may become a shared module, and the four wiring steps a new one needs. Read before adding one. |
 
 ---
 

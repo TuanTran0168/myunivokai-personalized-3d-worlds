@@ -2,7 +2,7 @@ FROM golang:1.25-alpine
 
 WORKDIR /workspace/services/universe-service
 COPY contracts/go /workspace/contracts/go
-COPY family-platform/go /workspace/family-platform/go
+COPY shared/family-platform/go /workspace/shared/family-platform/go
 COPY services/universe-service/go.mod services/universe-service/go.sum ./
 RUN go mod download
 

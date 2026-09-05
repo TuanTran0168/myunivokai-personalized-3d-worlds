@@ -62,7 +62,7 @@
 >   that no longer holds).
 > - §7's file links point at `internal/config/config.go` in each family service.
 >   That package no longer exists: `config.Load` moved to
->   `family-platform/go/config` on this same branch, and now takes the family as
+>   `shared/family-platform/go/config` on this same branch, and now takes the family as
 >   a parameter rather than reading a per-service literal default — the fix
 >   §7 asked for ("make the default fail rather than fall back to localhost") was
 >   answered differently, by deriving the default from the family instead.

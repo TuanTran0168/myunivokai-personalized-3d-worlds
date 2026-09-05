@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/models"
 )
 

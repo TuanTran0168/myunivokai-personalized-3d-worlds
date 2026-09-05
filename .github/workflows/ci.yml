@@ -49,13 +49,13 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: family-platform/go
+        working-directory: shared/family-platform/go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: family-platform/go/go.mod
-          cache-dependency-path: family-platform/go/go.sum
+          go-version-file: shared/family-platform/go/go.mod
+          cache-dependency-path: shared/family-platform/go/go.sum
       - name: Verify modules
         run: go mod verify
       - name: Vet

@@ -7,7 +7,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/myunivokai/myunivokai/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
 )
 
 // Connect builds an explicitly-configured pgx pool. Returns (nil, nil) when no

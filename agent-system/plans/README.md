@@ -45,7 +45,7 @@ now **half executed: read its §14 first.** The share-URL defect it found is
 fixed — every published world in every family was handing out a 404, and
 `myunivokai-ocean` had no `PUBLIC_WEB_URL` in production at all — and the Tier 0
 duplication is extracted into
-[`family-platform/go`](../../family-platform/go/README.md), the second shared Go
+[`shared/family-platform/go`](../../shared/family-platform/go/README.md), the second shared Go
 module after `contracts/go`. §14 records the two claims executing it disproved.
 The admin items are all still open. Read it before proposing any admin feature —
 it records which one is forbidden and why — and before any change that would be

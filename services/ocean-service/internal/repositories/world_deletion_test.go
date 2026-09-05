@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/myunivokai/myunivokai/family-platform/go/ownership"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/models"
 )
 

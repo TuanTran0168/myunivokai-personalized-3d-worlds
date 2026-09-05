@@ -71,12 +71,12 @@ domain, operation, and V1 version. JSON schemas and fixed examples live in
 `contracts/schemas` and `contracts/fixtures`; the public browser contract is
 `contracts/openapi.yaml`.
 
-## The other shared module — `family-platform/go`
+## The other shared module — `shared/family-platform/go`
 
 `contracts/go` is not the only shared Go module any more. Since 2026-09-05
-`family-platform/go` holds the code the three family services had three
+`shared/family-platform/go` holds the code the three family services had three
 copies of, and the two are told apart by one rule: **`contracts/go` holds the
-shapes that cross a service boundary; `family-platform/go` holds behaviour
+shapes that cross a service boundary; `shared/family-platform/go` holds behaviour
 that happens to be identical inside several services.** A thing that crosses
 the wire belongs in `contracts/go` even when it is also shared code.
 
@@ -97,7 +97,7 @@ What did **not** move is the more useful half of the description.
 lines out of 509 — and stayed, because they import each service's own
 `internal/models`, whose world types genuinely differ. Making them shared
 needs a decision nobody has taken. The module's
-[README](../../../family-platform/go/README.md) carries the admission rule;
+[README](../../../shared/family-platform/go/README.md) carries the admission rule;
 read it before adding anything.
 
 ## API Gateway
@@ -303,7 +303,7 @@ claimed. `owner_account_id IS NULL` answers "is this anonymous"; `anonymous_id`
 answers "*which* anonymous visitor", and only the second can be turned into
 ownership later.
 
-The rules live in `family-platform/go/ownership`, shared by all three
+The rules live in `shared/family-platform/go/ownership`, shared by all three
 families since 2026-09-05, and there are two of them because deletion does
 not follow the others:
 

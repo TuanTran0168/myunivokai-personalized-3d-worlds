@@ -6,14 +6,14 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/myunivokai/myunivokai/contracts/go v0.0.0
-	github.com/myunivokai/myunivokai/family-platform/go v0.0.0
+	github.com/myunivokai/myunivokai/shared/family-platform/go v0.0.0
 	github.com/nats-io/nats.go v1.52.0
 	github.com/rs/zerolog v1.34.0
 )
 
 replace github.com/myunivokai/myunivokai/contracts/go => ../../contracts/go
 
-replace github.com/myunivokai/myunivokai/family-platform/go => ../../family-platform/go
+replace github.com/myunivokai/myunivokai/shared/family-platform/go => ../../shared/family-platform/go
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
