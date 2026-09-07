@@ -267,7 +267,7 @@ forms that are actually available.
 > **Not yet built** — this is the plan to implement from, not a research
 > document.
 
-Against that: 41 Rust source files, `migrations/0001_init.sql` with five
+Against that: 31 Rust source files, `migrations/0001_init.sql` with five
 tables, both Dockerfiles, `wake.ServiceTelemetry` wired in `platform.go`, two
 gateway routes, three admin pages, and a live service in `render.yaml`. Every
 phase 0–8 in that plan's own table has shipped; phase 9 is deferred by design.

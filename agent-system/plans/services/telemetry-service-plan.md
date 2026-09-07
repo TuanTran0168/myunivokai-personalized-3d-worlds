@@ -1,7 +1,12 @@
 # Telemetry service plan — B2 + Track C, decided
 
-> **Document status:** Approved design. **Not yet built** — this is the plan
-> to implement from, not a research document. It graduates
+> **Document status:** **Built and deployed.** Phases 0–8 of §Phases have all
+> shipped; phase 9 is deferred by its own trigger. This line said "Not yet
+> built — this is the plan to implement from" until 2026-09-07, by which point
+> the service had 31 Rust source files, five tables, both Dockerfiles, wake
+> integration, two gateway routes, three admin pages and a live entry in
+> `render.yaml` — see §What shipped, and what this plan got wrong at the end.
+> Read that section before the phase table, not after. It graduates
 > [platform-evolution-research.md §Track B](../../evolution/platform-evolution-research.md#track-b--operational-telemetry)
 > (B2 specifically) and
 > [platform-evolution-research.md §Track C](../../evolution/platform-evolution-research.md#track-c--a-service-written-in-rust)
@@ -554,12 +559,61 @@ administration) until now.
 
 ## Open decisions still needed from the owner
 
-1. **Default `TELEMETRY_SINK` value.** This plan does not pick one. `postgres`
-   gives the admin app something to render from day one; `otlp` gives
-   alerting for free but nothing to look at inside `myunivokai-admin` until a
-   Grafana dashboard is built by hand.
-2. **Retention window for `http_rollups`.** Sketched at 90 days above,
-   matching the research doc's schema; not confirmed.
+**Two of these three were answered by the deployment and this section did not
+notice for a month.** Corrected 2026-09-07.
+
+1. ~~**Default `TELEMETRY_SINK` value.** This plan does not pick one.~~
+   **Resolved: `postgres`**, declared in `render.yaml` — *"postgres is the only
+   sink the admin Telemetry screen can render from; otlp forwards to Grafana
+   Cloud and answers no range query at all, which the screen shows as a link
+   rather than an empty chart."* The `otlp` path exists and is one env-var
+   change away, which is what "a switch, not a one-time fork" was for.
+2. ~~**Retention window for `http_rollups`.** Sketched at 90 days above; not
+   confirmed.~~ **Resolved: 90 days**, swept every 6h —
+   `TELEMETRY_RETENTION_DAYS: "90"` and
+   `TELEMETRY_RETENTION_SWEEP_INTERVAL: 6h`. The sketch was adopted unchanged,
+   and `render.yaml` records why there is no rollup-of-rollups: *"a bucket is
+   already one minute wide, so the only thing old data becomes is deleted."*
 3. **Which admin navigation direction to take** — grouped sections inside one
    sidebar, or a top-level section switcher — see §Future dependency above.
-   Not urgent: only becomes real once phase 8 ships.
+   **Still genuinely open.** Phase 8 has now shipped, so its trigger condition
+   is met; what has not happened is the sidebar actually feeling crowded, which
+   is the condition phase 9 was written to wait for rather than the phase
+   number.
+
+## What shipped, and what this plan got wrong
+
+Written 2026-09-07, while surveying what was left to build in admin and
+telemetry — see
+[`admin-writes-and-what-goes-unmeasured.md`](../architecture/admin-writes-and-what-goes-unmeasured.md).
+
+**The status line was the whole problem.** Everything in phases 0–8 exists and
+runs in production; the document's first line said none of it did. A plan is
+the document that wins when it disagrees with the code
+(`CLAUDE.md` — *"the document is right and reality must change → it is a
+plan"*), which is exactly why a stale one is expensive here: a reader who
+trusted this file would have concluded the platform has no telemetry at all,
+and either rebuilt it or dropped a feature that depends on it.
+
+What the survey found on the way, which belongs to this service rather than to
+that document:
+
+- **The share page has been measured since 2026-09-04 and nobody has looked.**
+  `middleware.Telemetry` is registered on the *root* router, above the product,
+  identity and admin groups, and `Collector.RecordHTTPRequest` keys buckets on
+  chi's route **template**. So `GET /share/worlds/{shareSlug}` is a row in
+  `http_rollups` and `share:v1` is a row in `cache_rollups`, both already
+  returned by `TelemetryRouteSummary` and `TelemetryCacheSummary`. The most
+  valuable business question near this service needed a query, not a schema.
+- **`WakeSignals` did what §What this service tracks §1 promised**, caveat
+  included: `ReliabilityPage` renders it as *"an approximation of the
+  wake-conversion rate joined on time proximity, not a per-request causal
+  trace."* The plan asked for an honest label and got one.
+- **Three admin pages share two queries**, which reads as a gap and is not one:
+  Traffic, Performance and Reliability are three framings of
+  `/telemetry/overview` and `/telemetry/routes`.
+- **This schema has one thing it cannot answer, and it is not a defect.** Every
+  table here is keyed on a time bucket, so nothing in it can be attributed to a
+  world, a session or a person. That is the property that lets it hold traffic
+  data with no data boundary at all, and any request to attribute a number to a
+  world belongs in `analytics-service` or nowhere.
