@@ -41,7 +41,12 @@ func TestSyncPermissionsAndSeedRoles_SeedsBasicUserWithChartReadOnly(t *testing.
 // on purpose, and adding the route means moving it out of reservedPermissions
 // in the same change.
 //
-// Four remain. `world:unpublish` left on 2026-09-07, when
+// Three remain. `world:unpublish` and `variant:read` both left on 2026-09-07 —
+// the second by GET /api/admin/worlds/{worldID}/variants, which needed the
+// variants across the analytics data boundary before a route could exist at
+// all: an admin read may not reach a family service (principle 10).
+//
+// `world:unpublish` left the same day, when
 // POST /api/admin/{family}/worlds/{worldID}/unpublish started checking it —
 // registered per family in admin_router.go and gated by
 // registerAdminWorldRoutes. It is named here rather than merely deleted so the
@@ -56,7 +61,6 @@ func TestSyncPermissionsAndSeedRoles_SeedsBasicUserWithChartReadOnly(t *testing.
 // agent-system/plans/architecture/admin-writes-and-what-goes-unmeasured.md §7.
 func TestReservedPermissionsAreDeclaredDeliberately(t *testing.T) {
 	expected := map[contracts.PermissionCode]bool{
-		contracts.PermissionVariantRead:   true,
 		contracts.PermissionJobRetry:      true,
 		contracts.PermissionProfileRead:   true,
 		contracts.PermissionProfileReveal: true,

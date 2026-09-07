@@ -84,7 +84,8 @@ func (store *PostgresStore) CreateWorld(ctx context.Context, world models.World,
 	// separate world.changed event being published alongside it: analytics
 	// then has one projection function, with `completed` as revision 1 and
 	// `world.changed` as every revision after it.
-	createdSnapshot := newWorldSnapshot(world, 1, variant.VariantNo, variant.Seed, nil)
+	createdSnapshot := newWorldSnapshot(world, 1, variant.VariantNo, variant.Seed,
+		[]contracts.WorldVariantSummary{{VariantNo: variant.VariantNo, Seed: variant.Seed, IsSelected: true}}, nil)
 	completedEnvelope := contracts.NewEnvelope(world.SourceJobID, contracts.FamilyCompletedData{
 		Family: contracts.WorldFamilyOcean, ProfileID: world.ProfileID, DNAVersionID: world.DNAVersionID,
 		WorldID: world.ID, Snapshot: &createdSnapshot,

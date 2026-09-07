@@ -37,7 +37,8 @@ type worldSnapshotQuerier interface {
 // a projection of the row: quote, dna_snapshot, visual variant config and
 // share slugs are absent on purpose and must stay absent — see
 // agent-system/plans/services/analytics-service-plan.md#data-boundary.
-func newWorldSnapshot(world models.World, variantCount, selectedVariantNo int, selectedVariantSeed string, publishedAt *time.Time) contracts.WorldSnapshot {
+func newWorldSnapshot(world models.World, variantCount, selectedVariantNo int, selectedVariantSeed string,
+	variants []contracts.WorldVariantSummary, publishedAt *time.Time) contracts.WorldSnapshot {
 	favoriteColors := world.VisualIntent.FavoriteColors
 	if favoriteColors == nil {
 		favoriteColors = []string{}
@@ -69,6 +70,7 @@ func newWorldSnapshot(world models.World, variantCount, selectedVariantNo int, s
 		// renderer draws from, so it is what the rare-feature lottery has to be
 		// replayed against.
 		VariantSeed:    selectedVariantSeed,
+		Variants:       variants,
 		PublishedAt:    publishedAt,
 		WorldCreatedAt: world.CreatedAt,
 	}
@@ -96,6 +98,10 @@ func loadWorldSnapshot(ctx context.Context, querier worldSnapshotQuerier, worldI
 	var visualIntentJSON, dnaJSON []byte
 	var variantCount, selectedVariantNo int
 	var selectedVariantSeed string
+	// Scanned as text and decoded here rather than into a []byte, because
+	// pgx hands a json_agg back as a driver-specific type that varies with the
+	// column's declared type; ::text makes it one thing on every path.
+	var variantsJSON string
 	var publishedAt *time.Time
 	// selected.seed rides along on the join that already resolves the selected
 	// variant. It is COALESCEd because the join is a LEFT one: a world whose
@@ -103,15 +109,30 @@ func loadWorldSnapshot(ctx context.Context, querier worldSnapshotQuerier, worldI
 	// NULL here would fail the scan rather than produce a world with no seed.
 	err := querier.QueryRow(ctx, `SELECT w.id::text, w.source_job_id, w.profile_id::text, w.dna_version_id::text,
 			w.revision, w.nickname, COALESCE(w.role,''), w.archetype, w.scene_name, w.visual_intent, w.dna_snapshot,
-			COALESCE(counted.variant_count, 0), COALESCE(selected.variant_no, 0), COALESCE(selected.seed, ''), shared.created_at, w.created_at
+			COALESCE(counted.variant_count, 0), COALESCE(selected.variant_no, 0), COALESCE(selected.seed, ''),
+			COALESCE(every_variant.variants, '[]'::json)::text, shared.created_at, w.created_at
 		FROM worlds w
 		LEFT JOIN (SELECT world_id, COUNT(*) AS variant_count FROM world_variants GROUP BY world_id) counted ON counted.world_id = w.id
 		LEFT JOIN world_variants selected ON selected.id = w.selected_variant_id
+		-- Every variant, aggregated by the database rather than by a second
+		-- round trip. The key names are the contract's camelCase because this
+		-- is decoded straight into []contracts.WorldVariantSummary; building
+		-- the JSON here and renaming it in Go would be two places to keep in
+		-- step. The config column is NOT selected: it is large, it is derived
+		-- from the DNA, no admin screen has a question it answers, and
+		-- TestSnapshotCarriesNoForbiddenField asserts that word never reaches a
+		-- serialized snapshot.
+		LEFT JOIN (
+			SELECT world_id,
+				json_agg(json_build_object('variantNo', variant_no, 'seed', seed, 'isSelected', is_selected)
+					ORDER BY variant_no) AS variants
+			FROM world_variants GROUP BY world_id
+		) every_variant ON every_variant.world_id = w.id
 		LEFT JOIN world_shares shared ON shared.world_id = w.id
 		WHERE w.id = $1`, worldID).Scan(
 		&world.ID, &world.SourceJobID, &world.ProfileID, &world.DNAVersionID,
 		&world.Revision, &world.Nickname, &world.Role, &world.Archetype, &world.SceneName, &visualIntentJSON, &dnaJSON,
-		&variantCount, &selectedVariantNo, &selectedVariantSeed, &publishedAt, &world.CreatedAt,
+		&variantCount, &selectedVariantNo, &selectedVariantSeed, &variantsJSON, &publishedAt, &world.CreatedAt,
 	)
 	if err != nil {
 		return contracts.WorldSnapshot{}, mapNotFound(err)
@@ -122,7 +143,11 @@ func loadWorldSnapshot(ctx context.Context, querier worldSnapshotQuerier, worldI
 	if err := json.Unmarshal(dnaJSON, &world.PersonalityDNA); err != nil {
 		return contracts.WorldSnapshot{}, fmt.Errorf("decode dna snapshot for %s: %w", worldID, err)
 	}
-	return newWorldSnapshot(world, variantCount, selectedVariantNo, selectedVariantSeed, publishedAt), nil
+	var variants []contracts.WorldVariantSummary
+	if err := json.Unmarshal([]byte(variantsJSON), &variants); err != nil {
+		return contracts.WorldSnapshot{}, fmt.Errorf("decode variants for %s: %w", worldID, err)
+	}
+	return newWorldSnapshot(world, variantCount, selectedVariantNo, selectedVariantSeed, variants, publishedAt), nil
 }
 
 // writeWorldChangedOutbox stages the event in the same transaction as the

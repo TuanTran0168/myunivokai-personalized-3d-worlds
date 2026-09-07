@@ -9,6 +9,7 @@ import type {
   WorldDetail,
   UnpublishResult,
   WorldFamily,
+  WorldVariantList,
   WorldListFilters,
   WorldPage
 } from "./types";
@@ -69,6 +70,13 @@ export const analyticsApi = {
   // 404 for anything that is not a world — but a raw slash would change which
   // gateway route is hit before that judgement is ever reached.
   world: (worldId: string) => adminRequest<WorldDetail>(`/worlds/${encodeURIComponent(worldId)}`),
+
+  // Its own request because it is its own permission: the gateway gates
+  // this route on `variant:read` and the world detail above on
+  // `world:read`, so a caller holding one and not the other gets exactly
+  // what it is allowed.
+  worldVariants: (worldId: string) =>
+    adminRequest<WorldVariantList>(`/worlds/${encodeURIComponent(worldId)}/variants`),
 
   jobs: (filters: JobListFilters, pageSize: number, cursor?: string) =>
     adminRequest<JobPage>(

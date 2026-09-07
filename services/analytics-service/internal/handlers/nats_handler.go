@@ -24,6 +24,7 @@ type AnalyticsService interface {
 	Timeseries(ctx context.Context, query contracts.AnalyticsTimeseriesQueryData) (contracts.AnalyticsTimeseriesResponseData, error)
 	ListWorlds(ctx context.Context, query contracts.AnalyticsWorldListQueryData) (contracts.AnalyticsWorldListResponseData, error)
 	GetWorld(ctx context.Context, query contracts.AnalyticsWorldGetQueryData) (contracts.AnalyticsWorldGetResponseData, error)
+	GetWorldVariants(ctx context.Context, query contracts.AnalyticsWorldGetQueryData) (contracts.AnalyticsWorldVariantListResponseData, error)
 	ListJobs(ctx context.Context, query contracts.AnalyticsJobListQueryData) (contracts.AnalyticsJobListResponseData, error)
 	ListServiceStarts(ctx context.Context, query contracts.ServiceStartListQueryData) (contracts.ServiceStartListResponseData, error)
 }
@@ -121,6 +122,17 @@ func (handler *NATSHandler) HandleWorldGetQuery(message *nats.Msg) {
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.AnalyticsWorldGetResponseData, error) {
 		return handler.analyticsService.GetWorld(ctx, envelope.Data)
+	})
+	handler.respondWithResult(message, envelope.JobID, response, err)
+}
+
+func (handler *NATSHandler) HandleWorldVariantListQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.AnalyticsWorldGetQueryData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (contracts.AnalyticsWorldVariantListResponseData, error) {
+		return handler.analyticsService.GetWorldVariants(ctx, envelope.Data)
 	})
 	handler.respondWithResult(message, envelope.JobID, response, err)
 }

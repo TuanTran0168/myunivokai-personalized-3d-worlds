@@ -19,6 +19,7 @@ import (
 var enforcedPermissions = []repositories.PermissionDefinition{
 	{Codename: contracts.PermissionWorldRead, Description: "Read world records across families.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionWorldUnpublish, Description: "Take a published world's share page down. The world itself is kept; only the public link is revoked, and every use is audited.", Audience: contracts.AccountAudienceAdmin},
+	{Codename: contracts.PermissionVariantRead, Description: "Read a world's individual variants — each one's number, seed and whether it is the selected one.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionJobRead, Description: "Read generation job records.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionChartRead, Description: "Read business, platform and job-health charts.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionAccountRead, Description: "Read staff account records.", Audience: contracts.AccountAudienceAdmin},
@@ -55,7 +56,6 @@ var enforcedPermissions = []repositories.PermissionDefinition{
 // codename added without a route has to be added here on purpose rather than
 // drifting in.
 var reservedPermissions = []repositories.PermissionDefinition{
-	{Codename: contracts.PermissionVariantRead, Description: "Not enforced yet — variants are read through world:read today. Reserved.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionJobRetry, Description: "Not enforced yet — no route retries a job. Reserved for that action.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionProfileRead, Description: "Not enforced yet — no route reads profiles. Reserved for that screen.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionProfileReveal, Description: "Not enforced yet — no route reveals masked input. Reserved, and audited when it exists.", Audience: contracts.AccountAudienceAdmin},

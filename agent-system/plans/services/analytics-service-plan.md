@@ -276,6 +276,36 @@ it rolled. Note the direction of the widening: the boundary now carries one more
 machine-generated value and no more user content, which is the only kind of
 addition this list should ever accept.
 
+**Widened again 2026-09-07: every variant's `{variant_no, seed, is_selected}`,
+as `WorldSnapshot.Variants`.**
+
+| Field | Where it lives | Why it may cross |
+| --- | --- | --- |
+| `world_variants.variant_no` | universe/nature/ocean | An ordinal this platform assigns, 1..n. It says which variant, and nothing about anybody. |
+| `world_variants.seed` (all of them) | universe/nature/ocean | Exactly the argument above, applied to the rest of the row rather than only the selected one. This is a widening of DEGREE inside a category the boundary already admits, not a new category. |
+| `world_variants.is_selected` | universe/nature/ocean | A boolean the platform sets. The projection already carries `selected_variant_no`, so this crossing adds no fact the read model did not have — it attaches the one it had to the variant it is about. |
+
+It crosses because `variant:read` cannot exist otherwise. That codename has
+been declared and grantable since S4-AUTH-005 with no route behind it, and a
+route cannot be built on a read model that does not hold the data: **principle
+10 forbids an admin read reaching a family service**, which is the whole reason
+this service exists. So the choice was to widen the boundary or retire the
+permission, and the permission's own description says which was intended —
+"variants are read through world:read today. Reserved."
+
+What does NOT cross, and is the reason this widening is narrow:
+`world_variants.config`. It is the scene configuration, it is large, it is
+derived from the DNA that deliberately stays on the other side, and no admin
+screen has a question it answers.
+`TestSnapshotCarriesNoForbiddenField` asserts the word never appears in a
+serialized snapshot. The variant's `thumbnail_url` stays behind too, for a
+duller reason: it points at storage the admin app holds no credentials for, so
+it would render as a broken image rather than as information.
+
+Worlds projected before this shipped carry an empty array rather than a null,
+so a screen reads "no variants recorded" instead of failing a scan. Each is
+refilled by the next `world.changed` that world produces.
+
 Worlds projected before this shipped carry no seed. They stay in the read model
 and stay out of every rarity denominator — the admin screen counts them
 separately as *unmeasured*, because a world whose lottery cannot be replayed is

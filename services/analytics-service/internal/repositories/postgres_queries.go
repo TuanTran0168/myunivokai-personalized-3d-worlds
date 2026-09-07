@@ -639,6 +639,34 @@ func (store *PostgresStore) ListWorlds(ctx context.Context, filter models.WorldL
 	return response, nil
 }
 
+// GetWorldVariants answers one world's variants, and nothing else about it.
+//
+// A query of its own rather than a field on GetWorld, because the permission is
+// its own: `variant:read` is separate from `world:read`, and a gate on a field
+// of a shared response is a gate the gateway cannot apply.
+//
+// A world with no recorded variants is not an error. Every projection written
+// before the snapshot carried them reads as an empty array, and the next
+// world.changed event that world produces refills it.
+func (store *PostgresStore) GetWorldVariants(ctx context.Context, worldID string) (contracts.AnalyticsWorldVariantListResponseData, error) {
+	var family string
+	var variantsJSON []byte
+	if err := store.pool.QueryRow(ctx,
+		`SELECT family, variants FROM world_projections WHERE world_id = $1::uuid`, worldID,
+	).Scan(&family, &variantsJSON); err != nil {
+		return contracts.AnalyticsWorldVariantListResponseData{}, mapWorldLookupError(err)
+	}
+	variants := []contracts.WorldVariantSummary{}
+	if err := json.Unmarshal(variantsJSON, &variants); err != nil {
+		return contracts.AnalyticsWorldVariantListResponseData{}, err
+	}
+	return contracts.AnalyticsWorldVariantListResponseData{
+		WorldID:  worldID,
+		Family:   contracts.WorldFamily(family),
+		Variants: variants,
+	}, nil
+}
+
 // GetWorld answers the world detail page in one round trip: the projection
 // row, and every job that ever touched that world. Both halves travel together
 // because they are read together — splitting them into two queries would let

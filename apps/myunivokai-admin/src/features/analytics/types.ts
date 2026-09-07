@@ -300,6 +300,21 @@ export interface JobListFilters {
 // and the gateway needs the old one to drop the share cache. Both fields are
 // empty/false when the world was already unpublished, which is a no-op rather
 // than an error — a second click must not answer differently from the first.
+// One of a world's variants. Three fields and no fourth: the scene config is
+// deliberately not across the analytics data boundary, and the thumbnail URL
+// points at storage this app has no credentials for.
+export interface WorldVariantSummary {
+  variantNo: number;
+  seed: string;
+  isSelected: boolean;
+}
+
+export interface WorldVariantList {
+  worldId: string;
+  family: WorldFamily;
+  variants: WorldVariantSummary[];
+}
+
 export interface UnpublishResult {
   revokedShareSlug: string;
   wasPublished: boolean;

@@ -16,6 +16,7 @@ import { ColorSwatches } from "./components/ColorSwatches";
 import { JobsTable } from "./components/JobsTable";
 import { TraitBars } from "./components/TraitBars";
 import { UnpublishWorldDialog } from "./components/UnpublishWorldDialog";
+import { WorldVariantsCard } from "./components/WorldVariantsCard";
 import { WorldIdentityCard } from "./components/WorldIdentityCard";
 
 export function WorldDetailPage({ params }: { params: Promise<{ worldId: string }> }) {
@@ -34,8 +35,13 @@ export function WorldDetailPage({ params }: { params: Promise<{ worldId: string 
   // this route subtree dynamic and cost the prefetched loading shell on every
   // navigation. Same pattern as SettingsPage.
   const [canUnpublish, setCanUnpublish] = useState(false);
+  // Read in the same effect: two cookie reads for two permissions on one
+  // render would be two chances to disagree about the same account.
+  const [canReadVariants, setCanReadVariants] = useState(false);
   useEffect(() => {
-    setCanUnpublish(hasPermission(readAccountCookie(), PERMISSIONS.worldUnpublish));
+    const account = readAccountCookie();
+    setCanUnpublish(hasPermission(account, PERMISSIONS.worldUnpublish));
+    setCanReadVariants(hasPermission(account, PERMISSIONS.variantRead));
   }, []);
   const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false);
 
@@ -102,6 +108,11 @@ export function WorldDetailPage({ params }: { params: Promise<{ worldId: string 
       ) : (
         <div className="flex flex-col gap-4">
           <WorldIdentityCard world={world} />
+
+          {/* Rendered only when the permission is held. A card that fetched
+              and 403d would fill the console with a failure nobody can act
+              on. */}
+          {canReadVariants ? <WorldVariantsCard worldId={world.worldId} /> : null}
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <SectionCard title="Trait scores" contentClassName="pb-1">

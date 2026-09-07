@@ -68,6 +68,26 @@ func (handler *AdminAnalyticsHandler) ListWorlds(responseWriter http.ResponseWri
 // is a relay, and analytics-service already has to decide what a valid world
 // id is because it owns the column. Checking here would add a second opinion
 // that can disagree with the first.
+// GetWorldVariants is a separate route from GetWorld because it is a separate
+// permission. `variant:read` has been declared and grantable since S4-AUTH-005
+// with nothing behind it — "variants are read through world:read today.
+// Reserved." — and this is the route it was reserved for.
+//
+// It is one verb on one resource, which is the rule the admin plan's §Roles
+// and permissions states. Folding variants into the world detail would have
+// been fewer lines and would have made the reserved codename permanently
+// pointless: a gate on a field of a shared response is a gate this layer
+// cannot apply.
+func (handler *AdminAnalyticsHandler) GetWorldVariants(responseWriter http.ResponseWriter, request *http.Request) {
+	worldID := chi.URLParam(request, "worldID")
+	response, ok := handler.transport.Request(responseWriter, request, contracts.AnalyticsWorldVariantListQuerySubject,
+		contracts.AnalyticsWorldGetQueryData{WorldID: worldID})
+	if !ok {
+		return
+	}
+	httpx.WriteRawJSON(responseWriter, response.Data.StatusCode, response.Data.Payload)
+}
+
 func (handler *AdminAnalyticsHandler) GetWorld(responseWriter http.ResponseWriter, request *http.Request) {
 	data := contracts.AnalyticsWorldGetQueryData{
 		WorldID: strings.TrimSpace(chi.URLParam(request, "worldID")),
