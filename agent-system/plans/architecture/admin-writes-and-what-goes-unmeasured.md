@@ -22,11 +22,15 @@ gateway has been recording share-page traffic in production **since
 2026-09-04**, and no screen frames it as a business number — so the most
 valuable analytics question here is answered by a query, not by
 instrumentation. The one thing genuinely unmeasured is the browser, and the
-code that would report it shipped yesterday and throws its answer away. Two of
-the five reserved permissions turn out to be traps: `profile:read` and
-`profile:reveal` cannot be built without breaking principle 10 or copying
-`profiles.raw_input` across the analytics boundary, and the honest deliverable
-for those two is the argument, not the route.
+code that would report it shipped yesterday and throws its answer away.
+
+**Corrected after execution: THREE of the five reserved permissions are traps,
+not two.** `profile:read` and `profile:reveal` cannot be built without breaking
+principle 10 or copying `profiles.raw_input` across the analytics boundary (§7).
+And `job:retry`, which this document originally listed as buildable, would help
+nothing: the AI cascade absorbs the transient failures a retry targets, what is
+left fails deterministically, and there are no failed jobs to retry (§14.5b).
+For all three the honest deliverable is the argument, not the route.
 
 ## 2. The question, and what research changed about it
 
@@ -95,9 +99,9 @@ codenames) are checked by a route. `reservedPermissions` are not:
 
 | Codename | Its own description | Verdict (§9) |
 | --- | --- | --- |
-| `world:unpublish` | *"Not enforced yet — no route revokes a share slug. Reserved for that screen."* | **Build** — W5 |
-| `job:retry` | *"Not enforced yet — no route retries a job. Reserved for that action."* | **Build** — W6 |
-| `variant:read` | *"Not enforced yet — variants are read through world:read today. Reserved."* | **Build** — W7 |
+| `world:unpublish` | *"Not enforced yet — no route revokes a share slug. Reserved for that screen."* | **Built** — W5, `08d5240`/`741e1d0` |
+| `job:retry` | *"Not enforced yet — no route retries a job. Reserved for that action."* | ~~Build~~ → **Do not build** — §14.5b, on measurement rather than on a rule |
+| `variant:read` | *"Not enforced yet — variants are read through world:read today. Reserved."* | **Built** — W7, `eb3a350` |
 | `profile:read` | *"Not enforced yet — no route reads profiles. Reserved for that screen."* | **Do not build** — §7 |
 | `profile:reveal` | *"Not enforced yet — no route reveals masked input. Reserved, and audited when it exists."* | **Do not build** — §7 |
 
@@ -548,6 +552,45 @@ the wrong one here: W8 is the only genuinely new measurement in this plan and
 the only item that unblocks something outside it (Sprint 07's `Verified` gate,
 which five other stories are also waiting on). W7 and W6 each finish one more
 reserved permission, which is valuable and is not blocking anything.
+
+### 14.5b W6 is a third trap, on evidence rather than on a rule
+
+**`job:retry` is not built, and the reason is not cost.** It is that the button
+has nothing to press it for, which took measuring rather than reading.
+
+Three facts, each checkable:
+
+1. **The failure class a retry targets is already absorbed upstream.** The AI
+   orchestrator is a cascade — primary, then repair attempts, then a distinct
+   fallback — and the quota is a DOWNGRADE rather than a refusal: over the
+   limit *"produces a world from presets… There is no 429 on this path and no
+   error a caller has to handle."* A transient provider failure therefore
+   produces a world, not a failed job.
+2. **What is left is deterministic.** `orchestrator.go` states it: *"A primary
+   failure with NO distinct fallback stays a failure and returns an error,
+   which is a failed job with no world."* That is a configuration or code
+   problem. Re-running it re-runs the same path and fails the same way, and a
+   staff button that does that is worse than no button — it invites a second
+   click and a third.
+3. **There are no failed jobs.** `job_projections WHERE status='failed'` in the
+   local 16-day history: **zero rows.** Production runs `AI_PROVIDER=mock`, and
+   a mock primary cannot fail transiently, so the class of failure a retry
+   would help does not exist there at all yet.
+
+That third fact is a local sample and is stated as one. What would change this
+conclusion is specific and worth writing down: a real AI provider configured in
+production, **and** a non-zero failed-job count on the admin Jobs screen. Either
+alone is not enough — a real provider whose failures the fallback absorbs still
+produces no failed jobs, and a non-zero count under `mock` is a bug to fix
+rather than a job to retry.
+
+So the reserved list now stands at three, and **all three are items where
+building the route the codename promises would make the platform worse or
+busier without making it better**: `profile:read` and `profile:reveal` by §7's
+rule, `job:retry` by this measurement. That is a different conclusion from the
+one this plan started with — §5.4 costed A5/`job:retry` as "same shape, same
+cost, lower value" than the takedown, which read the value as low rather than
+as absent.
 
 ### 14.6 W8: the envelope carried it unchanged, and the fixtures caught two things reading could not
 

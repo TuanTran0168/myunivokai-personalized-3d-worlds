@@ -54,11 +54,14 @@ func TestSyncPermissionsAndSeedRoles_SeedsBasicUserWithChartReadOnly(t *testing.
 // dropped: SyncPermissions ends in a DELETE of anything undeclared, so a
 // codename can leave this file in two very different ways.
 //
-// Of the four left, `profile:read` and `profile:reveal` cannot be built the
-// way the other two can — profiles.raw_input lives in dna-service, and an
-// admin read reaching it breaks principle 10 while copying it into analytics
-// makes that database a second store of the most sensitive data here. See
-// agent-system/plans/architecture/admin-writes-and-what-goes-unmeasured.md §7.
+// None of the three left should be built as it stands, and each for its own
+// reason. `profile:read` and `profile:reveal` would need an admin read
+// reaching dna-service, which breaks principle 10, or profiles.raw_input
+// copied into analytics, which makes that database a second store of the most
+// sensitive data here (§7). `job:retry` is different: it is buildable and it
+// would help nothing, because the AI cascade absorbs the transient failures a
+// retry targets and there are no failed jobs to retry (§14.5b). See
+// agent-system/plans/architecture/admin-writes-and-what-goes-unmeasured.md.
 func TestReservedPermissionsAreDeclaredDeliberately(t *testing.T) {
 	expected := map[contracts.PermissionCode]bool{
 		contracts.PermissionJobRetry:      true,
