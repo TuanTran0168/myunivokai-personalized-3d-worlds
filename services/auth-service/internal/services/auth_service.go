@@ -367,6 +367,35 @@ func (service *AuthService) bumpAndCacheTokenVersion(ctx context.Context, accoun
 	return nil
 }
 
+// RecordAuditEvent writes one row for an action that happened in another
+// service.
+//
+// Every other row in this table is written by the private `audit` helper below
+// as a side effect of something this service had just done itself. This one is
+// the exception the staff takedown forced: the action happens in a family
+// service, which has no audit table and must not grow one.
+//
+// Unlike `audit` it returns its error instead of logging and swallowing it.
+// That difference is deliberate. A login whose audit row fails must still be a
+// successful login — refusing to sign somebody in because a log write failed
+// would be worse than the missing row. A takedown is the opposite: it is an
+// action taken against somebody else's content on staff authority, and an
+// unrecorded one is exactly what the audit log exists to prevent. The caller
+// decides, and the gateway reports the failure rather than hiding it.
+func (service *AuthService) RecordAuditEvent(ctx context.Context, data contracts.AuditRecordData) error {
+	if err := data.Validate(); err != nil {
+		return err
+	}
+	actorAccountID := data.ActorAccountID
+	return service.store.RecordAuditEvent(ctx, repositories.AuditEvent{
+		ActorAccountID: &actorAccountID,
+		Action:         data.Action,
+		Target:         data.Target,
+		Result:         data.Result,
+		SourceAddress:  data.SourceAddress,
+	})
+}
+
 func (service *AuthService) audit(ctx context.Context, actorAccountID *string, action, target, result, sourceAddress string) {
 	if err := service.store.RecordAuditEvent(ctx, repositories.AuditEvent{
 		ActorAccountID: actorAccountID, Action: action, Target: target, Result: result, SourceAddress: sourceAddress,

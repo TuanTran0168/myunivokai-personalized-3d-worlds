@@ -40,13 +40,26 @@ func TestSyncPermissionsAndSeedRoles_SeedsBasicUserWithChartReadOnly(t *testing.
 // here — adding a codename with no route behind it now means editing this list
 // on purpose, and adding the route means moving it out of reservedPermissions
 // in the same change.
+//
+// Four remain. `world:unpublish` left on 2026-09-07, when
+// POST /api/admin/{family}/worlds/{worldID}/unpublish started checking it —
+// registered per family in admin_router.go and gated by
+// registerAdminWorldRoutes. It is named here rather than merely deleted so the
+// next reader can tell a promise that was kept from one that was quietly
+// dropped: SyncPermissions ends in a DELETE of anything undeclared, so a
+// codename can leave this file in two very different ways.
+//
+// Of the four left, `profile:read` and `profile:reveal` cannot be built the
+// way the other two can — profiles.raw_input lives in dna-service, and an
+// admin read reaching it breaks principle 10 while copying it into analytics
+// makes that database a second store of the most sensitive data here. See
+// agent-system/plans/architecture/admin-writes-and-what-goes-unmeasured.md §7.
 func TestReservedPermissionsAreDeclaredDeliberately(t *testing.T) {
 	expected := map[contracts.PermissionCode]bool{
-		contracts.PermissionWorldUnpublish: true,
-		contracts.PermissionVariantRead:    true,
-		contracts.PermissionJobRetry:       true,
-		contracts.PermissionProfileRead:    true,
-		contracts.PermissionProfileReveal:  true,
+		contracts.PermissionVariantRead:   true,
+		contracts.PermissionJobRetry:      true,
+		contracts.PermissionProfileRead:   true,
+		contracts.PermissionProfileReveal: true,
 	}
 	for _, permission := range reservedPermissions {
 		if !expected[permission.Codename] {

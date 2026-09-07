@@ -1,19 +1,21 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, ListChecks } from "lucide-react";
+import { AlertTriangle, ArrowLeft, EyeOff, ListChecks } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SectionCard } from "@/components/ui/section-card";
 import { AdminApiError } from "@/lib/admin-http";
+import { hasPermission, PERMISSIONS, readAccountCookie } from "@/lib/session";
 import { analyticsApi } from "./api";
 import { ColorSwatches } from "./components/ColorSwatches";
 import { JobsTable } from "./components/JobsTable";
 import { TraitBars } from "./components/TraitBars";
+import { UnpublishWorldDialog } from "./components/UnpublishWorldDialog";
 import { WorldIdentityCard } from "./components/WorldIdentityCard";
 
 export function WorldDetailPage({ params }: { params: Promise<{ worldId: string }> }) {
@@ -27,6 +29,16 @@ export function WorldDetailPage({ params }: { params: Promise<{ worldId: string 
       !(error instanceof AdminApiError && error.status === 404) && failureCount < 2
   });
 
+  // Read in an effect rather than during render, for the reason
+  // (dashboard)/layout.tsx explains: reading cookies() on the server would mark
+  // this route subtree dynamic and cost the prefetched loading shell on every
+  // navigation. Same pattern as SettingsPage.
+  const [canUnpublish, setCanUnpublish] = useState(false);
+  useEffect(() => {
+    setCanUnpublish(hasPermission(readAccountCookie(), PERMISSIONS.worldUnpublish));
+  }, []);
+  const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false);
+
   const detail = worldQuery.data;
   const world = detail?.world;
   const notFound = worldQuery.error instanceof AdminApiError && worldQuery.error.status === 404;
@@ -38,15 +50,37 @@ export function WorldDetailPage({ params }: { params: Promise<{ worldId: string 
         description={world ? `${world.archetype} · ${world.sceneName}` : undefined}
         sources={["Analytics Service"]}
         action={
-          <Link
-            href="/worlds"
+          <div className="flex items-center gap-2">
+            {canUnpublish && world?.isPublished ? (
+              <button
+                type="button"
+                onClick={() => setUnpublishDialogOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 px-3 py-1.5 text-sm text-destructive transition-colors duration-150 hover:border-destructive hover:bg-destructive/10"
+              >
+                <EyeOff className="size-4" />
+                Take down share page
+              </button>
+            ) : null}
+            <Link
+              href="/worlds"
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors duration-150 hover:border-primary/30 hover:bg-accent/50 hover:text-foreground"
           >
-            <ArrowLeft className="size-4" />
-            All worlds
-          </Link>
+              <ArrowLeft className="size-4" />
+              All worlds
+            </Link>
+          </div>
         }
       />
+
+      {world && canUnpublish ? (
+        <UnpublishWorldDialog
+          open={unpublishDialogOpen}
+          onOpenChange={setUnpublishDialogOpen}
+          worldId={world.worldId}
+          family={world.family}
+          nickname={world.nickname}
+        />
+      ) : null}
 
       {notFound ? (
         <EmptyState

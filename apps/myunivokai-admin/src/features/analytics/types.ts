@@ -293,3 +293,14 @@ export interface JobListFilters {
   until?: string;
   search?: string;
 }
+
+// What the gateway answers after a staff takedown.
+//
+// revokedShareSlug is named for what it WAS: the world has no slug afterwards,
+// and the gateway needs the old one to drop the share cache. Both fields are
+// empty/false when the world was already unpublished, which is a no-op rather
+// than an error — a second click must not answer differently from the first.
+export interface UnpublishResult {
+  revokedShareSlug: string;
+  wasPublished: boolean;
+}

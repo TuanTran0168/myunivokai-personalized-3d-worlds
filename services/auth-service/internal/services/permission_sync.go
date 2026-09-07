@@ -18,6 +18,7 @@ import (
 // fails when a route is added without one.
 var enforcedPermissions = []repositories.PermissionDefinition{
 	{Codename: contracts.PermissionWorldRead, Description: "Read world records across families.", Audience: contracts.AccountAudienceAdmin},
+	{Codename: contracts.PermissionWorldUnpublish, Description: "Take a published world's share page down. The world itself is kept; only the public link is revoked, and every use is audited.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionJobRead, Description: "Read generation job records.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionChartRead, Description: "Read business, platform and job-health charts.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionAccountRead, Description: "Read staff account records.", Audience: contracts.AccountAudienceAdmin},
@@ -35,7 +36,13 @@ var enforcedPermissions = []repositories.PermissionDefinition{
 // This list is the correction of a claim this file used to make. The comment
 // here said the set "only grows alongside the route that enforces it", while
 // five codenames had been sitting in it since S4-AUTH-005 with nothing behind
-// them. Two ways out were available and both were worse than saying so. Deleting
+// them.
+//
+// One of the five has now left: `world:unpublish` moved to
+// enforcedPermissions when POST /api/admin/{family}/worlds/{worldID}/unpublish
+// started checking it. That is the direction this list is supposed to shrink
+// in — "building the routes is a feature, not a correction", below — and it is
+// the first time it has. Two ways out were available and both were worse than saying so. Deleting
 // them is not free: SyncPermissions ends in
 // `DELETE FROM permissions WHERE NOT (codename = ANY($1))`, so a codename
 // removed here is removed from production and from every role holding it, on the
@@ -48,7 +55,6 @@ var enforcedPermissions = []repositories.PermissionDefinition{
 // codename added without a route has to be added here on purpose rather than
 // drifting in.
 var reservedPermissions = []repositories.PermissionDefinition{
-	{Codename: contracts.PermissionWorldUnpublish, Description: "Not enforced yet — no route revokes a share slug. Reserved for that screen.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionVariantRead, Description: "Not enforced yet — variants are read through world:read today. Reserved.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionJobRetry, Description: "Not enforced yet — no route retries a job. Reserved for that action.", Audience: contracts.AccountAudienceAdmin},
 	{Codename: contracts.PermissionProfileRead, Description: "Not enforced yet — no route reads profiles. Reserved for that screen.", Audience: contracts.AccountAudienceAdmin},
