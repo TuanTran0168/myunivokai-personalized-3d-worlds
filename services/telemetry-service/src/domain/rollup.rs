@@ -66,6 +66,16 @@ pub struct CacheRollupRow {
     pub misses: i64,
 }
 
+/// One `{tier, family, outcome}` cell of one interval, as a browser reported
+/// it. Carries no identity of any kind — see the migration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRenderRollupRow {
+    pub quality_tier: i16,
+    pub family: String,
+    pub outcome: String,
+    pub count: i64,
+}
+
 /// One flush, ready to be written in one transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RollupBatch {
@@ -79,6 +89,7 @@ pub struct RollupBatch {
     pub error_codes: Vec<ErrorCodeRollupRow>,
     pub nats: Vec<NatsRollupRow>,
     pub cache: Vec<CacheRollupRow>,
+    pub client_render: Vec<ClientRenderRollupRow>,
 }
 
 impl RollupBatch {
@@ -140,6 +151,16 @@ impl RollupBatch {
                     misses: bucket.misses,
                 })
                 .collect(),
+            client_render: data
+                .client_render_buckets
+                .iter()
+                .map(|bucket| ClientRenderRollupRow {
+                    quality_tier: bucket.quality_tier,
+                    family: bucket.family.clone(),
+                    outcome: bucket.outcome.clone(),
+                    count: bucket.count,
+                })
+                .collect(),
         })
     }
 
@@ -147,7 +168,11 @@ impl RollupBatch {
     /// is the number that says whether one gateway is quietly producing far
     /// more series than the cardinality rule allows.
     pub fn row_count(&self) -> usize {
-        self.http.len() + self.error_codes.len() + self.nats.len() + self.cache.len()
+        self.http.len()
+            + self.error_codes.len()
+            + self.nats.len()
+            + self.cache.len()
+            + self.client_render.len()
     }
 }
 
@@ -167,6 +192,7 @@ mod tests {
                 bucket_start: datetime!(2026-08-13 09:14:00 UTC),
                 bucket_duration_ms: 60_000,
                 buckets,
+                client_render_buckets: Vec::new(),
                 nats_backend_buckets: Vec::new(),
                 cache_buckets: vec![CacheBucket {
                     namespace: "world:v1".to_owned(),

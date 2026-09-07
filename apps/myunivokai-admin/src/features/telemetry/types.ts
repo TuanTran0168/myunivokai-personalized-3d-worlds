@@ -44,6 +44,15 @@ export interface TelemetryStatusClassCount {
   requestCount: number;
 }
 
+// One {tier, outcome} row of what browsers reported. The family is not a
+// dimension here: the backend groups it away, because the question is what
+// visitors' devices are capable of rather than which scene they opened.
+export interface TelemetryClientRenderSummary {
+  qualityTier: number;
+  outcome: string;
+  count: number;
+}
+
 export interface TelemetryErrorCodeCount {
   errorCode: string;
   count: number;
@@ -150,6 +159,8 @@ export interface TelemetryOverview extends TelemetrySink {
   comparison?: TelemetryComparison;
   trafficFunnel: TelemetryFunnelStage[];
   errorCodeTop: TelemetryErrorCodeCount[];
+  // The only field on this response the platform did not measure itself.
+  clientRender: TelemetryClientRenderSummary[];
   backends: TelemetryBackendSummary[];
   cache: TelemetryCacheSummary[];
   wakeSignals: TelemetryVolumePoint[];

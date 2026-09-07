@@ -14,6 +14,18 @@ service but NATS.
 
 ## What it consumes and answers
 
+> **Since 2026-09-07 the envelope carries a fourth concern.**
+> `clientRenderBuckets` counts what BROWSERS resolved — a quality tier, a world
+> family and whether the canvas rendered — which is the one question the other
+> three cannot answer: they are all measured at the gateway, so between them
+> they say what the platform did and none of them says what the visitor got.
+> The key space is closed by the contract (3 tiers x families x 2 outcomes), so
+> it needs no overflow bucket, and it carries no identity of any kind by
+> construction rather than by redaction. `POST /api/telemetry/render` on the
+> gateway's product surface is where it arrives, unauthenticated and
+> rate-limited per IP, and the admin's Reliability screen labels the numbers
+> client-reported because a determined caller can inflate them.
+
 | Subject | Direction | Shape |
 | --- | --- | --- |
 | `myunivokai.events.telemetry.http.v1` | in (JetStream, durable `telemetry-events-v1`) | `Envelope<HttpRollupData>` |

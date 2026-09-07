@@ -13,7 +13,16 @@
         "requestCount": 12,
         "durationSumMs": 4820,
         "durationMaxMs": 910,
-        "histogram": [0, 0, 1, 3, 5, 2, 1, 0]
+        "histogram": [
+          0,
+          0,
+          1,
+          3,
+          5,
+          2,
+          1,
+          0
+        ]
       },
       {
         "routePattern": "/api/universe/worlds/{worldID}",
@@ -22,7 +31,16 @@
         "requestCount": 34,
         "durationSumMs": 1190,
         "durationMaxMs": 128,
-        "histogram": [8, 11, 9, 4, 2, 0, 0, 0]
+        "histogram": [
+          8,
+          11,
+          9,
+          4,
+          2,
+          0,
+          0,
+          0
+        ]
       },
       {
         "routePattern": "/api/universe/worlds/{worldID}",
@@ -31,8 +49,19 @@
         "requestCount": 3,
         "durationSumMs": 96,
         "durationMaxMs": 41,
-        "histogram": [0, 1, 1, 1, 0, 0, 0, 0],
-        "errorCodes": { "SERVICE_WAKING": 3 }
+        "histogram": [
+          0,
+          1,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "errorCodes": {
+          "SERVICE_WAKING": 3
+        }
       },
       {
         "routePattern": "/api/admin/telemetry/overview",
@@ -41,7 +70,16 @@
         "requestCount": 5,
         "durationSumMs": 640,
         "durationMaxMs": 210,
-        "histogram": [0, 0, 0, 1, 2, 2, 0, 0]
+        "histogram": [
+          0,
+          0,
+          0,
+          1,
+          2,
+          2,
+          0,
+          0
+        ]
       }
     ],
     "natsBackendBuckets": [
@@ -50,7 +88,16 @@
         "requestCount": 49,
         "durationSumMs": 5210,
         "durationMaxMs": 880,
-        "histogram": [4, 9, 12, 14, 7, 2, 1, 0],
+        "histogram": [
+          4,
+          9,
+          12,
+          14,
+          7,
+          2,
+          1,
+          0
+        ],
         "errorCount": 3
       },
       {
@@ -58,7 +105,16 @@
         "requestCount": 12,
         "durationSumMs": 3600,
         "durationMaxMs": 940,
-        "histogram": [0, 0, 0, 2, 4, 4, 2, 0],
+        "histogram": [
+          0,
+          0,
+          0,
+          2,
+          4,
+          4,
+          2,
+          0
+        ],
         "errorCount": 0
       },
       {
@@ -66,14 +122,49 @@
         "requestCount": 5,
         "durationSumMs": 420,
         "durationMaxMs": 190,
-        "histogram": [0, 0, 1, 2, 2, 0, 0, 0],
+        "histogram": [
+          0,
+          0,
+          1,
+          2,
+          2,
+          0,
+          0,
+          0
+        ],
         "errorCount": 0
       }
     ],
     "cacheBuckets": [
-      { "namespace": "job:v1", "hits": 21, "misses": 6 },
-      { "namespace": "world:v1", "hits": 30, "misses": 4 },
-      { "namespace": "share:v1", "hits": 0, "misses": 2 }
+      {
+        "namespace": "job:v1",
+        "hits": 21,
+        "misses": 6
+      },
+      {
+        "namespace": "world:v1",
+        "hits": 30,
+        "misses": 4
+      },
+      {
+        "namespace": "share:v1",
+        "hits": 0,
+        "misses": 2
+      }
+    ],
+    "clientRenderBuckets": [
+      {
+        "qualityTier": 3,
+        "family": "universe",
+        "outcome": "rendered",
+        "count": 12
+      },
+      {
+        "qualityTier": 1,
+        "family": "ocean",
+        "outcome": "webgl_failed",
+        "count": 2
+      }
     ]
   }
 }

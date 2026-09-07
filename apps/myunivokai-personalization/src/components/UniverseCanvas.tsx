@@ -31,6 +31,12 @@ import { CanvasLoader } from "@/features/scene-renderers/shared/CanvasLoader";
 import { WebGLFailureBoundary } from "@/features/scene-renderers/shared/WebGLFailureBoundary";
 import { useDeviceQualityTier } from "@/features/scene-renderers/shared/useDeviceQualityTier";
 import {
+  clientRenderFamilyForSceneType,
+  reportClientRender,
+  CLIENT_RENDER_OUTCOME_RENDERED,
+  CLIENT_RENDER_OUTCOME_WEBGL_FAILED
+} from "@/features/scene-renderers/shared/reportClientRender";
+import {
   ADAPTIVE_SAMPLE_WINDOW_SECONDS,
   ADAPTIVE_SLOW_WINDOWS_BEFORE_ACTING,
   ADAPTIVE_WARM_UP_SECONDS,
@@ -463,7 +469,19 @@ export function UniverseCanvas({
           inside it would render its message at zero opacity, leaving the
           visitor looking at an empty rectangle. Which is the exact failure
           this exists to end. */}
-      <WebGLFailureBoundary>
+      <WebGLFailureBoundary
+        // The boundary stays free of telemetry and reports through the prop it
+        // already had. It is the canvas that knows the tier and the family, and
+        // a boundary that fetched them itself would be a second copy of the
+        // classification.
+        onFailure={() => {
+          reportClientRender({
+            qualityTier: deviceRenderProfile.tier,
+            family: clientRenderFamilyForSceneType(scene?.sceneType),
+            outcome: CLIENT_RENDER_OUTCOME_WEBGL_FAILED
+          });
+        }}
+      >
         <div
           className={`h-full w-full transition-opacity ease-out ${
             revealWithoutFade ? "duration-0" : "duration-1000"
@@ -537,6 +555,15 @@ export function UniverseCanvas({
                 <SceneReadySignal
                   onSceneReady={() => {
                     setLastReadyCanvasKey(canvasRemountKey);
+                    // Reported here rather than on mount, because a canvas
+                    // that mounted and never reached a frame is exactly the
+                    // case the failure outcome exists to count — sending
+                    // "rendered" on mount would report both as successes.
+                    reportClientRender({
+                      qualityTier: deviceRenderProfile.tier,
+                      family: clientRenderFamilyForSceneType(scene?.sceneType),
+                      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+                    });
                     onSceneReady?.();
                   }}
                 />

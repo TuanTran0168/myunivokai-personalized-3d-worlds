@@ -67,6 +67,7 @@ pub fn charts_are_elsewhere_overview(
         sink: descriptor,
         hours: normalize_telemetry_hours(query.hours),
         generated_at: now,
+        client_render: Vec::new(),
         total_requests: 0,
         error_requests: 0,
         error_rate_percent: 0.0,

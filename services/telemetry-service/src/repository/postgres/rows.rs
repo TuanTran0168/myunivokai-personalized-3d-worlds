@@ -11,8 +11,8 @@ use sqlx::postgres::PgRow;
 use sqlx::Row;
 
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ErrorCodeAggregate, HourOfDayBucket, HttpTotals,
-    LatencySummary, RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    HttpTotals, LatencySummary, RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 
 /// The eight columns `statements::histogram_sum_columns!` produces, in order.
@@ -132,6 +132,14 @@ pub fn cache_aggregate(row: &PgRow) -> Result<CacheAggregate, sqlx::Error> {
         namespace: row.try_get("namespace")?,
         hits: row.try_get("hits")?,
         misses: row.try_get("misses")?,
+    })
+}
+
+pub fn client_render_aggregate(row: &PgRow) -> Result<ClientRenderAggregate, sqlx::Error> {
+    Ok(ClientRenderAggregate {
+        quality_tier: row.try_get("quality_tier")?,
+        outcome: row.try_get("outcome")?,
+        count: row.try_get("count")?,
     })
 }
 

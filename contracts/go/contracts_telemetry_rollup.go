@@ -178,6 +178,10 @@ type HTTPRollupData struct {
 	Buckets            []HTTPRollupBucket  `json:"buckets"`
 	NATSBackendBuckets []NATSBackendBucket `json:"natsBackendBuckets"`
 	CacheBuckets       []CacheBucket       `json:"cacheBuckets"`
+	// ClientRenderBuckets is omitted rather than sent empty: the gateway
+	// collects none until a browser reports one, and every envelope
+	// published before this field existed decodes without it.
+	ClientRenderBuckets []ClientRenderBucket `json:"clientRenderBuckets,omitempty"`
 }
 
 // Validate rejects an envelope that would corrupt a rollup rather than merely
@@ -224,6 +228,19 @@ func (data HTTPRollupData) Validate() error {
 			return fmt.Errorf("cacheBuckets.%d counters must not be negative", bucketIndex)
 		}
 	}
+	for bucketIndex, bucket := range data.ClientRenderBuckets {
+		// Re-validated here even though the gateway validated each report on
+		// arrival. This side is what telemetry-service trusts, and a bucket
+		// key it cannot store is better refused at the envelope than written
+		// as a row nothing queries.
+		report := ClientRenderReportData{QualityTier: bucket.QualityTier, Family: bucket.Family, Outcome: bucket.Outcome}
+		if err := report.Validate(); err != nil {
+			return fmt.Errorf("clientRenderBuckets.%d: %w", bucketIndex, err)
+		}
+		if bucket.Count < 0 {
+			return fmt.Errorf("clientRenderBuckets.%d.count must not be negative", bucketIndex)
+		}
+	}
 	return nil
 }
 
@@ -231,7 +248,8 @@ func (data HTTPRollupData) Validate() error {
 // gateway skips publishing one: an envelope carrying no bucket costs a
 // JetStream write and a consumer wake-up to say nothing.
 func (data HTTPRollupData) IsEmpty() bool {
-	return len(data.Buckets) == 0 && len(data.NATSBackendBuckets) == 0 && len(data.CacheBuckets) == 0
+	return len(data.Buckets) == 0 && len(data.NATSBackendBuckets) == 0 && len(data.CacheBuckets) == 0 &&
+		len(data.ClientRenderBuckets) == 0
 }
 
 // TelemetryRollupMessageID is the identity of one flush, used in three places
@@ -259,6 +277,87 @@ type TelemetryOverviewQueryData struct {
 // templates — rather than by traffic, so there is nothing to paginate.
 type TelemetryRouteListQueryData struct {
 	Hours int `json:"hours,omitempty"`
+}
+
+// ClientRenderBucket counts what BROWSERS resolved, which is the one thing
+// none of the three buckets above can see.
+//
+// Everything else in this envelope is measured at the gateway, so it answers
+// "what did the platform do" and cannot answer "what did the visitor get". A
+// device that classified itself into the minimal tier, rendered at half the
+// resolution and lost its WebGL context produces exactly the same HTTP rollup
+// as a desktop that rendered everything.
+//
+// The key space is deliberately tiny — quality tier x family x outcome — and
+// that is the whole reason this rides the existing envelope instead of a new
+// per-event stream. Three tiers, four families and two outcomes is 24 keys
+// against maximumTrackedRoutePatterns' 400, so it needs no overflow bucket and
+// no cardinality guard.
+//
+// It also carries no identity, by construction rather than by redaction: there
+// is no world id, no account id, no session id, no user-agent string and no
+// timing that could single out one visitor. That is what lets a browser POST
+// straight into it on an unauthenticated route — see ClientRenderReportData.
+type ClientRenderBucket struct {
+	// QualityTier is the tier the DEVICE resolved for itself, not one the
+	// platform assigned. See the frontend's classifyDeviceQualityTier.
+	QualityTier int         `json:"qualityTier"`
+	Family      WorldFamily `json:"family"`
+	// Outcome separates a scene that rendered from one whose WebGL context was
+	// lost or never created. Two counters rather than a boolean per report,
+	// because the question asked of this table is always "how many of each".
+	Outcome string `json:"outcome"`
+	Count   int64  `json:"count"`
+}
+
+// The tiers a browser can report. They mirror the frontend's
+// QUALITY_TIER_MINIMAL / BALANCED / HIGH, and they are validated on arrival
+// because this is the one bucket type filled from outside the platform.
+const (
+	ClientRenderTierMinimal  = 1
+	ClientRenderTierBalanced = 2
+	ClientRenderTierHigh     = 3
+
+	// ClientRenderOutcomeRendered means the scene reached its first frame.
+	ClientRenderOutcomeRendered = "rendered"
+	// ClientRenderOutcomeWebGLFailed means the canvas never got a context, or
+	// lost the one it had. It is the event WebGLFailureBoundary catches and
+	// that nothing has ever counted.
+	ClientRenderOutcomeWebGLFailed = "webgl_failed"
+)
+
+// ClientRenderReportData is what a browser POSTs. One report, not a batch: a
+// visitor's page loads one scene, and accepting an array would let one request
+// move a counter by an arbitrary amount.
+//
+// There is no count field for the same reason. A report IS one, and a caller
+// that could send its own count could move the platform's numbers with a
+// single request instead of a rate-limited many.
+type ClientRenderReportData struct {
+	QualityTier int         `json:"qualityTier"`
+	Family      WorldFamily `json:"family"`
+	Outcome     string      `json:"outcome"`
+}
+
+// Validate is stricter than the other request types in this file because it is
+// the only one whose caller is a browser rather than another service. Every
+// field is a closed set, and anything outside it is refused rather than
+// clamped: a clamped value would enter the platform's own numbers as a fact.
+func (data ClientRenderReportData) Validate() error {
+	switch data.QualityTier {
+	case ClientRenderTierMinimal, ClientRenderTierBalanced, ClientRenderTierHigh:
+	default:
+		return fmt.Errorf("qualityTier must be %d, %d or %d", ClientRenderTierMinimal, ClientRenderTierBalanced, ClientRenderTierHigh)
+	}
+	if !data.Family.Valid() {
+		return errors.New("family is not a supported world family")
+	}
+	switch data.Outcome {
+	case ClientRenderOutcomeRendered, ClientRenderOutcomeWebGLFailed:
+	default:
+		return fmt.Errorf("outcome must be %q or %q", ClientRenderOutcomeRendered, ClientRenderOutcomeWebGLFailed)
+	}
+	return nil
 }
 
 // TelemetrySinkDescriptor is on every telemetry response, not only the ones
@@ -423,11 +522,30 @@ type TelemetryOverviewResponseData struct {
 	// UI must say so. An exact version is a real schema change nobody has
 	// asked for yet.
 	WakeSignals []TelemetryVolumePoint `json:"wakeSignals"`
+	// ClientRender is the only field on this response that is not measured by
+	// the platform. Browsers fill it, so the screen rendering it must say so —
+	// a determined caller can add to these counters, and nothing keyed to real
+	// money or real access may depend on them.
+	ClientRender []TelemetryClientRenderSummary `json:"clientRender"`
 	// OldestBucketStart is what actually exists in the store, which is not
 	// always what was asked for: a service that has been asleep for a week has
 	// no data for most of a 24-hour window, and a chart that does not say so
 	// reads as "no traffic" rather than "no data".
 	OldestBucketStart *time.Time `json:"oldestBucketStart,omitempty"`
+}
+
+// TelemetryClientRenderSummary is one {tier, outcome} row of what browsers
+// reported in the window.
+//
+// Family is not a dimension here even though it is one of the stored row. The
+// question this answers is "what are visitors' devices capable of", which is a
+// property of the devices rather than of the scene they happened to open —
+// splitting a small number four ways would answer a question nobody asked. The
+// rows keep the family, so a later screen can ask.
+type TelemetryClientRenderSummary struct {
+	QualityTier int    `json:"qualityTier"`
+	Outcome     string `json:"outcome"`
+	Count       int64  `json:"count"`
 }
 
 // TelemetryRouteSummary is one row of the per-route table.
@@ -453,8 +571,8 @@ type TelemetryRouteSummary struct {
 	// outside a developer machine has those links. The mechanism was
 	// nonetheless demonstrated crudely while adding this field — six
 	// mistyped-slug probes moved a naive "pages served" count from 4 to 22.
-	SuccessCount     int64   `json:"successCount"`
-	ErrorRatePercent float64 `json:"errorRatePercent"`
+	SuccessCount      int64   `json:"successCount"`
+	ErrorRatePercent  float64 `json:"errorRatePercent"`
 	AverageDurationMS int     `json:"averageDurationMs"`
 	P50DurationMS     int     `json:"p50DurationMs"`
 	P95DurationMS     int     `json:"p95DurationMs"`

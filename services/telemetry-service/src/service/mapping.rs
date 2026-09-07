@@ -21,13 +21,14 @@
 //! [Rust API Guidelines]: https://rust-lang.github.io/api-guidelines/interoperability.html#conversions-use-the-standard-traits-from-asref-asmut-c-conv-traits
 
 use myunivokai_contracts::{
-    TelemetryBackendSummary, TelemetryCacheSummary, TelemetryErrorCodeCount, TelemetryHourBucket,
-    TelemetryRouteSummary, TelemetryStatusClassCount, TelemetryVolumePoint,
+    TelemetryBackendSummary, TelemetryCacheSummary, TelemetryClientRenderSummary,
+    TelemetryErrorCodeCount, TelemetryHourBucket, TelemetryRouteSummary, TelemetryStatusClassCount,
+    TelemetryVolumePoint,
 };
 
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ErrorCodeAggregate, HourOfDayBucket, RouteAggregate,
-    StatusClassCount, VolumeBucket, WakeSignalBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 
 /// Every percentage on every telemetry screen, rounded in exactly one place.
@@ -121,6 +122,16 @@ impl From<CacheAggregate> for TelemetryCacheSummary {
             namespace: namespace.namespace,
             hits: namespace.hits,
             misses: namespace.misses,
+        }
+    }
+}
+
+impl From<ClientRenderAggregate> for TelemetryClientRenderSummary {
+    fn from(aggregate: ClientRenderAggregate) -> Self {
+        Self {
+            quality_tier: aggregate.quality_tier,
+            outcome: aggregate.outcome,
+            count: aggregate.count,
         }
     }
 }

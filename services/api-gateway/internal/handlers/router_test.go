@@ -15,6 +15,7 @@ import (
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/config"
 	"github.com/myunivokai/myunivokai/services/api-gateway/internal/edge"
+	"github.com/myunivokai/myunivokai/services/api-gateway/internal/telemetry"
 )
 
 type fakeBroker struct {
@@ -537,4 +538,57 @@ func validWorldInputJSON() string {
 // is family-agnostic.
 func worldInputJSONWithStyle(style string) string {
 	return `{"nickname":" Nova ","role":"Builder","interests":["AI","music","space"],"traits":["curious","calm","focused"],"goal":"Build a meaningful creative universe","mood":"curious","favoriteColors":["#8B5CF6"],"preferredWorldStyle":"` + style + `"}`
+}
+
+// The route has to be registered ABOVE `/api/{family}`, which is a wildcard
+// matched in registration order — so "telemetry" would be read as a world
+// family and a browser reporting what it rendered would be answered
+// WORLD_FAMILY_NOT_FOUND. That failure is invisible from the frontend, which
+// sends this with sendBeacon and cannot read a response at all.
+func TestTheClientRenderRouteIsNotShadowedByTheFamilyWildcard(t *testing.T) {
+	collector := telemetry.NewCollector()
+	router := NewRouter(testGatewayConfig(), &fakeBroker{}, newFakeEdgeStore(), nil, collector)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/telemetry/render",
+		strings.NewReader(`{"qualityTier":3,"family":"universe","outcome":"rendered"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", response.Code, response.Body.String())
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("a 204 carried a body: %s", response.Body.String())
+	}
+	snapshot := collector.Snapshot("instance", time.Now().UTC(), time.Minute)
+	if len(snapshot.ClientRenderBuckets) != 1 || snapshot.ClientRenderBuckets[0].Count != 1 {
+		t.Fatalf("collector recorded %+v", snapshot.ClientRenderBuckets)
+	}
+}
+
+// A renamed field on the frontend must fail loudly here rather than be
+// accepted as a 204 that counts nothing — a chart quietly going flat is the
+// hardest kind of telemetry bug to notice.
+func TestTheClientRenderRouteRefusesWhatItCannotCount(t *testing.T) {
+	collector := telemetry.NewCollector()
+	router := NewRouter(testGatewayConfig(), &fakeBroker{}, newFakeEdgeStore(), nil, collector)
+
+	for description, payload := range map[string]string{
+		"a tier nobody has":         `{"qualityTier":9,"family":"universe","outcome":"rendered"}`,
+		"a family that ships later": `{"qualityTier":3,"family":"city","outcome":"rendered"}`,
+		"an outcome nobody counts":  `{"qualityTier":3,"family":"ocean","outcome":"slow"}`,
+		"an empty body":             `{}`,
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/telemetry/render", strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", description, response.Code)
+		}
+	}
+	if snapshot := collector.Snapshot("instance", time.Now().UTC(), time.Minute); len(snapshot.ClientRenderBuckets) != 0 {
+		t.Fatalf("a refused report still reached the collector: %+v", snapshot.ClientRenderBuckets)
+	}
 }

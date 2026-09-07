@@ -67,6 +67,21 @@ pub struct RouteAggregate {
     pub latency: LatencySummary,
 }
 
+/// What the browsers in a window resolved, one row per `{tier, outcome}`.
+///
+/// Family is deliberately NOT a dimension of the aggregate even though it is
+/// one of the stored row. The question this answers is "what are visitors'
+/// devices capable of", and that is a property of the devices rather than of
+/// the scene they happened to open — splitting it by family would divide one
+/// small number into four smaller ones and answer a question nobody asked.
+/// The rows are still stored per family, so a later screen can ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRenderAggregate {
+    pub quality_tier: i16,
+    pub outcome: String,
+    pub count: i64,
+}
+
 /// One backend service's round-trip summary. This is the question end-to-end
 /// response time cannot answer: `/api/{family}/worlds` reaches universe or
 /// nature depending on the family, and both wear the same route template.

@@ -77,6 +77,7 @@ impl TelemetryService {
             .await?;
         let backends = self.repository.backend_aggregates(since).await?;
         let cache = self.repository.cache_aggregates(since).await?;
+        let client_render = self.repository.client_render_aggregates(since).await?;
         let wake_signals = self.repository.wake_signals(since).await?;
         let oldest_bucket_start = self.repository.oldest_bucket_start().await?;
 
@@ -120,6 +121,7 @@ impl TelemetryService {
             error_code_top: error_codes.into_iter().map(Into::into).collect(),
             backends: backends.into_iter().map(Into::into).collect(),
             cache: cache.into_iter().map(Into::into).collect(),
+            client_render: client_render.into_iter().map(Into::into).collect(),
             wake_signals: wake_signals.into_iter().map(Into::into).collect(),
             oldest_bucket_start,
         })
@@ -682,6 +684,7 @@ mod tests {
             // Only a handful of requests touched a backend. This is the shape
             // that broke the old funnel.
             &[backend_bucket("universe", 12, 400, 60, 1)],
+            &[],
             &[],
         );
         service.ingest(&envelope).await.expect("ingest");

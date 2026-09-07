@@ -581,6 +581,38 @@ notice for a month.** Corrected 2026-09-07.
    is the condition phase 9 was written to wait for rather than the phase
    number.
 
+## Added after this plan: what the browser reported
+
+**2026-09-07.** A fourth bucket array on the same envelope,
+`clientRenderBuckets`, and a fifth table. It is recorded here rather than as a
+new plan because it changes nothing this document decided — the sink switch, the
+minute bucket, the JetStream publish, the inbox idempotency and the retention
+sweep all carried it unchanged, which is the strongest evidence available that
+those decisions were the right shape.
+
+The reasoning is in
+[`admin-writes-and-what-goes-unmeasured.md`](../architecture/admin-writes-and-what-goes-unmeasured.md)
+§9.1. The short version: every table in §Data model is measured at the gateway,
+so between them they answer "what did the platform do" and none of them answers
+"what did the visitor get" — a phone that resolved the minimal tier, rendered at
+half resolution and lost its WebGL context produces exactly the same HTTP rollup
+as a desktop that rendered everything. Sprint 07 shipped the classification that
+knows the difference and threw it away after the first frame.
+
+It rides this envelope instead of a new per-event stream because the client's
+answer is **categorical and bounded**: three tiers x the world families x two
+outcomes is a couple of dozen keys against `maximumTrackedRoutePatterns`' 400.
+And it needs no data boundary at all, for the reason §What-shipped notes about
+this schema generally: there is nothing in the row that identifies anybody.
+
+The one property that is genuinely new is that a caller outside the platform
+fills it. Four things keep that safe and none of them is trust — closed sets
+validated on arrival and refused rather than clamped, no count field (one
+request is one render), a key space no caller can widen, and the product
+surface's own per-IP token bucket. What remains possible is inflation, so the
+screen says the numbers are client-reported and nothing keyed to money or
+access reads them.
+
 ## What shipped, and what this plan got wrong
 
 Written 2026-09-07, while surveying what was left to build in admin and

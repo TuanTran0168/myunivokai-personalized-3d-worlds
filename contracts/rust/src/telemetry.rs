@@ -100,6 +100,38 @@ pub struct CacheBucket {
     pub misses: i64,
 }
 
+/// Counts what BROWSERS resolved. Mirrors Go's `ClientRenderBucket`.
+///
+/// Every other bucket in this envelope is measured at the gateway and so
+/// answers "what did the platform do"; none of them can answer "what did the
+/// visitor get". The key space is quality tier x family x outcome — 24
+/// combinations — which is why it rides this envelope rather than a per-event
+/// stream, and it carries no identity of any kind by construction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientRenderBucket {
+    pub quality_tier: i16,
+    pub family: String,
+    pub outcome: String,
+    pub count: i64,
+}
+
+/// The tiers and outcomes a browser may report. Duplicated from
+/// `contracts/go` and asserted against the shared fixture, like the histogram
+/// edges above: a value outside these sets is refused rather than clamped,
+/// because a clamped one would enter the platform's own numbers as a fact.
+pub const CLIENT_RENDER_TIER_MINIMAL: i16 = 1;
+pub const CLIENT_RENDER_TIER_BALANCED: i16 = 2;
+pub const CLIENT_RENDER_TIER_HIGH: i16 = 3;
+pub const CLIENT_RENDER_OUTCOME_RENDERED: &str = "rendered";
+pub const CLIENT_RENDER_OUTCOME_WEBGL_FAILED: &str = "webgl_failed";
+
+/// The world families a client report may name. This crate deliberately does
+/// not mirror all of `contracts/go`'s world types — telemetry-service stores a
+/// family as a string and never reasons about one — so the closed set lives
+/// here, next to the only thing that checks it.
+pub const CLIENT_RENDER_FAMILIES: [&str; 3] = ["universe", "nature", "ocean"];
+
 /// One flush: everything one gateway instance observed in one interval.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +146,10 @@ pub struct HttpRollupData {
     pub nats_backend_buckets: Vec<NatsBackendBucket>,
     #[serde(default)]
     pub cache_buckets: Vec<CacheBucket>,
+    /// Absent on every envelope published before this field existed, which is
+    /// why it defaults rather than being required.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub client_render_buckets: Vec<ClientRenderBucket>,
 }
 
 /// The name `telemetry-service-plan.md` uses for the whole message. It is an
@@ -170,6 +206,34 @@ impl HttpRollupData {
                 ));
             }
         }
+        for (index, bucket) in self.client_render_buckets.iter().enumerate() {
+            if !matches!(
+                bucket.quality_tier,
+                CLIENT_RENDER_TIER_MINIMAL | CLIENT_RENDER_TIER_BALANCED | CLIENT_RENDER_TIER_HIGH
+            ) {
+                return Err(format!(
+                    "clientRenderBuckets.{index}.qualityTier must be 1, 2 or 3"
+                ));
+            }
+            if !CLIENT_RENDER_FAMILIES.contains(&bucket.family.as_str()) {
+                return Err(format!(
+                    "clientRenderBuckets.{index}.family is not a supported world family"
+                ));
+            }
+            if !matches!(
+                bucket.outcome.as_str(),
+                CLIENT_RENDER_OUTCOME_RENDERED | CLIENT_RENDER_OUTCOME_WEBGL_FAILED
+            ) {
+                return Err(format!(
+                    "clientRenderBuckets.{index}.outcome must be \"rendered\" or \"webgl_failed\""
+                ));
+            }
+            if bucket.count < 0 {
+                return Err(format!(
+                    "clientRenderBuckets.{index}.count must not be negative"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -177,6 +241,7 @@ impl HttpRollupData {
         self.buckets.is_empty()
             && self.nats_backend_buckets.is_empty()
             && self.cache_buckets.is_empty()
+            && self.client_render_buckets.is_empty()
     }
 }
 
@@ -356,12 +421,23 @@ pub struct TelemetryOverviewResponseData {
     pub backends: Vec<TelemetryBackendSummary>,
     pub cache: Vec<TelemetryCacheSummary>,
     pub wake_signals: Vec<TelemetryVolumePoint>,
+    /// The only field here browsers fill. See Go's `ClientRender`.
+    #[serde(default)]
+    pub client_render: Vec<TelemetryClientRenderSummary>,
     #[serde(
         default,
         with = "time::serde::rfc3339::option",
         skip_serializing_if = "Option::is_none"
     )]
     pub oldest_bucket_start: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelemetryClientRenderSummary {
+    pub quality_tier: i16,
+    pub outcome: String,
+    pub count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -623,9 +699,22 @@ mod tests {
             buckets: Vec::new(),
             nats_backend_buckets: Vec::new(),
             cache_buckets: Vec::new(),
+            client_render_buckets: Vec::new(),
         };
         assert!(data.validate().is_ok());
         assert!(data.is_empty());
+
+        // A browser report alone makes an interval worth publishing. Without
+        // this the flusher would drop an envelope whose only content is the
+        // one thing measured nowhere else.
+        data.client_render_buckets.push(ClientRenderBucket {
+            quality_tier: CLIENT_RENDER_TIER_HIGH,
+            family: "universe".to_owned(),
+            outcome: CLIENT_RENDER_OUTCOME_RENDERED.to_owned(),
+            count: 1,
+        });
+        assert!(!data.is_empty());
+        data.client_render_buckets.clear();
 
         data.instance_id = "  ".to_owned();
         assert!(data.validate().is_err());

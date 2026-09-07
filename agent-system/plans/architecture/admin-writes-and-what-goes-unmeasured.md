@@ -499,3 +499,102 @@ three copies, so adding a family meant knowing to look. There is now one
 `families.ts`, the chart config is derived from it, and the next family is one
 entry. Three stale descriptions that enumerated "universe and nature" were
 corrected to name no families at all — enumerating them is how they went stale.
+
+### 14.4 W5 cost three things §9 did not list, and one guard refused it outright
+
+**The audit log had no inbound write path.** Every row in that table was
+written by auth-service as a side effect of something it had just done itself,
+so `RecordAuditEvent` had no caller outside its own package and no subject.
+§5.4 costed the takedown as "a new command subject, a consumer in each family
+service, an audit row" — the audit row is a whole new auth-service query
+subject, `myunivokai.queries.auth.audit.record.v1`, and nothing in the survey
+knew that.
+
+It also needed a second kind of transport call. `RPCTransport.Request` writes
+every failure straight to the caller's `http.ResponseWriter`, which is correct
+for the call a caller is waiting on and wrong for a follow-up it never asked
+for: a failed audit write must not turn a completed takedown into a 502.
+
+**The `Store` ratchet refused the method, and refusing was right.**
+`TestTheStoreGainsNoMethodWithoutClassifyingIt` reflects over the interface and
+fails on any method not filed into one of five ownership categories.
+`UnpublishWorld` fits none: it mutates a world, runs no ownership check,
+assigns no ownership, and is not a read. `worldMutations` would have demanded a
+check it must not have; `nonMutatingStoreMethods` would have been a lie.
+
+So there is a sixth category — `staffMutationsBypassingOwnership` — and it is
+not an exemption list. A method joins it only with a test proving both halves:
+that somebody else's world comes down anyway, and that an unnamed actor is
+refused. That is a better outcome than the survey asked for, and the guard is
+what produced it.
+
+**Two status codes were wrong until they were measured.** A takedown with no
+named actor answered 500 `INTERNAL_ERROR` — "the platform is broken, try
+later" for a request that can never succeed as sent. And the contract's
+`Validate()` and the store's typed error described the same condition with
+different statuses. Both are now 400 `STAFF_ACCOUNT_REQUIRED`. Neither would
+have been found by reading the code; both came from calling the subject.
+
+**G4 was right and is now verified rather than argued.** The takedown emits
+`world.changed`, and in the local stack the projection went to
+`is_published=f, published_at=NULL` within seconds. Without it the admin list
+would keep showing a published world whose share page 404s.
+
+### 14.5 §12's sequencing, revised after W5
+
+W8 is taken next, ahead of W7 and W6. §12 ordered them by cost — W7 is a read
+and cheaper — which is the right tie-breaker between two comparable items and
+the wrong one here: W8 is the only genuinely new measurement in this plan and
+the only item that unblocks something outside it (Sprint 07's `Verified` gate,
+which five other stories are also waiting on). W7 and W6 each finish one more
+reserved permission, which is valuable and is not blocking anything.
+
+### 14.6 W8: the envelope carried it unchanged, and the fixtures caught two things reading could not
+
+§9.1 argued that a fourth bucket array on the existing envelope would cost "one
+contract field, one table, one query section" because the flush ticker, the
+JetStream publish, the inbox idempotency and the retention sweep already exist.
+That held: **not one of those five was modified.** The `TELEMETRY_SINK` switch,
+the minute bucket and the wake integration carried it too. For a design decided
+in August against a requirement invented in September, that is the strongest
+evidence available that the shape was right.
+
+Three things the argument did not anticipate, all found by running rather than
+reading:
+
+- **`is_empty()` on the Rust mirror did not count the new field**, so an
+  envelope whose only content was a browser report would have been judged empty
+  and dropped by the flusher — the one thing measured nowhere else, silently
+  discarded. Caught by an assertion I added to an existing test while fixing
+  its constructor, not by review.
+- **There is a second fixture with a round-trip assertion.**
+  `the_overview_response_fixture_decodes_into_the_mirror` re-encodes the Rust
+  mirror and compares it to the document it decoded, so a field added to the
+  response and not to the fixture fails. Go's decoder tolerates the missing
+  field and its suite passed; only the stricter side noticed. The Go suite now
+  asserts the field too, so the two languages fail together rather than one
+  covering for the other.
+- **`/api/{family}` would have claimed the route.** chi matches in registration
+  order and the family wildcard is registered last, so `POST
+  /api/telemetry/render` had to go above it or "telemetry" would have been read
+  as a world family and answered `WORLD_FAMILY_NOT_FOUND`. That failure is
+  invisible from the frontend, which sends this with `sendBeacon` and cannot
+  read a response at all — so there is a test whose only job is to prove the
+  route is not shadowed.
+
+And one thing that is a wire-contract hazard rather than a bug: **a scene's
+type is not its family.** The nature family renders scenes whose `sceneType` is
+`"forest"`. A reporter that passed the scene type through would have filed
+every nature render under a family the gateway refuses, as a 400 nobody can
+see. The translation is a named function with its own test.
+
+**Verified end to end on the local stack**, not asserted: seven identical
+reports folded into one row with `count: 7`; a tier-1 `webgl_failed` and a
+tier-2 `rendered` stored separately; three malformed reports answered 400 and
+left no row at all; and the overview query returned the three rows grouped by
+tier and outcome with the family grouped away, as designed.
+
+What this does NOT do is close Sprint 07's `Verified` gate on its own. It
+replaces a one-off device test with a number that keeps arriving — but the
+number only arrives from production, so the gate closes when `main` has it and
+real visitors have loaded a scene.
