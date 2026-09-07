@@ -164,6 +164,10 @@ export interface TelemetryRouteSummary {
   method: string;
   requestCount: number;
   errorCount: number;
+  // The 2xx count. NOT requestCount - errorCount: errorCount is the 5xx class
+  // alone, so a route's 4xx traffic appears in neither and has to be read as
+  // the remainder. On the share route that remainder is most of the traffic.
+  successCount: number;
   errorRatePercent: number;
   averageDurationMs: number;
   p50DurationMs: number;

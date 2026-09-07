@@ -142,6 +142,7 @@ pub fn route_aggregate(row: &PgRow) -> Result<RouteAggregate, sqlx::Error> {
         method: row.try_get("method")?,
         requests,
         server_errors: row.try_get("error_count")?,
+        successes: row.try_get("success_count")?,
         latency: latency(row, requests)?,
     })
 }

@@ -371,6 +371,11 @@ pub struct TelemetryRouteSummary {
     pub method: String,
     pub request_count: i64,
     pub error_count: i64,
+    /// The 2xx count. Mirrors Go's `SuccessCount`, and exists for the reason
+    /// stated there: `request_count - error_count` is not the number of
+    /// successful responses, because `error_count` is the 5xx class alone and
+    /// a route's 4xx traffic appears in neither.
+    pub success_count: i64,
     pub error_rate_percent: f64,
     pub average_duration_ms: i64,
     pub p50_duration_ms: i64,

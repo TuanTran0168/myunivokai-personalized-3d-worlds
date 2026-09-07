@@ -28,7 +28,21 @@ use crate::domain::{
 use crate::error::{Error, Result};
 
 const SERVER_ERROR_STATUS_CLASS: i16 = 5;
+const SUCCESS_STATUS_CLASS: i16 = 2;
 const WAKE_SIGNAL_ERROR_CODE: &str = "SERVICE_WAKING";
+
+/// What one route accumulates while `route_aggregates` walks the buckets.
+///
+/// A struct rather than a `(Counters, i64, i64)` tuple: the two counts are the
+/// same type and mean opposite things, so positional access is one transposed
+/// field away from a route that reports its 404s as successes — and the test
+/// that would catch it is the one this file exists to make unnecessary.
+#[derive(Default)]
+struct RouteTally {
+    counters: Counters,
+    server_errors: i64,
+    successes: i64,
+}
 
 /// `date_trunc('hour', ... AT TIME ZONE 'UTC')`, in Rust.
 ///
@@ -450,35 +464,37 @@ impl RollupRepository for InMemoryRollupRepository {
     async fn route_aggregates(&self, since: OffsetDateTime) -> Result<Vec<RouteAggregate>> {
         self.take_failure()?;
         let state = self.state.lock().expect("repository lock");
-        let mut grouped: BTreeMap<(String, String), (Counters, i64)> = BTreeMap::new();
+        let mut grouped: BTreeMap<(String, String), RouteTally> = BTreeMap::new();
         for ((bucket_start, route_pattern, method, status_class), counters) in &state.http {
             if *bucket_start < since {
                 continue;
             }
-            let entry = grouped
+            let tally = grouped
                 .entry((route_pattern.clone(), method.clone()))
-                .or_insert((Counters::default(), 0));
-            entry.0.accumulate(
+                .or_default();
+            tally.counters.accumulate(
                 counters.count,
                 counters.sum_ms,
                 counters.max_ms,
                 counters.histogram,
             );
             if *status_class >= SERVER_ERROR_STATUS_CLASS {
-                entry.1 += counters.count;
+                tally.server_errors += counters.count;
+            }
+            if *status_class == SUCCESS_STATUS_CLASS {
+                tally.successes += counters.count;
             }
         }
         let mut aggregates: Vec<RouteAggregate> = grouped
             .into_iter()
-            .map(
-                |((route_pattern, method), (counters, server_errors))| RouteAggregate {
-                    route_pattern,
-                    method,
-                    requests: counters.count,
-                    server_errors,
-                    latency: counters.summary(),
-                },
-            )
+            .map(|((route_pattern, method), tally)| RouteAggregate {
+                route_pattern,
+                method,
+                requests: tally.counters.count,
+                server_errors: tally.server_errors,
+                successes: tally.successes,
+                latency: tally.counters.summary(),
+            })
             .collect();
         aggregates.sort_by(|left, right| {
             right

@@ -49,7 +49,7 @@ export function JobsPage() {
     <div>
       <PageHeader
         title="Jobs"
-        description="Generation jobs across dna, universe and nature — what failed, why, and how long it took."
+        description="Generation jobs across dna and every world family — what failed, why, and how long it took."
         sources={["Analytics Service"]}
       />
 

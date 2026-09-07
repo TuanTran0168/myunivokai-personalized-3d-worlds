@@ -2,7 +2,7 @@
 // computed by analytics-service in SQL and relayed unchanged by the gateway —
 // this app renders numbers, it never derives them.
 
-export type WorldFamily = "universe" | "nature";
+export type WorldFamily = "universe" | "nature" | "ocean";
 export type JobStatus = "queued" | "processing" | "completed" | "failed";
 
 // Kept in step with contracts.AnalyticsDefaultPageSize / MaximumPageSize.

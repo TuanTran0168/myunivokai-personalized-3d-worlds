@@ -237,6 +237,7 @@ SELECT
     method,
     COALESCE(SUM(request_count), 0)::BIGINT AS request_count,
     COALESCE(SUM(request_count) FILTER (WHERE status_class >= $2), 0)::BIGINT AS error_count,
+    COALESCE(SUM(request_count) FILTER (WHERE status_class = $3), 0)::BIGINT AS success_count,
     COALESCE(SUM(duration_sum_ms), 0)::BIGINT AS duration_sum_ms,
     COALESCE(MAX(duration_max_ms), 0)::BIGINT AS duration_max_ms,",
     histogram_sum_columns!(),
@@ -380,5 +381,21 @@ mod tests {
                 "{table} is never pruned and grows without bound"
             );
         }
+    }
+
+    // The two status-class filters on the route table are a `>=` and an `=`,
+    // and swapping either comparison is the kind of edit that still returns
+    // plausible numbers. `>= error class` counts 5xx and anything above it;
+    // `= success class` counts 2xx exactly, so a 3xx redirect is neither an
+    // error nor a success, which is correct and is why neither filter can
+    // become a range that closes the gap.
+    #[test]
+    fn the_route_table_counts_errors_upward_and_successes_exactly() {
+        assert!(
+            SELECT_ROUTES.contains("FILTER (WHERE status_class >= $2), 0)::BIGINT AS error_count")
+        );
+        assert!(
+            SELECT_ROUTES.contains("FILTER (WHERE status_class = $3), 0)::BIGINT AS success_count")
+        );
     }
 }

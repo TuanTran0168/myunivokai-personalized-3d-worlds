@@ -432,11 +432,29 @@ type TelemetryOverviewResponseData struct {
 
 // TelemetryRouteSummary is one row of the per-route table.
 type TelemetryRouteSummary struct {
-	RoutePattern      string  `json:"routePattern"`
-	Method            string  `json:"method"`
-	RequestCount      int64   `json:"requestCount"`
-	ErrorCount        int64   `json:"errorCount"`
-	ErrorRatePercent  float64 `json:"errorRatePercent"`
+	RoutePattern string `json:"routePattern"`
+	Method       string `json:"method"`
+	RequestCount int64  `json:"requestCount"`
+	ErrorCount   int64  `json:"errorCount"`
+	// SuccessCount is the 2xx count, and it exists because RequestCount minus
+	// ErrorCount is NOT it. ErrorCount is the 5xx class only — 4xx is the
+	// client's problem and is deliberately kept out of the error rate — so a
+	// route's 4xx traffic is invisible in this row without this field.
+	//
+	// The route this matters most on is the share page, and the reason is
+	// structural rather than statistical: it is the only unauthenticated route
+	// reached by a URL a stranger types or a crawler follows, so it is where
+	// 404s actually come from — mistyped slugs, unpublished worlds, deleted
+	// worlds, bots. On any route that receives them, RequestCount is not a
+	// count of anybody having been shown anything.
+	//
+	// How large that gap is in production is UNMEASURED, not small: 16 days of
+	// local history holds 7 share requests and all 7 succeeded, because nobody
+	// outside a developer machine has those links. The mechanism was
+	// nonetheless demonstrated crudely while adding this field — six
+	// mistyped-slug probes moved a naive "pages served" count from 4 to 22.
+	SuccessCount     int64   `json:"successCount"`
+	ErrorRatePercent float64 `json:"errorRatePercent"`
 	AverageDurationMS int     `json:"averageDurationMs"`
 	P50DurationMS     int     `json:"p50DurationMs"`
 	P95DurationMS     int     `json:"p95DurationMs"`

@@ -13,11 +13,6 @@ export const ACTIVITY_CHART_CONFIG: ChartConfig = {
   failedJobCount: { label: "Failed jobs", color: "var(--chart-5)" }
 };
 
-export const FAMILY_CHART_CONFIG: ChartConfig = {
-  universe: { label: "Universe", color: "var(--chart-2)" },
-  nature: { label: "Nature", color: "var(--chart-3)" }
-};
-
 export const DISTRIBUTION_CHART_CONFIG: ChartConfig = {
   count: { label: "Worlds", color: "var(--chart-1)" }
 };

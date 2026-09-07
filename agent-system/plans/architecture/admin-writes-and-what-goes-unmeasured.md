@@ -410,3 +410,92 @@ blocks, and it blocks only W9/W10, which this plan already declines to build.
 | W6 | Medium | A retry that re-runs AI work costs money and must respect the quota that already exists |
 | W7 | Small | A boundary widening is a contract change in Go, a projection column, a migration, and a line in the allow list — four places, and the allow-list line is the one that gets forgotten |
 | W8 | Largest overall | The Rust mirror and the shared fixture are hand-maintained; both languages decode the same file, so a field added on one side and not the other fails a test rather than drifting — which is the design working, but it is four files before any behaviour changes |
+
+---
+
+## 14. What executing it found — 2026-09-07
+
+### 14.1 W3: the pipeline is verified against a real database. Production is not.
+
+Run with the procedure in `services/telemetry-service/README.md` §Verifying the
+whole pipeline locally, against the local stack, which was already up with
+`TELEMETRY_ENABLED=true`. All four invariants that README names hold:
+
+| Invariant | Result |
+| --- | --- |
+| `route_pattern` is chi's template, never the id | 58 distinct (pattern, method, status class) rows; not one contains a UUID |
+| Unmatched URLs collapse to one row | a single `unmatched` row, 24 requests, 4xx |
+| All three concerns arrive in one envelope | `nats_rollups` has 7 services; `cache_rollups` has all three namespaces, `share:v1` among them |
+| One inbox row per flush | 3,592 rows spanning 2026-08-22 → 2026-09-07 |
+
+So the SQL runs, the schema matches it, and two instances' counters accumulate
+rather than overwrite. **A3 is closed for the pipeline and remains open for the
+deployment**, which is not a distinction that can be closed from a developer
+machine: it needs an admin login to production or Render log access, both
+owner-held.
+
+One gap was closable and was closed. `statements.rs` asserts on the **text** of
+its SQL and CI provides no database service at all, so a column renamed in the
+migration and not in the statements would pass every test and fail at runtime.
+Cross-checking every identifier in the SQL against the migration: 74
+identifiers, 66 resolve to a table, column or keyword directly, and all 8
+remaining are output aliases (`hour_of_day`, `oldest_bucket_start`,
+`histogram_1..8`), a SQL function (`array_agg`), a derived-table column
+(`pair.position`) or words from assertion-message strings. **No drift.**
+
+### 14.2 W4 could not be built from the shipped queries — and the statistic I first justified it with was my own contamination
+
+`TelemetryRouteSummary` carried `requestCount` and `errorCount`, and
+`errorCount` is the **5xx class alone** — 4xx is deliberately excluded from
+every error rate on these screens, which is correct and means a route's 4xx
+traffic appeared in **neither** field. So `requestCount` is not a count of
+anybody having been shown anything, and `requestCount - errorCount` is not
+either.
+
+**The first version of this section, and of four source comments, said "72% of
+share requests are 404s, so a naive count overstates by 3.6x". That number was
+an artefact of my own testing and is withdrawn.** Querying the same table with
+today excluded: **7 share requests in 16 days, all 7 of them 2xx.** Every
+single 404 in that data was a probe I made myself, in this session, while
+checking that the route appeared in the rollups at all. I then read my own
+probes back as a finding about user behaviour.
+
+The correction does not weaken the change, and it is worth being precise about
+why. The justification is **structural, not statistical**: the share page is
+the platform's only unauthenticated route reached by a URL a stranger types or
+a crawler follows, so it is the one route where 404s arrive from outside — a
+mistyped slug, an unpublished world, a deleted one, a bot. On any route that
+receives them, `requestCount` overstates how many callers were served, and the
+overstatement is invisible in the response until it happens.
+
+What the local data actually supports is narrower and should be stated as such:
+**the production miss rate is unmeasured, not low.** A developer stack sees no
+public share traffic because nobody outside has the links. The only thing my
+probes demonstrated is the mechanism, crudely — six mistyped slugs moved a
+naive "pages served" count from 4 to 22 in the live response.
+
+So §9's "zero instrumentation" estimate for W4 was wrong on cost too. It took a
+contract field (`successCount`, in Go **and** the hand-maintained Rust mirror
+**and** the admin mirror), one `FILTER` clause in `SELECT_ROUTES`, a decode, an
+in-memory equivalent, and a mapping — plus two tests, one of which asserts that
+`successCount` is *not* derivable from the other two counts, because that is
+exactly the shortcut the next reader will try.
+
+### 14.3 The three-copy defect this branch was about, in the admin app
+
+`FAMILY_OPTIONS` was declared **verbatim in three page files** and
+`FAMILY_CHART_CONFIG` held a fourth copy of the same labels. **Ocean shipped to
+production in Sprint 6 and was missing from all four**, and from
+`WorldFamily` itself, which read `"universe" | "nature"`.
+
+The consequence was not a crash — the analytics database has no family `CHECK`
+constraint, so ocean worlds project normally and appear in the admin tables.
+The consequence was that they could not be *filtered for* on any of the three
+screens with a family picker, and the type asserted they could not exist.
+
+This is the same shape as the backend duplication the previous branch removed,
+found in the app rather than in the services: nothing pointed at the other
+three copies, so adding a family meant knowing to look. There is now one
+`families.ts`, the chart config is derived from it, and the next family is one
+entry. Three stale descriptions that enumerated "universe and nature" were
+corrected to name no families at all — enumerating them is how they went stale.

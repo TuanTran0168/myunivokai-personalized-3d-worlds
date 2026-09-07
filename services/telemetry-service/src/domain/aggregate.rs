@@ -60,6 +60,10 @@ pub struct RouteAggregate {
     pub method: String,
     pub requests: i64,
     pub server_errors: i64,
+    /// Responses in the 2xx class. Counted separately from `requests` and
+    /// `server_errors` rather than derived from them: the two do not span the
+    /// row, because 4xx belongs to neither.
+    pub successes: i64,
     pub latency: LatencySummary,
 }
 

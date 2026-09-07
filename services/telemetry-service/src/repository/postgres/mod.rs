@@ -29,6 +29,14 @@ use crate::error::Result;
 /// the comment explaining it, instead of being repeated in four query strings.
 const SERVER_ERROR_STATUS_CLASS: i16 = 5;
 
+/// The class a successful response falls in, bound for the same reason as
+/// `SERVER_ERROR_STATUS_CLASS` above.
+///
+/// It is a separate count rather than `requests - errors`, because those two do
+/// not span the row: a 4xx is neither, so on any route that receives one the
+/// difference overstates how many callers were actually served.
+const SUCCESS_STATUS_CLASS: i16 = 2;
+
 /// The gateway's own code for "the service is starting up".
 const WAKE_SIGNAL_ERROR_CODE: &str = "SERVICE_WAKING";
 
@@ -268,6 +276,7 @@ impl RollupRepository for PostgresRollupRepository {
         let fetched = sqlx::query(statements::SELECT_ROUTES)
             .bind(since)
             .bind(SERVER_ERROR_STATUS_CLASS)
+            .bind(SUCCESS_STATUS_CLASS)
             .fetch_all(&self.pool)
             .await?;
         Ok(fetched
