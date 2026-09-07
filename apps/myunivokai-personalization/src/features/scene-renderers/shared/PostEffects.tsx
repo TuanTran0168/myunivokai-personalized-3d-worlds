@@ -15,6 +15,7 @@ import { BlendFunction } from "postprocessing";
 import { Vector2 } from "three";
 import type { ScenePostFXConfig, ScenePostFXGradeConfig } from "@/lib/types";
 import { sceneGradeForTheme, type SceneGrade } from "@/lib/scene";
+import type { PostProcessingProfile } from "./deviceQualityTier";
 import {
   composerMultisamplingFor,
   shouldComputeAmbientOcclusionAtHalfResolution
@@ -85,9 +86,27 @@ type PostEffectsProps = {
   theme?: string;
   /** Forest family opts in to ground-contact ambient occlusion. */
   ambientOcclusion?: boolean;
+  /**
+   * Which passes this device's tier can afford. Absent means the top tier,
+   * which is every pass — the same default the canvas had before tiering
+   * existed, so a caller that does not know about tiers is unaffected.
+   */
+  postProcessingProfile?: PostProcessingProfile;
 };
 
-export function PostEffects({ postFX, theme, ambientOcclusion = false }: PostEffectsProps) {
+const EVERY_PASS: PostProcessingProfile = {
+  ambientOcclusion: true,
+  bloom: true,
+  lensAndGrain: true,
+  vignette: true
+};
+
+export function PostEffects({
+  postFX,
+  theme,
+  ambientOcclusion = false,
+  postProcessingProfile = EVERY_PASS
+}: PostEffectsProps) {
   const bloomIntensity = postFX?.bloomIntensity ?? DEFAULT_BLOOM_INTENSITY;
   const grade = resolveSceneGrade(postFX?.grade, theme);
   // The RENDERER's ratio, not the display's. Reading the display's was tried,
@@ -104,7 +123,7 @@ export function PostEffects({ postFX, theme, ambientOcclusion = false }: PostEff
   // (EffectComposer's children type rejects a literal null child). AO goes
   // first, so it darkens the lit color before bloom/grade read it.
   const effects = [
-    ambientOcclusion ? (
+    ambientOcclusion && postProcessingProfile.ambientOcclusion ? (
       <N8AO
         key="n8ao"
         aoRadius={FOREST_AO_RADIUS}
@@ -113,28 +132,36 @@ export function PostEffects({ postFX, theme, ambientOcclusion = false }: PostEff
         halfRes={shouldComputeAmbientOcclusionAtHalfResolution(pixelRatio)}
       />
     ) : null,
-    <Bloom
-      key="bloom"
-      intensity={bloomIntensity}
-      luminanceThreshold={BLOOM_LUMINANCE_THRESHOLD}
-      luminanceSmoothing={BLOOM_LUMINANCE_SMOOTHING}
-      mipmapBlur
-    />,
+    postProcessingProfile.bloom ? (
+      <Bloom
+        key="bloom"
+        intensity={bloomIntensity}
+        luminanceThreshold={BLOOM_LUMINANCE_THRESHOLD}
+        luminanceSmoothing={BLOOM_LUMINANCE_SMOOTHING}
+        mipmapBlur
+      />
+    ) : null,
     <HueSaturation key="hue-saturation" hue={grade.hueRadians} saturation={grade.saturation} />,
     <BrightnessContrast key="brightness-contrast" brightness={grade.brightness} contrast={grade.contrast} />,
-    <ChromaticAberration
-      key="chromatic-aberration"
-      offset={CHROMATIC_ABERRATION_OFFSET}
-      radialModulation
-      modulationOffset={CHROMATIC_ABERRATION_MODULATION_OFFSET}
-    />,
-    <Vignette
-      key="vignette"
-      eskil={false}
-      offset={VIGNETTE_OFFSET}
-      darkness={VIGNETTE_DARKNESS}
-    />,
-    <Noise key="noise" premultiply opacity={FILM_GRAIN_OPACITY} blendFunction={BlendFunction.SOFT_LIGHT} />
+    postProcessingProfile.lensAndGrain ? (
+      <ChromaticAberration
+        key="chromatic-aberration"
+        offset={CHROMATIC_ABERRATION_OFFSET}
+        radialModulation
+        modulationOffset={CHROMATIC_ABERRATION_MODULATION_OFFSET}
+      />
+    ) : null,
+    postProcessingProfile.vignette ? (
+      <Vignette
+        key="vignette"
+        eskil={false}
+        offset={VIGNETTE_OFFSET}
+        darkness={VIGNETTE_DARKNESS}
+      />
+    ) : null,
+    postProcessingProfile.lensAndGrain ? (
+      <Noise key="noise" premultiply opacity={FILM_GRAIN_OPACITY} blendFunction={BlendFunction.SOFT_LIGHT} />
+    ) : null
     // React 19 removed the global JSX namespace; it lives under React now.
   ].filter((effect): effect is React.JSX.Element => effect !== null);
 
