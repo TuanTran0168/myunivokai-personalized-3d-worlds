@@ -28,6 +28,8 @@ import {
   CAMERA_SETTLE_DURATION_SECONDS
 } from "@/features/scene-renderers/shared/cameraIntro";
 import { CanvasLoader } from "@/features/scene-renderers/shared/CanvasLoader";
+import { WebGLFailureBoundary } from "@/features/scene-renderers/shared/WebGLFailureBoundary";
+import { useDeviceQualityTier } from "@/features/scene-renderers/shared/useDeviceQualityTier";
 import {
   ADAPTIVE_SAMPLE_WINDOW_SECONDS,
   ADAPTIVE_SLOW_WINDOWS_BEFORE_ACTING,
@@ -65,13 +67,18 @@ const FOREST_MAXIMUM_POLAR_ANGLE_RADIANS = Math.PI * 0.492;
 // windSpeedFromSeed's own band in OceanRenderer.tsx.
 const OCEAN_FALLBACK_WIND_SPEED_METRES_PER_SECOND = 13;
 // Render at native device resolution (the old 1.8 cap under-sampled every
-// HiDPI display — a uniform blur). Quality-first scope: weak devices are
-// explicitly out of scope for now.
+// HiDPI display — a uniform blur).
 //
 // This is the CEILING, not a fixed setting. AdaptiveResolution below starts
 // here and only ever steps back from it when frames are actually being missed,
 // so a strong machine renders every pixel its display has and a 4K panel gets
 // whatever the GPU can hold sixty frames at.
+//
+// Updated by S7-FE-ADAPTIVE-001: this line used to end "weak devices are
+// explicitly out of scope for now", and they no longer are. The value here is
+// the TOP tier's ceiling and remains exactly what it was; a device classified
+// below that tier starts lower. See shared/deviceQualityTier.ts, whose test
+// asserts the top tier still equals this pair.
 const CANVAS_DEVICE_PIXEL_RATIO_RANGE: [number, number] = [1, 3];
 
 /**
@@ -275,7 +282,7 @@ export function UniverseCanvas({
   selectedPlanetKey,
   onSelectPlanet,
   preserveDrawingBuffer = false,
-  devicePixelRatioRange = CANVAS_DEVICE_PIXEL_RATIO_RANGE,
+  devicePixelRatioRange,
   enableKeyboardMove = true,
   enableAmbientSound = false,
   entryMotion = "cinematic",
@@ -283,6 +290,14 @@ export function UniverseCanvas({
   revealWithoutFade = false,
   onSceneReady
 }: UniverseCanvasProps) {
+  // Classified once per mount, before the first frame, because shadows and the
+  // postprocessing chain are decided when the canvas is created and cannot be
+  // walked back by a frame-rate reading the way the pixel ratio can.
+  const deviceRenderProfile = useDeviceQualityTier();
+  // An explicit range from a caller still wins. The share page and the create
+  // preview both pass one, and a device tier is not entitled to overrule a
+  // decision the calling screen made about its own layout.
+  const activeDevicePixelRatioRange = devicePixelRatioRange ?? deviceRenderProfile.devicePixelRatioRange;
   const ambientSoundscape = useAmbientSoundscape(scene, enableAmbientSound);
   const [hoveredPlanet, setHoveredPlanet] = useState<PlanetSceneConfig | null>(null);
   const planetPositionTrackerReference = useRef<Map<string, Vector3>>(new Map());
@@ -442,95 +457,109 @@ export function UniverseCanvas({
       className={`relative h-full min-h-[320px] overflow-hidden ${className ?? ""}`}
       style={{ backgroundColor, cursor: hoveredPlanet ? "pointer" : "grab" }}
     >
-      <div
-        className={`h-full w-full transition-opacity ease-out ${
-          revealWithoutFade ? "duration-0" : "duration-1000"
-        } ${isCanvasVisible ? "opacity-100" : "opacity-0"}`}
-      >
-        <Canvas
-          key={canvasRemountKey}
-          camera={{ position: cameraPosition, fov: cameraFieldOfView }}
-          // The forest (sun through the canopy) and the ocean (a single key
-          // light through water) both cast real shadows; universe scenes are
-          // emissive-lit and have no ground to receive one, so they skip the
-          // pass. The ocean was missing from this list for its whole life, which
-          // made every castShadow/receiveShadow in its rig inert — and a seabed
-          // with no contact shadow is why its boulders read as flat blobs
-          // sitting ON a plane rather than resting IN sediment.
-          shadows={isForestFamilyScene || isOceanFamilyScene ? "soft" : false}
-          dpr={devicePixelRatioRange}
-          // AgX rolls hot highlights off more gracefully than the default ACES
-          // (no neon clipping on lit planets); sky layers opt out via
-          // toneMapped={false} and are unaffected.
-          //
-          // The ocean is the exception, and it is not a preference. That family's
-          // whole grade was designed and proven against three.js's own ACES at a
-          // per-depth `toneMappingExposure` — the adaptation curve IS the
-          // exposure — so it needs the curve the design was measured with, not a
-          // second one applied on top of it.
-          gl={{
-            preserveDrawingBuffer,
-            powerPreference: "high-performance",
-            toneMapping: isOceanFamilyScene ? ACESFilmicToneMapping : AgXToneMapping,
-          }}
-          onCreated={disableShaderErrorCheckingInProduction}
-          onPointerMissed={() => onSelectPlanet?.(null)}
+      {/* OUTSIDE the fade wrapper, and the placement is the whole point.
+          The wrapper below holds opacity-0 until the scene signals ready, and
+          a canvas that failed never signals anything — so a boundary nested
+          inside it would render its message at zero opacity, leaving the
+          visitor looking at an empty rectangle. Which is the exact failure
+          this exists to end. */}
+      <WebGLFailureBoundary>
+        <div
+          className={`h-full w-full transition-opacity ease-out ${
+            revealWithoutFade ? "duration-0" : "duration-1000"
+          } ${isCanvasVisible ? "opacity-100" : "opacity-0"}`}
         >
-          <color attach="background" args={[backgroundColor]} />
-          <PlanetPositionTrackerContext.Provider value={planetPositionTrackerReference.current}>
-          <TerrainHeightSamplerContext.Provider value={terrainHeightSamplerReference.current}>
-            <Suspense fallback={<CanvasLoader />}>
-              <SceneRenderer
-                scene={scene ?? {}}
-                seed={seed}
-                selectedPlanetKey={selectedPlanetKey ?? null}
-                hoveredPlanetKey={hoveredPlanetKey}
-                onHoverPlanet={setHoveredPlanet}
-                onSelectPlanet={onSelectPlanet}
-              />
-              {/* The ocean renders STRAIGHT TO THE CANVAS, with no composer.
-                  Not a tuning choice — a correctness one. EffectComposer sets
-                  gl.toneMapping = NoToneMapping on mount and expects a
-                  <ToneMapping> effect in the chain, which this one has never
-                  had. So for the ocean's whole life its tone curve was a
-                  passthrough, `toneMappingExposure` was read by nothing, and
-                  every linear value above 1 clipped flat to white — the cause
-                  of every washed-out ocean frame reported so far.
-                  Bypassing the chain restores the renderer's own ACES, makes
-                  the per-depth exposure live again, and removes the need for
-                  the hand-injected curve that stood in for it. */}
-              {isOceanFamilyScene ? null : (
-                <PostEffects
-                  postFX={scene?.postFX}
-                  theme={scene?.theme}
-                  ambientOcclusion={isForestFamilyScene}
+          <Canvas
+            key={canvasRemountKey}
+            camera={{ position: cameraPosition, fov: cameraFieldOfView }}
+            // The forest (sun through the canopy) and the ocean (a single key
+            // light through water) both cast real shadows; universe scenes are
+            // emissive-lit and have no ground to receive one, so they skip the
+            // pass. The ocean was missing from this list for its whole life, which
+            // made every castShadow/receiveShadow in its rig inert — and a seabed
+            // with no contact shadow is why its boulders read as flat blobs
+            // sitting ON a plane rather than resting IN sediment.
+            // The tier gates this, the family chooses it. A device that cannot
+            // afford shadow mapping is not asked; one that can gets exactly the
+            // behaviour it had before tiering existed.
+            shadows={
+              deviceRenderProfile.allowsShadows && (isForestFamilyScene || isOceanFamilyScene) ? "soft" : false
+            }
+            dpr={activeDevicePixelRatioRange}
+            // AgX rolls hot highlights off more gracefully than the default ACES
+            // (no neon clipping on lit planets); sky layers opt out via
+            // toneMapped={false} and are unaffected.
+            //
+            // The ocean is the exception, and it is not a preference. That family's
+            // whole grade was designed and proven against three.js's own ACES at a
+            // per-depth `toneMappingExposure` — the adaptation curve IS the
+            // exposure — so it needs the curve the design was measured with, not a
+            // second one applied on top of it.
+            gl={{
+              preserveDrawingBuffer,
+              powerPreference: "high-performance",
+              toneMapping: isOceanFamilyScene ? ACESFilmicToneMapping : AgXToneMapping,
+            }}
+            onCreated={disableShaderErrorCheckingInProduction}
+            onPointerMissed={() => onSelectPlanet?.(null)}
+          >
+            <color attach="background" args={[backgroundColor]} />
+            <PlanetPositionTrackerContext.Provider value={planetPositionTrackerReference.current}>
+            <TerrainHeightSamplerContext.Provider value={terrainHeightSamplerReference.current}>
+              <Suspense fallback={<CanvasLoader />}>
+                <SceneRenderer
+                  scene={scene ?? {}}
+                  seed={seed}
+                  selectedPlanetKey={selectedPlanetKey ?? null}
+                  hoveredPlanetKey={hoveredPlanetKey}
+                  onHoverPlanet={setHoveredPlanet}
+                  onSelectPlanet={onSelectPlanet}
                 />
-              )}
-              <SceneReadySignal
-                onSceneReady={() => {
-                  setLastReadyCanvasKey(canvasRemountKey);
-                  onSceneReady?.();
-                }}
+                {/* The ocean renders STRAIGHT TO THE CANVAS, with no composer.
+                    Not a tuning choice — a correctness one. EffectComposer sets
+                    gl.toneMapping = NoToneMapping on mount and expects a
+                    <ToneMapping> effect in the chain, which this one has never
+                    had. So for the ocean's whole life its tone curve was a
+                    passthrough, `toneMappingExposure` was read by nothing, and
+                    every linear value above 1 clipped flat to white — the cause
+                    of every washed-out ocean frame reported so far.
+                    Bypassing the chain restores the renderer's own ACES, makes
+                    the per-depth exposure live again, and removes the need for
+                    the hand-injected curve that stood in for it. */}
+                {isOceanFamilyScene ? null : (
+                  <PostEffects
+                    postFX={scene?.postFX}
+                    theme={scene?.theme}
+                    ambientOcclusion={isForestFamilyScene}
+                    postProcessingProfile={deviceRenderProfile.postProcessing}
+                  />
+                )}
+                <SceneReadySignal
+                  onSceneReady={() => {
+                    setLastReadyCanvasKey(canvasRemountKey);
+                    onSceneReady?.();
+                  }}
+                />
+              </Suspense>
+              <AdaptiveResolution isSceneReady={isSceneReady} />
+              <CameraRig
+                selectedPlanetKey={selectedPlanetKey ?? null}
+                minimumDistance={isForestFamilyScene ? FOREST_MINIMUM_CAMERA_DISTANCE : undefined}
+                maximumDistance={isForestFamilyScene ? FOREST_MAXIMUM_CAMERA_DISTANCE : undefined}
+                maximumPolarAngleRadians={isForestFamilyScene ? FOREST_MAXIMUM_POLAR_ANGLE_RADIANS : undefined}
+                maximumCameraHeightMetres={oceanCameraCeiling ?? undefined}
+                minimumCameraHeightMetres={oceanCameraFloor ?? undefined}
+                keyboardMoveEnabled={enableKeyboardMove}
+                restingTarget={oceanCameraFraming?.target}
+                introDurationSeconds={introDurationSeconds}
+                introPhase={introPhase}
+                introPoseSeed={seed}
               />
-            </Suspense>
-            <AdaptiveResolution isSceneReady={isSceneReady} />
-            <CameraRig
-              selectedPlanetKey={selectedPlanetKey ?? null}
-              minimumDistance={isForestFamilyScene ? FOREST_MINIMUM_CAMERA_DISTANCE : undefined}
-              maximumDistance={isForestFamilyScene ? FOREST_MAXIMUM_CAMERA_DISTANCE : undefined}
-              maximumPolarAngleRadians={isForestFamilyScene ? FOREST_MAXIMUM_POLAR_ANGLE_RADIANS : undefined}
-              maximumCameraHeightMetres={oceanCameraCeiling ?? undefined}
-              minimumCameraHeightMetres={oceanCameraFloor ?? undefined}
-              keyboardMoveEnabled={enableKeyboardMove}
-              restingTarget={oceanCameraFraming?.target}
-              introDurationSeconds={introDurationSeconds}
-              introPhase={introPhase}
-              introPoseSeed={seed}
-            />
-          </TerrainHeightSamplerContext.Provider>
-          </PlanetPositionTrackerContext.Provider>
-        </Canvas>
-      </div>
+            </TerrainHeightSamplerContext.Provider>
+            </PlanetPositionTrackerContext.Provider>
+          </Canvas>
+        </div>
+      </WebGLFailureBoundary>
       {/* The hold before the scene arrives. Deliberately NOT a spinner: a pair
           of counter-spinning rings used to sit here, and it said nothing about
           the world being built behind it — a generic wait widget in front of a

@@ -474,7 +474,9 @@ difference.
 
 ### S7-FE-ADAPTIVE-001 — Adaptive quality tiers, pulled forward ahead of City
 
-Status: Planned
+Status: Implemented (branch `feat/fe/adaptive-quality-tiers`) — read
+"What implementing it found" at the end of this story before the task list, because
+two of the tasks were completed by NOT doing what they say.
 Priority: P1
 
 As a visitor on a mobile or weak device,
@@ -524,16 +526,22 @@ Source evidence:
   library researched for this sprint
 
 Tasks:
-- [ ] Add `detect-gpu`; classify GPU tier once at canvas mount, with distinct
-      mobile/desktop thresholds.
-- [ ] Define per-tier render profiles (DPR range, shadow map size,
-      postprocessing set, LOD distances); promote today's fixed settings to
-      the tier-3/desktop profile unchanged.
-- [ ] Wire `<PerformanceMonitor>` for continuous runtime step-down/step-up.
-- [ ] Add the WebGL context-lost/compile-failure boundary named as missing in
-      `frontend-plan.md` gap #4.
-- [ ] Verify: capture tier-3/desktop output before and after; confirm no
-      visual regression on any of the three shipped families.
+- [x] ~~Add `detect-gpu`~~; classify GPU tier once at canvas mount, with distinct
+      mobile/desktop thresholds. **`detect-gpu` was NOT added** — it fetches its
+      benchmarks from unpkg and this app's CSP blocks that. See §1 below.
+- [x] Define per-tier render profiles (DPR range, shadow map size,
+      postprocessing set, ~~LOD distances~~); promote today's fixed settings to
+      the tier-3/desktop profile unchanged. **LOD distances are deliberately
+      not tiered** — this sprint's own measurement says they would buy nothing.
+      See §2 below.
+- [x] ~~Wire `<PerformanceMonitor>`~~ — already done by the owner pass above,
+      and deliberately NOT with `PerformanceMonitor`, whose factor saturates.
+      `AdaptiveResolution` in `UniverseCanvas.tsx` is the runtime half.
+- [x] Add the WebGL context-lost/compile-failure boundary named as missing in
+      `frontend-plan.md` gap #4. `shared/WebGLFailureBoundary.tsx`.
+- [x] Verify: capture tier-3/desktop output before and after; confirm no
+      visual regression on any of the three shipped families. Done, and the
+      method had to be rebuilt twice — §4 below.
 
 Owner pass (2026-08-29): the runtime half, driven by a measurement
 
@@ -668,3 +676,93 @@ reset, the per-family tone-mapping/shadow config, and the genie reveal's
 still-matches-live-frame guarantee onto imperative effects instead — a real
 piece of work, not attempted here, and not something to start unreviewed under
 a "the swipe feels laggy" report.
+
+---
+
+#### What implementing it found (2026-09-05)
+
+Four things, and the first two mean a task was completed by not doing what it
+says.
+
+**§1. `detect-gpu` could not be used, and the blocker did not exist when this
+story was written.** It is already in `node_modules` as a `@react-three/drei`
+transitive dependency, so adding it looked free. But `getGPUTier()` fetches its
+benchmark data from `https://unpkg.com/detect-gpu@5.0.70/dist/benchmarks` at
+call time, and this app's CSP — shipped in **Sprint 08**, a week after this
+story — is `connect-src 'self' <gateway origin> blob:`. The fetch is blocked,
+and a classifier that cannot reach its data classifies nothing.
+
+Self-hosting the benchmarks is the documented workaround and it is
+self-defeating here: **713 KB across 16 JSON files**, downloaded at canvas
+mount, by exactly the mobile devices on exactly the connections this story
+exists to help. Paying most of a megabyte to find out that a phone is a phone
+is worse than the problem.
+
+So `shared/deviceQualityTier.ts` classifies from signals the browser gives for
+free: coarse pointer, `hardwareConcurrency`, `deviceMemory`, WebGL2 support,
+`MAX_TEXTURE_SIZE`, and the unmasked renderer string. Measured cost of reading
+them: **4–7 ms**, once per mount.
+
+**§2. LOD distances are in this story's task list and are measurably useless
+here.** The owner pass above already established that frame time scales with
+pixel count while draw calls hold at 83 and triangles at 4.1 million across a
+tenfold resolution range — *"LOD distances and instancing — the obvious levers —
+would have bought nothing."* A per-tier LOD distance would therefore be a knob
+that does not turn, and a future reader would tune it looking for frames it
+cannot produce. The file says so at the point where the knob is absent, so the
+next person disagrees with an argument rather than with silence.
+
+**§3. The visual-baseline suite runs on SwiftShader, and that collided with the
+classifier.** `playwright.config.ts` launches Chromium with
+`--use-angle=swiftshader` deliberately. The classifier reads software
+rasterisers as the weakest tier — correctly, since the repo has measured those
+scenes at ~1.5 fps under it — which would have made **every baseline image
+start measuring a profile no visitor is served**, silently.
+
+The guard is `navigator.webdriver`: under automation the renderer string is
+excused and nothing else is. It is the same act the harness already performs
+with `--force-device-scale-factor=1` — pinning a variable so that two runs
+differ only by the code between them — and it cannot be reached by a page or a
+URL, so no visitor can trip it. Probed values from that browser:
+`webdriver: true`, 32 cores, `MAX_TEXTURE_SIZE: 8192`, `hasWebGL2: true`,
+renderer `SwiftShader Device (Subzero)` → classifies **tier 3**, which is
+today's profile.
+
+**§4. The verification method was wrong twice, and both times it looked like a
+regression in the code.** This is the part worth keeping.
+
+The obvious check — capture the eleven baseline scenes before and after, compare
+bytes — reported **10 of 11 changed**. It was measuring nothing:
+
+1. **Two runs of identical, unmodified code also differ in every byte.** So byte
+   equality is not an instrument here, exactly as `playwright.config.ts` warns
+   ("a pixel assertion would be worse than nothing").
+2. Switching to per-channel mean and standard deviation, `landing` moved 13.0
+   against a 0.6 noise floor — a 20x excursion that read as bloom being lost.
+   The first hypothesis, a cold shader cache on the first run, was **wrong**:
+   re-running warm left it at 13.7.
+3. The real answer: **`landing` is BIMODAL.** Two runs of the *same* code
+   differ by **13.9**, while two others differ by 0.6. A single sample per side
+   cannot distinguish a code change from which mode a capture landed in.
+4. And then a genuine process failure of mine: `git stash pop` reported *"The
+   stash entry is kept"* — it had conflicted on the screenshot PNGs and did not
+   restore the two wiring files. So the "after" set I had been comparing was
+   **unwired code**. Re-applied, re-shot, re-measured.
+
+Final result, two runs per side on wired code, comparing each scene's
+same-code spread against the closest cross-version match:
+
+| scene | same-code spread | best cross-version match | verdict |
+| --- | --- | --- | --- |
+| forest-world | 22.474 | 0.009 | within noise |
+| universe-world | 1.212 | 0.149 | within noise |
+| ocean-abyss | 1.081 | 0.273 | within noise |
+| landing | 0.605 | 0.055 | within noise |
+
+No scene produced a state the unchanged code did not also produce.
+
+**The finding that outlives this story: `forest-world` has a same-code spread of
+22.5, wider than `landing`'s.** Two scenes in this harness are bimodal and
+nobody had characterised that, so **any single-sample before/after comparison of
+these images is unreliable** — including every previous "compared by eye" check
+in this sprint. Take two captures per side, and compare the closest pair.
