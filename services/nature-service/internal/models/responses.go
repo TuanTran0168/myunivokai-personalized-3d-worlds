@@ -33,6 +33,27 @@ type PublishResponse struct {
 	ShareURL  string `json:"shareUrl"`
 }
 
+// WorldUnpublish is what the store reports after revoking a share slug.
+//
+// RevokedShareSlug is named for what it WAS, because a field called
+// `shareSlug` on the response to an unpublish reads as the slug the world has
+// — and the world has none. It is empty when the world was already
+// unpublished, which is not an error: the second click of a button must not
+// answer differently from the first.
+type WorldUnpublish struct {
+	RevokedShareSlug string `json:"revokedShareSlug"`
+	WasPublished     bool   `json:"wasPublished"`
+}
+
+// UnpublishResponse is the transport shape of the above. It is a distinct type
+// from WorldUnpublish for the same reason PublishResponse is distinct from
+// models.World: the store reports a fact, and the response is what the admin
+// screen is told.
+type UnpublishResponse struct {
+	RevokedShareSlug string `json:"revokedShareSlug"`
+	WasPublished     bool   `json:"wasPublished"`
+}
+
 type PublicWorldResponse struct {
 	World     PublicWorld   `json:"world"`
 	Variant   PublicVariant `json:"variant"`

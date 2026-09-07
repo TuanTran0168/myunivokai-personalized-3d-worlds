@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/models"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 )
 
 type MemoryStore struct {
@@ -192,6 +192,35 @@ func (s *MemoryStore) PublishWorld(ctx context.Context, worldID, slug string, re
 		return models.World{}, err
 	}
 	return s.worlds[worldID], nil
+}
+
+// UnpublishWorld mirrors PostgresStore.UnpublishWorld so a test written
+// against either store proves the same behaviour — including that it emits a
+// world change and that a second call is a no-op.
+func (s *MemoryStore) UnpublishWorld(ctx context.Context, worldID, staffAccountID string) (models.WorldUnpublish, error) {
+	if staffAccountID == "" {
+		return models.WorldUnpublish{}, ErrStaffAccountRequired
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	world, ok := s.worlds[worldID]
+	if !ok || s.isDeleted(worldID) {
+		return models.WorldUnpublish{}, ErrNotFound
+	}
+	if world.ShareSlug == nil {
+		return models.WorldUnpublish{}, nil
+	}
+	revokedSlug := *world.ShareSlug
+	delete(s.slugs, revokedSlug)
+	world.ShareSlug = nil
+	world.Visibility = "private"
+	world.UpdatedAt = time.Now().UTC()
+	s.worlds[worldID] = world
+	delete(s.publishedAt, worldID)
+	if err := s.recordWorldChange(worldID); err != nil {
+		return models.WorldUnpublish{}, err
+	}
+	return models.WorldUnpublish{RevokedShareSlug: revokedSlug, WasPublished: true}, nil
 }
 
 // recordWorldChange mirrors the Postgres path's bump-load-emit sequence so a

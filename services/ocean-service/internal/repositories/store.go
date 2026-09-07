@@ -15,6 +15,13 @@ var ErrNotFound = errors.New("not found")
 // share slug). Callers retry with fresh values instead of surfacing a 500.
 var ErrConflict = errors.New("conflict")
 
+// ErrStaffAccountRequired guards the one mutation whose caller identity is
+// mandatory rather than optional. It is a distinct error and not a reuse of
+// ErrNotWorldOwner: the caller is not the wrong person, the request never said
+// who was asking, and a takedown with no recorded actor must not happen at
+// all. See contracts.UnpublishWorldData.
+var ErrStaffAccountRequired = errors.New("staff account is required")
+
 type WorldBundle struct {
 	World    models.World
 	Variants []models.WorldVariant
@@ -43,6 +50,16 @@ type Store interface {
 	AddVariant(ctx context.Context, worldID string, variant models.WorldVariant, requestingAccountID *string) (models.WorldVariant, error)
 	SelectVariant(ctx context.Context, worldID, variantID string, requestingAccountID *string) (models.WorldVariant, error)
 	PublishWorld(ctx context.Context, worldID, slug string, requestingAccountID *string) (models.World, error)
+	// UnpublishWorld revokes the share slug and returns the one it revoked —
+	// not the world's resulting state, which has none. The gateway drops the
+	// share cache by slug and cannot derive it from a world id, so a response
+	// reporting the new state would leave the taken-down page served from
+	// Redis for a whole SHARE_CACHE_TTL while the screen said it was down.
+	//
+	// It takes a staff account id rather than an optional requesting account,
+	// for the reason contracts.UnpublishWorldData spells out: a nil account
+	// authorises every unowned world, which is all of them today.
+	UnpublishWorld(ctx context.Context, worldID, staffAccountID string) (models.WorldUnpublish, error)
 	// DeleteWorld sets the flag and returns the share slug the world had, so
 	// the gateway can drop a cache entry keyed by a slug only this service can
 	// map a world id to. Owner-only, unlike the three above.

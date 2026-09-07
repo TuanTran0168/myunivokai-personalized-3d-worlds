@@ -10,9 +10,9 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
@@ -39,6 +39,7 @@ type WorldService interface {
 	RegenerateVariant(context.Context, string, *string) (models.VariantResponse, error)
 	SelectVariant(context.Context, string, string, *string) (models.VariantResponse, error)
 	PublishWorld(context.Context, string, *string) (models.PublishResponse, error)
+	UnpublishWorld(context.Context, string, string) (models.UnpublishResponse, error)
 	DeleteWorld(context.Context, string, *string) (models.DeleteResponse, error)
 	ClaimWorlds(context.Context, contracts.Envelope[contracts.WorldClaimData]) error
 	GetPublicWorld(context.Context, string) (models.PublicWorldResponse, error)
@@ -170,6 +171,21 @@ func (handler *NATSHandler) HandleWorldPublishQuery(message *nats.Msg) {
 	}
 	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.PublishResponse, error) {
 		return handler.worldService.PublishWorld(ctx, envelope.Data.WorldID, envelope.Data.RequestingAccountID)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
+func (handler *NATSHandler) HandleWorldUnpublishQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.UnpublishWorldData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	if err := envelope.Data.Validate(); err != nil {
+		handler.respondWithResult(message, envelope.JobID, http.StatusOK, models.UnpublishResponse{}, err)
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.UnpublishResponse, error) {
+		return handler.worldService.UnpublishWorld(ctx, envelope.Data.WorldID, envelope.Data.StaffAccountID)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }

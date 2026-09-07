@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/repositories"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
 )
 
 // The share URL this service prints is the ONE value a visitor copies out of

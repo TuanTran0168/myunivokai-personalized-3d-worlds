@@ -10,11 +10,11 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/db"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/messaging"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/services"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/db"
 	"github.com/rs/zerolog/log"
 )
 
