@@ -108,20 +108,36 @@ type cacheBucketValue struct {
 	misses int64
 }
 
+// clientRenderBucketKey is the {tier, family, outcome} triple a browser
+// reports. Like httpBucketKey it is a comparable struct rather than a joined
+// string, so a separator cannot appear inside a component and merge two
+// buckets.
+//
+// It needs no overflow key. The three components are closed sets validated on
+// arrival — 3 tiers x 4 families x 2 outcomes — so the map is bounded at 24
+// entries by the contract rather than by a backstop.
+type clientRenderBucketKey struct {
+	qualityTier int
+	family      contracts.WorldFamily
+	outcome     string
+}
+
 // Collector is the in-memory aggregate. One instance per process, shared by
 // every goroutine serving a request, drained by the flusher.
 type Collector struct {
-	mutex        sync.Mutex
-	httpBuckets  map[httpBucketKey]*httpBucketValue
-	natsBuckets  map[string]*backendBucketValue
-	cacheBuckets map[string]*cacheBucketValue
+	mutex               sync.Mutex
+	httpBuckets         map[httpBucketKey]*httpBucketValue
+	natsBuckets         map[string]*backendBucketValue
+	cacheBuckets        map[string]*cacheBucketValue
+	clientRenderBuckets map[clientRenderBucketKey]int64
 }
 
 func NewCollector() *Collector {
 	return &Collector{
-		httpBuckets:  make(map[httpBucketKey]*httpBucketValue),
-		natsBuckets:  make(map[string]*backendBucketValue),
-		cacheBuckets: make(map[string]*cacheBucketValue),
+		httpBuckets:         make(map[httpBucketKey]*httpBucketValue),
+		natsBuckets:         make(map[string]*backendBucketValue),
+		cacheBuckets:        make(map[string]*cacheBucketValue),
+		clientRenderBuckets: make(map[clientRenderBucketKey]int64),
 	}
 }
 
@@ -218,6 +234,29 @@ func (collector *Collector) RecordCacheLookup(namespace string, hit bool) {
 	bucket.misses++
 }
 
+// RecordClientRender folds one browser's report into its bucket.
+//
+// It increments by one and takes no count, because the caller is a browser: a
+// report IS one render, and a field a caller could set would let a single
+// request move the platform's numbers as far as it liked. Volume is bounded by
+// the product surface's own per-IP rate limit instead.
+//
+// The report is validated by the handler before this is called, and the key is
+// dropped rather than stored if it is not one of the closed set — a value that
+// reached here unvalidated must not become a row.
+func (collector *Collector) RecordClientRender(qualityTier int, family contracts.WorldFamily, outcome string) {
+	if collector == nil {
+		return
+	}
+	report := contracts.ClientRenderReportData{QualityTier: qualityTier, Family: family, Outcome: outcome}
+	if report.Validate() != nil {
+		return
+	}
+	collector.mutex.Lock()
+	defer collector.mutex.Unlock()
+	collector.clientRenderBuckets[clientRenderBucketKey{qualityTier: qualityTier, family: family, outcome: outcome}]++
+}
+
 // Snapshot drains everything collected so far into one envelope's worth of
 // buckets and starts the next interval empty.
 //
@@ -240,9 +279,11 @@ func (collector *Collector) Snapshot(instanceID string, bucketStart time.Time, b
 	httpBuckets := collector.httpBuckets
 	natsBuckets := collector.natsBuckets
 	cacheBuckets := collector.cacheBuckets
+	clientRenderBuckets := collector.clientRenderBuckets
 	collector.httpBuckets = make(map[httpBucketKey]*httpBucketValue, len(httpBuckets))
 	collector.natsBuckets = make(map[string]*backendBucketValue, len(natsBuckets))
 	collector.cacheBuckets = make(map[string]*cacheBucketValue, len(cacheBuckets))
+	collector.clientRenderBuckets = make(map[clientRenderBucketKey]int64, len(clientRenderBuckets))
 	collector.mutex.Unlock()
 
 	data.Buckets = make([]contracts.HTTPRollupBucket, 0, len(httpBuckets))
@@ -295,6 +336,31 @@ func (collector *Collector) Snapshot(instanceID string, bucketStart time.Time, b
 	sort.Slice(data.CacheBuckets, func(first, second int) bool {
 		return data.CacheBuckets[first].Namespace < data.CacheBuckets[second].Namespace
 	})
+
+	// Left nil when no browser reported, so an envelope from a gateway serving
+	// only API traffic carries no empty array — and one published before this
+	// field existed stays byte-identical.
+	if len(clientRenderBuckets) > 0 {
+		data.ClientRenderBuckets = make([]contracts.ClientRenderBucket, 0, len(clientRenderBuckets))
+		for key, count := range clientRenderBuckets {
+			data.ClientRenderBuckets = append(data.ClientRenderBuckets, contracts.ClientRenderBucket{
+				QualityTier: key.qualityTier,
+				Family:      key.family,
+				Outcome:     key.outcome,
+				Count:       count,
+			})
+		}
+		sort.Slice(data.ClientRenderBuckets, func(first, second int) bool {
+			left, right := data.ClientRenderBuckets[first], data.ClientRenderBuckets[second]
+			if left.QualityTier != right.QualityTier {
+				return left.QualityTier < right.QualityTier
+			}
+			if left.Family != right.Family {
+				return left.Family < right.Family
+			}
+			return left.Outcome < right.Outcome
+		})
+	}
 	return data
 }
 

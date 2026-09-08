@@ -187,18 +187,36 @@ rarity, accounts, account detail, roles, audit, settings, telemetry
 (overview / performance / reliability). Each is a one-line re-export over a
 feature module; the pages are not stubs.
 
-The gateway backs every one of them. `admin_router.go` exposes 24 routes across
-accounts, roles, permissions, audit, settings, analytics, telemetry and wake
-stats, each behind an explicit permission.
+The gateway backs every one of them. `admin_router.go` exposes **26 management
+routes** across accounts, roles, permissions, audit, settings, analytics,
+telemetry and wake stats, each behind an explicit permission, plus 4 auth
+routes.
 
 **So the honest answer to "what admin features are left" is: very few reads.**
 The read surface is close to complete.
 
+> **Corrected 2026-09-07.** This paragraph said "24 routes". Counted:
+> 26 management routes — 15 read, 11 mutating — plus 4 auth. See
+> [`admin-writes-and-what-goes-unmeasured.md`](admin-writes-and-what-goes-unmeasured.md) §3.1.
+> The same survey also found that **§5.3–§5.5 below invented an A1–A5 list
+> while the platform was already keeping one**: `reservedPermissions` in
+> `permission_sync.go` declares five permissions with no route behind them, and
+> three of them — `variant:read`, `profile:read`, `profile:reveal` — appear
+> nowhere in this document. Read that plan's §4 instead of this section's
+> tiers, which are not wrong so much as incomplete.
+
 ### 5.2 The asymmetry, which is a design decision and not a gap
 
-Of those 24 routes, **six mutate anything**, and they touch exactly three
-things: accounts, roles, settings. Worlds, jobs, fleet, content, rarity,
+Of those 26 management routes, **11 mutate anything**, and they touch exactly
+three things: accounts, roles, settings. Worlds, jobs, fleet, content, rarity,
 telemetry and audit are read-only.
+
+> **Corrected 2026-09-07.** This said "six mutate anything" — wrong by nearly
+> half. Counted: 5 on accounts (create, update, invite, disable, enable), 5 on
+> roles (create, update, delete, assign, revoke), 1 on settings. The claim's
+> *shape* is what mattered and it survives unchanged: the mutations touch three
+> nouns and **no world, job, chart or audit row is writable by any route**. But
+> a survey should be able to count its own subject.
 
 This follows from two rules the platform already committed to, and neither
 should be relaxed casually:

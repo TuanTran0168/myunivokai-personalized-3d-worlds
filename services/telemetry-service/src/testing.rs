@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 
 use myunivokai_contracts::{
-    telemetry_histogram_index_of, CacheBucket, Envelope, HttpRollupBucket, HttpRollupData,
-    HttpRollupEnvelope, NatsBackendBucket, TelemetryHistogram,
+    telemetry_histogram_index_of, CacheBucket, ClientRenderBucket, Envelope, HttpRollupBucket,
+    HttpRollupData, HttpRollupEnvelope, NatsBackendBucket, TelemetryHistogram,
 };
 use time::OffsetDateTime;
 
@@ -135,16 +135,17 @@ pub fn rollup_envelope(
     bucket_start: OffsetDateTime,
     buckets: &[TestBucket],
 ) -> HttpRollupEnvelope {
-    rollup_envelope_with(instance_id, bucket_start, buckets, &[], &[])
+    rollup_envelope_with(instance_id, bucket_start, buckets, &[], &[], &[])
 }
 
-/// One envelope carrying all three concerns, as a real flush does.
+/// One envelope carrying all four concerns, as a real flush does.
 pub fn rollup_envelope_with(
     instance_id: &str,
     bucket_start: OffsetDateTime,
     buckets: &[TestBucket],
     nats_backend_buckets: &[NatsBackendBucket],
     cache_buckets: &[CacheBucket],
+    client_render_buckets: &[ClientRenderBucket],
 ) -> HttpRollupEnvelope {
     let data = HttpRollupData {
         instance_id: instance_id.to_owned(),
@@ -153,6 +154,7 @@ pub fn rollup_envelope_with(
         buckets: buckets.iter().map(HttpRollupBucket::from).collect(),
         nats_backend_buckets: nats_backend_buckets.to_vec(),
         cache_buckets: cache_buckets.to_vec(),
+        client_render_buckets: client_render_buckets.to_vec(),
     };
     Envelope::new(
         myunivokai_contracts::telemetry_rollup_message_id(instance_id, bucket_start),
@@ -186,5 +188,19 @@ pub fn cache_bucket(namespace: &str, hits: i64, misses: i64) -> CacheBucket {
         namespace: namespace.to_owned(),
         hits,
         misses,
+    }
+}
+
+pub fn client_render_bucket(
+    quality_tier: i16,
+    family: &str,
+    outcome: &str,
+    count: i64,
+) -> ClientRenderBucket {
+    ClientRenderBucket {
+        quality_tier,
+        family: family.to_owned(),
+        outcome: outcome.to_owned(),
+        count,
     }
 }

@@ -125,6 +125,18 @@ func NewRouter(serviceConfig config.Config, brokerClient broker.Client, edgeStor
 		// nothing to do with their session.
 		attachProductIdentity := middleware.OptionalProductAccessToken(accessTokenVerifier, revocationChecker)
 		businessRouter.Get("/api/jobs/{jobID}", dnaJobHandler.GetJob)
+		// Registered above the family routes for the reason the comment below
+		// the last of them gives: chi matches in registration order, and
+		// `/api/{family}` would otherwise claim "telemetry" as a world family
+		// and answer WORLD_FAMILY_NOT_FOUND to a browser reporting what it
+		// rendered.
+		//
+		// Unauthenticated on purpose. The report carries a quality tier, a
+		// family and an outcome — no world, no account, no session — so there
+		// is nothing here a token would protect, and requiring one would
+		// silently exclude every visitor who never signed in, which is most of
+		// them and the ones a weak device is most likely to belong to.
+		businessRouter.Post("/api/telemetry/render", NewClientTelemetryHandler(collector).Report)
 		businessRouter.Route("/api/universe", func(familyRouter chi.Router) {
 			registerWorldRoutes(familyRouter, universeHandler, attachProductIdentity)
 		})

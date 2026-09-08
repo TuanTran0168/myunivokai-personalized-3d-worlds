@@ -4,7 +4,7 @@ import { Cell, Pie, PieChart, Tooltip } from "recharts";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type ChartConfig, ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
-import { FAMILY_CHART_CONFIG } from "../../chart-config";
+import { FAMILY_CHART_CONFIG } from "../../families";
 import { formatCount, formatPercent } from "../../format";
 import type { FamilyTotals } from "../../types";
 
@@ -12,7 +12,7 @@ const PIE_CONFIG: ChartConfig = {
   worldCount: { label: "Worlds", color: "var(--chart-1)" }
 };
 
-// The split between Universe and Nature, with each family's own numbers beside
+// The split across the world families, with each family's own numbers beside
 // it. A donut answers "which family is this platform actually generating" at a
 // glance; the numbers beside it answer everything asked immediately afterwards,
 // which a donut on its own cannot. Both halves come from the same query, so

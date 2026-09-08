@@ -14,14 +14,10 @@ import { DistributionChart } from "./components/charts/DistributionChart";
 import { FamilyMixChart } from "./components/charts/FamilyMixChart";
 import { TraitRadarChart } from "./components/charts/TraitRadarChart";
 import { FAILURE_DISTRIBUTION_CHART_CONFIG } from "./chart-config";
+import { FAMILY_FILTER_OPTIONS } from "./families";
 import type { WorldFamily } from "./types";
 
 const RANGE_OPTIONS = [7, 30, 90] as const;
-const FAMILY_OPTIONS: { label: string; value: "" | WorldFamily }[] = [
-  { label: "All families", value: "" },
-  { label: "Universe", value: "universe" },
-  { label: "Nature", value: "nature" }
-];
 
 // What the generator is actually producing, separated from Overview because it
 // answers a different person's question. Overview asks "is the platform
@@ -68,7 +64,7 @@ export function ContentMixPage() {
           label="Family"
           value={family}
           onChange={(value) => setFamily(value as "" | WorldFamily)}
-          options={FAMILY_OPTIONS}
+          options={FAMILY_FILTER_OPTIONS}
         />
         <FilterSelect
           label="Range"

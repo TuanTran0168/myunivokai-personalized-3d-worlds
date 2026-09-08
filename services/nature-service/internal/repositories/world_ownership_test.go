@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/nature-service/internal/models"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 )
 
 // migrationsDirectory is relative to this package, which is where `go test`
@@ -274,6 +274,94 @@ var ownerOnlyMutations = []string{"DeleteWorld"}
 // transfer endpoint, which v1 deliberately does not have.
 var ownershipAssigningWrites = []string{"CreateWorld", "ClaimWorlds"}
 
+// staffMutationsBypassingOwnership is the sixth category, and the only one
+// whose members run NO ownership check at all. Being on this list is therefore
+// a claim that has to be earned, not an exemption from the four rules above,
+// and TestAStaffMutationIgnoresOwnershipAndDemandsAnActor below is what earns
+// it.
+//
+// `UnpublishWorld` takes a public share page down on a staff instruction. It
+// cannot ask `ownership.MutationPermitted`, and the reason is not
+// convenience — that predicate returns "permitted" whenever a world has no
+// owner, which its own comment notes "describes every world in production". A
+// takedown routed through it would work today by accident and start refusing
+// the moment ownership rolls out, on exactly the owned worlds a takedown is
+// most likely to be about.
+//
+// What makes it safe is that the caller must NAME itself: the contract's
+// StaffAccountID is a required non-empty string, the gateway fills it from a
+// verified admin access token and never from the request body, and the route
+// is gated on the `world:unpublish` permission. So the check that would have
+// been an ownership comparison is instead an authenticated permission plus an
+// audit row — which is the right shape for an action whose whole point is that
+// the owner does not get a say.
+//
+// A method may only join this list with a test proving both halves: that it
+// succeeds against a world owned by somebody else, and that it refuses when no
+// actor is named.
+var staffMutationsBypassingOwnership = []string{"UnpublishWorld"}
+
+// The proof for the list above.
+func TestAStaffMutationIgnoresOwnershipAndDemandsAnActor(t *testing.T) {
+	const worldOwnerAccountID = "11111111-1111-1111-1111-111111111111"
+	const staffAccountID = "99999999-9999-9999-9999-999999999999"
+	owner := worldOwnerAccountID
+
+	// Half one: somebody else's world comes down anyway. This is the whole
+	// point of the mutation, and it is the assertion that would fail if a
+	// future edit "tidied" an ownership check into it.
+	store := NewMemoryStore()
+	bundle, err := store.CreateWorld(context.Background(),
+		models.World{SourceJobID: "job-1", Visibility: "private", OwnerAccountID: &owner},
+		models.WorldVariant{ID: "variant-1", VariantNo: 1, Seed: "seed-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishWorld(context.Background(), bundle.World.ID, "owned-world-slug", &owner); err != nil {
+		t.Fatal(err)
+	}
+	unpublished, err := store.UnpublishWorld(context.Background(), bundle.World.ID, staffAccountID)
+	if err != nil {
+		t.Fatalf("staff unpublish of an owned world: %v", err)
+	}
+	if !unpublished.WasPublished || unpublished.RevokedShareSlug != "owned-world-slug" {
+		t.Fatalf("unpublish reported %+v, want the slug it revoked", unpublished)
+	}
+
+	// Half two: the response reports the slug it REVOKED, not the world's
+	// resulting state. The gateway drops the share cache by slug and cannot
+	// derive it from a world id, so an empty answer here leaves the page it
+	// just took down being served from Redis for a whole cache TTL.
+	after, err := store.GetWorld(context.Background(), bundle.World.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.World.ShareSlug != nil {
+		t.Fatalf("world still carries share slug %q after unpublish", *after.World.ShareSlug)
+	}
+	if after.World.Visibility != "private" {
+		t.Fatalf("visibility = %q after unpublish, want private", after.World.Visibility)
+	}
+
+	// Half three: no actor, no takedown. A nil or empty caller is how the
+	// other mutations express "anonymous", and here it must express nothing at
+	// all.
+	if _, err := store.UnpublishWorld(context.Background(), bundle.World.ID, ""); !errors.Is(err, ErrStaffAccountRequired) {
+		t.Fatalf("unpublish with no staff account: error = %v, want ErrStaffAccountRequired", err)
+	}
+
+	// And a second takedown is a no-op rather than an error, mirroring
+	// PublishWorld's re-publish shortcut: the second click of a button must
+	// not answer differently from the first.
+	repeated, err := store.UnpublishWorld(context.Background(), bundle.World.ID, staffAccountID)
+	if err != nil {
+		t.Fatalf("second unpublish: %v", err)
+	}
+	if repeated.WasPublished || repeated.RevokedShareSlug != "" {
+		t.Fatalf("second unpublish reported %+v, want an empty no-op", repeated)
+	}
+}
+
 // ownershipFilteredReads is the fifth category, and it exists because the four
 // above are all about WRITING.
 //
@@ -383,6 +471,9 @@ func TestTheStoreGainsNoMethodWithoutClassifyingIt(t *testing.T) {
 		classified[methodName] = true
 	}
 	for _, methodName := range ownershipAssigningWrites {
+		classified[methodName] = true
+	}
+	for _, methodName := range staffMutationsBypassingOwnership {
 		classified[methodName] = true
 	}
 	for _, methodName := range ownershipFilteredReads {

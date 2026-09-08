@@ -57,6 +57,7 @@ type AuthService interface {
 
 	ListPermissions(ctx context.Context) (contracts.PermissionListResponseData, error)
 	ListAuditEvents(ctx context.Context, cursor string, pageSize int, since, until *time.Time, search string) (contracts.AuditListResponseData, error)
+	RecordAuditEvent(ctx context.Context, data contracts.AuditRecordData) error
 
 	// The settings control plane. These two subjects carry every write to
 	// system_settings; there is no read subject on the create path, because
@@ -390,6 +391,21 @@ func (handler *NATSHandler) HandleAuditListQuery(message *nats.Msg) {
 		return handler.authService.ListAuditEvents(ctx, envelope.Data.Cursor, envelope.Data.PageSize, envelope.Data.Since, envelope.Data.Until, envelope.Data.Search)
 	})
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
+// HandleAuditRecordQuery answers with an empty object rather than the row it
+// wrote. The caller already knows what it asked to record, and the row's id and
+// timestamp are assigned by the database — returning them would invite a caller
+// to depend on a shape whose only consumer is the audit list screen.
+func (handler *NATSHandler) HandleAuditRecordQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.AuditRecordData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	_, err := withQueryTimeout(handler, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, handler.authService.RecordAuditEvent(ctx, envelope.Data)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, struct{}{}, err)
 }
 
 func (handler *NATSHandler) HandleSettingListQuery(message *nats.Msg) {

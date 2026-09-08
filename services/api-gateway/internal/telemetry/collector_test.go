@@ -256,3 +256,58 @@ func TestEverySnapshotSatisfiesTheContract(t *testing.T) {
 		t.Fatalf("status class was not reduced through the contract's own helper: %+v", data.Buckets[0])
 	}
 }
+
+// The key space is closed by the contract rather than by a backstop, so this
+// asserts the two properties that follow from that: reports fold together, and
+// one that would create a key outside the set is dropped rather than stored.
+func TestClientRenderReportsFoldIntoABoundedKeySpace(t *testing.T) {
+	collector := NewCollector()
+	for reportIndex := 0; reportIndex < 5; reportIndex++ {
+		collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered)
+	}
+	collector.RecordClientRender(contracts.ClientRenderTierMinimal, contracts.WorldFamilyOcean, contracts.ClientRenderOutcomeWebGLFailed)
+	// Every one of these would be a new map key if it were stored, which is
+	// the thing a browser must not be able to do.
+	collector.RecordClientRender(9, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered)
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamily("city"), contracts.ClientRenderOutcomeRendered)
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyNature, "slow")
+
+	data := collector.Snapshot("instance", time.Now().UTC(), time.Minute)
+	if len(data.ClientRenderBuckets) != 2 {
+		t.Fatalf("buckets = %+v, want exactly the two valid keys", data.ClientRenderBuckets)
+	}
+	// Sorted by tier, so minimal comes first.
+	if data.ClientRenderBuckets[0].QualityTier != contracts.ClientRenderTierMinimal || data.ClientRenderBuckets[0].Count != 1 {
+		t.Fatalf("first bucket = %+v", data.ClientRenderBuckets[0])
+	}
+	if data.ClientRenderBuckets[1].Count != 5 {
+		t.Fatalf("five reports of one key folded into count %d", data.ClientRenderBuckets[1].Count)
+	}
+}
+
+// Draining, like every other bucket type: an envelope is a delta over its own
+// interval, and a count that survived a flush would be added twice by the sink.
+func TestClientRenderBucketsAreDrainedByASnapshot(t *testing.T) {
+	collector := NewCollector()
+	collector.RecordClientRender(contracts.ClientRenderTierBalanced, contracts.WorldFamilyNature, contracts.ClientRenderOutcomeRendered)
+	if first := collector.Snapshot("instance", time.Now().UTC(), time.Minute); len(first.ClientRenderBuckets) != 1 {
+		t.Fatalf("first snapshot = %+v", first.ClientRenderBuckets)
+	}
+	second := collector.Snapshot("instance", time.Now().UTC(), time.Minute)
+	if second.ClientRenderBuckets != nil {
+		t.Fatalf("second snapshot still carries %+v", second.ClientRenderBuckets)
+	}
+	// Nil rather than an empty slice, so a gateway serving only API traffic
+	// publishes an envelope byte-identical to one from before this field
+	// existed.
+	if !second.IsEmpty() {
+		t.Fatal("an envelope with nothing in it did not report itself empty")
+	}
+}
+
+// A nil collector is what TELEMETRY_ENABLED=false leaves behind, and the
+// handler calls straight into it — so this must not panic.
+func TestANilCollectorAcceptsAClientRenderReportAndDoesNothing(t *testing.T) {
+	var collector *Collector
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered)
+}

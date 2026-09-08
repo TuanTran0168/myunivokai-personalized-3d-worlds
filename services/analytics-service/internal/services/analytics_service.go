@@ -57,6 +57,13 @@ func (service *AnalyticsService) GetWorld(ctx context.Context, query contracts.A
 	return service.store.GetWorld(ctx, query.WorldID)
 }
 
+// GetWorldVariants reads one world's variants. Same query data as GetWorld —
+// a world id and nothing else — because the two questions differ in what they
+// answer rather than in what they are asked.
+func (service *AnalyticsService) GetWorldVariants(ctx context.Context, query contracts.AnalyticsWorldGetQueryData) (contracts.AnalyticsWorldVariantListResponseData, error) {
+	return service.store.GetWorldVariants(ctx, query.WorldID)
+}
+
 func (service *AnalyticsService) ListJobs(ctx context.Context, query contracts.AnalyticsJobListQueryData) (contracts.AnalyticsJobListResponseData, error) {
 	return service.store.ListJobs(ctx, models.JobListFilter{
 		Family:    normalizeFamily(query.Family),

@@ -12,12 +12,17 @@
 
 use std::sync::Arc;
 
-use myunivokai_contracts::{TelemetryOverviewQueryData, TelemetryRouteListQueryData};
+use myunivokai_contracts::{
+    TelemetryOverviewQueryData, TelemetryRouteListQueryData, CLIENT_RENDER_OUTCOME_RENDERED,
+    CLIENT_RENDER_OUTCOME_WEBGL_FAILED, CLIENT_RENDER_TIER_HIGH, CLIENT_RENDER_TIER_MINIMAL,
+};
 use telemetry_service::domain::IngestOutcome;
 use telemetry_service::repository::memory::InMemoryRollupRepository;
 use telemetry_service::service::TelemetryService;
 use telemetry_service::sink::{charts_are_elsewhere_overview, charts_are_elsewhere_routes};
-use telemetry_service::testing::{backend_bucket, cache_bucket, rollup_envelope_with, TestBucket};
+use telemetry_service::testing::{
+    backend_bucket, cache_bucket, client_render_bucket, rollup_envelope_with, TestBucket,
+};
 use time::macros::datetime;
 use time::OffsetDateTime;
 
@@ -47,8 +52,8 @@ fn service() -> TelemetryService {
     TelemetryService::new(Arc::new(InMemoryRollupRepository::new()), RETENTION_DAYS)
 }
 
-/// One realistic minute: three route buckets, two backends and all three cache
-/// namespaces, exactly as a gateway flush carries them.
+/// One realistic minute: three route buckets, two backends, all three cache
+/// namespaces and two browser reports, exactly as a gateway flush carries them.
 async fn ingest_one_realistic_minute(service: &TelemetryService, instance: &str) {
     let envelope = rollup_envelope_with(
         instance,
@@ -67,6 +72,23 @@ async fn ingest_one_realistic_minute(service: &TelemetryService, instance: &str)
             cache_bucket("job:v1", 21, 6),
             cache_bucket("world:v1", 30, 4),
             cache_bucket("share:v1", 0, 2),
+        ],
+        // Two tiers and both outcomes, so the aggregate below is exercising a
+        // group-by rather than a single row — and so the failing branch is in
+        // the fixture that the whole-pipeline test reads.
+        &[
+            client_render_bucket(
+                CLIENT_RENDER_TIER_HIGH,
+                "universe",
+                CLIENT_RENDER_OUTCOME_RENDERED,
+                9,
+            ),
+            client_render_bucket(
+                CLIENT_RENDER_TIER_MINIMAL,
+                "ocean",
+                CLIENT_RENDER_OUTCOME_WEBGL_FAILED,
+                2,
+            ),
         ],
     );
     assert_eq!(
@@ -114,6 +136,23 @@ async fn one_flush_answers_every_question_the_telemetry_screen_asks() {
     assert_eq!(universe.average_duration_ms, 106);
 
     assert_eq!(overview.cache.len(), 3);
+
+    // The fourth concern. Grouped by tier and outcome, with the family
+    // dropped, which is what the screen asks for and what the SQL does.
+    assert_eq!(overview.client_render.len(), 2);
+    let failed = overview
+        .client_render
+        .iter()
+        .find(|row| row.outcome == CLIENT_RENDER_OUTCOME_WEBGL_FAILED)
+        .expect("the webgl failure row");
+    assert_eq!(failed.quality_tier, CLIENT_RENDER_TIER_MINIMAL);
+    assert_eq!(failed.count, 2);
+    let rendered = overview
+        .client_render
+        .iter()
+        .find(|row| row.outcome == CLIENT_RENDER_OUTCOME_RENDERED)
+        .expect("the rendered row");
+    assert_eq!(rendered.count, 9);
     let job_cache = overview
         .cache
         .iter()
@@ -201,6 +240,7 @@ async fn redelivering_the_same_flush_five_times_changes_nothing() {
             "instance-a",
             datetime!(2026-08-13 09:14:00 UTC),
             &[TestBucket::successful("/api/universe/worlds", 10, 500, 90)],
+            &[],
             &[],
             &[],
         );

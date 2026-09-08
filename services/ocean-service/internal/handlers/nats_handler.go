@@ -10,9 +10,9 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/ocean-service/internal/repositories"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
@@ -39,6 +39,7 @@ type WorldService interface {
 	RegenerateVariant(context.Context, string, *string) (models.VariantResponse, error)
 	SelectVariant(context.Context, string, string, *string) (models.VariantResponse, error)
 	PublishWorld(context.Context, string, *string) (models.PublishResponse, error)
+	UnpublishWorld(context.Context, string, string) (models.UnpublishResponse, error)
 	DeleteWorld(context.Context, string, *string) (models.DeleteResponse, error)
 	ClaimWorlds(context.Context, contracts.Envelope[contracts.WorldClaimData]) error
 	GetPublicWorld(context.Context, string) (models.PublicWorldResponse, error)
@@ -174,6 +175,31 @@ func (handler *NATSHandler) HandleWorldPublishQuery(message *nats.Msg) {
 	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
 }
 
+func (handler *NATSHandler) HandleWorldUnpublishQuery(message *nats.Msg) {
+	var envelope contracts.Envelope[contracts.UnpublishWorldData]
+	if !decodeQuery(handler, message, &envelope) {
+		return
+	}
+	// Validated here AND in the store, and the two must answer alike: a bare
+	// error from Validate would fall through respondWithResult's final branch
+	// and report 500 for a malformed request the store answers 400 for. So the
+	// contract's check is translated into the store's typed error rather than
+	// surfaced as its own.
+	//
+	// Both checks stay. The store's is the enforcement — it runs beside the row
+	// it is about — and this one keeps a malformed request from reaching a
+	// database connection at all.
+	if err := envelope.Data.Validate(); err != nil {
+		handler.respondWithResult(message, envelope.JobID, http.StatusOK, models.UnpublishResponse{},
+			fmt.Errorf("%w: %v", repositories.ErrStaffAccountRequired, err))
+		return
+	}
+	response, err := withQueryTimeout(handler, func(ctx context.Context) (models.UnpublishResponse, error) {
+		return handler.worldService.UnpublishWorld(ctx, envelope.Data.WorldID, envelope.Data.StaffAccountID)
+	})
+	handler.respondWithResult(message, envelope.JobID, http.StatusOK, response, err)
+}
+
 func (handler *NATSHandler) HandleWorldDeleteQuery(message *nats.Msg) {
 	var envelope contracts.Envelope[contracts.DeleteWorldData]
 	if !decodeQuery(handler, message, &envelope) {
@@ -241,6 +267,16 @@ func (handler *NATSHandler) respondWithResult(message *nats.Msg, jobID string, s
 	}
 	if errors.Is(err, repositories.ErrConflict) {
 		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusConflict, "WORLD_CONFLICT", "The world was changed by another request. Please retry."))
+		return
+	}
+	// A takedown with no named actor is a malformed request, not an outage.
+	// It answered 500 INTERNAL_ERROR until this mapping existed, which is the
+	// wrong thing to tell an operator twice: it reads as "the platform is
+	// broken, try later" for a request that will never succeed as sent. The
+	// gateway always fills this field from a verified token, so reaching here
+	// means a publisher went around it.
+	if errors.Is(err, repositories.ErrStaffAccountRequired) {
+		handler.respond(message, contracts.ErrorRPCEnvelope(jobID, http.StatusBadRequest, "STAFF_ACCOUNT_REQUIRED", "A staff account must be named for this action."))
 		return
 	}
 	if err != nil {

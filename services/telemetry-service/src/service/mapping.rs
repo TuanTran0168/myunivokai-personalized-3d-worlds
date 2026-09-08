@@ -21,13 +21,14 @@
 //! [Rust API Guidelines]: https://rust-lang.github.io/api-guidelines/interoperability.html#conversions-use-the-standard-traits-from-asref-asmut-c-conv-traits
 
 use myunivokai_contracts::{
-    TelemetryBackendSummary, TelemetryCacheSummary, TelemetryErrorCodeCount, TelemetryHourBucket,
-    TelemetryRouteSummary, TelemetryStatusClassCount, TelemetryVolumePoint,
+    TelemetryBackendSummary, TelemetryCacheSummary, TelemetryClientRenderSummary,
+    TelemetryErrorCodeCount, TelemetryHourBucket, TelemetryRouteSummary, TelemetryStatusClassCount,
+    TelemetryVolumePoint,
 };
 
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ErrorCodeAggregate, HourOfDayBucket, RouteAggregate,
-    StatusClassCount, VolumeBucket, WakeSignalBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 
 /// Every percentage on every telemetry screen, rounded in exactly one place.
@@ -125,6 +126,16 @@ impl From<CacheAggregate> for TelemetryCacheSummary {
     }
 }
 
+impl From<ClientRenderAggregate> for TelemetryClientRenderSummary {
+    fn from(aggregate: ClientRenderAggregate) -> Self {
+        Self {
+            quality_tier: aggregate.quality_tier,
+            outcome: aggregate.outcome,
+            count: aggregate.count,
+        }
+    }
+}
+
 impl From<RouteAggregate> for TelemetryRouteSummary {
     fn from(route: RouteAggregate) -> Self {
         Self {
@@ -137,6 +148,7 @@ impl From<RouteAggregate> for TelemetryRouteSummary {
             method: route.method,
             request_count: route.requests,
             error_count: route.server_errors,
+            success_count: route.successes,
         }
     }
 }
@@ -205,10 +217,38 @@ mod tests {
             method: "GET".to_owned(),
             requests: 37,
             server_errors: 3,
+            successes: 30,
             latency: LatencySummary::new(37, 3700, 210, [0, 0, 0, 0, 0, 37, 0, 0]),
         });
         assert_eq!(summary.route_pattern, "/api/universe/worlds/{worldID}");
         assert_eq!(summary.error_rate_percent, 8.11);
         assert_eq!(summary.average_duration_ms, 100);
+    }
+
+    /// The three counts do not span the row, and a reader who assumes they do
+    /// gets the share page wrong by a factor of three.
+    ///
+    /// 37 requests, 3 server errors and 30 successes leaves 4 responses in the
+    /// 4xx class, which this row reports in no field — deliberately, because
+    /// 4xx is the client's problem and the error rate would be misread with it
+    /// included. The point of the assertion is that `successes` is carried
+    /// through rather than recomputed as `requests - server_errors`, which
+    /// would have said 34.
+    #[test]
+    fn successes_are_carried_not_derived_from_requests_minus_errors() {
+        let summary = TelemetryRouteSummary::from(RouteAggregate {
+            route_pattern: "/api/universe/share/worlds/{shareSlug}".to_owned(),
+            method: "GET".to_owned(),
+            requests: 37,
+            server_errors: 3,
+            successes: 30,
+            latency: LatencySummary::new(37, 3700, 210, [0, 0, 0, 0, 0, 37, 0, 0]),
+        });
+        assert_eq!(summary.success_count, 30);
+        assert_ne!(
+            summary.success_count,
+            summary.request_count - summary.error_count,
+            "successes must not be derivable from the other two counts"
+        );
     }
 }

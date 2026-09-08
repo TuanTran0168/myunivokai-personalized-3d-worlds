@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 )
 
 const readAuthorizationOwnerAccountID = "11111111-1111-1111-1111-111111111111"

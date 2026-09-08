@@ -327,3 +327,75 @@ func TestTelemetryOverviewFixtureDecodesIntoTheContract(t *testing.T) {
 		t.Errorf("backend p50 did not decode: %+v", overview.Backends)
 	}
 }
+
+// The drift guard for the fourth bucket type. It is in the shared fixture, so
+// a field renamed on one side of the mirror and not the other fails here or in
+// contracts/rust/tests/telemetry_fixture.rs rather than in production.
+func TestTelemetryRollupFixtureCarriesWhatTheBrowserReported(t *testing.T) {
+	var envelope Envelope[HTTPRollupData]
+	if err := json.Unmarshal(readFixture(t, telemetryRollupFixturePath), &envelope); err != nil {
+		t.Fatalf("decode %s: %v", telemetryRollupFixturePath, err)
+	}
+	if len(envelope.Data.ClientRenderBuckets) != 2 {
+		t.Fatalf("clientRenderBuckets has %d entries, want 2", len(envelope.Data.ClientRenderBuckets))
+	}
+	rendered := envelope.Data.ClientRenderBuckets[0]
+	if rendered.QualityTier != ClientRenderTierHigh || rendered.Family != WorldFamilyUniverse {
+		t.Fatalf("first bucket = tier %d family %q, want tier %d universe", rendered.QualityTier, rendered.Family, ClientRenderTierHigh)
+	}
+	if rendered.Outcome != ClientRenderOutcomeRendered || rendered.Count != 12 {
+		t.Fatalf("first bucket = %q x%d, want %q x12", rendered.Outcome, rendered.Count, ClientRenderOutcomeRendered)
+	}
+	// The failure outcome is in the fixture on purpose: it is the one this
+	// pipeline exists to count, and a fixture holding only successes would let
+	// the losing branch rot unnoticed.
+	failed := envelope.Data.ClientRenderBuckets[1]
+	if failed.Outcome != ClientRenderOutcomeWebGLFailed || failed.QualityTier != ClientRenderTierMinimal {
+		t.Fatalf("second bucket = %q tier %d, want %q tier %d", failed.Outcome, failed.QualityTier, ClientRenderOutcomeWebGLFailed, ClientRenderTierMinimal)
+	}
+}
+
+// A browser fills this one, so the closed sets are the security boundary
+// rather than a convenience. Every field is checked, and nothing is clamped:
+// a clamped value would enter the platform's own numbers as a fact.
+func TestClientRenderReportValidateRefusesAnythingOutsideTheClosedSets(t *testing.T) {
+	valid := ClientRenderReportData{QualityTier: ClientRenderTierBalanced, Family: WorldFamilyNature, Outcome: ClientRenderOutcomeRendered}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("a valid report was refused: %v", err)
+	}
+	refused := map[string]ClientRenderReportData{
+		"a tier above the highest":  {QualityTier: 4, Family: WorldFamilyNature, Outcome: ClientRenderOutcomeRendered},
+		"a tier below the lowest":   {QualityTier: 0, Family: WorldFamilyNature, Outcome: ClientRenderOutcomeRendered},
+		"a family that ships later": {QualityTier: ClientRenderTierHigh, Family: WorldFamily("city"), Outcome: ClientRenderOutcomeRendered},
+		"an empty family":           {QualityTier: ClientRenderTierHigh, Family: WorldFamily(""), Outcome: ClientRenderOutcomeRendered},
+		"an outcome nobody counts":  {QualityTier: ClientRenderTierHigh, Family: WorldFamilyOcean, Outcome: "slow"},
+		"an empty outcome":          {QualityTier: ClientRenderTierHigh, Family: WorldFamilyOcean, Outcome: ""},
+	}
+	for description, report := range refused {
+		if err := report.Validate(); err == nil {
+			t.Errorf("%s was accepted", description)
+		}
+	}
+}
+
+// The overview fixture's own client-render rows. Go tolerates a missing field
+// where the Rust mirror's round-trip assertion does not, so without this the
+// Go suite would pass on a fixture that had lost the field entirely and only
+// contracts/rust would notice.
+func TestTelemetryOverviewFixtureCarriesTheClientRenderRows(t *testing.T) {
+	var overview TelemetryOverviewResponseData
+	if err := json.Unmarshal(readFixture(t, telemetryOverviewFixturePath), &overview); err != nil {
+		t.Fatalf("decode %s: %v", telemetryOverviewFixturePath, err)
+	}
+	if len(overview.ClientRender) != 2 {
+		t.Fatalf("clientRender has %d rows, want 2", len(overview.ClientRender))
+	}
+	failed := overview.ClientRender[0]
+	if failed.Outcome != ClientRenderOutcomeWebGLFailed || failed.QualityTier != ClientRenderTierMinimal || failed.Count != 2 {
+		t.Fatalf("first row = %+v, want the minimal-tier failure", failed)
+	}
+	rendered := overview.ClientRender[1]
+	if rendered.Outcome != ClientRenderOutcomeRendered || rendered.Count != 41 {
+		t.Fatalf("second row = %+v, want 41 renders", rendered)
+	}
+}

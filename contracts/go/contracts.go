@@ -52,6 +52,7 @@ const (
 	UniverseVariantSelectSubject  = "myunivokai.queries.universe.variant.select.v1"
 	UniverseWorldPublishSubject   = "myunivokai.queries.universe.world.publish.v1"
 	UniverseWorldDeleteSubject    = "myunivokai.queries.universe.world.delete.v1"
+	UniverseWorldUnpublishSubject = "myunivokai.queries.universe.world.unpublish.v1"
 	UniverseShareGetQuerySubject  = "myunivokai.queries.universe.share.get.v1"
 	NatureWorldListQuerySubject   = "myunivokai.queries.nature.world.list.v1"
 	NatureWorldGetQuerySubject    = "myunivokai.queries.nature.world.get.v1"
@@ -59,6 +60,7 @@ const (
 	NatureVariantSelectSubject    = "myunivokai.queries.nature.variant.select.v1"
 	NatureWorldPublishSubject     = "myunivokai.queries.nature.world.publish.v1"
 	NatureWorldDeleteSubject      = "myunivokai.queries.nature.world.delete.v1"
+	NatureWorldUnpublishSubject   = "myunivokai.queries.nature.world.unpublish.v1"
 	NatureShareGetQuerySubject    = "myunivokai.queries.nature.share.get.v1"
 	OceanWorldListQuerySubject    = "myunivokai.queries.ocean.world.list.v1"
 	OceanWorldGetQuerySubject     = "myunivokai.queries.ocean.world.get.v1"
@@ -66,6 +68,7 @@ const (
 	OceanVariantSelectSubject     = "myunivokai.queries.ocean.variant.select.v1"
 	OceanWorldPublishSubject      = "myunivokai.queries.ocean.world.publish.v1"
 	OceanWorldDeleteSubject       = "myunivokai.queries.ocean.world.delete.v1"
+	OceanWorldUnpublishSubject    = "myunivokai.queries.ocean.world.unpublish.v1"
 	OceanShareGetQuerySubject     = "myunivokai.queries.ocean.share.get.v1"
 
 	JobStatusQueued     JobStatus = "queued"
@@ -774,6 +777,44 @@ type VariantSelectData struct {
 type PublishWorldData struct {
 	WorldID             string  `json:"worldId"`
 	RequestingAccountID *string `json:"requestingAccountId,omitempty"`
+}
+
+// UnpublishWorldData revokes a share slug, and it carries a REQUIRED staff
+// account id rather than the optional RequestingAccountID every other mutation
+// uses. That difference is the whole safety property of this payload, so it is
+// worth stating why it is not an inconsistency.
+//
+// `ownership.MutationPermitted` returns "permitted" when a world has no owner,
+// and its own comment notes that branch "describes every world in production".
+// So an unpublish modelled on PublishWorldData and called with a nil account
+// would work today by accident, and would begin failing the moment ownership
+// rolls out — on exactly the owned worlds a takedown is most likely to be
+// about. A required non-empty field cannot be nil by omission, and a caller
+// that has no staff id to put in it cannot construct this request at all.
+//
+// The gateway fills StaffAccountID from the verified admin access token and
+// never from the request body, the same rule the settings write already
+// follows: the record of who took a public page down must not be settable by
+// whoever sent the request.
+//
+// There is deliberately no owner-facing form of this yet. Publishing has no
+// inverse for the person who published either, and giving them one is a
+// product decision with its own confirmation flow — not a nil check on this
+// field. Whoever adds it adds a field and an explicit branch; nil must never
+// come to mean "the anonymous owner asked".
+type UnpublishWorldData struct {
+	WorldID        string `json:"worldId"`
+	StaffAccountID string `json:"staffAccountId"`
+}
+
+func (data UnpublishWorldData) Validate() error {
+	if strings.TrimSpace(data.WorldID) == "" {
+		return errors.New("worldId is required")
+	}
+	if strings.TrimSpace(data.StaffAccountID) == "" {
+		return errors.New("staffAccountId is required")
+	}
+	return nil
 }
 
 // DeleteWorldData is the one mutation with no anonymous form. Deleting is

@@ -40,13 +40,33 @@ func TestSyncPermissionsAndSeedRoles_SeedsBasicUserWithChartReadOnly(t *testing.
 // here — adding a codename with no route behind it now means editing this list
 // on purpose, and adding the route means moving it out of reservedPermissions
 // in the same change.
+//
+// Three remain. `world:unpublish` and `variant:read` both left on 2026-09-07 —
+// the second by GET /api/admin/worlds/{worldID}/variants, which needed the
+// variants across the analytics data boundary before a route could exist at
+// all: an admin read may not reach a family service (principle 10).
+//
+// `world:unpublish` left the same day, when
+// POST /api/admin/{family}/worlds/{worldID}/unpublish started checking it —
+// registered per family in admin_router.go and gated by
+// registerAdminWorldRoutes. It is named here rather than merely deleted so the
+// next reader can tell a promise that was kept from one that was quietly
+// dropped: SyncPermissions ends in a DELETE of anything undeclared, so a
+// codename can leave this file in two very different ways.
+//
+// None of the three left should be built as it stands, and each for its own
+// reason. `profile:read` and `profile:reveal` would need an admin read
+// reaching dna-service, which breaks principle 10, or profiles.raw_input
+// copied into analytics, which makes that database a second store of the most
+// sensitive data here (§7). `job:retry` is different: it is buildable and it
+// would help nothing, because the AI cascade absorbs the transient failures a
+// retry targets and there are no failed jobs to retry (§14.5b). See
+// agent-system/plans/architecture/admin-writes-and-what-goes-unmeasured.md.
 func TestReservedPermissionsAreDeclaredDeliberately(t *testing.T) {
 	expected := map[contracts.PermissionCode]bool{
-		contracts.PermissionWorldUnpublish: true,
-		contracts.PermissionVariantRead:    true,
-		contracts.PermissionJobRetry:       true,
-		contracts.PermissionProfileRead:    true,
-		contracts.PermissionProfileReveal:  true,
+		contracts.PermissionJobRetry:      true,
+		contracts.PermissionProfileRead:   true,
+		contracts.PermissionProfileReveal: true,
 	}
 	for _, permission := range reservedPermissions {
 		if !expected[permission.Codename] {

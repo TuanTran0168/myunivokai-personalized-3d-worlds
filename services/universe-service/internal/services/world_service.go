@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/seed"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/ownership"
 	"github.com/rs/zerolog/log"
 )
 
@@ -31,7 +31,6 @@ const (
 // so every share link this platform has ever handed out was a 404. A path that
 // only the frontend knows the shape of is a path the backend gets to guess at.
 const sharePagePathPrefix = "/share/worlds/"
-
 
 type WorldService struct {
 	config  config.Config
@@ -231,6 +230,24 @@ func (service *WorldService) PublishWorld(ctx context.Context, worldID string, r
 		lastConflictError = err
 	}
 	return models.PublishResponse{}, lastConflictError
+}
+
+// UnpublishWorld revokes a world's share slug on a staff instruction.
+//
+// It is the inverse `PublishWorld` never had. Nothing in this platform could
+// take a public share page down: not staff, and not the person who published
+// it — the only remedy was deleting the whole world. This closes the staff
+// half, which is the half the permission table already reserved
+// (`world:unpublish`, "Not enforced yet — no route revokes a share slug").
+func (service *WorldService) UnpublishWorld(ctx context.Context, worldID, staffAccountID string) (models.UnpublishResponse, error) {
+	unpublished, err := service.store.UnpublishWorld(ctx, worldID, staffAccountID)
+	if err != nil {
+		return models.UnpublishResponse{}, err
+	}
+	return models.UnpublishResponse{
+		RevokedShareSlug: unpublished.RevokedShareSlug,
+		WasPublished:     unpublished.WasPublished,
+	}, nil
 }
 
 // DeleteWorld is owner-only and reversible for ever. The store decides who may
