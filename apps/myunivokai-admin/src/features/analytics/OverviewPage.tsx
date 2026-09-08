@@ -17,15 +17,12 @@ import { StatCard } from "@/components/ui/stat-card";
 import { analyticsApi } from "./api";
 import { ActivityChart } from "./components/charts/ActivityChart";
 import { LatencyPair } from "./components/LatencyPair";
+import { ShareReachPanel } from "./components/ShareReachPanel";
+import { FAMILY_FILTER_OPTIONS } from "./families";
 import { formatCount, formatDate, formatPercent } from "./format";
 import type { WorldFamily } from "./types";
 
 const RANGE_OPTIONS = [7, 30, 90] as const;
-const FAMILY_OPTIONS: { label: string; value: "" | WorldFamily }[] = [
-  { label: "All families", value: "" },
-  { label: "Universe", value: "universe" },
-  { label: "Nature", value: "nature" }
-];
 
 // The business landing screen: is the platform producing, is production
 // healthy, and is today different from yesterday.
@@ -67,7 +64,7 @@ export function OverviewPage() {
       <PageHeader
         title="Overview"
         description="Eventually consistent — a world appears here seconds after it is created."
-        sources={["Analytics Service"]}
+        sources={["Analytics Service", "Telemetry Service"]}
       />
 
       <FilterBar>
@@ -75,7 +72,7 @@ export function OverviewPage() {
           label="Family"
           value={family}
           onChange={(value) => setFamily(value as "" | WorldFamily)}
-          options={FAMILY_OPTIONS}
+          options={FAMILY_FILTER_OPTIONS}
         />
         <FilterSelect
           label="Range"
@@ -170,6 +167,13 @@ export function OverviewPage() {
               emptyLabel="No job was submitted in this window."
             />
           </div>
+
+          <ShareReachPanel
+            days={days}
+            family={family}
+            publishedWorlds={overview?.totalPublished}
+            isPublishedLoading={overviewQuery.isLoading}
+          />
 
           <div className="grid gap-4 lg:grid-cols-2">
             <SectionCard

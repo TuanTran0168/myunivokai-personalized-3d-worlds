@@ -1,6 +1,10 @@
 package contracts
 
-import "time"
+import (
+	"errors"
+	"strings"
+	"time"
+)
 
 const (
 	AuthLoginQuerySubject          = "myunivokai.queries.auth.login.v1"
@@ -19,6 +23,7 @@ const (
 	AuthRoleRevokeQuerySubject     = "myunivokai.queries.auth.role.revoke.v1"
 	AuthPermissionListQuerySubject = "myunivokai.queries.auth.permission.list.v1"
 	AuthAuditListQuerySubject      = "myunivokai.queries.auth.audit.list.v1"
+	AuthAuditRecordQuerySubject    = "myunivokai.queries.auth.audit.record.v1"
 	AuthInviteCreateQuerySubject   = "myunivokai.queries.auth.invite.create.v1"
 	AuthInviteAcceptQuerySubject   = "myunivokai.queries.auth.invite.accept.v1"
 	AuthAccountCreateQuerySubject  = "myunivokai.queries.auth.account.create.v1"
@@ -489,6 +494,55 @@ type AuditListResponseData struct {
 	NextCursor string              `json:"nextCursor,omitempty"`
 	TotalCount int                 `json:"totalCount"`
 }
+
+// AuditRecordData writes one audit row on behalf of an action that happened
+// somewhere other than auth-service.
+//
+// Every audit row until now was written by auth-service as a side effect of
+// the thing it had just done itself — a login, a role change, a settings
+// write — so there was no reason for an inbound write path and there was none.
+// The staff takedown broke that: the action happens in a family service, which
+// has no audit table and must not grow one, and the row still has to exist.
+//
+// The actor is a required field and the gateway fills it from the verified
+// admin access token, never from the request body. Result is required for the
+// same reason the rest of the log carries it: a takedown that was attempted
+// and refused is exactly the row an investigation needs, and a log that only
+// records successes cannot answer what was tried.
+//
+// This subject is a WRITE behind an admin permission, so it is not a general
+// "log anything" endpoint: the gateway is its only caller, and it calls it
+// only after an action it just performed on the operator's behalf.
+type AuditRecordData struct {
+	ActorAccountID string `json:"actorAccountId"`
+	Action         string `json:"action"`
+	Target         string `json:"target"`
+	Result         string `json:"result"`
+	SourceAddress  string `json:"sourceAddress,omitempty"`
+}
+
+func (data AuditRecordData) Validate() error {
+	if strings.TrimSpace(data.ActorAccountID) == "" {
+		return errors.New("actorAccountId is required")
+	}
+	if strings.TrimSpace(data.Action) == "" {
+		return errors.New("action is required")
+	}
+	if strings.TrimSpace(data.Result) == "" {
+		return errors.New("result is required")
+	}
+	return nil
+}
+
+// The audit actions written from outside auth-service. Declared here rather
+// than as a string at the call site so the admin log's filter and the writer
+// cannot disagree about spelling.
+const (
+	AuditActionWorldUnpublish = "world.unpublish"
+
+	AuditResultSuccess = "success"
+	AuditResultFailure = "failure"
+)
 
 // InviteCreateData creates an account with no password, identified only by
 // a one-time token the operator relays out of band — no email infrastructure

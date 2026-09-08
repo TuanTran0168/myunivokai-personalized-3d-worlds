@@ -18,8 +18,9 @@ use async_trait::async_trait;
 use time::OffsetDateTime;
 
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ErrorCodeAggregate, HourOfDayBucket, HttpTotals,
-    IngestOutcome, RollupBatch, RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    HttpTotals, IngestOutcome, RollupBatch, RouteAggregate, StatusClassCount, VolumeBucket,
+    WakeSignalBucket,
 };
 use crate::error::Result;
 
@@ -72,6 +73,14 @@ pub trait RollupRepository: Send + Sync {
     async fn wake_signals(&self, since: OffsetDateTime) -> Result<Vec<WakeSignalBucket>>;
     async fn backend_aggregates(&self, since: OffsetDateTime) -> Result<Vec<BackendAggregate>>;
     async fn cache_aggregates(&self, since: OffsetDateTime) -> Result<Vec<CacheAggregate>>;
+
+    /// What browsers reported, grouped by tier and outcome. The only
+    /// question in this trait whose answer was filled in from outside the
+    /// platform.
+    async fn client_render_aggregates(
+        &self,
+        since: OffsetDateTime,
+    ) -> Result<Vec<ClientRenderAggregate>>;
     async fn route_aggregates(&self, since: OffsetDateTime) -> Result<Vec<RouteAggregate>>;
 
     /// The oldest interval actually stored, which is not always the one that

@@ -40,6 +40,9 @@ type Store interface {
 
 	// GetWorld returns one world and its job history, or ErrNotFound.
 	GetWorld(ctx context.Context, worldID string) (contracts.AnalyticsWorldGetResponseData, error)
+	// GetWorldVariants returns one world's variants, or ErrNotFound. Separate
+	// from GetWorld because `variant:read` is separate from `world:read`.
+	GetWorldVariants(ctx context.Context, worldID string) (contracts.AnalyticsWorldVariantListResponseData, error)
 
 	ListJobs(ctx context.Context, filter models.JobListFilter) (contracts.AnalyticsJobListResponseData, error)
 	Timeseries(ctx context.Context, filter models.OverviewFilter) (contracts.AnalyticsTimeseriesResponseData, error)

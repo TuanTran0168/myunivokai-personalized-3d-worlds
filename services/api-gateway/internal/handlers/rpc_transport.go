@@ -138,6 +138,38 @@ func (transport *RPCTransport) Request(responseWriter http.ResponseWriter, reque
 	return response, true
 }
 
+// RequestWithoutResponse makes a request/reply call whose outcome belongs to
+// the caller's LOGS rather than to the caller.
+//
+// Request above writes every failure straight to the http.ResponseWriter,
+// which is correct for the call a caller is waiting on and wrong for a
+// follow-up the caller never asked for: the audit row written after a
+// successful takedown must not turn a completed takedown into a 502. So this
+// returns the status and reports nothing.
+//
+// It still records the backend call and still marks the responder seen. Those
+// are facts about the platform, not about the request, and a second call path
+// that quietly stopped feeding them would make one service's latency
+// disappear from the telemetry the moment it was used.
+func (transport *RPCTransport) RequestWithoutResponse(ctx context.Context, subject string, data any) (int, bool) {
+	requestContext, cancel := context.WithTimeout(ctx, transport.timeout)
+	defer cancel()
+	requestID := httpx.RequestID(ctx)
+	requestStartedAt := time.Now()
+	response, err := transport.requester.Request(requestContext, subject, contracts.NewEnvelope(requestID, data))
+	transport.collector.RecordBackendCall(wake.ServiceForSubject(subject), time.Since(requestStartedAt), err != nil)
+	if err != nil {
+		return 0, false
+	}
+	if transport.waker != nil {
+		transport.waker.Seen(wake.ServiceForSubject(subject))
+	}
+	if response.Data.Error != nil {
+		return response.Data.StatusCode, false
+	}
+	return response.Data.StatusCode, true
+}
+
 // Wake starts a service this request is about to depend on, before any
 // failure exists. It returns immediately and reports nothing; see
 // wake.Coordinator.Wake for why waiting is not an option.

@@ -11,15 +11,11 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { analyticsApi } from "./api";
 import { RarityFeatureCard } from "./components/RarityFeatureCard";
+import { FAMILY_FILTER_OPTIONS } from "./families";
 import { formatCount } from "./format";
 import type { WorldFamily } from "./types";
 
 const RANGE_OPTIONS = [7, 30, 90] as const;
-const FAMILY_OPTIONS: { label: string; value: "" | WorldFamily }[] = [
-  { label: "All families", value: "" },
-  { label: "Universe", value: "universe" },
-  { label: "Nature", value: "nature" }
-];
 
 // "The black hole is tuned to 40% — how often does it actually come up?"
 //
@@ -69,7 +65,7 @@ export function RarityPage() {
           label="Family"
           value={family}
           onChange={(value) => setFamily(value as "" | WorldFamily)}
-          options={FAMILY_OPTIONS}
+          options={FAMILY_FILTER_OPTIONS}
         />
         <FilterSelect
           label="Range"

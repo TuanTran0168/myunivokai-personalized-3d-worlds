@@ -12,7 +12,9 @@
 //! finding nothing when the fixture moves.
 
 use myunivokai_contracts::{
-    telemetry_rollup_message_id, Envelope, HttpRollupData, TELEMETRY_HISTOGRAM_BUCKET_COUNT,
+    telemetry_rollup_message_id, Envelope, HttpRollupData, CLIENT_RENDER_OUTCOME_RENDERED,
+    CLIENT_RENDER_OUTCOME_WEBGL_FAILED, CLIENT_RENDER_TIER_HIGH, CLIENT_RENDER_TIER_MINIMAL,
+    TELEMETRY_HISTOGRAM_BUCKET_COUNT,
 };
 use time::macros::datetime;
 
@@ -203,4 +205,57 @@ fn the_overview_response_fixture_decodes_into_the_mirror() {
         reencoded, original,
         "the mirror does not re-encode to the fixture it decoded"
     );
+}
+
+/// The Rust half of the fourth bucket type's drift guard. Its Go twin is
+/// TestTelemetryRollupFixtureCarriesWhatTheBrowserReported.
+#[test]
+fn the_fixture_carries_what_the_browser_reported() {
+    let envelope = decode_fixture();
+    assert_eq!(envelope.data.client_render_buckets.len(), 2);
+
+    let rendered = &envelope.data.client_render_buckets[0];
+    assert_eq!(rendered.quality_tier, CLIENT_RENDER_TIER_HIGH);
+    assert_eq!(rendered.family, "universe");
+    assert_eq!(rendered.outcome, CLIENT_RENDER_OUTCOME_RENDERED);
+    assert_eq!(rendered.count, 12);
+
+    // The failure outcome is in the fixture on purpose: it is the one this
+    // pipeline exists to count, and a fixture holding only successes would let
+    // the losing branch rot unnoticed.
+    let failed = &envelope.data.client_render_buckets[1];
+    assert_eq!(failed.quality_tier, CLIENT_RENDER_TIER_MINIMAL);
+    assert_eq!(failed.outcome, CLIENT_RENDER_OUTCOME_WEBGL_FAILED);
+}
+
+/// Validation is the security boundary on this bucket, because a browser fills
+/// it. Nothing is clamped.
+#[test]
+fn validate_refuses_client_render_values_outside_the_closed_sets() {
+    let mut data = decode_fixture().data;
+    assert!(data.validate().is_ok());
+
+    data.client_render_buckets[0].quality_tier = 4;
+    assert!(
+        data.validate().is_err(),
+        "a tier above the highest was accepted"
+    );
+
+    data.client_render_buckets[0].quality_tier = CLIENT_RENDER_TIER_HIGH;
+    data.client_render_buckets[0].family = "city".to_owned();
+    assert!(
+        data.validate().is_err(),
+        "a family that ships later was accepted"
+    );
+
+    data.client_render_buckets[0].family = "universe".to_owned();
+    data.client_render_buckets[0].outcome = "slow".to_owned();
+    assert!(
+        data.validate().is_err(),
+        "an outcome nobody counts was accepted"
+    );
+
+    data.client_render_buckets[0].outcome = CLIENT_RENDER_OUTCOME_RENDERED.to_owned();
+    data.client_render_buckets[0].count = -1;
+    assert!(data.validate().is_err(), "a negative count was accepted");
 }

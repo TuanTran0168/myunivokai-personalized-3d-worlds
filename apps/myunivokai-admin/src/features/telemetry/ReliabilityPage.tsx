@@ -6,6 +6,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "@/components/ui/stat-card";
 import { formatCount, formatDateTime, formatPercent } from "@/features/analytics/format";
+import { ClientRenderPanel } from "./components/ClientRenderPanel";
 import { TelemetryShell } from "./components/TelemetryShell";
 import { formatWindow } from "./format";
 import { useTelemetryWindow } from "./useTelemetryWindow";
@@ -135,6 +136,8 @@ export function ReliabilityPage() {
                 )}
               </SectionCard>
             </div>
+
+            <ClientRenderPanel rows={overview?.clientRender ?? []} isLoading={isLoading} />
           </>
         );
       }}

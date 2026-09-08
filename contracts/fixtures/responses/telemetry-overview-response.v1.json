@@ -125,5 +125,17 @@
       "p95DurationMs": 0
     }
   ],
-  "oldestBucketStart": "2026-08-13T09:14:00Z"
+  "oldestBucketStart": "2026-08-13T09:14:00Z",
+  "clientRender": [
+    {
+      "qualityTier": 1,
+      "outcome": "webgl_failed",
+      "count": 2
+    },
+    {
+      "qualityTier": 3,
+      "outcome": "rendered",
+      "count": 41
+    }
+  ]
 }

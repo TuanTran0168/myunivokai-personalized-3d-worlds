@@ -87,6 +87,16 @@ ON CONFLICT (bucket_start, service) DO UPDATE SET
              WITH ORDINALITY AS pair(stored, incoming, position)
     )";
 
+/// Accumulates like the other four. A browser reporting the same
+/// `{tier, family, outcome}` a second time inside one minute must add to the
+/// row, and two gateway instances flushing the same minute must add to each
+/// other.
+pub const UPSERT_CLIENT_RENDER_ROLLUP: &str = "
+INSERT INTO client_render_rollups (bucket_start, quality_tier, family, outcome, count)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (bucket_start, quality_tier, family, outcome) DO UPDATE SET
+    count = client_render_rollups.count + EXCLUDED.count";
+
 pub const UPSERT_CACHE_ROLLUP: &str = "
 INSERT INTO cache_rollups (bucket_start, namespace, hits, misses)
 VALUES ($1, $2, $3, $4)
@@ -237,6 +247,7 @@ SELECT
     method,
     COALESCE(SUM(request_count), 0)::BIGINT AS request_count,
     COALESCE(SUM(request_count) FILTER (WHERE status_class >= $2), 0)::BIGINT AS error_count,
+    COALESCE(SUM(request_count) FILTER (WHERE status_class = $3), 0)::BIGINT AS success_count,
     COALESCE(SUM(duration_sum_ms), 0)::BIGINT AS duration_sum_ms,
     COALESCE(MAX(duration_max_ms), 0)::BIGINT AS duration_max_ms,",
     histogram_sum_columns!(),
@@ -247,6 +258,19 @@ GROUP BY route_pattern, method
 ORDER BY SUM(request_count) DESC, route_pattern, method"
 );
 
+/// Grouped by tier and outcome but NOT by family — see
+/// `ClientRenderAggregate` for why. The rows keep the family so a later screen
+/// can ask a question this one does not.
+pub const SELECT_CLIENT_RENDER: &str = "
+SELECT
+    quality_tier,
+    outcome,
+    COALESCE(SUM(count), 0)::BIGINT AS count
+FROM client_render_rollups
+WHERE bucket_start >= $1
+GROUP BY quality_tier, outcome
+ORDER BY quality_tier, outcome";
+
 pub const SELECT_OLDEST_BUCKET: &str =
     "SELECT MIN(bucket_start) AS oldest_bucket_start FROM http_rollups";
 
@@ -256,11 +280,12 @@ pub const SELECT_OLDEST_BUCKET: &str =
 /// same cutoff: its rows are only useful for as long as JetStream could still
 /// redeliver the envelope they describe, which is far shorter than the rollup
 /// retention.
-pub const PRUNE_STATEMENTS: [&str; 5] = [
+pub const PRUNE_STATEMENTS: [&str; 6] = [
     "DELETE FROM http_rollups WHERE bucket_start < $1",
     "DELETE FROM error_code_rollups WHERE bucket_start < $1",
     "DELETE FROM nats_rollups WHERE bucket_start < $1",
     "DELETE FROM cache_rollups WHERE bucket_start < $1",
+    "DELETE FROM client_render_rollups WHERE bucket_start < $1",
     "DELETE FROM inbox_messages WHERE processed_at < $1",
 ];
 
@@ -373,6 +398,7 @@ mod tests {
             "error_code_rollups",
             "nats_rollups",
             "cache_rollups",
+            "client_render_rollups",
             "inbox_messages",
         ] {
             assert!(
@@ -380,5 +406,21 @@ mod tests {
                 "{table} is never pruned and grows without bound"
             );
         }
+    }
+
+    // The two status-class filters on the route table are a `>=` and an `=`,
+    // and swapping either comparison is the kind of edit that still returns
+    // plausible numbers. `>= error class` counts 5xx and anything above it;
+    // `= success class` counts 2xx exactly, so a 3xx redirect is neither an
+    // error nor a success, which is correct and is why neither filter can
+    // become a range that closes the gap.
+    #[test]
+    fn the_route_table_counts_errors_upward_and_successes_exactly() {
+        assert!(
+            SELECT_ROUTES.contains("FILTER (WHERE status_class >= $2), 0)::BIGINT AS error_count")
+        );
+        assert!(
+            SELECT_ROUTES.contains("FILTER (WHERE status_class = $3), 0)::BIGINT AS success_count")
+        );
     }
 }

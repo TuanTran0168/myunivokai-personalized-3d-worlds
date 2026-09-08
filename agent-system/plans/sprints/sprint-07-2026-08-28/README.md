@@ -1,13 +1,21 @@
 # Sprint 07 — create-form, transitions, gallery and ambient-audio polish
 
 > **Starts:** 2026-08-28
-> **Status:** Implemented — **five of six stories.** Corrected 2026-09-05:
-> this line said "implementation absent" while its own
+> **Status:** Implemented — **all six stories**, the last of them
+> (`S7-FE-ADAPTIVE-001`, adaptive quality tiers) on 2026-09-05. This line said
+> "implementation absent" until 2026-09-05 while its own
 > [`user-stories.md`](user-stories.md) had marked five stories `Implemented`
 > since 2026-08-29, on `fix/fe/sprint-07-experience-batch` and
-> `feat/fe/world-entry-cinematics`. Only
-> [`S7-FE-ADAPTIVE-001`](user-stories.md#s7-fe-adaptive-001--adaptive-quality-tiers-pulled-forward-ahead-of-city)
-> is still `Planned`.
+> `feat/fe/world-entry-cinematics`.
+>
+> **Read `S7-FE-ADAPTIVE-001`'s "What implementing it found" before trusting any
+> before/after image in this sprint.** Two of its tasks were completed by NOT
+> doing what they said — `detect-gpu` is blocked by a CSP that shipped after
+> this sprint was written, and per-tier LOD distances are measurably useless in
+> fill-rate-bound scenes. More importantly it found that **two scenes in the
+> screenshot harness are bimodal**, `forest-world` with a same-code spread of
+> 22.5, so a single-sample eye comparison of these images cannot distinguish a
+> code change from which mode a capture landed in.
 >
 > **Not `Verified`:** the five carry their own caveat — *"Verified needs
 > real-device/browser evidence beyond this session's own Playwright

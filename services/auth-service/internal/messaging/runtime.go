@@ -87,6 +87,7 @@ func (runtime *Runtime) Run(_ context.Context) error {
 		{subject: contracts.AuthRoleRevokeQuerySubject, handler: runtime.natsHandler.HandleRoleRevokeQuery},
 		{subject: contracts.AuthPermissionListQuerySubject, handler: runtime.natsHandler.HandlePermissionListQuery},
 		{subject: contracts.AuthAuditListQuerySubject, handler: runtime.natsHandler.HandleAuditListQuery},
+		{subject: contracts.AuthAuditRecordQuerySubject, handler: runtime.natsHandler.HandleAuditRecordQuery},
 		{subject: contracts.AuthSettingListQuerySubject, handler: runtime.natsHandler.HandleSettingListQuery},
 		{subject: contracts.AuthSettingUpdateQuerySubject, handler: runtime.natsHandler.HandleSettingUpdateQuery},
 	}

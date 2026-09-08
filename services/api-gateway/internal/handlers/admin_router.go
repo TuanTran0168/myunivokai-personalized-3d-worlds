@@ -60,6 +60,11 @@ func newAdminRouter(serviceConfig config.Config, brokerClient broker.Client, edg
 	telemetryHandler := NewAdminTelemetryHandler(transport)
 	wakeHandler := NewAdminWakeHandler(edgeStore, waker, serviceConfig.ServiceWakePlatform)
 	settingsHandler := NewAdminSettingsHandler(transport)
+	// One per family, each holding its own subject. See AdminWorldHandler:
+	// the family is chosen here and never read from a request.
+	universeAdminWorldHandler := NewAdminWorldHandler(contracts.WorldFamilyUniverse, contracts.UniverseWorldUnpublishSubject, transport)
+	natureAdminWorldHandler := NewAdminWorldHandler(contracts.WorldFamilyNature, contracts.NatureWorldUnpublishSubject, transport)
+	oceanAdminWorldHandler := NewAdminWorldHandler(contracts.WorldFamilyOcean, contracts.OceanWorldUnpublishSubject, transport)
 
 	adminRouter.Group(func(managementRouter chi.Router) {
 		managementRouter.Use(requireAccessToken)
@@ -101,6 +106,7 @@ func newAdminRouter(serviceConfig config.Config, brokerClient broker.Client, edg
 		managementRouter.With(requirePermission(contracts.PermissionChartRead)).Get("/timeseries", analyticsHandler.Timeseries)
 		managementRouter.With(requirePermission(contracts.PermissionWorldRead)).Get("/worlds", analyticsHandler.ListWorlds)
 		managementRouter.With(requirePermission(contracts.PermissionWorldRead)).Get("/worlds/{worldID}", analyticsHandler.GetWorld)
+		managementRouter.With(requirePermission(contracts.PermissionVariantRead)).Get("/worlds/{worldID}/variants", analyticsHandler.GetWorldVariants)
 		managementRouter.With(requirePermission(contracts.PermissionJobRead)).Get("/jobs", analyticsHandler.ListJobs)
 		managementRouter.With(requirePermission(contracts.PermissionChartRead)).Get("/service-starts", analyticsHandler.ListServiceStarts)
 
@@ -122,6 +128,21 @@ func newAdminRouter(serviceConfig config.Config, brokerClient broker.Client, edg
 		// every holder of chart:read is already trusted with: a dashboard
 		// number with no personal data in it.
 		managementRouter.With(requirePermission(contracts.PermissionChartRead)).Get("/wake-stats", wakeHandler.Stats)
+
+		// The only admin routes that WRITE to a family service. One
+		// registration per family rather than a `/{family}` wildcard, so the
+		// service a request reaches is decided by the route table and not by
+		// the request — the same rule the product routes above the admin edge
+		// already follow.
+		managementRouter.Route("/universe", func(familyRouter chi.Router) {
+			registerAdminWorldRoutes(familyRouter, universeAdminWorldHandler, requirePermission)
+		})
+		managementRouter.Route("/nature", func(familyRouter chi.Router) {
+			registerAdminWorldRoutes(familyRouter, natureAdminWorldHandler, requirePermission)
+		})
+		managementRouter.Route("/ocean", func(familyRouter chi.Router) {
+			registerAdminWorldRoutes(familyRouter, oceanAdminWorldHandler, requirePermission)
+		})
 	})
 
 	adminRouter.NotFound(func(responseWriter http.ResponseWriter, request *http.Request) {

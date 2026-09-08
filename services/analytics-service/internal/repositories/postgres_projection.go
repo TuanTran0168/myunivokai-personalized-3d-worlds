@@ -147,12 +147,27 @@ func upsertWorldProjection(ctx context.Context, transaction pgx.Tx, snapshot con
 	if err != nil {
 		return err
 	}
+	// Marshalled rather than passed through, for the same reason as
+	// favoriteColors above: pgx would otherwise have to guess a Postgres type
+	// for a Go slice, and a JSONB column wants bytes.
+	//
+	// A nil slice marshals to `null`, which a NOT NULL JSONB column refuses —
+	// and nil is the normal case for an event published before the snapshot
+	// carried variants. So it becomes an empty array here.
+	variantList := snapshot.Variants
+	if variantList == nil {
+		variantList = []contracts.WorldVariantSummary{}
+	}
+	variants, err := json.Marshal(variantList)
+	if err != nil {
+		return err
+	}
 	commandTag, err := transaction.Exec(ctx, `INSERT INTO world_projections
 			(world_id, family, profile_id, dna_version_id, source_job_id, revision, nickname, role,
 			 archetype, scene_name, mood, world_style, favorite_colors,
 			 trait_creativity, trait_discipline, trait_curiosity, trait_energy, trait_focus,
-			 variant_count, selected_variant_no, variant_seed, is_published, published_at, world_created_at)
-		VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+			 variant_count, selected_variant_no, variant_seed, variants, is_published, published_at, world_created_at)
+		VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		ON CONFLICT (world_id) DO UPDATE SET
 			family = EXCLUDED.family,
 			profile_id = EXCLUDED.profile_id,
@@ -174,6 +189,7 @@ func upsertWorldProjection(ctx context.Context, transaction pgx.Tx, snapshot con
 			variant_count = EXCLUDED.variant_count,
 			selected_variant_no = EXCLUDED.selected_variant_no,
 			variant_seed = EXCLUDED.variant_seed,
+			variants = EXCLUDED.variants,
 			is_published = EXCLUDED.is_published,
 			published_at = EXCLUDED.published_at,
 			world_created_at = EXCLUDED.world_created_at,
@@ -184,7 +200,7 @@ func upsertWorldProjection(ctx context.Context, transaction pgx.Tx, snapshot con
 		snapshot.Mood, snapshot.WorldStyle, favoriteColors,
 		snapshot.TraitScores.Creativity, snapshot.TraitScores.Discipline, snapshot.TraitScores.Curiosity,
 		snapshot.TraitScores.Energy, snapshot.TraitScores.Focus,
-		snapshot.VariantCount, snapshot.SelectedVariantNo, snapshot.VariantSeed,
+		snapshot.VariantCount, snapshot.SelectedVariantNo, snapshot.VariantSeed, variants,
 		snapshot.PublishedAt != nil, snapshot.PublishedAt,
 		snapshot.WorldCreatedAt,
 	)

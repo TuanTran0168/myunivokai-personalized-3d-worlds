@@ -7,6 +7,9 @@ import type {
   Timeseries,
   WakeStats,
   WorldDetail,
+  UnpublishResult,
+  WorldFamily,
+  WorldVariantList,
   WorldListFilters,
   WorldPage
 } from "./types";
@@ -68,6 +71,13 @@ export const analyticsApi = {
   // gateway route is hit before that judgement is ever reached.
   world: (worldId: string) => adminRequest<WorldDetail>(`/worlds/${encodeURIComponent(worldId)}`),
 
+  // Its own request because it is its own permission: the gateway gates
+  // this route on `variant:read` and the world detail above on
+  // `world:read`, so a caller holding one and not the other gets exactly
+  // what it is allowed.
+  worldVariants: (worldId: string) =>
+    adminRequest<WorldVariantList>(`/worlds/${encodeURIComponent(worldId)}/variants`),
+
   jobs: (filters: JobListFilters, pageSize: number, cursor?: string) =>
     adminRequest<JobPage>(
       `/jobs${buildQuery({
@@ -84,5 +94,20 @@ export const analyticsApi = {
   serviceStarts: (service: string, pageSize: number, cursor?: string) =>
     adminRequest<ServiceStartPage>(`/service-starts${buildQuery({ pageSize, cursor, service })}`),
 
-  wakeStats: (days: number) => adminRequest<WakeStats>(`/wake-stats${buildQuery({ days })}`)
+  wakeStats: (days: number) => adminRequest<WakeStats>(`/wake-stats${buildQuery({ days })}`),
+
+  // The one WRITE in this file, and the only route in this app that reaches a
+  // family service rather than the read model. It is called out because
+  // everything above it reads a projection: this changes a published world's
+  // public page, and calling it again does not undo it.
+  //
+  // The family is part of the PATH and not the body. The gateway registers one
+  // route per family so the service a request reaches is decided by its route
+  // table (see AdminWorldHandler), and a client sending the family as a field
+  // would be asking for a shape the gateway deliberately does not offer.
+  unpublishWorld: (family: WorldFamily, worldId: string) =>
+    adminRequest<UnpublishResult>(
+      `/${encodeURIComponent(family)}/worlds/${encodeURIComponent(worldId)}/unpublish`,
+      { method: "POST" }
+    )
 };

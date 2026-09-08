@@ -22,11 +22,14 @@ const (
 
 	// The analytics query subjects need no gateway ACL change either —
 	// the gateway may already publish "myunivokai.queries.>".
-	AnalyticsOverviewGetQuerySubject   = "myunivokai.queries.analytics.overview.get.v1"
-	AnalyticsWorldListQuerySubject     = "myunivokai.queries.analytics.world.list.v1"
-	AnalyticsWorldGetQuerySubject      = "myunivokai.queries.analytics.world.get.v1"
-	AnalyticsJobListQuerySubject       = "myunivokai.queries.analytics.job.list.v1"
-	AnalyticsTimeseriesGetQuerySubject = "myunivokai.queries.analytics.timeseries.get.v1"
+	AnalyticsOverviewGetQuerySubject = "myunivokai.queries.analytics.overview.get.v1"
+	AnalyticsWorldListQuerySubject   = "myunivokai.queries.analytics.world.list.v1"
+	AnalyticsWorldGetQuerySubject    = "myunivokai.queries.analytics.world.get.v1"
+	// The variants of one world, on their own subject because they are on
+	// their own permission. See AnalyticsWorldVariantListResponseData.
+	AnalyticsWorldVariantListQuerySubject = "myunivokai.queries.analytics.world.variant.list.v1"
+	AnalyticsJobListQuerySubject          = "myunivokai.queries.analytics.job.list.v1"
+	AnalyticsTimeseriesGetQuerySubject    = "myunivokai.queries.analytics.timeseries.get.v1"
 
 	// Pagination and range bounds are declared here rather than inside
 	// analytics-service because the gateway relays raw query strings and the
@@ -98,9 +101,65 @@ type WorldSnapshot struct {
 	// Omitempty and tolerated as empty on the way in: events published before
 	// this field existed carry no seed, and a projection that refused them
 	// would drop history to gain a metric.
-	VariantSeed    string     `json:"variantSeed,omitempty"`
-	PublishedAt    *time.Time `json:"publishedAt,omitempty"`
-	WorldCreatedAt time.Time  `json:"worldCreatedAt"`
+	VariantSeed string `json:"variantSeed,omitempty"`
+	// Variants is every variant this world has, not only the selected one, and
+	// it carries three fields per variant: the number, the seed and whether it
+	// is the selected one.
+	//
+	// It exists because `variant:read` exists. That codename has been declared
+	// and grantable since S4-AUTH-005 with no route behind it, and a route
+	// cannot be built on a read model that does not hold the data — an admin
+	// read may not reach a family service (principle 10), which is the whole
+	// reason analytics-service exists.
+	//
+	// What does NOT cross with them is `world_variants.config`. It is a scene
+	// configuration derived from the DNA, it is large, and no admin screen has
+	// a question it answers; `TestSnapshotCarriesNoForbiddenField` asserts the
+	// word never appears in a serialized snapshot.
+	//
+	// The seeds are covered by the same argument the boundary already accepted
+	// for VariantSeed on 2026-09-03: a base32 identifier this platform minted,
+	// carrying nothing a person typed. The widening is from ONE such
+	// identifier to all of a world's, which is a difference of degree inside a
+	// category the boundary already admits.
+	//
+	// Omitempty and tolerated as empty on the way in, for the same reason as
+	// VariantSeed: events published before this field existed carry no
+	// variants, and a projection that refused them would drop history to gain
+	// a screen.
+	Variants       []WorldVariantSummary `json:"variants,omitempty"`
+	PublishedAt    *time.Time            `json:"publishedAt,omitempty"`
+	WorldCreatedAt time.Time             `json:"worldCreatedAt"`
+}
+
+// WorldVariantSummary is one of a world's variants, reduced to what an admin
+// screen can answer a question with.
+//
+// Three fields and no fourth. `config` is deliberately absent — see
+// WorldSnapshot.Variants — and so is the thumbnail URL, which points at
+// storage the admin app has no credentials for and would render as a broken
+// image rather than as information.
+type WorldVariantSummary struct {
+	VariantNo int `json:"variantNo"`
+	// The seed is what makes a variant investigable: contracts_rarity.go
+	// replays the rare-feature lottery from it, so a staff member asking "did
+	// this world really roll a black hole" has something to check rather than
+	// a claim to believe.
+	Seed       string `json:"seed"`
+	IsSelected bool   `json:"isSelected"`
+}
+
+// AnalyticsWorldVariantListResponseData answers the variants of one world.
+//
+// A response of its own rather than a field on the world detail, because the
+// permission is its own: `variant:read` is separate from `world:read`, which
+// follows the "verbs explicit on the resource" rule the admin plan's §Roles
+// and permissions states. A gate on a field of a shared response would be a
+// gate the gateway could not apply.
+type AnalyticsWorldVariantListResponseData struct {
+	WorldID  string                `json:"worldId"`
+	Family   WorldFamily           `json:"family"`
+	Variants []WorldVariantSummary `json:"variants"`
 }
 
 // FamilyWorldChangedData carries a snapshot and nothing else. Every later
@@ -254,8 +313,8 @@ type AnalyticsRarityFeatureRate struct {
 	// the window, that carry a seed. It is per-feature rather than global
 	// because a forest cannot roll a black hole, and counting it in that
 	// denominator would halve every universe rate.
-	EligibleWorlds int     `json:"eligibleWorlds"`
-	ObservedCount  int     `json:"observedCount"`
+	EligibleWorlds  int     `json:"eligibleWorlds"`
+	ObservedCount   int     `json:"observedCount"`
 	ObservedPercent float64 `json:"observedPercent"`
 	// Species is empty for features that have no varieties.
 	Species []AnalyticsRaritySpeciesShare `json:"species,omitempty"`

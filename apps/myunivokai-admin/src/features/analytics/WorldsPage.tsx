@@ -54,7 +54,7 @@ export function WorldsPage() {
     <div>
       <PageHeader
         title="Worlds"
-        description="Every generated world, newest first, projected from universe and nature events."
+        description="Every generated world, newest first, projected from each family's world events."
         sources={["Analytics Service"]}
       />
 

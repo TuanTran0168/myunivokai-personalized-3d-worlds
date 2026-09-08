@@ -21,14 +21,28 @@ use time::OffsetDateTime;
 
 use super::RollupRepository;
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ErrorCodeAggregate, HourOfDayBucket, HttpTotals,
-    IngestOutcome, LatencySummary, RollupBatch, RouteAggregate, StatusClassCount, VolumeBucket,
-    WakeSignalBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    HttpTotals, IngestOutcome, LatencySummary, RollupBatch, RouteAggregate, StatusClassCount,
+    VolumeBucket, WakeSignalBucket,
 };
 use crate::error::{Error, Result};
 
 const SERVER_ERROR_STATUS_CLASS: i16 = 5;
+const SUCCESS_STATUS_CLASS: i16 = 2;
 const WAKE_SIGNAL_ERROR_CODE: &str = "SERVICE_WAKING";
+
+/// What one route accumulates while `route_aggregates` walks the buckets.
+///
+/// A struct rather than a `(Counters, i64, i64)` tuple: the two counts are the
+/// same type and mean opposite things, so positional access is one transposed
+/// field away from a route that reports its 404s as successes — and the test
+/// that would catch it is the one this file exists to make unnecessary.
+#[derive(Default)]
+struct RouteTally {
+    counters: Counters,
+    server_errors: i64,
+    successes: i64,
+}
 
 /// `date_trunc('hour', ... AT TIME ZONE 'UTC')`, in Rust.
 ///
@@ -79,6 +93,7 @@ struct State {
     error_codes: BTreeMap<(OffsetDateTime, String), i64>,
     nats: BTreeMap<(OffsetDateTime, String), (Counters, i64)>,
     cache: BTreeMap<(OffsetDateTime, String), (i64, i64)>,
+    client_render: BTreeMap<(OffsetDateTime, i16, String, String), i64>,
     /// Set to make the next call fail, so the consumer's nak path is testable
     /// without an unreachable database.
     next_failure: Option<&'static str>,
@@ -175,6 +190,17 @@ impl RollupRepository for InMemoryRollupRepository {
                 .or_insert((0, 0));
             entry.0 += row.hits;
             entry.1 += row.misses;
+        }
+        for row in &batch.client_render {
+            *state
+                .client_render
+                .entry((
+                    batch.bucket_start,
+                    row.quality_tier,
+                    row.family.clone(),
+                    row.outcome.clone(),
+                ))
+                .or_insert(0) += row.count;
         }
         Ok(IngestOutcome::Stored)
     }
@@ -447,38 +473,67 @@ impl RollupRepository for InMemoryRollupRepository {
             .collect())
     }
 
+    async fn client_render_aggregates(
+        &self,
+        since: OffsetDateTime,
+    ) -> Result<Vec<ClientRenderAggregate>> {
+        self.take_failure()?;
+        let state = self.state.lock().expect("repository lock");
+        // Keyed on (tier, outcome) and NOT on family, which is what
+        // SELECT_CLIENT_RENDER's GROUP BY does. A double that kept the family
+        // would return more rows than the database and let a test pass on a
+        // shape the screen never sees.
+        let mut grouped: BTreeMap<(i16, String), i64> = BTreeMap::new();
+        for ((bucket_start, quality_tier, _family, outcome), count) in &state.client_render {
+            if *bucket_start < since {
+                continue;
+            }
+            *grouped.entry((*quality_tier, outcome.clone())).or_insert(0) += count;
+        }
+        Ok(grouped
+            .into_iter()
+            .map(|((quality_tier, outcome), count)| ClientRenderAggregate {
+                quality_tier,
+                outcome,
+                count,
+            })
+            .collect())
+    }
+
     async fn route_aggregates(&self, since: OffsetDateTime) -> Result<Vec<RouteAggregate>> {
         self.take_failure()?;
         let state = self.state.lock().expect("repository lock");
-        let mut grouped: BTreeMap<(String, String), (Counters, i64)> = BTreeMap::new();
+        let mut grouped: BTreeMap<(String, String), RouteTally> = BTreeMap::new();
         for ((bucket_start, route_pattern, method, status_class), counters) in &state.http {
             if *bucket_start < since {
                 continue;
             }
-            let entry = grouped
+            let tally = grouped
                 .entry((route_pattern.clone(), method.clone()))
-                .or_insert((Counters::default(), 0));
-            entry.0.accumulate(
+                .or_default();
+            tally.counters.accumulate(
                 counters.count,
                 counters.sum_ms,
                 counters.max_ms,
                 counters.histogram,
             );
             if *status_class >= SERVER_ERROR_STATUS_CLASS {
-                entry.1 += counters.count;
+                tally.server_errors += counters.count;
+            }
+            if *status_class == SUCCESS_STATUS_CLASS {
+                tally.successes += counters.count;
             }
         }
         let mut aggregates: Vec<RouteAggregate> = grouped
             .into_iter()
-            .map(
-                |((route_pattern, method), (counters, server_errors))| RouteAggregate {
-                    route_pattern,
-                    method,
-                    requests: counters.count,
-                    server_errors,
-                    latency: counters.summary(),
-                },
-            )
+            .map(|((route_pattern, method), tally)| RouteAggregate {
+                route_pattern,
+                method,
+                requests: tally.counters.count,
+                server_errors: tally.server_errors,
+                successes: tally.successes,
+                latency: tally.counters.summary(),
+            })
             .collect();
         aggregates.sort_by(|left, right| {
             right
@@ -503,8 +558,11 @@ impl RollupRepository for InMemoryRollupRepository {
     async fn delete_before(&self, cutoff: OffsetDateTime) -> Result<u64> {
         self.take_failure()?;
         let mut state = self.state.lock().expect("repository lock");
-        let before =
-            state.http.len() + state.error_codes.len() + state.nats.len() + state.cache.len();
+        let before = state.http.len()
+            + state.error_codes.len()
+            + state.nats.len()
+            + state.cache.len()
+            + state.client_render.len();
         state
             .http
             .retain(|(bucket_start, _, _, _), _| *bucket_start >= cutoff);
@@ -517,8 +575,14 @@ impl RollupRepository for InMemoryRollupRepository {
         state
             .cache
             .retain(|(bucket_start, _), _| *bucket_start >= cutoff);
-        let after =
-            state.http.len() + state.error_codes.len() + state.nats.len() + state.cache.len();
+        state
+            .client_render
+            .retain(|(bucket_start, _, _, _), _| *bucket_start >= cutoff);
+        let after = state.http.len()
+            + state.error_codes.len()
+            + state.nats.len()
+            + state.cache.len()
+            + state.client_render.len();
         Ok((before - after) as u64)
     }
 }

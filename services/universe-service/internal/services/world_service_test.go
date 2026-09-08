@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/models"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
 )
 
 func newTestWorldService(store repositories.Store) *WorldService {

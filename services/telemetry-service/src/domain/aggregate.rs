@@ -60,7 +60,26 @@ pub struct RouteAggregate {
     pub method: String,
     pub requests: i64,
     pub server_errors: i64,
+    /// Responses in the 2xx class. Counted separately from `requests` and
+    /// `server_errors` rather than derived from them: the two do not span the
+    /// row, because 4xx belongs to neither.
+    pub successes: i64,
     pub latency: LatencySummary,
+}
+
+/// What the browsers in a window resolved, one row per `{tier, outcome}`.
+///
+/// Family is deliberately NOT a dimension of the aggregate even though it is
+/// one of the stored row. The question this answers is "what are visitors'
+/// devices capable of", and that is a property of the devices rather than of
+/// the scene they happened to open — splitting it by family would divide one
+/// small number into four smaller ones and answer a question nobody asked.
+/// The rows are still stored per family, so a later screen can ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRenderAggregate {
+    pub quality_tier: i16,
+    pub outcome: String,
+    pub count: i64,
 }
 
 /// One backend service's round-trip summary. This is the question end-to-end

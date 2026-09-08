@@ -9,10 +9,10 @@ import (
 	"time"
 
 	contracts "github.com/myunivokai/myunivokai/contracts/go"
-	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/handlers"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/repositories"
 	"github.com/myunivokai/myunivokai/services/universe-service/internal/services"
+	"github.com/myunivokai/myunivokai/shared/family-platform/go/config"
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
@@ -106,6 +106,7 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		{subject: contracts.UniverseVariantCreateSubject, handler: runtime.natsHandler.HandleVariantCreateQuery},
 		{subject: contracts.UniverseVariantSelectSubject, handler: runtime.natsHandler.HandleVariantSelectQuery},
 		{subject: contracts.UniverseWorldPublishSubject, handler: runtime.natsHandler.HandleWorldPublishQuery},
+		{subject: contracts.UniverseWorldUnpublishSubject, handler: runtime.natsHandler.HandleWorldUnpublishQuery},
 		{subject: contracts.UniverseWorldDeleteSubject, handler: runtime.natsHandler.HandleWorldDeleteQuery},
 		{subject: contracts.UniverseShareGetQuerySubject, handler: runtime.natsHandler.HandleShareGetQuery},
 	}

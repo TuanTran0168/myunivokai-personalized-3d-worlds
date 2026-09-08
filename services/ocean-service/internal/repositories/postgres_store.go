@@ -84,7 +84,8 @@ func (store *PostgresStore) CreateWorld(ctx context.Context, world models.World,
 	// separate world.changed event being published alongside it: analytics
 	// then has one projection function, with `completed` as revision 1 and
 	// `world.changed` as every revision after it.
-	createdSnapshot := newWorldSnapshot(world, 1, variant.VariantNo, variant.Seed, nil)
+	createdSnapshot := newWorldSnapshot(world, 1, variant.VariantNo, variant.Seed,
+		[]contracts.WorldVariantSummary{{VariantNo: variant.VariantNo, Seed: variant.Seed, IsSelected: true}}, nil)
 	completedEnvelope := contracts.NewEnvelope(world.SourceJobID, contracts.FamilyCompletedData{
 		Family: contracts.WorldFamilyOcean, ProfileID: world.ProfileID, DNAVersionID: world.DNAVersionID,
 		WorldID: world.ID, Snapshot: &createdSnapshot,
@@ -300,6 +301,67 @@ func (store *PostgresStore) PublishWorld(ctx context.Context, worldID, shareSlug
 	}
 	bundle, err := store.GetWorld(ctx, worldID)
 	return bundle.World, err
+}
+
+// UnpublishWorld deletes the share row, which is all it takes: every read
+// derives visibility from `CASE WHEN s.id IS NULL THEN 'private' ELSE
+// 'public' END` and share_slug from the same LEFT JOIN, so removing the row
+// makes the world private and slug-less everywhere at once.
+//
+// It runs no ownership check, and that is the authorisation rather than the
+// absence of one. `assertWorldMutable` asks whether a CALLER may act on a
+// world; a staff takedown is not that question, and passing a nil account to
+// it would return "permitted" for every unowned world — which is all of them
+// today — while failing on owned ones the moment ownership rolls out. The
+// staff id is required by the contract, supplied by the gateway from a
+// verified admin token, and recorded in the audit row the caller writes.
+//
+// Unlike DeleteWorld this DOES emit: unpublishing leaves the world in place
+// with a state the read model can represent, so `published_at` has to go back
+// to null in the projection or the admin list keeps showing a published world
+// whose share page 404s.
+func (store *PostgresStore) UnpublishWorld(ctx context.Context, worldID, staffAccountID string) (models.WorldUnpublish, error) {
+	if staffAccountID == "" {
+		return models.WorldUnpublish{}, ErrStaffAccountRequired
+	}
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return models.WorldUnpublish{}, err
+	}
+	defer transaction.Rollback(ctx)
+	// The world must exist and must not be deleted, checked in the same
+	// transaction as the delete below. A takedown of a world that was already
+	// deleted is a 404, not a silent success.
+	var exists bool
+	if err := transaction.QueryRow(ctx,
+		`SELECT TRUE FROM worlds WHERE id = $1 AND deleted_at IS NULL`, worldID).Scan(&exists); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.WorldUnpublish{}, ErrNotFound
+		}
+		return models.WorldUnpublish{}, err
+	}
+	var revokedSlug string
+	err = transaction.QueryRow(ctx,
+		`DELETE FROM world_shares WHERE world_id = $1 RETURNING share_slug`, worldID).Scan(&revokedSlug)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Already unpublished. No revision bump and no event, mirroring
+		// PublishWorld's re-publish shortcut: an event here would describe a
+		// state change that did not happen.
+		if err := transaction.Commit(ctx); err != nil {
+			return models.WorldUnpublish{}, err
+		}
+		return models.WorldUnpublish{}, nil
+	}
+	if err != nil {
+		return models.WorldUnpublish{}, err
+	}
+	if err := recordWorldChange(ctx, transaction, worldID); err != nil {
+		return models.WorldUnpublish{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return models.WorldUnpublish{}, err
+	}
+	return models.WorldUnpublish{RevokedShareSlug: revokedSlug, WasPublished: true}, nil
 }
 
 // DeleteWorld sets the flag and emits nothing.

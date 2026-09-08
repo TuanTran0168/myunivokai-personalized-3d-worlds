@@ -19,8 +19,9 @@ use time::OffsetDateTime;
 use super::RollupRepository;
 use crate::config::Config;
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ErrorCodeAggregate, HourOfDayBucket, HttpTotals,
-    IngestOutcome, RollupBatch, RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    HttpTotals, IngestOutcome, RollupBatch, RouteAggregate, StatusClassCount, VolumeBucket,
+    WakeSignalBucket,
 };
 use crate::error::Result;
 
@@ -28,6 +29,14 @@ use crate::error::Result;
 /// parameter rather than inlined so the one definition lives in Rust beside
 /// the comment explaining it, instead of being repeated in four query strings.
 const SERVER_ERROR_STATUS_CLASS: i16 = 5;
+
+/// The class a successful response falls in, bound for the same reason as
+/// `SERVER_ERROR_STATUS_CLASS` above.
+///
+/// It is a separate count rather than `requests - errors`, because those two do
+/// not span the row: a 4xx is neither, so on any route that receives one the
+/// difference overstates how many callers were actually served.
+const SUCCESS_STATUS_CLASS: i16 = 2;
 
 /// The gateway's own code for "the service is starting up".
 const WAKE_SIGNAL_ERROR_CODE: &str = "SERVICE_WAKING";
@@ -136,6 +145,17 @@ impl RollupRepository for PostgresRollupRepository {
                 .bind(row.namespace.as_str())
                 .bind(row.hits)
                 .bind(row.misses)
+                .execute(&mut *transaction)
+                .await?;
+        }
+
+        for row in &batch.client_render {
+            sqlx::query(statements::UPSERT_CLIENT_RENDER_ROLLUP)
+                .bind(batch.bucket_start)
+                .bind(row.quality_tier)
+                .bind(row.family.as_str())
+                .bind(row.outcome.as_str())
+                .bind(row.count)
                 .execute(&mut *transaction)
                 .await?;
         }
@@ -264,10 +284,25 @@ impl RollupRepository for PostgresRollupRepository {
             .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?)
     }
 
+    async fn client_render_aggregates(
+        &self,
+        since: OffsetDateTime,
+    ) -> Result<Vec<ClientRenderAggregate>> {
+        let fetched = sqlx::query(statements::SELECT_CLIENT_RENDER)
+            .bind(since)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(fetched
+            .iter()
+            .map(rows::client_render_aggregate)
+            .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?)
+    }
+
     async fn route_aggregates(&self, since: OffsetDateTime) -> Result<Vec<RouteAggregate>> {
         let fetched = sqlx::query(statements::SELECT_ROUTES)
             .bind(since)
             .bind(SERVER_ERROR_STATUS_CLASS)
+            .bind(SUCCESS_STATUS_CLASS)
             .fetch_all(&self.pool)
             .await?;
         Ok(fetched
