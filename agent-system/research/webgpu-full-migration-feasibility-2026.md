@@ -17,6 +17,10 @@
 > questions that decide the verdict. **§28.3 lists six things that are still UNVERIFIED**, and they are
 > load-bearing. This document is honest about which of its sections rest on primary source and which
 > rest on a single reading.
+> **Phase 0 executed 2026-09-09 and passed** — the one measurement this report said had to come before
+> anything else. §19.7 holds the result, §28.3 item 6 is closed, and the instrument is committed at
+> `apps/myunivokai-personalization/e2e/webgpu-adapter-probe.mjs`. Still no production code modified,
+> and no migration begun.
 > **Supersedes:** nothing. **Amends:** `../evolution/platform-evolution-research.md` §Track D and
 > `../evolution/frontend-modernization-research.md` §WebGPU — see §20, which is an audit of both, not
 > a summary.
@@ -1179,8 +1183,106 @@ The project's rule is real-GPU headless Chromium, never SwiftShader. But:
   --enable-features=Vulkan --disable-vulkan-surface --enable-unsafe-webgpu`, from a **2024-01-16**
   article) is dated and Linux-oriented, and the article is unambiguous that **a real GPU is
   necessary**.
-- **UNVERIFIED:** whether Playwright's default Chromium on this project's Windows/RTX 4060 target
-  exposes a hardware WebGPU adapter. This is Phase 0.
+- ~~**UNVERIFIED:** whether Playwright's default Chromium on this project's Windows/RTX 4060 target
+  exposes a hardware WebGPU adapter.~~ **Measured on 2026-09-09 — see §19.7.** The answer is worse
+  than "no" and better than "no": the default binary never gets hardware, the pinned full browser
+  gets an adapter it cannot turn into a device, and one flag fixes it.
+
+### 19.7 Phase 0 result — measured, 2026-09-09
+
+Run with [`../../apps/myunivokai-personalization/e2e/webgpu-adapter-probe.mjs`](../../apps/myunivokai-personalization/e2e/webgpu-adapter-probe.mjs),
+committed alongside this section. Eight launch modes, one machine (Windows 11, RTX 4060 Laptop),
+Playwright 1.56.1. Every row is a separate browser launch; the page is route-fulfilled over https so
+the probe needs no dev server.
+
+| Launch mode | WebGL renderer it got | `requestAdapter()` | `requestDevice()` | Frame? |
+| --- | --- | --- | --- | --- |
+| headless shell · suite's SwiftShader flags | SwiftShader | **null**, 1 ms | — | no |
+| headless shell · **no flags at all** | **SwiftShader anyway** | **null**, 1 ms | — | no |
+| full Chromium · no flags | RTX 4060 / D3D11 | nvidia / lovelace, 15 features | **rejects** | no |
+| full Chromium · ANGLE/D3D11 | RTX 4060 / D3D11 | nvidia / lovelace, 15 features | **rejects** | no |
+| full Chromium · SwiftShader flags | SwiftShader | **null**, 2 ms | — | no |
+| full Chromium · `--disable-dawn-features=use_dxc` | RTX 4060 / D3D11 | nvidia / lovelace, 13 features | ok, 20 ms | **yes** |
+| installed Chrome 152.0.7977.78 · no flags | RTX 4060 / D3D11 | nvidia / lovelace, 20 features | ok, 28 ms | **yes** |
+| installed Edge 152.0.4191.66 · no flags | RTX 4060 / D3D11 | nvidia / lovelace, 20 features | ok, 20 ms | **yes** |
+
+**Gate: PASSED.** Three of eight modes present a hardware WebGPU frame. Phase 1 is unblocked.
+
+#### 19.7.1 §19.6 named one cause. There were two, and they are independent
+
+The SwiftShader flag is real, but removing it would not have helped, and that is the finding worth
+keeping. **Playwright's `headless: true` launches `chromium_headless_shell`, not Chromium** — a
+different binary since Playwright 1.49 — and with *zero* flags that binary still reports
+`ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)` for WebGL and
+resolves `requestAdapter()` to null. It has no GPU access to give. `channel: "chromium"` selects the
+full build and is the half of the fix nothing in this repo had identified.
+
+A flags problem is a two-line change. A binary problem is a different launch. Both were true.
+
+#### 19.7.2 The pinned browser enumerates the GPU and then cannot use it
+
+Full Chromium 141.0.7390.37 reports the adapter completely — `nvidia` / `lovelace`, 15 features,
+`maxTextureDimension2D=16384`, `maxBufferSize=2147483648` — and then:
+
+```txt
+OperationError: Failed to execute 'requestDevice' on 'GPUAdapter':
+  DynamicLib.Open: dxil.dll Windows Error: 87
+  at EnsureDXCLibraries (..\..\third_party\dawn\src\dawn\native\d3d12\PlatformFunctionsD3D12.cpp:129)
+```
+
+This is **not a missing file.** `chromium-1234/chrome-win64/` contains `dxil.dll` at 1,509,760 bytes —
+byte-identical in size to the one shipped by installed Chrome — and `dxcompiler.dll` at 25,752,064
+bytes, both with valid `MZ` headers. Dawn's DXC loader refuses them anyway, with Windows error 87
+(`ERROR_INVALID_PARAMETER`), in Playwright's build and not in Google's.
+
+`--disable-dawn-features=use_dxc` routes around it by falling back to FXC, which is built in. **The
+cost is exactly two adapter features: `shader-f16` and `subgroups`** — measured by diffing the feature
+lists, not assumed. That cost is safe for this project:
+`three.webgpu.js:41350` requests `requiredFeatures: supportedFeatures`, i.e. whatever the adapter
+happens to have, so a shorter list cannot make device creation fail; and `subgroups` is consumed only
+behind `renderer.hasFeature( 'subgroups' )` at `three.webgpu.js:39260`, which enables a WGSL directive
+for shaders that call subgroup functions. None of this app's nine shaders do.
+
+#### 19.7.3 The trap this would have set, and why the gate is defined as "a frame"
+
+An adapter that cannot become a device fails by **rejecting `requestDevice()`** — which is precisely
+what `Renderer.init()` catches to fall back to WebGL (§6.2). So a WebGPU parity run on Playwright's
+own pinned Chromium today would have quietly rendered the **WebGL** path, and all 25 screenshots would
+have matched their baselines and proved nothing. That is the same shape of failure
+`playwright.config.ts:47-53` already documents for the missing SwiftShader flag — *"every shot then
+comes out pure black … the failure is invisible because these tests assert nothing"* — except worse,
+because the images would look correct.
+
+This is not hypothetical: **the first version of the probe defined the gate as "a hardware adapter
+exists" and printed PASSED** on a machine where no WebGPU frame could be created at all. The gate is
+now `hardware adapter AND a configured canvas cleared AND `queue.onSubmittedWorkDone()` resolved`, and
+the distinction is the single most useful thing Phase 0 produced.
+
+#### 19.7.4 Two smaller answers that came free
+
+- **Loopback http is not a problem.** `http://127.0.0.1:41300/world/probe` — the shape
+  `playwright.config.ts:29-30` actually serves — reports `isSecureContext: true` and presents a frame.
+  The spec's "potentially trustworthy" rule for loopback holds here, so the harness origin needs no
+  https work.
+- **SwiftShader resolves `requestAdapter()` to null rather than throwing**, in 1–2 ms. This is
+  empirical confirmation of §6.2's claim from source that the fallback must be triggered by
+  `init()` rejection rather than by a missing `navigator.gpu`: on every SwiftShader row
+  `navigator.gpu` was **present**.
+
+#### 19.7.5 What the harness should launch, and what it should not touch
+
+A **third** Playwright project with its own `launchOptions` — `channel: "chromium"` plus
+`--disable-dawn-features=use_dxc` — leaving the `desktop` and `mobile` projects' SwiftShader pin
+exactly as it is. That pin's stated reason (*"two runs on the same machine differ only by the code
+between them"*) is still correct for the WebGL baselines, and a WebGPU project that needs the real GPU
+does not invalidate it.
+
+One caveat to carry into Phase 4: **the pinned browser is eleven majors behind the installed one.**
+Chromium 141 offers 13–15 adapter features and 4 `wgslLanguageFeatures`; Chrome 152 offers 20 and 10,
+including `primitive-index`, `subgroup-size-control`, `texture-component-swizzle` and
+`texture-formats-tier1`/`tier2`. Parity photographed on 141 is parity on a browser no user is running,
+so a WebGPU-specific difference should be cross-checked against `channel: "chrome"` before it is
+believed.
 
 ---
 
@@ -1257,7 +1359,7 @@ other step (§4.3).
 | DRACO/KTX2 decoders | self-hosted, CSP-driven | unchanged | unchanged | n/a | TRIVIAL | LOW | IDENTICAL | — |
 | Image export | `toDataURL` + `preserveDrawingBuffer` | no direct analogue | existing | n/a | MEDIUM | VISUAL_PARITY_RISK | UNKNOWN | Test |
 | Transition stills | `drawImage` + centre-pixel guard | same, already fails safe | existing | n/a | LOW | LOW | IDENTICAL | Lucky — keep the guard |
-| Visual parity harness | Playwright, SwiftShader, **no assertions** | must reach WebGPU + pin phase + add a metric | same | n/a | **HIGH** | **CRITICAL** | n/a | **Phase 0 — gates everything** |
+| Visual parity harness | Playwright, SwiftShader, **no assertions** | ~~must reach WebGPU~~ **reachability solved (§19.7)** + pin phase + add a metric | same | n/a | **MEDIUM** — was HIGH | **CRITICAL** | n/a | Phase 4 — Phase 0 passed |
 | GPU compute | none | available; also lowers to transform feedback | emulated | yes | — | — | — | **Defer — not phase one** (§15) |
 
 ---
@@ -1333,14 +1435,16 @@ What it does **not** give, in its own words:
   *"a pixel assertion would be worse than nothing here"* because WebGL output differs across GPUs.
 - **No pinned animation phase** — `scene-baseline.spec.ts:72-79`: freezing three.js's clock from
   outside without touching React's scheduler is *"not reliably possible"*.
-- **No WebGPU reachability** — SwiftShader is a GL rasteriser (§19.6).
+- **No WebGPU reachability** — SwiftShader is a GL rasteriser, and the default headless binary has no
+  GPU access at all. Both are fixable in `launchOptions`; §19.7 has the measured launch line.
 - Not run by `npm test`, not run in CI.
 
 ### 23.2 The three things that must be added
 
-**(a) A backend that can actually be WebGPU.** Phase 0. Either Playwright's default Chromium exposes
-a hardware adapter on the RTX 4060 target, or the harness needs a headed/GPU-enabled launch. Until
-this is answered nothing else in §23 is buildable.
+**(a) A backend that can actually be WebGPU.** ~~Phase 0.~~ **Answered — §19.7.** A third Playwright
+project with `channel: "chromium"` and `--disable-dawn-features=use_dxc` presents hardware WebGPU
+frames headlessly on the RTX 4060 target; no headed launch is needed. The `desktop`/`mobile`
+SwiftShader pin stays. The remaining two items below are now the only things blocking §23.
 
 **(b) A pinned animation phase.** The existing suite's own reason for not pinning is real, but
 `WebGPURenderer`/`Renderer` drives its own `Animation` object (`:28750`, constructed inside `init()`),
@@ -1499,18 +1603,22 @@ Phases adapted to this repository, one branch per phase with many commits, per
 [`../rules/git-convention.md`](../rules/git-convention.md) and the project's phase-branching
 convention. **Every phase ships and is independently revertable.**
 
-### Phase 0 — Can we even see it? (gates everything)
+### Phase 0 — Can we even see it? (gates everything) — **DONE 2026-09-09, PASSED**
 
 - **Objective:** determine whether this project's headless Chromium exposes a **hardware** WebGPU
   adapter on the RTX 4060 target.
-- **Files:** `e2e/` only — a throwaway spec that logs `navigator.gpu`, `requestAdapter()`,
-  `adapter.info`, and asserts the origin is a secure context.
-- **Dependencies:** none.
-- **Risk:** none. **Cost:** hours.
-- **Validation:** a hardware adapter string that is not SwiftShader.
-- **Rollback:** delete the spec.
-- **If it fails:** stop. Everything downstream is unprovable, and §28.4 becomes the whole
-  recommendation.
+- **Files:** `e2e/webgpu-adapter-probe.mjs`, committed. Nothing else touched.
+- **Result:** **PASSED** — 3 of 8 launch modes present a hardware WebGPU frame (§19.7). Usable line:
+  `channel: "chromium"` + `--disable-dawn-features=use_dxc`.
+- **Validation criterion, corrected during the run:** "a hardware adapter string that is not
+  SwiftShader" was **too weak** and passed on a machine that could not create a device. The criterion
+  is now adapter **and** device **and** a cleared canvas whose queue drained — see §19.7.3, which is
+  the most reusable thing this phase produced.
+- **What it also found, unplanned:** the default headless binary is `chromium_headless_shell` and has
+  no GPU access with any flags; the pinned full Chromium fails `requestDevice()` on `dxil.dll`
+  (Windows error 87) despite shipping the DLL; and that failure mode would have been **silently
+  absorbed** by `Renderer.init()`'s WebGL fallback, producing 25 passing screenshots of the wrong
+  renderer.
 
 ### Phase 1 — Proof of concept on the installed version (no upgrade)
 
@@ -1697,7 +1805,14 @@ WebGPU — the chain is replaced, not ported (§11.2). A fifteen-release three.j
 prerequisite, its r181 entry changes PBR appearance across 56 material sites on the *existing*
 renderer, and a peer range dictates the order (§4). The TSL surface saw ~15 renames or removals across
 that range. ~20% of users make the fallback a second production renderer (§19.5). And the parity
-harness that would prove any of it cannot currently reach WebGPU at all (§19.6).
+harness still has to be built — though it is no longer *unreachable*: Phase 0 ran on 2026-09-09 and
+found a headless launch line that presents hardware WebGPU frames (§19.7).
+
+**What Phase 0 changed, and what it did not.** It retires one of the five blockers this report named,
+and it is the one that gated the other four — parity could not previously be photographed at all. It
+did **not** answer a single visual-parity question. The scores below are therefore unchanged: Phase 0
+bought the *ability* to answer §28.3's remaining five items, not the answers. It also removed a way
+this study could have fooled itself, which is worth more than a point of confidence (§19.7.3).
 
 **Why not "FEASIBLE BUT WITH UNAVOIDABLE BEHAVIOR/VISUAL DIFFERENCES":** the differences found —
 N8AO→GTAO, `PCFSoftShadowMap`→`PCFShadowMap`, r181 PBR, premultiplied alpha — are all *tunable toward
@@ -1717,7 +1832,7 @@ bit-for-bit identity were required, the verdict would be that fifth category ins
 | Render target compatibility | **92** | The app creates **zero** render targets, cube targets, MRT or depth textures and reads back no pixels. All textures are 2D-canvas bakes or one `DataTexture`. Deductions: colour-space tagging is applied at different points on the node path, and the composer's buffers become app-owned |
 | WebGL2 fallback | **70** | Automatic, triggered on `init()` rejection — the correct trigger, covering async adapter failure; the backend is substantive, with a real transform-feedback compute path; `WebGLRenderer` not deprecated. **Deduction, and it is the report's largest: visual and performance equivalence for this content is entirely unverified**, while ~20% of users depend on it |
 | Behavioural equivalence | **68** | The whole application layer above the renderer is untouched: scene generation, seeds, spawn, behaviour, camera, optics, audio, state, persistence, UI, API. Deductions: device loss is a **new** failure mode; `webglcontextlost` has no analogue; soft shadows change; AO changes; the tone-curve fix changes the ocean deliberately; readback semantics differ |
-| **Overall** | **62** | No hard blockers, a clean target for every item, and most of the app free by construction — against one library replacement, a fifteen-release upgrade that moves the baseline, a harness that cannot yet see the new path, and ~20% of users on an unmeasured second renderer |
+| **Overall** | **62** | No hard blockers, a clean target for every item, and most of the app free by construction — against one library replacement, a fifteen-release upgrade that moves the baseline, a parity harness that must still be built (its reachability now solved — §19.7), and ~20% of users on an unmeasured second renderer |
 
 ### 28.3 Still UNVERIFIED — and load-bearing
 
@@ -1730,7 +1845,11 @@ bit-for-bit identity were required, the verdict would be that fifth category ins
    backends.
 4. **Field defect reports** for `WebGPURenderer` at production scale — none gathered.
 5. **Does `glslFn` work under the WebGPU backend**, or only the WebGL one?
-6. **Does Playwright's Chromium expose a hardware WebGPU adapter** on this project's target? Phase 0.
+6. ~~**Does Playwright's Chromium expose a hardware WebGPU adapter** on this project's target?~~
+   **ANSWERED 2026-09-09 — §19.7.** Yes, but only with `channel: "chromium"` *and*
+   `--disable-dawn-features=use_dxc`; the default headless binary has no GPU at all, and the pinned
+   full browser enumerates the RTX 4060 and then fails `requestDevice()` on `dxil.dll`. Five of six
+   items remain open.
 
 Also open, from the browser research: desktop Safari 26 on macOS Sequoia; Android/iOS WebView support;
 and this app's own real WebGPU/WebGL2 split, which one analytics field would answer.
@@ -1739,9 +1858,9 @@ and this app's own real WebGPU/WebGL2 split, which one analytics field would ans
 
 **Not a migration. A measurement, then one shader.**
 
-**Step 1 (hours):** Phase 0 — can the harness see a hardware WebGPU adapter on the RTX 4060? If not,
-stop and solve that first, because parity is otherwise unprovable and a migration without a parity
-harness is a redesign wearing a migration's clothes.
+**Step 1 (hours) — DONE 2026-09-09, PASSED.** Phase 0 — can the harness see a hardware WebGPU adapter
+on the RTX 4060? Yes, with `channel: "chromium"` and `--disable-dawn-features=use_dxc` (§19.7). Step 2
+is therefore live, and is the next thing to do.
 
 **Step 2 (a day or two), on the installed `three@0.171.0`, in `demos/`:** one scratch route with
 `<Canvas gl={async factory}>`, rendering the forest fixture, exercising in this order:
@@ -1763,6 +1882,12 @@ single line of the ocean is rewritten.
 ---
 
 ## 29. References
+
+### Primary — first-party measurement on the target machine
+
+| Source | Date | What it proves | Where used |
+| --- | --- | --- | --- |
+| `apps/myunivokai-personalization/e2e/webgpu-adapter-probe.mjs`, run on Windows 11 / RTX 4060 Laptop with Playwright 1.56.1 | 2026-09-09 | Which headless launch modes reach a hardware WebGPU adapter, which reach a *device*, and what the pinned browser's `dxil.dll` failure costs | §19.6, §19.7, §23.2, §26 Phase 0, §28.3 item 6 |
 
 ### Primary — the installed source (strongest evidence in this report)
 
@@ -1850,4 +1975,5 @@ Honest ticks and crosses. A cross is more useful than a dishonest tick.
 | Migration phases proposed | ✅ §26, 14 phases adapted to this source |
 | Field defect reports gathered | ❌ agent killed; §28.3 item 4 |
 | Adversarial verification of load-bearing claims | ❌ fleet killed; §27 is a single-author second pass |
-| **No production code modified** | ✅ **nothing outside this file was touched** |
+| Phase 0 executed and measured | ✅ 2026-09-09, 8 launch modes on the real target; §19.7. Its own first pass-criterion was wrong and is recorded as wrong |
+| **No production code modified** | ✅ **nothing outside this file and the Phase 0 probe** (`e2e/webgpu-adapter-probe.mjs`, a test instrument that renders no application code) **was touched** |
