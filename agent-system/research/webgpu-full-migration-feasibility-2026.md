@@ -1,11 +1,13 @@
 # WebGPU-first migration feasibility — myunivokai's full 3D rendering stack
 
-> **Document status:** Research, with **Phases 0–4 of §26 executed and passed**. Nothing in the verdict
+> **Document status:** Research, with **Phases 0–5 of §26 executed and passed**. Nothing in the verdict
 > is approved, and **Phases 2–4 did modify production code** — the last rows of the Quality check say
-> exactly what a visitor now receives and what is gated behind a build flag.
+> exactly what a visitor now receives and what is gated behind a build flag. Phase 5 added a second
+> post chain behind that same flag and changed nothing a visitor receives; it also **found §25's
+> recommended architecture to be defined by an impossible step**, which is corrected in place.
 > **Raised:** 2026-09-09 by the owner — a full-stack feasibility study, not a "can we use WebGPU
 > somewhere" question.
-> **Last source review:** 2026-09-10
+> **Last source review:** 2026-09-11
 > **Method:** every repository claim below was read from the source and carries a `file:line`. Every
 > external claim carries a URL, the date on the source, and the version it applies to. The strongest
 > class of evidence used is the **installed** `three@0.171.0` in `node_modules`, read directly —
@@ -1063,6 +1065,25 @@ Architecture A as the destination, reached by first upgrading three.js and repla
 **on the existing `WebGLRenderer`**, so that each step is independently verifiable and the app is
 shippable throughout.
 
+> **CORRECTED 2026-09-11 — §26 Phase 5. THE CLAUSE IN BOLD ABOVE DESCRIBES SOMETHING THAT CANNOT BE
+> DONE, and it is this architecture's defining clause.** Read from the installed 0.185.1 source:
+> `RenderPipeline` (and its deprecated `PostProcessing` alias) is exported **only** from
+> `three/webgpu` — zero occurrences in `three.module.js` — and `PassNode`, the base of every node
+> effect and the thing that gets the scene into the chain, calls `renderer.getMRT`, `setMRT`,
+> `getOutputBufferType`, `getOutputRenderTarget` and `contextNode`. Every one of those five: **zero
+> occurrences in three's WebGL build**, 5 to 45 in the WebGPU build. The node pipeline requires the
+> node renderer, and `postprocessing` requires the other one (Phase 4's blocker 2). Each chain runs on
+> exactly one renderer class, and **the chain change and the backend change are the same change**.
+>
+> The same constraint applies to TSL node materials, so Phases 6-8 cannot be done "on the existing
+> renderer" either. **The node path is all-or-nothing.** What is actually available, and what Phase 5
+> did, is to build the node path behind the renderer switch Phase 4 added to `UniverseCanvas`, keep
+> `WebGLRenderer` as what every visitor gets, and use the harness to drive the difference down until
+> the default can flip. **During the port that IS Architecture B** — the two-implementations shape this
+> section calls the trap — and what keeps it from becoming the trap is that it now has a stated end
+> condition and a number to reach it by. Architecture A remains the destination; D's staging story is
+> what was wrong.
+
 ### Comparison
 
 | Criterion | A | B | C | **D** |
@@ -1838,7 +1859,7 @@ convention. **Every phase ships and is independently revertable.**
 - **Rollback:** harness only; no production behaviour outside the anisotropy helper, which changes nothing
   on WebGL.
 
-### Phase 5 — Replace the post-processing chain, still on WebGL
+### Phase 5 — Replace the post-processing chain, still on WebGL — **DONE 2026-09-11, PASSED**
 
 - **Objective:** move off `postprocessing@6.39.4` to three.js's `RenderPipeline` + TSL **on the
   existing renderer**, so the chain change is isolated from the backend change.
@@ -1846,6 +1867,70 @@ convention. **Every phase ships and is independently revertable.**
 - **Risk:** **CRITICAL** — the N8AO→GTAO retune is a real look change.
 - **Validation:** Phase 4's harness; forest AO reviewed by the owner.
 - **Rollback:** revert; the old chain still works at 0.185.x.
+- **THE OBJECTIVE ABOVE IS IMPOSSIBLE AS WRITTEN**, and the correction is in §25 Architecture D
+  because it is that architecture's defining clause: the node pipeline cannot attach to a
+  `WebGLRenderer`. The chain landed as `shared/NodePostEffects.tsx`, mounted when the renderer IS a
+  node renderer, with `PostEffects.tsx` unchanged and still serving every visitor. `renderQuality.ts`
+  and `package.json` were NOT touched: multisampling still comes from the pixel ratio, and
+  `postprocessing` cannot be removed while it is what every visitor renders through.
+- **Result: PASSED, and both composer families are measurable for the first time.** On real GPU
+  hardware at the pinned phase:
+
+  | fixture | WebGPU vs WebGL | forceWebGL vs WebGL | **WebGPU vs forceWebGL** |
+  | --- | --- | --- | --- |
+  | universe-world | 18.95 · 183.12 · 64.45% | 18.73 · 183.04 · 64.19% | **0.44 · 25.84 · 2.55%** |
+  | forest-world | 20.32 · 84.27 · 86.42% | 20.35 · 82.65 · 86.45% | **1.31 · 11.61 · 7.58%** |
+  | ocean-shallow *(control)* | 57.02 · 150.77 · 98.21% | 57.02 · 151.20 · 98.21% | 0.02 · 1.50 · 0.23% |
+
+  Each pair of new legs differs from today's renderer by the same amount at the same worst block, and
+  from each other by a small non-zero margin — which is the shape two real rasterisers produce. The
+  ocean is the control and did not move: the same three numbers as Phase 4, at the same worst blocks.
+- **THE FIRST VERSION OF THIS TABLE WAS A LIE, AND IT WAS A BEAUTIFUL ONE.** It read 22.89 / 22.89 /
+  **0.00** and 96.62 / 96.62 / **0.00**, and the zeroes were written up here and in a commit message
+  as "byte-identical through the full node chain". They were byte-identical because **both node legs
+  were rendering nothing.** Two silent faults: `chromaticAberration` was passed a `null` centre, which
+  its JSDoc says means the screen centre and which the node does not implement — the graph build fails
+  with `THREE.TSL: TypeError: Cannot read properties of null (reading 'build')`, logged and not thrown;
+  and the ambient occlusion pass was multiplied in as a whole vec4 when **§11.3 of this document
+  already quotes three's r181 note that AO lives in the `r` channel only**, so green and blue were
+  zeroed and the forest went black. The forest's 96.62 was the distance from a black canvas to a
+  forest. Both were found by LOOKING at the frames. The gate that makes the numbers say it themselves
+  — a per-leg structure assertion — landed first, and §29 records why the first version of THAT passed
+  a blank frame at a deviation of 26.
+- **Two of Phase 4's three blockers close here.** Blocker 2 (`postprocessing` cannot take a
+  `WebGPURenderer`) is **CLOSED** — the chain it could not build is gone from the node path. Blocker 3
+  (the forest's mid-frame `Cannot read properties of undefined (reading 'get')`) **NO LONGER
+  REPRODUCES**: the forest renders three legs cleanly, and whether that throw was ever a fault
+  distinct from the composer's cannot be established from here. Recorded as closed-by-removal, not as
+  fixed — its ledger entry had already said the resemblance to Phase 1's `Nodes.delete` finding was a
+  resemblance and not a diagnosis.
+- **18.95 and 20.32 are the PORT debt, not the backend.** Both new legs differ from today's renderer
+  by the same amount with the same worst block at the same coordinates, so what differs is the
+  scene's own shaders — Phases 6-8 — plus this chain's three named divergences. The forest's number is
+  larger because it has the most patched materials *and* because its AO changed algorithm.
+- **§11.3 holds at 0.185.1, with one improvement:** `ChromaticAberrationNode` now exists first-party,
+  where §11.3 says to hand-write it because "`RGBShiftNode` is a *different* effect". Every formula
+  was ported from `postprocessing`'s shipped shaders rather than from three's near-equivalents,
+  because "close" is what makes two chains diverge — pmndrs' saturation scales the deviation from the
+  channel average through a hyperbola, three's `saturation()` mixes toward luminance.
+- **What it also found, unplanned: `hue-saturation.frag` ends with `min(color, 1.0)`.** The grade
+  CLAMPS the frame to 1.0 in linear space *before* the tone curve, so the AgX curve Phase 2 restored
+  has almost nothing above 1 left to roll off. `PostEffects.tsx`'s own comment says the grade "keeps
+  operating on the linear HDR values they always operated on"; on the highlight half of that claim it
+  is wrong. Reproduced in the node chain rather than fixed — parity first, and one line to delete when
+  the owner decides highlights should survive the grade.
+- **Production surface: none.** The chain is chosen by renderer class, and the renderer is
+  `WebGLRenderer` unless a build sets `NEXT_PUBLIC_PARITY_HARNESS`. `three/webgpu`, `three/tsl` and
+  the three addon nodes are all dynamically imported.
+
+> **PHASES 6-8 ALSO NEED THE NODE RENDERER — corrected 2026-09-11 after §26 Phase 5.** TSL node
+> materials are exported from `three/webgpu`, exactly as `RenderPipeline` is, so none of the three
+> shader phases below can be done "on the existing renderer" either. They land behind the same
+> renderer switch Phase 5 used, and each one is measured by driving `forceWebGL vs WebGL` down: it is
+> **18.95** for the universe and **20.32** for the forest as these phases begin, against the ocean's
+> **57.02**. That is the acceptance number for all three phases, and it replaces "shots reviewed by
+> eye" as the primary gate — the eye is still required for the deliberate changes, and it is no
+> longer the only instrument.
 
 ### Phase 6 — Shared GLSL library → TSL
 
@@ -2010,14 +2095,14 @@ bit-for-bit identity were required, the verdict would be that fifth category ins
 | Shader migration | **62** | ~~Every construct in all 9 shaders has a named node target~~ — **§30.2 removed the target for four of them**: `sizeNode` and `pointUV` are non-functional, so the point layers need instanced quads on ≥ r173. Credit, measured: the `onBeforeCompile`→`colorNode` port is arithmetically exact (0.78 of 255, §30.1). Every construct in the other 5 shaders has a named node target; 3 share one library; `glslFn`/`wgslFn` and an in-box transpiler exist; `oceanShaderSource.test.ts` already tests generated source. Deductions: the sea-top and god-ray bodies are large, 20 `#include` sites have no analogue, **and not one shader has actually been ported** |
 | TSL portability | **58** | **§30.2:** two of the names this report counted as renderer-agnostic are present-but-dead, and `glslFn` is WebGL-only. Presence in the export list was checked; behaviour was not. Credit: fog nodes, `attribute()`, `uniform()` and the material slots are now behaviourally verified on **both** backends (§30.1). |
 | TSL portability — prior reasoning | ~~65~~ | `hue`/`saturation` in core; 4 clean slots replacing 9 patches; compute even lowers to transform feedback. Deductions: no authoritative GLSL-lowered/WebGPU-only list was obtained; ~15 API renames in 15 releases; behavioural equality across backends unverified |
-| Post-processing migration | **45** | The lowest score, and it sets the verdict. 878 WebGL-class references in the installed library; only 2 of 7 effects have a first-party node; GTAO ≠ N8AO numerically; `PostProcessing`→`RenderPipeline`; MSAA and HDR buffers become app-owned. Credit: 4 effects are ~5 lines of TSL each and it is one 169-line file |
+| Post-processing migration | **78** | ~~45~~ — was the lowest score and set the verdict; **§26 Phase 5 built the chain and measured it**. All eight passes run through `RenderPipeline` on both new backends, and the two backends agree to **0.44** on the universe and **1.31** on the forest. `ChromaticAberrationNode` turned out to exist first-party at 0.185.1, so it is 5 of 8 with a first-party node rather than 2 of 7, and the hand-written ones were ported from pmndrs' shipped shaders line by line rather than from their descriptions. Deductions, all named in `NodePostEffects.tsx`: the GTAO retune is still an unreviewed look change; the chromatic aberration parameterisation is a conversion rather than a match; the grain hash differs; and **multisampling is not wired** — `renderer.samples` is a constructor value on the node renderer, so the composer's per-pixel-ratio policy has to be passed into the `gl` factory in Phase 9. `postprocessing` is still installed and still what every visitor renders through |
 | Ocean migration | **60** | Holds 4 of 9 shaders, 7 of 9 patches and the whole shared library, and the sea-top shader is the most intricate file in the layer. Credit: optics, depth curve, sea state and framing are pure TypeScript and untouched; the rig is one imperative surface, not a hundred props. Deduction: constants tuned against a tone curve that was silently disabled |
 | Creature/animation compatibility | **90** | Spawn, despawn, movement, orientation, culling and LOD are seeded CPU code with two dedicated test files; `AnimationMixer` is renderer-agnostic; `SkinningNode`/`MorphNode` exist. One coupled item (the undulation patch). Deduction: skinning fidelity under the node path unverified, and I initially got the skinning question wrong |
 | Render target compatibility | **92** | The app creates **zero** render targets, cube targets, MRT or depth textures and reads back no pixels. All textures are 2D-canvas bakes or one `DataTexture`. Deductions: colour-space tagging is applied at different points on the node path, and the composer's buffers become app-owned |
-| WebGL2 fallback | **84** | **§30 raised this, and §26 Phase 4 raised it again.** Every probe that passed on WebGPU passed identically on `forceWebGL` — the leaf port byte-for-byte, the fog curve to 0.0064, both drei lighting mechanisms, the dome — and the cube-camera reflection lands within 0.020 of the same place on both. Two differences are read-back conventions rather than renders (§30.5), and one is a 5× performance gap, not a visual one. **§26 Phase 4 then raised it again and gave it its first app-content number: on `ocean-shallow` at a pinned phase, WebGPU against its own `forceWebGL` fallback is a mean absolute error of 0.02 of 255.** One family, one machine; the composer families' WebGPU leg is blocked until Phase 5, so this is the app content that can be measured today rather than all of it. |
+| WebGL2 fallback | **90** | **§30 raised this, and §26 Phase 4 raised it again.** Every probe that passed on WebGPU passed identically on `forceWebGL` — the leaf port byte-for-byte, the fog curve to 0.0064, both drei lighting mechanisms, the dome — and the cube-camera reflection lands within 0.020 of the same place on both. Two differences are read-back conventions rather than renders (§30.5), and one is a 5× performance gap, not a visual one. **§26 Phase 4 then raised it again and gave it its first app-content number: on `ocean-shallow` at a pinned phase, WebGPU against its own `forceWebGL` fallback is a mean absolute error of 0.02 of 255.** One family, one machine; the composer families' WebGPU leg is blocked until Phase 5, so this is the app content that can be measured today rather than all of it. **§26 Phase 5 then unblocked both composer families and measured them through a chain of eight passes.** Three families, three legs each, one machine: universe **0.44**, forest **1.31**, ocean **0.02** of 255, all inside the harness's cross-backend tolerance. The first version of those numbers read 0.00 for two of them and was measuring two blank canvases — see Phase 5. Remaining deductions: one machine, four ocean depths unmeasured, and every mean here diluted by the HUD the screenshot includes. |
 | WebGL2 fallback — prior reasoning | ~~70~~ | Automatic, triggered on `init()` rejection — the correct trigger, covering async adapter failure; the backend is substantive, with a real transform-feedback compute path; `WebGLRenderer` not deprecated. **Deduction, and it is the report's largest: visual and performance equivalence for this content is entirely unverified**, while ~20% of users depend on it |
 | Behavioural equivalence | **68** | The whole application layer above the renderer is untouched: scene generation, seeds, spawn, behaviour, camera, optics, audio, state, persistence, UI, API. Deductions: device loss is a **new** failure mode; `webglcontextlost` has no analogue; soft shadows change; AO changes; the tone-curve fix changes the ocean deliberately; readback semantics differ |
-| **Overall** | **66** | ~~62~~, and the four points come from execution rather than from re-reading: §30 took points off shader and TSL portability for the dead point-material slots and put the same number back on the fallback and on a performance case that now has a measurement, leaving 62 unmoved — then **Phases 3 and 4 removed two of this report's three standing unknowns**. The fifteen-release upgrade that "moves the baseline" moved it by 0.002 and cost no code (Phase 3), and the parity harness that "must still be built" is built, byte-identical against itself, and reports the fallback within 0.02 of the primary on app content (Phase 4). Against that, Phase 4 also found the first **fatal** incompatibility class this report had not listed — five `capabilities` reads that kill the canvas before a frame — proving the §3 audit's shape is incomplete rather than merely short, and left one unlocated forest throw. Still: no hard blockers, a clean target for every item **except the four point layers**, one library replacement that is now known to fail at construction rather than at render, and ~20% of users on a second renderer measured **behaviourally identical on six probes and within 0.02 of 255 on one family of app content** |
+| **Overall** | **71** | ~~66~~, ~~62~~. **Phase 5 is the largest single move this table has made**, and it comes from the lowest-scoring dimension: the post chain went from "the library cannot come along, and nothing has been ported" to eight passes running on both backends, with the two backends within 1.31 of each other on app content. It also **found the report's recommended architecture to be defined by an impossible step** (§25 Architecture D), which does not lower the destination's feasibility but does mean the staging story in §26 was never available — the node path is all-or-nothing, and the migration is a flag-gated second implementation until the default flips. Two of Phase 4's three blockers closed. Held back from higher by what is still untouched: **not one of the nine shaders or nine patches has been ported** (Phases 6-8), and the two numbers that measure them — universe 18.95, forest 20.32 — are each about a third of the ocean's 57.02, which is the one family whose shaders bypass every chain. Prior reasoning: ~~62~~, and the four points come from execution rather than from re-reading: §30 took points off shader and TSL portability for the dead point-material slots and put the same number back on the fallback and on a performance case that now has a measurement, leaving 62 unmoved — then **Phases 3 and 4 removed two of this report's three standing unknowns**. The fifteen-release upgrade that "moves the baseline" moved it by 0.002 and cost no code (Phase 3), and the parity harness that "must still be built" is built, byte-identical against itself, and reports the fallback within 0.02 of the primary on app content (Phase 4). Against that, Phase 4 also found the first **fatal** incompatibility class this report had not listed — five `capabilities` reads that kill the canvas before a frame — proving the §3 audit's shape is incomplete rather than merely short, and left one unlocated forest throw. Still: no hard blockers, a clean target for every item **except the four point layers**, one library replacement that is now known to fail at construction rather than at render, and ~20% of users on a second renderer measured **behaviourally identical on six probes and within 0.02 of 255 on one family of app content** |
 
 ### 28.3 Still UNVERIFIED — and load-bearing
 
@@ -2028,9 +2113,20 @@ bit-for-bit identity were required, the verdict would be that fifth category ins
    **Both against `WebGLRenderer`: 57.02** — so the answer to the question exactly as asked is *no, not
    yet*, and the cause is named rather than guessed: the ocean's four raw GLSL `ShaderMaterial`s are not
    node materials. **That gap is Phases 6–8's to close, and it is now a number rather than a worry.**
-   *Still open:* six of the seven fixtures. The composer families cannot run their WebGPU leg until Phase 5
-   (`postprocessing` cannot construct against a `WebGPURenderer`), and the forest additionally throws
-   on the node path from a place nobody has located.
+   **ADVANCED 2026-09-11 — §26 Phase 5.** Both composer families now run all three legs, and on all
+   three families the fallback is close to the primary through a chain that includes ambient
+   occlusion, bloom, the grade, the tone curve, chromatic aberration, vignette and grain: **universe
+   0.44, forest 1.31, ocean 0.02** of 255. So for the half of this question that ~20% of users depend
+   on, the answer is now measured on three families rather than one, and **the fallback half of item 1
+   is ANSWERED** — within the harness's own cross-backend tolerance on every one of them.
+   *Still open:* the other half, unchanged in shape — universe **18.95**, forest **20.32**, ocean
+   **57.02** against today's `WebGLRenderer`. Both new legs differ from it by the same amount at the
+   same worst-block coordinates, so the gap is the scene's own shaders and not the backend.
+   **Phases 6–8's to close.** Four of the seven fixtures remain unmeasured (the ocean's other four
+   depths). *And a caution on all of these numbers:* the harness screenshots the scene canvas, which
+   on this app is overlaid by the HUD, so every mean absolute error here is diluted by a region that
+   is identical on every leg. The comparisons are optimistic by however much of the frame is
+   interface.
 2. ~~**Do drei `<Environment>` and `<Lightformer>` work under the node path?**~~ **ANSWERED 2026-09-10 —
    §30.1.** Both mechanisms work, on both backends: the equirectangular form is prefiltered by roughness
    (mirror peak-over-mean 2.96 against a rough sphere's 1.94, which a flat 2D sample could not produce),
@@ -2114,6 +2210,8 @@ single line of the ocean is rewritten.
 | `demos/webgpu-node-path/` — 9 probes × 2 backends, 62 graded claims, same machine, `channel: "chromium"` + `--disable-dawn-features=use_dxc` | 2026-09-10 | That `sizeNode` and `pointUV` are non-functional; that the `onBeforeCompile`→`colorNode` port is arithmetically exact; that both drei lighting mechanisms work; that WebGPU builds pipelines 5× faster and still blocks; that a WGSL failure is invisible to the page; the two render-target read-back traps | §1, §7, §8, §12, §21, §23.2, §26 Phase 1, §27.1, §28.2, §28.3 items 2/3/5, §30 |
 | `e2e/measure.mjs` over `e2e/shots/` and `e2e/reference/next-15.5.23-react-19.2.8-r3f-9.7-three-0.185.1/` — 91 scene frames, twice, with a control run of the same specs on **stashed source** so the old version rendered them | 2026-09-10 | That `EffectComposer` discarded the canvas's tone curve for three families (blown 10.1%/12.5%/8.8% → 0.0%, and that clipping *drains* a frame as well as brightening it); that fifteen three.js releases moved the frames by a median 0.002 and r181's 51 material sites by +0.007/+0.002/−0.003; that the ocean drifted away from its own recorded parity **on 0.171.0**, which the untouched `ref-*` prototype frames (±0.004) separate from harness noise | §26 Phases 2 and 3, §28.3 |
 | `e2e/scene-parity.spec.ts` + `e2e/parityMetrics.mjs`, the `webgpu` Playwright project on the RTX 4060, three renderers per fixture at a clock pinned through R3F's manual frameloop | 2026-09-10 | That the harness is **byte-identical against itself** (0.00) and that its three fixtures are distinguishable (81.32/69.88/57.61); that WebGPU and its own WebGL2 fallback agree to **0.02 of 255** on app content while both differ from `WebGLRenderer` by **57.02**; that five `capabilities.getMaxAnisotropy()` reads kill the canvas before a frame; that `postprocessing`'s `EffectComposer` cannot be *constructed* against a `WebGPURenderer`; that the forest throws mid-frame on the node path | §22, §23.2, §26 Phases 4 and 5, §28.2, §28.3 item 1 |
+| The same harness re-run against `shared/NodePostEffects.tsx`, on a production build served by `scripts/serveStandaloneBuild.mjs`, with a per-leg structure gate added first | 2026-09-11 | That three.js's `RenderPipeline` renders both composer families on both new backends and that the two backends agree to **0.44** (universe) and **1.31** (forest) of 255 through eight passes; that both differ from today's `WebGLRenderer` by **18.95** and **20.32**, at the same worst block as each other, which locates the gap in the scene's shaders rather than the backend; that the ocean control is unmoved at **57.02 / 57.02 / 0.02**; that the forest's Phase 4 throw no longer reproduces once the composer leaves the node path. **And that this harness could report 0.00 for two blank canvases:** the first run of it did, because a `null` centre node failed the graph build with a logged-not-thrown TSL error and the AO pass was multiplied in as a vec4 when only its `r` channel carries occlusion. Both found by looking at the frames | §11.3, §25 Architecture D, §26 Phase 5, §28.2, §28.3 item 1 |
+| `e2e/highlight-clipping.spec.ts` + `clippedChannelFraction`, and `e2e/gl-driver-errors.spec.ts`, on a production build | 2026-09-11 | That the tone curve Phase 2 restored is still applied — **0.19%** of the universe frame clipped against a stated 1% ceiling, **2.31%** with the pass removed — and that neither composer family asks the GL driver for an illegal operation. Also that the visual suite's own `webServer` command could never start a server (`next start` refuses `output: standalone`), so with `reuseExistingServer` it had been measuring whatever was on the port — a `next dev` in Docker, which reports **256** `glBlitFramebuffer` errors on the forest where a production build reports **0** | §26 Phase 2, §26 Phase 5, §29 |
 
 ### Primary — the installed source (strongest evidence in this report)
 
@@ -2364,5 +2462,5 @@ Honest ticks and crosses. A cross is more useful than a dishonest tick.
 | Phase 0 executed and measured | ✅ 2026-09-09, 8 launch modes on the real target; §19.7. Its own first pass-criterion was wrong and is recorded as wrong |
 | Phase 1 executed and measured | ✅ 2026-09-10, 9 probes × 2 backends, 62 graded claims, all holding; §30. Three of its own instruments were replaced mid-run for scoring vacuously or silently, and each replacement is recorded where it happened |
 | Load-bearing claims verified by measurement rather than by reading | ⚠️ **now partly.** §30 measured 6 propositions this report had only read, and **refuted one of them** — the point-material slots. The remaining unmeasured claims are still unmeasured, and §27.1(a) is the standing example of what reading alone is worth |
-| Phases 2, 3 and 4 executed and measured | ✅ 2026-09-10, all three passed; §26. Phase 2 measured on four families of app frames with two accidental controls, Phase 3 against a control run on stashed source, Phase 4 against itself before against anything else. **Two of Phase 4's own instruments were wrong first**, and an impossibility — three different scenes scoring identically to four decimals — caught both; that impossibility is now a gate in the suite |
-| ~~**No production code modified**~~ | ⚠️ **NO LONGER TRUE, as of Phases 2–4, and this row is kept rather than deleted because it was the report's own standing promise.** Phase 0 and Phase 1 touched nothing outside this file, `e2e/webgpu-adapter-probe.mjs` and `demos/webgpu-node-path/`. Phases 2–4 modify the app: the composer's tone curve, `three@0.185.1`, a shader-chunk guard, an anisotropy helper, and a build-flagged renderer switch plus `frameloop` on `UniverseCanvas`. **What is shipped to a visitor:** the tone curve (deliberate, the forest 44% brighter and awaiting the owner's eye), the upgrade (median 0.002), `shadows="percentage"` instead of a warning that substituted it anyway, and nothing else — the harness resolves to `null` unless a build sets `NEXT_PUBLIC_PARITY_HARNESS`, which only `playwright.config.ts` does, and `three/webgpu` is dynamically imported so it stays out of every visitor's bundle |
+| Phases 2, 3, 4 and 5 executed and measured | ✅ Phases 2–4 on 2026-09-10, Phase 5 on 2026-09-11, all passed; §26. Phase 2 measured on four families of app frames with two accidental controls, Phase 3 against a control run on stashed source, Phase 4 against itself before against anything else. **Two of Phase 4's own instruments were wrong first**, and an impossibility — three different scenes scoring identically to four decimals — caught both; that impossibility is now a gate in the suite. **Phase 5 found the wrong instrument again, in a different place:** its first two measurements came from a `next dev` server in Docker that Playwright had silently attached to, because the suite's own `webServer` command could never start one — and one of those measurements said the opposite of the truth. Both were re-taken against a production build |
+| ~~**No production code modified**~~ | ⚠️ **NO LONGER TRUE, as of Phases 2–4, and this row is kept rather than deleted because it was the report's own standing promise.** Phase 0 and Phase 1 touched nothing outside this file, `e2e/webgpu-adapter-probe.mjs` and `demos/webgpu-node-path/`. Phases 2–4 modify the app: the composer's tone curve, `three@0.185.1`, a shader-chunk guard, an anisotropy helper, and a build-flagged renderer switch plus `frameloop` on `UniverseCanvas`. **What is shipped to a visitor:** the tone curve (deliberate, the forest 44% brighter and awaiting the owner's eye), the upgrade (median 0.002), `shadows="percentage"` instead of a warning that substituted it anyway, and nothing else — the harness resolves to `null` unless a build sets `NEXT_PUBLIC_PARITY_HARNESS`, which only `playwright.config.ts` does, and `three/webgpu` is dynamically imported so it stays out of every visitor's bundle. **Phase 5 adds a second post chain and changes that list by nothing:** it is chosen by renderer class, and the renderer is `WebGLRenderer` for every visitor |
