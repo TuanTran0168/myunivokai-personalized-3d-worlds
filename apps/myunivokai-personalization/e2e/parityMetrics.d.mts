@@ -44,6 +44,17 @@ export function toleranceBreaches(comparison: ParityComparison, tolerance: Parit
 
 export function describeComparison(comparison: ParityComparison): string;
 
+/**
+ * Share of pixels with any channel at or above `clippedByte`.
+ *
+ * The one-frame measurement: a missing tone curve clips every frame including
+ * the reference, so no comparison between frames can see it.
+ */
+export function clippedChannelFraction(frame: DecodedFrame, clippedByte?: number): number;
+
+/** The byte at which a channel counts as clipped. */
+export const CLIPPED_CHANNEL_BYTE: number;
+
 /** Two runs of the SAME renderer. The stability gate; assert it first. */
 export const SAME_RENDERER_TOLERANCE: ParityTolerance;
 /** Two DIFFERENT backends. Looser on purpose, and deliberately not zero. */

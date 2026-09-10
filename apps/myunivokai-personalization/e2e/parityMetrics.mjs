@@ -277,3 +277,46 @@ export function describeComparison(comparison) {
     `${(comparison.differingFraction * 100).toFixed(2)}% differing`
   );
 }
+
+/**
+ * A channel at or above this byte is called clipped.
+ *
+ * 250 of 255, not 255, because the composer's grade and the AgX shoulder land a
+ * genuinely clipped value a byte or two below the ceiling and an exact-255 test
+ * would miss it. This is the number the tone-curve fix was measured with.
+ */
+export const CLIPPED_CHANNEL_BYTE = 250;
+
+/**
+ * THE ONE-FRAME MEASUREMENT, because the failure it exists for is not a
+ * difference between two frames.
+ *
+ * A missing tone curve does not make a scene differ from a reference — it makes
+ * a scene lose its highlights, and it does that to EVERY frame including the
+ * reference. For its whole life before the fix in §26 Phase 2 this app shipped a
+ * composer that assigned `NoToneMapping` and had no `<ToneMapping>` pass, so
+ * every linear value above 1 clipped flat: the sun rendered as a black disc with
+ * only its hottest granulation surviving, and the baseline shot of that was
+ * COMMITTED TO THIS REPOSITORY and reviewed by eye without anyone catching it.
+ *
+ * `scene-baseline.spec.ts` says to compare its images "by eye for CONTENT", and
+ * that policy is right — but a black sun IS content, and it still got through,
+ * twice, on two different pages. So the property gets an assertion instead of a
+ * reviewer: what fraction of this frame is clipped.
+ */
+export function clippedChannelFraction(frame, clippedByte = CLIPPED_CHANNEL_BYTE) {
+  const { pixels, width, height } = frame;
+  const pixelCount = width * height;
+  let clippedPixels = 0;
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    if (
+      pixels[offset] >= clippedByte ||
+      pixels[offset + 1] >= clippedByte ||
+      pixels[offset + 2] >= clippedByte
+    ) {
+      clippedPixels += 1;
+    }
+  }
+  return clippedPixels / pixelCount;
+}
