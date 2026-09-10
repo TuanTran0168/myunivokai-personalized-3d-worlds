@@ -364,6 +364,81 @@ export function luminanceStandardDeviation(frame) {
 }
 
 /**
+ * TWO FRAMES COMPARED AT BLOCK RESOLUTION, WHICH IS THE RIGHT LENS FOR TWO
+ * DIFFERENT DRIVERS.
+ *
+ * `compareFrames` measures |a - b| per pixel. Between two rasterisers that is
+ * dominated by high-frequency disagreement — antialiasing coverage, anisotropic
+ * filtering, dither, shadow-map precision — none of which a person can see and
+ * all of which a per-pixel metric reports. Measured between SwiftShader and an
+ * RTX 4060 on this app's own fixtures: mean 9.75 to 30.02, worst 16x16 block
+ * 95.49 to 158.86, on frames that look the same.
+ *
+ * The failure worth catching there has the opposite shape. A NaN fragment, a
+ * dropped draw or an out-of-range value ruins a REGION: it changes what that part
+ * of the image IS, not how its edges are sampled. So this averages each block
+ * first and compares the averages — high-frequency noise cancels, a region going
+ * black does not.
+ */
+export function compareBlockMeans(left, right) {
+  if (left.width !== right.width || left.height !== right.height) {
+    throw new Error(
+      `parityMetrics: frame sizes differ (${left.width}x${left.height} against ${right.width}x${right.height})`
+    );
+  }
+  const { width, height } = left;
+  let totalDifference = 0;
+  let blockCount = 0;
+  let worstBlockDifference = 0;
+  let worstBlockAt = { x: 0, y: 0 };
+
+  for (let blockTop = 0; blockTop < height; blockTop += BLOCK_SIZE) {
+    for (let blockLeft = 0; blockLeft < width; blockLeft += BLOCK_SIZE) {
+      const blockRight = Math.min(blockLeft + BLOCK_SIZE, width);
+      const blockBottom = Math.min(blockTop + BLOCK_SIZE, height);
+      let leftTotal = 0;
+      let rightTotal = 0;
+      let sampleCount = 0;
+      for (let y = blockTop; y < blockBottom; y += 1) {
+        for (let x = blockLeft; x < blockRight; x += 1) {
+          const offset = (y * width + x) * 4;
+          leftTotal +=
+            left.pixels[offset] * LUMINANCE_RED_WEIGHT +
+            left.pixels[offset + 1] * LUMINANCE_GREEN_WEIGHT +
+            left.pixels[offset + 2] * LUMINANCE_BLUE_WEIGHT;
+          rightTotal +=
+            right.pixels[offset] * LUMINANCE_RED_WEIGHT +
+            right.pixels[offset + 1] * LUMINANCE_GREEN_WEIGHT +
+            right.pixels[offset + 2] * LUMINANCE_BLUE_WEIGHT;
+          sampleCount += 1;
+        }
+      }
+      const difference = Math.abs(leftTotal / sampleCount - rightTotal / sampleCount);
+      totalDifference += difference;
+      blockCount += 1;
+      if (difference > worstBlockDifference) {
+        worstBlockDifference = difference;
+        worstBlockAt = { x: blockLeft, y: blockTop };
+      }
+    }
+  }
+
+  return {
+    meanBlockDifference: totalDifference / blockCount,
+    worstBlockDifference,
+    worstBlockAt,
+    blockCount
+  };
+}
+
+export function describeBlockComparison(comparison) {
+  return (
+    `mean block ${comparison.meanBlockDifference.toFixed(2)} · worst block ` +
+    `${comparison.worstBlockDifference.toFixed(2)} at ${comparison.worstBlockAt.x},${comparison.worstBlockAt.y}`
+  );
+}
+
+/**
  * Mean luminance inside one rectangle of the frame.
  *
  * The whole-frame average cannot answer "is the star lit": a star is a small

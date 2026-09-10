@@ -92,7 +92,7 @@ export default defineConfig({
       // BECAUSE of what it asserts: a NaN fragment renders black on this driver
       // and not on SwiftShader, so the property can only fail where the real GPU
       // is. See e2e/star-is-lit.spec.ts.
-      testMatch: /(scene-parity|star-is-lit)\.spec\.ts/,
+      testMatch: /(scene-parity|star-is-lit|driver-parity)\.spec\.ts/,
       // Four minutes, against the suite's 120 s default. A parity test renders
       // the same fixture through THREE renderers in one test, and each leg pays
       // its own renderer creation, lazy chunk, GLTF load and environment bake —

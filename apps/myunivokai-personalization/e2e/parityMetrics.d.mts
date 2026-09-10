@@ -68,6 +68,25 @@ export const BLANK_FRAME_LUMINANCE_DEVIATION: number;
  */
 export function clippedChannelFraction(frame: DecodedFrame, clippedByte?: number): number;
 
+/** Two frames compared at 16x16 block resolution, in luminance. */
+export type BlockComparison = {
+  /** Mean |difference of block means| over every block. */
+  meanBlockDifference: number;
+  /** The largest |difference of block means|. */
+  worstBlockDifference: number;
+  worstBlockAt: { x: number; y: number };
+  blockCount: number;
+};
+
+/**
+ * Averages each 16x16 block before comparing, which is the right lens for two
+ * different DRIVERS: high-frequency disagreement (antialiasing, filtering,
+ * dither) cancels, and a region that changed what it IS does not.
+ */
+export function compareBlockMeans(left: DecodedFrame, right: DecodedFrame): BlockComparison;
+
+export function describeBlockComparison(comparison: BlockComparison): string;
+
 /** A rectangle in frame pixels, top-left inclusive and bottom-right exclusive. */
 export type FrameRegion = { left: number; top: number; right: number; bottom: number };
 
