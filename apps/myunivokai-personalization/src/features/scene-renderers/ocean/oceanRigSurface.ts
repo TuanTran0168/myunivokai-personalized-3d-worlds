@@ -44,6 +44,7 @@ import {
   SKY_UNIFORMS_GLSL,
   WAVE_UNIFORMS_GLSL,
 } from "./oceanSky";
+import { maximumTextureAnisotropy } from "@/features/scene-renderers/shared/textureAnisotropy";
 
 /** The sky's own colours, used where a constant is honest. */
 export const SKY_HAZE = "#9BBBD2";
@@ -147,7 +148,7 @@ export function createWaterNormalTexture(renderer: WebGLRenderer): Texture {
   const texture = new CanvasTexture(canvas);
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
-  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  texture.anisotropy = maximumTextureAnisotropy(renderer);
   return texture;
 }
 
