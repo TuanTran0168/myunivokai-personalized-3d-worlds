@@ -68,6 +68,17 @@ export const BLANK_FRAME_LUMINANCE_DEVIATION: number;
  */
 export function clippedChannelFraction(frame: DecodedFrame, clippedByte?: number): number;
 
+/** A rectangle in frame pixels, top-left inclusive and bottom-right exclusive. */
+export type FrameRegion = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * Mean luminance inside one rectangle.
+ *
+ * A frame-wide mean cannot see a small bright object going dark; a named region
+ * can, and the fixture is what pins the camera that puts the object there.
+ */
+export function regionMeanLuminance(frame: DecodedFrame, region: FrameRegion): number;
+
 /** The byte at which a channel counts as clipped. */
 export const CLIPPED_CHANNEL_BYTE: number;
 

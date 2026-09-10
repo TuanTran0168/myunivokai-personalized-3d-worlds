@@ -364,6 +364,31 @@ export function luminanceStandardDeviation(frame) {
 }
 
 /**
+ * Mean luminance inside one rectangle of the frame.
+ *
+ * The whole-frame average cannot answer "is the star lit": a star is a small
+ * bright disc in a mostly black sky, and its failure — going black — barely
+ * moves a frame-wide mean. So the region is named by the caller and the fixture
+ * pins the camera that puts the object in it.
+ */
+export function regionMeanLuminance(frame, region) {
+  const { pixels, width } = frame;
+  let total = 0;
+  let sampleCount = 0;
+  for (let y = region.top; y < region.bottom; y += 1) {
+    for (let x = region.left; x < region.right; x += 1) {
+      const offset = (y * width + x) * 4;
+      total +=
+        pixels[offset] * LUMINANCE_RED_WEIGHT +
+        pixels[offset + 1] * LUMINANCE_GREEN_WEIGHT +
+        pixels[offset + 2] * LUMINANCE_BLUE_WEIGHT;
+      sampleCount += 1;
+    }
+  }
+  return sampleCount === 0 ? 0 : total / sampleCount;
+}
+
+/**
  * A channel at or above this byte is called clipped.
  *
  * 250 of 255, not 255, because the composer's grade and the AgX shoulder land a

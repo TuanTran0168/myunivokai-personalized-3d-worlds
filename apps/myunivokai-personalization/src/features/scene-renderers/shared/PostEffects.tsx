@@ -37,6 +37,7 @@ import {
   shouldComputeAmbientOcclusionAtHalfResolution
 } from "./renderQuality";
 import { composerToneMappingModeFor, DEFAULT_FAMILY_TONE_MAPPING } from "./sceneToneMapping";
+import { NonNegativeColour } from "./NonNegativeColour";
 
 // EVERY TUNING VALUE THIS CHAIN USES NOW LIVES IN postEffectsTuning.ts, and it
 // moved there rather than staying here because §26 Phase 5 adds a SECOND chain
@@ -115,6 +116,16 @@ export function PostEffects({
       />
     ) : null,
     <HueSaturation key="hue-saturation" hue={grade.hueRadians} saturation={grade.saturation} />,
+    // BETWEEN THE TWO GRADE EFFECTS, and the position is the whole point.
+    // `hue-saturation.frag` ends with `min(color, 1.0)` — it clamps the top and
+    // not the bottom — and a positive saturation drives the sun's blue channel
+    // negative because the star is the one object above 1.0 in linear space.
+    // `BrightnessContrast` is the one effect declaring an sRGB input space, so
+    // the composer encodes to sRGB before it with a `pow`, `pow` of a negative
+    // is undefined, and the NaN renders BLACK on the RTX 4060 and not on
+    // SwiftShader — which is what every committed screenshot is taken on. See
+    // NonNegativeColour.tsx for the bisect.
+    <NonNegativeColour key="non-negative-colour" />,
     <BrightnessContrast key="brightness-contrast" brightness={grade.brightness} contrast={grade.contrast} />,
     // AFTER the grade and BEFORE the lens effects, and the position is the
     // whole design decision.

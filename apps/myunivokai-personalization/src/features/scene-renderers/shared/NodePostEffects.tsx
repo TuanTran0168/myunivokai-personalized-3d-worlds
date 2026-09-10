@@ -341,7 +341,14 @@ export function NodePostEffects({
       // values", and it is reproduced here rather than fixed, because parity
       // comes first: it is one line to delete the day the owner decides the
       // highlights should survive the grade instead.
-      const clamped = saturated.min(vec3(1));
+      // `min` for the ceiling pmndrs clamps, `max` for the floor it does NOT —
+      // and the floor is the one that mattered. A positive saturation drives the
+      // sun's blue channel negative (the star is the only object above 1.0 in
+      // linear space), the sRGB encode below is a `pow`, and `pow` of a negative
+      // number is undefined: it renders the star BLACK on the RTX 4060 and not
+      // on SwiftShader. The composer chain gets the same clamp as its own pass —
+      // see NonNegativeColour.tsx, which carries the bisect.
+      const clamped = saturated.min(vec3(1)).max(vec3(0));
 
       // brightness-contrast is the ONE effect in the composer chain that declares
       // `inputColorSpace = SRGBColorSpace`, so the composer converts linear to
