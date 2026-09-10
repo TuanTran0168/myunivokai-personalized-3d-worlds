@@ -8,6 +8,7 @@ import {
   HueSaturation,
   N8AO,
   Noise,
+  ToneMapping,
   Vignette
 } from "@react-three/postprocessing";
 import { useThree } from "@react-three/fiber";
@@ -20,6 +21,7 @@ import {
   composerMultisamplingFor,
   shouldComputeAmbientOcclusionAtHalfResolution
 } from "./renderQuality";
+import { composerToneMappingModeFor, DEFAULT_FAMILY_TONE_MAPPING } from "./sceneToneMapping";
 
 const DEFAULT_BLOOM_INTENSITY = 0.8;
 // Selective bloom by luminance: with the composer's HDR (half-float) buffer,
@@ -50,6 +52,14 @@ const VIGNETTE_DARKNESS = 0.55;
 const FILM_GRAIN_OPACITY = 0.06;
 const CHROMATIC_ABERRATION_OFFSET = new Vector2(0.0005, 0.001);
 const CHROMATIC_ABERRATION_MODULATION_OFFSET = 0.15;
+
+// The tone curve, restored. `EffectComposer` sets gl.toneMapping =
+// NoToneMapping on mount, so for every family that mounts this chain the AgX
+// curve the canvas asked for was never applied and anything past 1.0 in linear
+// space clipped flat to white — 10.1% of the universe world's canvas band at
+// 250+ before this. The mode is derived from the renderer's own curve rather
+// than named again here; see sceneToneMapping.ts.
+const COMPOSER_TONE_MAPPING_MODE = composerToneMappingModeFor(DEFAULT_FAMILY_TONE_MAPPING);
 
 // Grade channels arrive from stored data (schemaVersion 1.2); clamp magnitudes
 // so a corrupt value can tint the frame, never destroy it.
@@ -143,6 +153,23 @@ export function PostEffects({
     ) : null,
     <HueSaturation key="hue-saturation" hue={grade.hueRadians} saturation={grade.saturation} />,
     <BrightnessContrast key="brightness-contrast" brightness={grade.brightness} contrast={grade.contrast} />,
+    // AFTER the grade and BEFORE the lens effects, and the position is the
+    // whole design decision.
+    //
+    // After the grade, so HueSaturation and BrightnessContrast keep operating
+    // on the linear HDR values they always operated on — the stored grade
+    // channels were authored against that behaviour, and moving the curve above
+    // them would re-grade every world that has ever been saved.
+    //
+    // Before the lens effects, because vignette darkening and soft-light grain
+    // are display-referred operators: they are meant to sit on a finished
+    // image, and applying them to unbounded linear radiance is why the grain
+    // reads differently over a bright frame than a dark one.
+    //
+    // Bloom stays above it and therefore still selects on raw HDR luminance,
+    // which is what makes BLOOM_LUMINANCE_THRESHOLD mean "deliberate emitter"
+    // rather than "bright pixel".
+    <ToneMapping key="tone-mapping" mode={COMPOSER_TONE_MAPPING_MODE} />,
     postProcessingProfile.lensAndGrain ? (
       <ChromaticAberration
         key="chromatic-aberration"

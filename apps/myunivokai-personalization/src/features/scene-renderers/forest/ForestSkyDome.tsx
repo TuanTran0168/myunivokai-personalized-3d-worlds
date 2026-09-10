@@ -47,8 +47,16 @@ export function sunDirectionFromLighting(lighting?: ForestLightingConfig): Vecto
 /**
  * Vertex-colored gradient dome (zenith by time of day, horizon = seasonal fog
  * color, grayed out by cloud coverage) plus a two-sprite sun: hot disc + wide
- * additive glow. toneMapped stays on so the sky sits in the same AgX response
- * as the lit forest.
+ * additive glow.
+ *
+ * `toneMapped` stays on so the sky sits in the same response as the lit forest.
+ * That sentence used to say "the same AgX response" and it was false for this
+ * family's whole life: `EffectComposer` sets gl.toneMapping = NoToneMapping on
+ * mount, so the forest had no in-shader curve for a material to be mapped BY.
+ * The curve now arrives as a composer pass instead (shared/sceneToneMapping.ts),
+ * which is frame-wide — so this flag no longer decides whether the sky is tone
+ * mapped, only whether it would be if this family ever left the chain the way
+ * the ocean did.
  */
 export function ForestSkyDome({ lighting, weather }: ForestSkyDomeProps) {
   const timeOfDay = lighting?.timeOfDay ?? "day";
