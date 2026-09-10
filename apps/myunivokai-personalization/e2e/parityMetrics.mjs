@@ -279,6 +279,91 @@ export function describeComparison(comparison) {
 }
 
 /**
+ * THE FLOOR A FRAME HAS TO CLEAR TO COUNT AS A RENDER AT ALL.
+ *
+ * Standard deviation of luminance, in bytes of 255. A frame filled with one
+ * colour measures 0; every real frame this project produces measures tens.
+ *
+ * It exists because of a failure that passed every gate this harness had.
+ * §26 Phase 5's node chain built its graph with a `null` centre node, three
+ * logged `THREE.TSL: TypeError: Cannot read properties of null (reading
+ * 'build')` — logged, not thrown — and `RenderPipeline` then rendered an EMPTY
+ * canvas. The comparison duly reported the two new backends as **byte-identical
+ * to 0.00**, which was true and meaningless: two blank frames are identical.
+ * Phase 1 had already recorded this shape (§30.3, a dropped draw nothing
+ * reports); what was missing was a gate that asks whether a leg drew anything
+ * before asking whether two legs agree.
+ *
+ * 3 of 255, stated rather than fitted: it is above the noise of a gradient-only
+ * background and far below any frame with geometry in it. Measured over the
+ * frame's centred half — see `luminanceStandardDeviation`, and the reason is that
+ * an element screenshot includes the HTML overlays on top of the canvas.
+ */
+export const BLANK_FRAME_LUMINANCE_DEVIATION = 3;
+
+/** Rec. 709 luminance weights, matching three's own working colour space. */
+const LUMINANCE_RED_WEIGHT = 0.2126;
+const LUMINANCE_GREEN_WEIGHT = 0.7152;
+const LUMINANCE_BLUE_WEIGHT = 0.0722;
+
+/**
+ * Standard deviation of per-pixel luminance — how much STRUCTURE a frame has.
+ *
+ * Not a mean: a blank frame and a busy frame can share a mean. The deviation is
+ * what separates "the renderer drew the scene" from "the renderer drew the clear
+ * colour", which is the distinction a parity comparison cannot make on its own.
+ */
+/**
+ * How much of the frame's WIDTH and HEIGHT the structure test looks at, centred.
+ *
+ * Half, and it has to be a crop rather than the whole frame, because a
+ * Playwright element screenshot is a VIEWPORT capture clipped to the element's
+ * box — so a screenshot of the scene canvas contains every HTML overlay drawn on
+ * top of it. On this app's world page that is the title card, the DNA panel, the
+ * share box and the action bar, all of them identical on every leg.
+ *
+ * The first version of this gate measured the whole frame and passed a
+ * completely empty 3D canvas at a deviation of 26, because the HUD alone
+ * supplies that much structure. The middle of the frame is the one region that
+ * is scene on every fixture this suite renders.
+ */
+const STRUCTURE_REGION_FRACTION = 0.5;
+
+/**
+ * Standard deviation of per-pixel luminance over the centred crop — how much
+ * STRUCTURE the frame has where the scene is.
+ *
+ * Not a mean: a blank frame and a busy frame can share a mean. The deviation is
+ * what separates "the renderer drew the scene" from "the renderer drew the clear
+ * colour", which is the distinction a parity comparison cannot make on its own.
+ */
+export function luminanceStandardDeviation(frame) {
+  const { pixels, width, height } = frame;
+  const regionWidth = Math.max(1, Math.round(width * STRUCTURE_REGION_FRACTION));
+  const regionHeight = Math.max(1, Math.round(height * STRUCTURE_REGION_FRACTION));
+  const startX = Math.round((width - regionWidth) / 2);
+  const startY = Math.round((height - regionHeight) / 2);
+
+  let total = 0;
+  let squaredTotal = 0;
+  const sampleCount = regionWidth * regionHeight;
+  for (let y = startY; y < startY + regionHeight; y += 1) {
+    for (let x = startX; x < startX + regionWidth; x += 1) {
+      const offset = (y * width + x) * 4;
+      const luminance =
+        pixels[offset] * LUMINANCE_RED_WEIGHT +
+        pixels[offset + 1] * LUMINANCE_GREEN_WEIGHT +
+        pixels[offset + 2] * LUMINANCE_BLUE_WEIGHT;
+      total += luminance;
+      squaredTotal += luminance * luminance;
+    }
+  }
+  const mean = total / sampleCount;
+  const variance = Math.max(0, squaredTotal / sampleCount - mean * mean);
+  return Math.sqrt(variance);
+}
+
+/**
  * A channel at or above this byte is called clipped.
  *
  * 250 of 255, not 255, because the composer's grade and the AgX shoulder land a

@@ -45,6 +45,22 @@ export function toleranceBreaches(comparison: ParityComparison, tolerance: Parit
 export function describeComparison(comparison: ParityComparison): string;
 
 /**
+ * Standard deviation of per-pixel luminance over the frame's centred half: how
+ * much structure the frame has WHERE THE SCENE IS.
+ *
+ * The crop is load-bearing. A Playwright element screenshot is a viewport
+ * capture clipped to the element's box, so a shot of the scene canvas contains
+ * every HTML overlay on top of it — enough structure to pass an empty 3D canvas.
+ *
+ * A frame filled with one colour measures 0. The gate that asks whether a leg
+ * drew anything at all, before any comparison asks whether two legs agree.
+ */
+export function luminanceStandardDeviation(frame: DecodedFrame): number;
+
+/** The luminance deviation below which a frame is called blank. */
+export const BLANK_FRAME_LUMINANCE_DEVIATION: number;
+
+/**
  * Share of pixels with any channel at or above `clippedByte`.
  *
  * The one-frame measurement: a missing tone curve clips every frame including
