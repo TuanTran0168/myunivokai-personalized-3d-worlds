@@ -218,6 +218,55 @@ Quy tắc rút ra:
   cấu hình camera (`distantBlackHolePlacement.test.ts`), không phải hằng số
   chỉnh tay.
 
+### The same class again: a clearance measured against the default, not the range
+
+The black-hole placement above was an object solved in the wrong coordinate
+system. `BinarySun.tsx` was the same mistake in a cheaper form — a **world-unit
+constant checked against one configuration and then applied across a seeded
+range** — and it survived over a year because it is invisible at the value it
+was written at.
+
+The companion star orbited at the world-unit constant `2.4`, carrying the
+comment *"Inside the first planet orbit (3.2), outside the primary sun's glow
+shell."* Both halves are true of `DEFAULT_SUN_SCALE`. Neither is true of the sun
+the generator actually draws: the primary's radius is `core.scale ×
+SUN_SCALE_MULTIPLIER`, and `core.scale` is seeded over **1.05–1.50** — the same
+range in `world_config_builder.go:62` and in `lib/scene.ts` — so the primary
+swells from 1.52 to 2.18 world units while the companion's orbit stood still.
+Above core scale ≈**1.24** the companion's photosphere is inside the primary's
+and a binary world renders one lumpy star. That is 59% of the seeded range, so
+roughly 1.8% of universes (3% binary × 59%). Reported from a create-form preview
+at core scale 1.41, where the overlap is 0.34 world units.
+
+The rules that follow are narrower than the camera-framing ones above, and they
+apply to any rare feature that has to sit near something else:
+
+- **A clearance is a ratio, not a length.** The orbit is now expressed in
+  primary-surface radii, which cannot drift out of clearance whatever the seed
+  rolls. Any constant positioned relative to a seeded quantity has to be
+  expressed in that quantity's units, or it is only correct at one seed.
+- **The comment that asserts the clearance is the thing to distrust.** This one
+  named the number it cleared (3.2) and the shell it cleared (the glow), which
+  reads as having been checked. It had been — once, at one core scale.
+- **Sweep the generator's whole range in a unit test.**
+  `binarySunGeometry.test.ts` walks 1.05–1.50 in steps of 0.005 and also pulls
+  400 real preview scenes, so a generator that widens its range fails the sweep
+  instead of escaping it. Same shape as `distantBlackHolePlacement.test.ts`.
+- **A rare feature has no visual gate.** Nothing in `e2e/` pins a fixture with
+  `binary-sun` on, and `rareFeatures.test.ts` checks only that the lottery fires
+  at the right rate — not that what it fires renders correctly. Every one of
+  these features is in that position. Arithmetic is the affordable answer;
+  a fixture per feature is not.
+
+What is still wrong, and is a generator decision rather than a renderer one: the
+planets start at orbit radius 3.2 while the primary's surface can reach 2.18, and
+a companion star does not fit in what is left. The inclination added to its orbit
+takes it out of the planets' plane for most of a revolution, which makes the
+crossing rarer without removing it. Widening the inner orbit when `binary-sun` is
+rolled would remove it, and that is a change on both sides of the contract.
+
+Evidence, pinned and reproducible: `demos/binary-sun-clearance/`.
+
 ### Gắn model vào object chuyển động
 
 `OrbitingSpacecraft.tsx` KHÔNG couple vào `SolarPlanet`: nó đọc vị trí live
