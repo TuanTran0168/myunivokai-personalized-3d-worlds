@@ -138,6 +138,51 @@ The same seed must always draw the same scene. Every "random" FE value
 (star positions, orbit inclinations) comes from `randomFromSeed(seed)` in
 `lib/scene.ts` (an xorshift PRNG) — `Math.random()` is forbidden in scene code.
 
+### One material, two shader systems
+
+Since §26 Phase 7 began, a material that customises its shader exists **twice**,
+and both ship at once. This is not a transitional inconvenience — it is what
+makes the migration checkable.
+
+- `WebGLRenderer` draws GLSL. Custom shading is a `ShaderMaterial`, or a stock
+  material patched through `onBeforeCompile` and `shared/shaderChunkPatch.ts`.
+- The node renderer (`WebGPURenderer`, on either the WebGPU or the WebGL2
+  backend) assembles shaders from a **node graph**. There is no GLSL string to
+  patch — `onBeforeCompile` does not exist on a node material — and
+  `WebGLRenderer` cannot draw one.
+
+**The node path is all-or-nothing**: one raw GLSL `ShaderMaterial` left in a
+scene is a scene that cannot run on the node renderer. So the port proceeds
+material by material with both implementations live, `scene-parity.spec.ts`
+renders the same scene through both, and the difference is the remaining debt.
+
+The machinery is `shared/nodeMaterials.ts` and `shared/useNodeMaterialModules.ts`:
+
+```txt
+UniverseCanvas's async `gl` factory
+  -> loadNodeMaterialModules()        caches three/webgpu + three/tsl, once
+  -> fiber awaits the factory before mounting ANY child
+  -> useNodeMaterialModules()         synchronous from then on, null on the classic path
+  -> createSomeMaterial(source, nodeModules)   picks its implementation
+```
+
+Three rules, each of which has already cost something:
+
+- **The two implementations read ONE set of constants.** Declared separately
+  they drift, the frames differ by an amount too small to notice and too large
+  to be right, and nothing throws. `forestFoliageMaterial.ts` is the reference
+  shape: constants at the top, a `…Glsl()` builder and a node builder below
+  them, and a test asserting the shader string contains no numeric literal the
+  module does not declare.
+- **`null` node modules is the ordinary answer, not an error.** It is what
+  every visitor gets until Phase 9. A material factory that throws or falls
+  back loudly on the classic path is wrong.
+- **Decide on the RENDERER, not on the graphics API.** `WebGPURenderer` with
+  `forceWebGL: true` is still a node renderer — it draws node graphs through a
+  WebGL2 backend — and that is the configuration ~20% of users land on after
+  the swap. `isNodeRenderer` therefore tests for `renderer.backend`, the same
+  question `ParityHarnessBridge.describeBackend` asks.
+
 ### Camera focus (NASA-Eyes style)
 
 Clicking a planet makes `CameraRig` lerp the `OrbitControls` target toward that

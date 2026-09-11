@@ -17,6 +17,7 @@ import {
 } from "three";
 import type { ForestSeasonConfig, ForestTerrainConfig, ForestTreesConfig } from "@/lib/types";
 import { randomFromSeed } from "@/lib/scene";
+import { useNodeMaterialModules } from "@/features/scene-renderers/shared/useNodeMaterialModules";
 import {
   blendedFoliageColors,
   blendedGroundColor,
@@ -246,11 +247,19 @@ export function ForestTerrain({
 
   // Real mossy rocks (Quaternius MegaKit), instanced across the seeded
   // scatter. Draw order per rock: angle, radius, scale, yaw, variant pick.
+  const nodeModules = useNodeMaterialModules();
+
   const rockModelUrls = useMemo(() => ROCK_MODEL_DEFINITIONS.map((definition) => natureModelUrl(definition)), []);
   const loadedRockModels = useGLTF(rockModelUrls);
   const rockInstancedMeshes = useMemo(() => {
     const rockVariants = loadedRockModels.flatMap((gltf, definitionIndex) =>
-      gltf?.scene ? extractInstancedModelVariants(gltf.scene, ROCK_MODEL_DEFINITIONS[definitionIndex].targetHeight) : []
+      gltf?.scene
+        ? extractInstancedModelVariants(
+            gltf.scene,
+            ROCK_MODEL_DEFINITIONS[definitionIndex].targetHeight,
+            nodeModules
+          )
+        : []
     );
     if (rockVariants.length === 0) {
       return [];
@@ -277,7 +286,15 @@ export function ForestTerrain({
         ? buildStaticInstancedMeshes(variant, transformsPerVariant[variantIndex], { receiveShadow: true })
         : []
     );
-  }, [clearingRadius, loadedRockModels, placementSeed, terrain?.rockCount, terrainHeightSampler, treelineRadius]);
+  }, [
+    clearingRadius,
+    loadedRockModels,
+    nodeModules,
+    placementSeed,
+    terrain?.rockCount,
+    terrainHeightSampler,
+    treelineRadius
+  ]);
 
   // Real grass tufts, seasonal color per instance. Draw order per tuft:
   // angle, radius, scale, yaw, variant pick.
@@ -285,7 +302,13 @@ export function ForestTerrain({
   const loadedGrassModels = useGLTF(grassModelUrls);
   const grassInstancedMeshes = useMemo(() => {
     const grassVariants = loadedGrassModels.flatMap((gltf, definitionIndex) =>
-      gltf?.scene ? extractInstancedModelVariants(gltf.scene, GRASS_MODEL_DEFINITIONS[definitionIndex].targetHeight) : []
+      gltf?.scene
+        ? extractInstancedModelVariants(
+            gltf.scene,
+            GRASS_MODEL_DEFINITIONS[definitionIndex].targetHeight,
+            nodeModules
+          )
+        : []
     );
     if (grassVariants.length === 0) {
       return [];
@@ -335,6 +358,7 @@ export function ForestTerrain({
   }, [
     groundKind,
     loadedGrassModels,
+    nodeModules,
     pathLateralDistanceSampler,
     placementSeed,
     season,

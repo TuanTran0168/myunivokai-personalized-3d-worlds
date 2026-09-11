@@ -1985,10 +1985,55 @@ convention. **Every phase ships and is independently revertable.**
 > bundler's question — does this name a file — so a rename INSIDE a file that still exists passes it
 > and fails typecheck instead.
 
+### Phases 6–8 — two corrections to this plan, **made 2026-09-11 while starting them**
+
+> **(a) THE BLOCKER PHASE 6 WAS TOLD TO FIND NO LONGER EXISTS.**
+> `scene-parity.spec.ts`'s failure ledger carried *"forest on the node path throws mid-frame, cause
+> NOT located — Phase 6 should find it before porting the forest"*, with
+> `Cannot read properties of undefined (reading 'get')` and nothing else. Nothing else was available
+> because that suite is a ratchet: it records `error.message` and drops `error.stack`, which
+> Playwright puts on the same object.
+>
+> `e2e/node-path-diagnostic.spec.ts` was written to keep the stacks, and found there is nothing left
+> to catch. **All three families, on both node backends, on the real GPU: zero throws, zero page
+> errors.** Every leg reached its pinned frame.
+>
+>     forest-world    on webgpu-forcewebgl / webgpu    no throw, 0 page errors
+>     universe-world  on webgpu-forcewebgl / webgpu    no throw, 0 page errors
+>     ocean-shallow   on webgpu-forcewebgl / webgpu    no throw, 0 page errors
+>
+> Phase 5 closed it: the forest mounted `PostEffects`, and `EffectComposer` cannot be CONSTRUCTED
+> against a node renderer. The entry was recorded before the node chain existed and was never
+> re-checked. **A ledger of known failures has to be re-run, not read** — an entry that outlives its
+> cause reads as a live blocker and buys nobody anything.
+>
+> **(b) PHASE 6'S ORDER IS WRONG, AND THE RIGHT ONE IS BY FAMILY.**
+> This plan starts with the shared GLSL library because one port serves three shaders. True, and it
+> produces **nothing testable**: all three consumers of `oceanSky.ts` are still raw
+> `ShaderMaterial`s afterwards, so no scene changes, no parity number moves, and the first
+> verification of the biggest single port is at the end of it.
+>
+> The node path is **all-or-nothing** — one raw GLSL `ShaderMaterial` left in a scene is a scene
+> that cannot run on the node renderer — so the unit that produces a measurement is a FAMILY, not a
+> shader. Counting what each family still needs:
+>
+>     forest    1 patch  (forestModels.ts foliage recolour)
+>     universe  2 shaders (SizedStarPoints, NebulaCloudPoints — both instanced-quad rewrites, §30.2)
+>     ocean     7 shaders + 8 patches
+>
+> So the forest goes first: one patch, the lowest-complexity entry in §8.2, and a whole family
+> arriving on the node path at the end of it. It also has to establish the machinery every other
+> port needs — `shared/nodeMaterials.ts` and `shared/useNodeMaterialModules.ts`, which give a
+> synchronous answer to "is this a node renderer, and where are the node modules" without putting a
+> second copy of three in every visitor's bundle. That work is the real Phase 6, and porting the
+> shared ocean library is Phase 6b, immediately before the ocean's own shaders need it.
+
 ### Phase 6 — Shared GLSL library → TSL
 
 - **Objective:** port `oceanSky.ts` (Preetham, Gerstner) once, serving three shaders.
 - **Validation:** `oceanShaderSource.test.ts` adapted; ocean shots.
+- **Superseded by the correction above:** the dual-material machinery and the forest's single patch
+  land first, because they are what produces the first parity number.
 
 ### Phase 7 — The nine `onBeforeCompile` patches → node slots
 
@@ -2379,6 +2424,33 @@ A 9:1 request comes back 1:1. Reading the source afterwards says why, twice over
 - The one class in 0.171.0 that *does* expand points to sized quads is `InstancedPointsNodeMaterial`
   (`:9638-9700`) — it needs an `instancePosition` instanced attribute and quad geometry, an entirely
   different geometry contract from `Points` — and r173 **removed it** (§4.2).
+
+> **UPDATED 2026-09-11, ON 0.185.1: THE CAPABILITY DID NOT GO AWAY, IT MOVED INTO
+> `PointsNodeMaterial` ITSELF.** Everything above still holds for a `Points` object — that path is
+> unchanged and still renders one pixel — but `PointsNodeMaterial.setupVertex` now DISPATCHES:
+>
+> ```js
+> setupVertex( builder ) {
+>   if ( builder.object.isPoints ) return super.setupVertex( builder );   // the 1-pixel path
+>   else return this.setupVertexSprite( builder );                       // sized quad expansion
+> }
+> ```
+>
+> `setupVertexSprite` (`src/materials/nodes/PointsNodeMaterial.js:89`) reads `sizeNode`, multiplies by
+> `screenDPR`, applies size attenuation with three's own comment *"follow WebGLRenderer's
+> implementation, and scale by half the canvas height in logical units"*, offsets by
+> `positionGeometry.xy`, divides by half the viewport and multiplies by `mvp.w` to compensate for the
+> perspective divide. **That is the entire `gl_PointSize` semantic, written by three, in the library.**
+>
+> So the four point shaders are still an ARCHITECTURAL_CHANGE — the geometry contract genuinely
+> changes from `Points` to a quad with per-instance attributes — but **the hard half is not ours to
+> write**, and the sizing maths that would have been the likeliest source of a subtle mismatch comes
+> from the same codebase as the baseline it is compared against. The estimate for Phase 8's four
+> point shaders should come down accordingly.
+>
+> **`pointUV` is still unusable and this does not change that.** `PointUVNode.generate()` still emits
+> `gl_PointCoord` on every builder. On the sprite path there is no need for it: the quad carries its
+> own `uv` attribute, which is what `gl_PointCoord` was standing in for.
 
 So the four point layers — `SizedStarPoints`, `NebulaCloudPoints`, the ocean's marine motes and its bubbles —
 are an **architectural change**, not a port: their geometry contract changes, on a three version this project

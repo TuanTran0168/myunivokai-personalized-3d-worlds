@@ -1,0 +1,121 @@
+import { test, type Page } from "@playwright/test";
+import natureWorld from "./fixtures/nature-world.json";
+import universeWorld from "./fixtures/universe-world.json";
+import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
+
+/**
+ * THE STACKS `scene-parity.spec.ts` DELIBERATELY DOES NOT KEEP.
+ *
+ * That suite is a ratchet: every failure it records has to fit on one line of a
+ * ledger, so it collects `error.message` and drops `error.stack`, which
+ * Playwright puts on the same object. That is the right trade for a ratchet and
+ * the wrong one for finding out where something went wrong — and it is why its
+ * own ledger carries an entry reading *"forest on the node path throws
+ * mid-frame, cause NOT located — Phase 6 should find it before porting the
+ * forest"*, with `Cannot read properties of undefined (reading 'get')` and
+ * nothing else.
+ *
+ * So this spec sits beside it rather than changing it, and **it asserts
+ * nothing**. It renders each fixture on each node backend, catches whatever is
+ * thrown, and prints the frames. Phases 6-8 each port shaders onto this path;
+ * every one of them will throw something at some point, and the alternative to
+ * this file is re-deriving how to get a stack out of the harness each time.
+ *
+ * Run it with `--project=webgpu`. The two SwiftShader projects have no WebGPU at
+ * all, and `forceWebGL` on them would be measuring the software rasteriser.
+ */
+
+const PINNED_SECONDS = 6;
+const HARNESS_READY_TIMEOUT_MILLISECONDS = 90_000;
+const SCENE_ARRIVAL_MILLISECONDS = 8_000;
+const DIAGNOSTIC_TIMEOUT_MILLISECONDS = 300_000;
+const STACK_FRAMES_TO_PRINT = 24;
+const CONSOLE_MESSAGE_CHARACTER_LIMIT = 400;
+
+const DIAGNOSTIC_FIXTURES = [
+  { name: "forest-world", worldId: natureWorld.world.id, family: "nature" },
+  { name: "universe-world", worldId: universeWorld.world.id, family: undefined },
+  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean" }
+] as const;
+
+const NODE_BACKENDS = ["webgpu-forcewebgl", "webgpu"] as const;
+
+type ParityHarnessWindow = Window & {
+  __parityHarness?: { backend: string; advanceToPinnedTime: () => Promise<void> };
+};
+
+async function serveWorldFixtures(page: Page) {
+  const routes = [
+    ["**/api/nature/**", natureWorld],
+    ["**/api/universe/**", universeWorld],
+    ["**/api/ocean/**", oceanShallowWorld]
+  ] as const;
+  for (const [path, world] of routes) {
+    await page.route(path, async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(world) });
+    });
+  }
+}
+
+function printStack(label: string, stack: string) {
+  console.log(`${label}\n${stack.split("\n").slice(0, STACK_FRAMES_TO_PRINT).join("\n")}`);
+}
+
+for (const fixture of DIAGNOSTIC_FIXTURES) {
+  for (const requestedRenderer of NODE_BACKENDS) {
+    test(`${fixture.name} on ${requestedRenderer}: whatever it throws, with frames`, async ({ page }) => {
+      test.setTimeout(DIAGNOSTIC_TIMEOUT_MILLISECONDS);
+
+      const pageErrors: { message: string; stack: string }[] = [];
+      page.on("pageerror", (error) => {
+        pageErrors.push({ message: error.message, stack: error.stack ?? "(no stack)" });
+      });
+      page.on("console", (message) => {
+        if (message.type() === "error") {
+          console.log(`console.error: ${message.text().slice(0, CONSOLE_MESSAGE_CHARACTER_LIMIT)}`);
+        }
+      });
+
+      await serveWorldFixtures(page);
+      const familyParameter = fixture.family ? `family=${fixture.family}&` : "";
+      await page.goto(
+        `/worlds/${fixture.worldId}?${familyParameter}parityRenderer=${requestedRenderer}` +
+          `&paritySeconds=${PINNED_SECONDS}`
+      );
+
+      // Twice, for the reason `scene-parity.spec.ts` documents at length: the
+      // routed fixture arriving remounts the whole <Canvas>, so a harness read
+      // before the wait belongs to a registration that no longer exists.
+      await page.waitForFunction(() => (window as ParityHarnessWindow).__parityHarness !== undefined, undefined, {
+        timeout: HARNESS_READY_TIMEOUT_MILLISECONDS
+      });
+      await page.waitForTimeout(SCENE_ARRIVAL_MILLISECONDS);
+      await page.waitForFunction(() => (window as ParityHarnessWindow).__parityHarness !== undefined, undefined, {
+        timeout: HARNESS_READY_TIMEOUT_MILLISECONDS
+      });
+
+      console.log(`backend: ${await page.evaluate(() => (window as ParityHarnessWindow).__parityHarness!.backend)}`);
+
+      const advanceResult = await page.evaluate(async () => {
+        try {
+          await (window as ParityHarnessWindow).__parityHarness!.advanceToPinnedTime();
+          return { threw: false, message: "", stack: "" };
+        } catch (error) {
+          const thrown = error as Error;
+          return { threw: true, message: thrown.message, stack: thrown.stack ?? "(no stack)" };
+        }
+      });
+
+      if (advanceResult.threw) {
+        printStack(`\nadvanceToPinnedTime threw: ${advanceResult.message}\n`, advanceResult.stack);
+      } else {
+        console.log("advanceToPinnedTime completed without throwing");
+      }
+
+      console.log(`\npage errors: ${pageErrors.length}`);
+      for (const pageError of pageErrors) {
+        printStack(`\n--- ${pageError.message}`, pageError.stack);
+      }
+    });
+  }
+}

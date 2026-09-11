@@ -8,12 +8,12 @@ import {
   Material,
   Matrix4,
   Mesh,
-  MeshStandardMaterial,
   Object3D,
   Quaternion,
   Vector3
 } from "three";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
+import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
+import { recolorableFoliageMaterial } from "./forestFoliageMaterial";
 
 // The nature-1 asset catalog: every modelKey the backend config can emit maps
 // to self-hosted, draco-compressed CC0/CC-BY GLB files under
@@ -287,50 +287,6 @@ function collectMeshesInWorldSpace(root: Object3D): Mesh[] {
   return meshes;
 }
 
-// Recolorable foliage material. KEEPS the source model's leaf texture and its
-// smooth normals (the canopy geometry is 3k-20k verts of real leaf clusters —
-// dropping the texture and flat-shading it was what collapsed canopies into
-// featureless faceted blobs, the "lá như hình vuông" complaint). The texture
-// now drives only light/dark DETAIL (luminance); the HUE comes from the
-// per-instance color (season tint) via a shader injection — a straight
-// multiply of an autumn-orange tint over a green leaf texture turns muddy.
-function recolorableFoliageMaterial(originalMaterial: Material): MeshStandardMaterial {
-  const source = originalMaterial as MeshStandardMaterial;
-  const material = new MeshStandardMaterial({
-    map: source.map ?? null,
-    normalMap: source.normalMap ?? null,
-    alphaMap: source.alphaMap ?? null,
-    transparent: source.transparent,
-    alphaTest: source.alphaTest,
-    side: source.side,
-    roughness: source.roughness ?? 0.9,
-    metalness: 0,
-    color: new Color("#FFFFFF")
-  });
-  material.onBeforeCompile = (shader) => {
-    // Replace the stock map multiply: sample the leaf texture, collapse it to
-    // luminance, remap into a gentle light range, and multiply that onto the
-    // instance-colored diffuse. Result = season hue × texture detail.
-    shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "forestModels leaf recolour", [
-      SHADER_CHUNK_MARKERS.mapFragment
-    ]).replace(
-        SHADER_CHUNK_MARKERS.mapFragment,
-      [
-        "#ifdef USE_MAP",
-        "  vec4 sampledLeafColor = texture2D( map, vMapUv );",
-        "  float leafLuma = dot( sampledLeafColor.rgb, vec3( 0.299, 0.587, 0.114 ) );",
-        "  leafLuma = mix( 0.72, 1.12, leafLuma );",
-        "  diffuseColor.rgb *= leafLuma;",
-        "  diffuseColor.a *= sampledLeafColor.a;",
-        "#endif"
-      ].join("\n")
-    );
-  };
-  // Foliage materials all share one program despite per-instance colors.
-  material.customProgramCacheKey = () => "forest-foliage-recolor";
-  return material;
-}
-
 /**
  * Collapses same-material parts into one geometry.
  *
@@ -384,7 +340,11 @@ function mergePartsByMaterial(parts: { geometry: BufferGeometry; material: Mater
   });
 }
 
-function buildVariantFromMeshes(meshes: Mesh[], targetHeight: number): InstancedModelVariant | null {
+function buildVariantFromMeshes(
+  meshes: Mesh[],
+  targetHeight: number,
+  nodeModules: NodeMaterialModules | null
+): InstancedModelVariant | null {
   if (meshes.length === 0) {
     return null;
   }
@@ -418,7 +378,7 @@ function buildVariantFromMeshes(meshes: Mesh[], targetHeight: number): Instanced
     const foliage = isFoliageMaterial(material);
     return {
       geometry,
-      material: foliage ? recolorableFoliageMaterial(material) : material,
+      material: foliage ? recolorableFoliageMaterial(material, nodeModules) : material,
       isFoliage: foliage
     };
   });
@@ -436,6 +396,7 @@ function buildVariantFromMeshes(meshes: Mesh[], targetHeight: number): Instanced
 export function extractInstancedModelVariants(
   sceneRoot: Object3D,
   targetHeight: number,
+  nodeModules: NodeMaterialModules | null,
   splitIntoVariants = false
 ): InstancedModelVariant[] {
   sceneRoot.updateMatrixWorld(true);
@@ -448,14 +409,14 @@ export function extractInstancedModelVariants(
       splitLevel.children.length > 1 && splitLevel.children.every((child) => !(child as Mesh).isMesh);
     if (childrenAreGroupingNodes) {
       const childVariants = splitLevel.children
-        .map((child) => buildVariantFromMeshes(collectMeshesInWorldSpace(child), targetHeight))
+        .map((child) => buildVariantFromMeshes(collectMeshesInWorldSpace(child), targetHeight, nodeModules))
         .filter((variant): variant is InstancedModelVariant => variant !== null);
       if (childVariants.length > 1) {
         return childVariants;
       }
     }
   }
-  const wholeVariant = buildVariantFromMeshes(collectMeshesInWorldSpace(sceneRoot), targetHeight);
+  const wholeVariant = buildVariantFromMeshes(collectMeshesInWorldSpace(sceneRoot), targetHeight, nodeModules);
   return wholeVariant ? [wholeVariant] : [];
 }
 

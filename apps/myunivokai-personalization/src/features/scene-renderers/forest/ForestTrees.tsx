@@ -6,6 +6,7 @@ import { useGLTF } from "@react-three/drei";
 import { Color, InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
 import type { ForestSeasonConfig, ForestTerrainConfig, ForestTreesConfig } from "@/lib/types";
 import { randomFromSeed } from "@/lib/scene";
+import { useNodeMaterialModules } from "@/features/scene-renderers/shared/useNodeMaterialModules";
 import {
   blendedFoliageColors,
   clampValue,
@@ -119,6 +120,8 @@ export function ForestTrees({ trees, terrain, season, terrainHeightSampler, path
   );
   const loadedModels = useGLTF(modelUrls);
 
+  const nodeModules = useNodeMaterialModules();
+
   const variantsBySpecies = useMemo(() => {
     const variantsMap = new Map<string, InstancedModelVariant[]>();
     let modelCursor = 0;
@@ -130,7 +133,12 @@ export function ForestTrees({ trees, terrain, season, terrainHeightSampler, path
         modelCursor += 1;
         if (gltf?.scene) {
           speciesVariants.push(
-            ...extractInstancedModelVariants(gltf.scene, definition.targetHeight, definition.splitIntoVariants ?? false)
+            ...extractInstancedModelVariants(
+              gltf.scene,
+              definition.targetHeight,
+              nodeModules,
+              definition.splitIntoVariants ?? false
+            )
           );
         }
       }
@@ -139,7 +147,7 @@ export function ForestTrees({ trees, terrain, season, terrainHeightSampler, path
       }
     });
     return variantsMap;
-  }, [loadedModels, modelDefinitionsBySpecies, speciesKeys]);
+  }, [loadedModels, modelDefinitionsBySpecies, nodeModules, speciesKeys]);
 
   const renderBuckets = useMemo<RenderBucket[]>(() => {
     const desktopCount = trees?.countDesktop ?? 180;

@@ -105,24 +105,23 @@ const KNOWN_WEBGPU_BLOCKERS: readonly { fragment: string; name: string }[] = [
     fragment: "getContextAttributes is not a function",
     name: "postprocessing's EffectComposer cannot take a WebGPURenderer (setRenderer, build/index.js:994) — Phase 5"
   },
-  {
-    // The forest's `forceWebGL` leg, during the pinned frames. UNLIKE THE ENTRY
-    // ABOVE, THIS ONE IS NOT LOCATED: the message is all there is so far, thrown
-    // from inside `advanceToPinnedTime`, on the forest and not on the universe
-    // or the ocean.
-    //
-    // Recorded rather than left red because it is reproducible and it is the
-    // migration's, not the harness's — the same three legs work on two other
-    // fixtures. Its shape resembles what Phase 1 found in `Nodes.delete`
-    // (`three.webgpu.js:27796`), which dereferences a cache entry with no guard
-    // and throws when a render object is disposed before it was ever built; the
-    // forest is the fixture that mounts and disposes the most (drei
-    // `<Environment>`, 51 material sites, GLTF variants). **That is a
-    // resemblance, not a diagnosis**, and the entry says so on purpose. Whoever
-    // takes Phase 6 should locate it before porting the forest.
-    fragment: "Cannot read properties of undefined (reading 'get')",
-    name: "forest on the node path throws mid-frame, cause NOT located — Phase 6 should find it before porting the forest"
-  }
+  // REMOVED 2026-09-11, and what it was is worth keeping: an entry reading
+  // "forest on the node path throws mid-frame, cause NOT located — Phase 6
+  // should find it before porting the forest", matching
+  // `Cannot read properties of undefined (reading 'get')`.
+  //
+  // Phase 6 went looking and found nothing left to catch.
+  // `e2e/node-path-diagnostic.spec.ts` renders all three fixtures on both node
+  // backends on the real GPU and keeps the STACKS this file deliberately drops:
+  // zero throws, zero page errors, every leg reaching its pinned frame. Phase 5
+  // had closed it — the forest mounted `PostEffects`, and `EffectComposer`
+  // cannot be CONSTRUCTED against a node renderer — and the entry was written
+  // before the node chain existed.
+  //
+  // **A LEDGER OF KNOWN FAILURES HAS TO BE RE-RUN, NOT READ.** This one outlived
+  // its cause by a phase and read as a live blocker the whole time. The cost was
+  // not the entry, it was that the forest produced NO parity number for as long
+  // as it stood.
 ];
 
 /**
@@ -151,6 +150,15 @@ const KNOWN_WEBGPU_BLOCKERS: readonly { fragment: string; name: string }[] = [
  * path rendering this scene differently from the classic renderer, which is what
  * the ocean's four raw GLSL `ShaderMaterial`s not being node materials looks
  * like from the outside. The gap is the PORT (Phases 6-8), not the backend.
+ *
+ * **CORRECTED 2026-09-11: "the gap is the port" is true of the ocean and is NOT
+ * the whole story.** The forest is now the first family with no hand-written
+ * shader left, and it still differs from the classic renderer by 19.49 — while
+ * its own two node backends agree to 1.24. A finished port is therefore not the
+ * same thing as a matching frame, and the residual has to be attributed before
+ * Phase 10 can judge the fallback. The forest's entry below names the
+ * candidates. The fallback half of the claim stands on every fixture measured:
+ * 0.02 ocean, 0.45 universe, 1.24 forest between WebGPU and forceWebGL.
  */
 const DIVERGENCE_HEADROOM = 1.1;
 
@@ -165,10 +173,66 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
   {
     fixture: "universe-world",
     comparison: "forceWebGL against WebGL",
-    meanAbsoluteError: 25.71,
-    worstBlockError: 185.18,
-    differingFraction: 0.9773,
-    closedBy: "Phases 6-8 (the nine shaders become node materials)"
+    meanAbsoluteError: 11.99,
+    worstBlockError: 204.47,
+    differingFraction: 0.6069,
+    closedBy: "Phase 8 (SizedStarPoints and NebulaCloudPoints become node materials)"
+  },
+  // MEASURED FOR THE FIRST TIME 2026-09-11. This leg used to be tolerated as a
+  // render failure rather than compared, and the universe's `WebGPU against
+  // WebGL` was never recorded at all.
+  {
+    fixture: "universe-world",
+    comparison: "WebGPU against WebGL",
+    meanAbsoluteError: 12.19,
+    worstBlockError: 205.01,
+    differingFraction: 0.609,
+    closedBy: "Phase 8 (SizedStarPoints and NebulaCloudPoints become node materials)"
+  },
+  /**
+   * THE FOREST'S FIRST NUMBERS EVER, AND THEY ARE NOT A PORT DEBT.
+   *
+   * This fixture produced nothing until 2026-09-11, because a stale entry in
+   * KNOWN_RENDER_FAILURES above tolerated its legs as failures. It now renders
+   * on both node backends, and it is the FIRST FAMILY WITH NO HAND-WRITTEN
+   * SHADER LEFT: its one `onBeforeCompile` patch became a `colorNode` in
+   * `forest/forestFoliageMaterial.ts`, and nothing else in its tree is a
+   * `ShaderMaterial`.
+   *
+   * **So 19.49 is what a FULLY PORTED family still differs by, and that is the
+   * most interesting number in this list.** §26 says "the gap is the PORT
+   * (Phases 6-8), not the backend". For the forest the port is done and 19.49
+   * of gap remains, so that sentence is not the whole story. The candidates,
+   * none of which is yet isolated and which are therefore named rather than
+   * diagnosed:
+   *
+   *   - the forest's ambient occlusion, which is N8AO on the composer chain and
+   *     three's GTAO on the node chain. §26 Phase 5 already marks this the one
+   *     deliberate look change it hands to the owner's eye, and it is the only
+   *     effect that applies to this family and not to the universe.
+   *   - drei's `<Environment>` PMREM bake, which each renderer performs with its
+   *     own pipeline.
+   *   - three's own conversion of stock `MeshStandardMaterial`s to node
+   *     materials, which is not a no-op and which nothing here has measured.
+   *
+   * The two node backends agree with each other to 1.24, so whatever this is,
+   * it is not the WebGL2 fallback diverging from WebGPU.
+   */
+  {
+    fixture: "forest-world",
+    comparison: "WebGPU against WebGL",
+    meanAbsoluteError: 19.49,
+    worstBlockError: 72.31,
+    differingFraction: 0.8757,
+    closedBy: "the AO retune and the PMREM bake, NOT a shader port — the forest has no GLSL left"
+  },
+  {
+    fixture: "forest-world",
+    comparison: "forceWebGL against WebGL",
+    meanAbsoluteError: 19.5,
+    worstBlockError: 72.37,
+    differingFraction: 0.8751,
+    closedBy: "the AO retune and the PMREM bake, NOT a shader port — the forest has no GLSL left"
   },
   {
     fixture: "ocean-shallow",

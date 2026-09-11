@@ -5,6 +5,7 @@ import { useGLTF } from "@react-three/drei";
 import { Vector3 } from "three";
 import type { ForestTerrainConfig } from "@/lib/types";
 import { randomFromSeed } from "@/lib/scene";
+import { useNodeMaterialModules } from "@/features/scene-renderers/shared/useNodeMaterialModules";
 import { treelineRadiusFromTerrain, type TerrainHeightSampler } from "./forestMath";
 import {
   buildStaticInstancedMeshes,
@@ -48,11 +49,14 @@ export function ForestDistantTreeline({ terrain, terrainHeightSampler }: ForestD
   const placementSeed = terrain?.placementSeed ?? "forest-terrain";
   const gltf = useGLTF(natureModelUrl(DISTANT_TREE_MODEL_DEFINITION));
 
+  const nodeModules = useNodeMaterialModules();
+
   const instancedMeshes = useMemo(() => {
     const variants = gltf?.scene
       ? extractInstancedModelVariants(
           gltf.scene,
           DISTANT_TREE_MODEL_DEFINITION.targetHeight,
+          nodeModules,
           DISTANT_TREE_MODEL_DEFINITION.splitIntoVariants ?? false
         )
       : [];
@@ -97,7 +101,7 @@ export function ForestDistantTreeline({ terrain, terrainHeightSampler }: ForestD
           })
         : []
     );
-  }, [gltf, placementSeed, terrainHeightSampler, treelineRadius]);
+  }, [gltf, nodeModules, placementSeed, terrainHeightSampler, treelineRadius]);
 
   return (
     <group>

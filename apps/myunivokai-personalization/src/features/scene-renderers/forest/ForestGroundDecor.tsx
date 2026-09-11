@@ -5,6 +5,7 @@ import { useGLTF } from "@react-three/drei";
 import { Vector3 } from "three";
 import type { ForestSeasonConfig, ForestTerrainConfig } from "@/lib/types";
 import { randomFromSeed } from "@/lib/scene";
+import { useNodeMaterialModules } from "@/features/scene-renderers/shared/useNodeMaterialModules";
 import {
   blendedFoliageColors,
   clearingRadiusFromTerrain,
@@ -82,9 +83,17 @@ export function ForestGroundDecor({ terrain, season, terrainHeightSampler, pathL
   const decorModelUrls = useMemo(() => DECOR_MODEL_DEFINITIONS.map((definition) => natureModelUrl(definition)), []);
   const loadedDecorModels = useGLTF(decorModelUrls);
 
+  const nodeModules = useNodeMaterialModules();
+
   const decorInstancedMeshes = useMemo(() => {
     const variantsPerDefinition = loadedDecorModels.map((gltf, definitionIndex) =>
-      gltf?.scene ? extractInstancedModelVariants(gltf.scene, DECOR_MODEL_DEFINITIONS[definitionIndex].targetHeight) : []
+      gltf?.scene
+        ? extractInstancedModelVariants(
+            gltf.scene,
+            DECOR_MODEL_DEFINITIONS[definitionIndex].targetHeight,
+            nodeModules
+          )
+        : []
     );
     const weights = DECOR_WEIGHTS_BY_SEASON[seasonKind] ?? DECOR_WEIGHTS_BY_SEASON.spring;
     const foliageColors = blendedFoliageColors(season);
@@ -133,6 +142,7 @@ export function ForestGroundDecor({ terrain, season, terrainHeightSampler, pathL
   }, [
     clearingRadius,
     loadedDecorModels,
+    nodeModules,
     pathLateralDistanceSampler,
     placementSeed,
     season,
