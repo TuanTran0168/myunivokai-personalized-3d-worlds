@@ -89,7 +89,10 @@ describe("post effects tuning", () => {
     const bloom = positionOf(NODE_CHAIN_SOURCE, "bloomModule.bloom(", "NodePostEffects.tsx");
     const hueSaturation = positionOf(NODE_CHAIN_SOURCE, "hueRotationVector(grade.hueRadians)", "NodePostEffects.tsx");
     const brightnessContrast = positionOf(NODE_CHAIN_SOURCE, "contrastFactor(grade.contrast)", "NodePostEffects.tsx");
-    const toneMapping = positionOf(NODE_CHAIN_SOURCE, "agxToneMapping(graded", "NodePostEffects.tsx");
+    // `applyToneCurve` rather than a curve's name: which curve the chain applies
+    // is `sceneToneMapping.ts`'s decision and changes with the look, while WHERE
+    // it is applied is this test's subject and must not.
+    const toneMapping = positionOf(NODE_CHAIN_SOURCE, "applyToneCurve(graded", "NodePostEffects.tsx");
     const chromaticAberration = positionOf(
       NODE_CHAIN_SOURCE,
       "chromaticAberrationModule.chromaticAberration(",

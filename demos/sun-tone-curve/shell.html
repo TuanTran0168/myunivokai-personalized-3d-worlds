@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sun tone curve — what the restored curve did to the star</title>
+    <style>
+      :root {
+        --page-background: #08090c;
+        --panel-background: #101219;
+        --panel-border: #21242f;
+        --text-primary: #e7e9f0;
+        --text-secondary: #969aad;
+        --accent: #d8b169;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 40px 28px 80px;
+        background: var(--page-background);
+        color: var(--text-primary);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.6;
+      }
+
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        font-size: 26px;
+        font-weight: 600;
+        margin: 0 0 6px;
+        letter-spacing: -0.01em;
+      }
+
+      .subtitle {
+        color: var(--text-secondary);
+        margin: 0 0 8px;
+        max-width: 76ch;
+      }
+
+      .subtitle code {
+        color: var(--accent);
+        font-size: 0.92em;
+      }
+
+      h2 {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 42px 0 4px;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+      }
+
+      .world-note {
+        color: var(--text-secondary);
+        font-size: 13px;
+        margin: 0 0 16px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--panel-background);
+        border: 1px solid var(--panel-border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      th,
+      td {
+        padding: 10px 12px;
+        text-align: left;
+        border-bottom: 1px solid var(--panel-border);
+        font-size: 13px;
+        vertical-align: middle;
+      }
+
+      tr:last-child td {
+        border-bottom: none;
+      }
+
+      th {
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        background: #0b0d13;
+      }
+
+      th:first-child,
+      td:first-child {
+        width: 96px;
+        color: var(--text-secondary);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .swatch-cell {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .swatch {
+        width: 46px;
+        height: 34px;
+        border-radius: 5px;
+        flex: none;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+      }
+
+      .readout {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+        font-size: 11.5px;
+        color: var(--text-secondary);
+        white-space: nowrap;
+      }
+
+      .readout strong {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+
+      .verdict {
+        margin-top: 44px;
+        padding: 22px 24px;
+        background: var(--panel-background);
+        border: 1px solid var(--panel-border);
+        border-radius: 10px;
+      }
+
+      .verdict h2 {
+        margin-top: 0;
+      }
+
+      .retention-row {
+        display: grid;
+        grid-template-columns: 210px 1fr 78px;
+        align-items: center;
+        gap: 14px;
+        margin: 9px 0;
+        font-size: 13px;
+      }
+
+      .retention-track {
+        height: 9px;
+        background: #1b1e28;
+        border-radius: 5px;
+        overflow: hidden;
+      }
+
+      .retention-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #6b5327, var(--accent));
+      }
+
+      .retention-value {
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 12.5px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .limits {
+        margin-top: 40px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 84ch;
+      }
+
+      .limits strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sun tone curve</h1>
+      <p class="subtitle">
+        The owner reported the sun looking &ldquo;as if a sheet of frosted glass were laid over it &mdash; not fiery
+        red like it used to be&rdquo;. Until <code>3f09796</code> the universe, forest and fallback families rendered
+        with <strong>no tone curve at all</strong>: <code>EffectComposer</code> sets
+        <code>gl.toneMapping = NoToneMapping</code> on mount and none of those three chains contained a
+        <code>&lt;ToneMapping&gt;</code> pass, so everything above 1.0 in linear space hit the display ceiling flat and
+        stayed fully saturated. Restoring a curve was right. The curve restored was AgX, and AgX desaturates as it
+        approaches the top of its range &mdash; that is how it avoids the clipping. The report describes AgX working
+        as designed.
+      </p>
+      <p class="subtitle">
+        Four curves, applied to the colours the two reported worlds' suns actually hand the renderer. Every number
+        here is produced by <code>toneCurves.mjs</code>, the same module <code>measure.mjs</code> checks.
+      </p>
+
+      <div id="worlds"></div>
+
+      <div class="verdict">
+        <h2>Saturation kept, against the build the report compares against</h2>
+        <p class="world-note">
+          Averaged over the texture ramp, both worlds, star surface and glow shell. 1.00 is the old build's look.
+        </p>
+        <div id="retention"></div>
+      </div>
+
+      <p class="limits">
+        <strong>What this does not show.</strong> A frame is not these swatches. Bloom, the grade, the vignette, the
+        film grain and the glow shell's additive blend over the star all sit between this colour and a rendered pixel,
+        and none of them is modelled here. What makes the comparison fair anyway is that every one of them is
+        identical across the four columns &mdash; the tone curve is the only thing that differs &mdash; so the
+        <em>difference</em> between columns is the difference in the frame, even though the absolute values are not.
+        It also does not model the sun texture's own hue, only its brightness ramp.
+      </p>
+    </main>
+
+    <script type="module">
+      // @splice ./toneCurves.mjs
+
+      const REPORTED_WORLDS = [
+        {
+          label: 'nickname "Trần Đăng Tuấn" — the reported frame',
+          note: "binary-sun and black-hole rolled · core scale 1.41",
+          surfaceTintColor: "#FFE3C4",
+          glowColor: "#FF9E4A",
+          surfaceHdrMultiplier: 1.39
+        },
+        {
+          label: 'nickname empty (seeds as "Neo")',
+          note: "no rare feature · core scale 1.22",
+          surfaceTintColor: "#FFFFFF",
+          glowColor: "#FDB813",
+          surfaceHdrMultiplier: 1.36
+        }
+      ];
+
+      const SUN_TEXTURE_LEVELS = [1, 0.85, 0.7, 0.55, 0.4, 0.25];
+
+      function swatchCell(linearColor, curve) {
+        const displayRgb = linearColorToDisplayRgb(curve.apply(linearColor));
+        const saturation = saturationOfDisplayRgb(displayRgb);
+        const cell = document.createElement("div");
+        cell.className = "swatch-cell";
+
+        const swatch = document.createElement("div");
+        swatch.className = "swatch";
+        swatch.style.background = `rgb(${displayRgb.join(" ")})`;
+        cell.append(swatch);
+
+        const readout = document.createElement("div");
+        readout.className = "readout";
+        readout.innerHTML =
+          `<strong>${displayRgb.map((channel) => String(channel).padStart(3)).join(" ")}</strong>` +
+          `<br />sat ${saturation.toFixed(2)}`;
+        cell.append(readout);
+
+        return cell;
+      }
+
+      function renderWorld(world) {
+        const section = document.createElement("section");
+
+        const heading = document.createElement("h2");
+        heading.textContent = world.label;
+        section.append(heading);
+
+        const note = document.createElement("p");
+        note.className = "world-note";
+        note.textContent =
+          `star surface ${world.surfaceTintColor} · glow shell ${world.glowColor} · ` +
+          `HDR ×${world.surfaceHdrMultiplier} · ${world.note}`;
+        section.append(note);
+
+        const table = document.createElement("table");
+        const headerRow = document.createElement("tr");
+        headerRow.append(document.createElement("th"));
+        headerRow.lastChild.textContent = "Texture";
+        for (const curve of TONE_CURVES) {
+          const headerCell = document.createElement("th");
+          headerCell.textContent = curve.label;
+          headerRow.append(headerCell);
+        }
+        table.append(headerRow);
+
+        const tintLinear = hexToLinearColor(world.surfaceTintColor);
+        for (const textureLevel of SUN_TEXTURE_LEVELS) {
+          const row = document.createElement("tr");
+          const levelCell = document.createElement("td");
+          levelCell.textContent = textureLevel.toFixed(2);
+          row.append(levelCell);
+          const linear = tintLinear.map((channel) => channel * world.surfaceHdrMultiplier * textureLevel);
+          for (const curve of TONE_CURVES) {
+            const cell = document.createElement("td");
+            cell.append(swatchCell(linear, curve));
+            row.append(cell);
+          }
+          table.append(row);
+        }
+
+        const glowRow = document.createElement("tr");
+        const glowLabel = document.createElement("td");
+        glowLabel.textContent = "glow shell";
+        glowRow.append(glowLabel);
+        const glowLinear = hexToLinearColor(world.glowColor).map(
+          (channel) => channel * world.surfaceHdrMultiplier
+        );
+        for (const curve of TONE_CURVES) {
+          const cell = document.createElement("td");
+          cell.append(swatchCell(glowLinear, curve));
+          glowRow.append(cell);
+        }
+        table.append(glowRow);
+
+        section.append(table);
+        return section;
+      }
+
+      function renderRetention() {
+        const [noCurve, ...candidateCurves] = TONE_CURVES;
+        const container = document.getElementById("retention");
+        const widestRetention = 1.2;
+
+        for (const curve of candidateCurves) {
+          let baselineTotal = 0;
+          let curveTotal = 0;
+          for (const world of REPORTED_WORLDS) {
+            for (const hexColor of [world.surfaceTintColor, world.glowColor]) {
+              const tintLinear = hexToLinearColor(hexColor);
+              for (const textureLevel of SUN_TEXTURE_LEVELS) {
+                const linear = tintLinear.map(
+                  (channel) => channel * world.surfaceHdrMultiplier * textureLevel
+                );
+                baselineTotal += saturationOfDisplayRgb(linearColorToDisplayRgb(noCurve.apply(linear)));
+                curveTotal += saturationOfDisplayRgb(linearColorToDisplayRgb(curve.apply(linear)));
+              }
+            }
+          }
+          const retention = curveTotal / baselineTotal;
+
+          const row = document.createElement("div");
+          row.className = "retention-row";
+
+          const label = document.createElement("div");
+          label.textContent = curve.label;
+          row.append(label);
+
+          const track = document.createElement("div");
+          track.className = "retention-track";
+          const fill = document.createElement("div");
+          fill.className = "retention-fill";
+          fill.style.width = `${Math.min(100, (retention / widestRetention) * 100)}%`;
+          track.append(fill);
+          row.append(track);
+
+          const value = document.createElement("div");
+          value.className = "retention-value";
+          value.textContent = retention.toFixed(3);
+          row.append(value);
+
+          container.append(row);
+        }
+      }
+
+      const worldsContainer = document.getElementById("worlds");
+      for (const world of REPORTED_WORLDS) {
+        worldsContainer.append(renderWorld(world));
+      }
+      renderRetention();
+    </script>
+  </body>
+</html>

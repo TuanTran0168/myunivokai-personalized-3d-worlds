@@ -289,7 +289,59 @@ lại được cho bất kỳ vật thể nào cần "bám theo" object khác.
   chỉ vật tự đẩy màu HDR >1 (Sun ×1.5, sao) mới glow; vignette + film grain +
   chromatic aberration gộp 1 fullscreen pass; grade màu riêng từng theme qua
   `THEME_SCENE_GRADES`; MSAA 8.
-- **AgX tone mapping** đặt ở `UniverseCanvas` (`gl.toneMapping`), dpr `[1,3]`.
+- **Tone curve** — xem mục dưới. Không còn đặt riêng ở `UniverseCanvas` nữa:
+  `gl.toneMapping` ở đó là **vô hiệu** với mọi family mount composer, và cặp khai
+  báo bắt buộc nằm trong `sceneToneMapping.ts`.
+
+### A missing default is a look, and restoring it is a look change
+
+`UniverseCanvas` set `gl.toneMapping` to AgX, and for universe, forest and the
+fallback renderer **that line did nothing for the app's entire life**.
+`EffectComposer` assigns `gl.toneMapping = NoToneMapping` on mount
+(`@react-three/postprocessing`, comment: *"threejs disallows tonemapping on
+render targets"*) and it does not check whether the chain contains a
+`<ToneMapping>` pass. Those three chains did not. So those three families
+rendered with **no tone curve at all** and every linear value above 1 clipped
+flat. `sceneToneMapping.ts` and its test exist to make that state unreachable.
+
+The fix was right and its consequence was not priced:
+
+- **A flat clamp is not "no look". It is a look, and it is the one every world
+  in this app was authored against.** Clipping the top of a channel that is
+  already at the top changes nothing while the other channels stay put, so a
+  clipped highlight keeps ALL of its saturation. Nine months of "the sun is
+  fiery orange" was the clip.
+- The curve restored was AgX, picked while fixing the clipping rather than while
+  looking at the result. AgX desaturates as it approaches the top of its range —
+  that is *how* it avoids clipping. Measured over the sun's own colours
+  (`demos/sun-tone-curve/`): AgX keeps **0.632** of the clip's saturation and
+  lifts middle grey from 0.18 to **0.215**. Less colour and lighter darks is
+  what the owner reported as *"a sheet of frosted glass laid over the sun"*.
+- Shipped instead: **Khronos PBR Neutral** for those three families — 1.062 of
+  the old saturation, middle grey down to 0.14, a deep shadow from 0.02 to
+  0.0025. The ocean keeps ACES, which its per-depth `toneMappingExposure` grade
+  was actually designed against.
+
+The transferable rules:
+
+- **When a default turns out to have been dead, restoring it is a product
+  change, not a repair.** The correct move is to fix the wiring and then choose
+  the value by looking, because the value that was *declared* was never the
+  value anyone saw. Nobody chose AgX for this app; a dead prop did.
+- **Measure the pair the report names.** The first answer to "the sun is pale"
+  compared two SEEDS on one build and produced a true number that answered
+  nothing — the report was about two BUILDS. The easy comparison is rarely the
+  asked one.
+- **Check a transcription before trusting its output.** The tone curves had to
+  be transcribed from GLSL to be measured at all, and a colour-space matrix
+  transposed while transcribing gives plausible wrong colours silently. Two
+  cheap invariants catch it: every colour-space matrix row sums to 1 (white maps
+  to white), and a neutral in is a neutral out.
+- **A value declared in two places was declared in three.**
+  `NodePostEffects.tsx` called `agxToneMapping` from `three/tsl` as a literal,
+  agreeing with the composer by coincidence. It now looks the function up by
+  name from the same table, because the whole point of `sceneToneMapping.ts` is
+  that a curve has one declaration.
 
 ## Checklist thêm model/asset mới
 

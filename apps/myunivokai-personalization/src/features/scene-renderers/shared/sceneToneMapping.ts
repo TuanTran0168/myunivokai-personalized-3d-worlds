@@ -1,4 +1,4 @@
-import { ACESFilmicToneMapping, AgXToneMapping, type ToneMapping } from "three";
+import { ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping, type ToneMapping } from "three";
 import { ToneMappingMode } from "postprocessing";
 
 /**
@@ -46,11 +46,34 @@ import { ToneMappingMode } from "postprocessing";
 export const OCEAN_FAMILY_TONE_MAPPING: ToneMapping = ACESFilmicToneMapping;
 
 /**
- * Everything else. AgX rolls hot highlights off more gracefully than ACES — no
- * neon clipping on lit planets — which is what the sun, the binary suns, the
- * star cores and the additive nebula layers need.
+ * Everything else: universe, forest, and the fallback renderer.
+ *
+ * **THESE THREE FAMILIES RENDERED WITH NO TONE CURVE AT ALL UNTIL 2026-09-10**,
+ * for the app's whole life, because of the bug described above. So there is no
+ * long-standing design intent to preserve here — every world these families
+ * have ever shown was authored by eye against a FLAT CLAMP, where every linear
+ * value above 1 hit the display ceiling and stayed fully saturated.
+ *
+ * The curve first restored was AgX, chosen while fixing the clipping rather
+ * than while looking at the result, and the owner reported the result as "a
+ * sheet of frosted glass laid over the sun — it is not fiery red like it used
+ * to be". That report is accurate, and AgX is doing exactly what AgX is for:
+ * `demos/sun-tone-curve/` measures the sun's own colours through all four
+ * curves and finds AgX keeps **0.63** of the saturation the flat clamp gave,
+ * while lifting middle grey from 0.18 to 0.215. Less saturated and lighter in
+ * the mids is the definition of a veil.
+ *
+ * Khronos PBR Neutral is the curve that answers the report. It keeps **1.06**
+ * of that saturation — it is designed to leave in-gamut colour alone and
+ * compress only what would clip — and it takes middle grey DOWN to 0.14 and a
+ * deep shadow from 0.02 to 0.0025, so the black of space stays black. It is
+ * still a real tone curve: nothing clips flat, which is what the original fix
+ * was for.
+ *
+ * ONE CONSTANT, and `demos/sun-tone-curve/` renders all four side by side if
+ * the owner wants a different one.
  */
-export const DEFAULT_FAMILY_TONE_MAPPING: ToneMapping = AgXToneMapping;
+export const DEFAULT_FAMILY_TONE_MAPPING: ToneMapping = NeutralToneMapping;
 
 /**
  * The same curves as the composer knows them.
@@ -63,8 +86,53 @@ export const DEFAULT_FAMILY_TONE_MAPPING: ToneMapping = AgXToneMapping;
  */
 const COMPOSER_MODE_BY_RENDERER_TONE_MAPPING = new Map<ToneMapping, ToneMappingMode>([
   [ACESFilmicToneMapping, ToneMappingMode.ACES_FILMIC],
-  [AgXToneMapping, ToneMappingMode.AGX]
+  [AgXToneMapping, ToneMappingMode.AGX],
+  [NeutralToneMapping, ToneMappingMode.NEUTRAL]
 ]);
+
+/**
+ * THE THIRD DECLARATION OF THE SAME CURVE, AND IT WAS A HARDCODED ONE.
+ *
+ * This module's whole reason to exist is that a tone curve declared twice
+ * drifts. It was already declared three times: `NodePostEffects.tsx` called
+ * `agxToneMapping` from `three/tsl` as a literal, agreeing with the composer by
+ * coincidence rather than by construction. Changing the default curve in one
+ * place would have left the node chain on AgX and the composer on Neutral — two
+ * renderers of the same scene, grading differently, with nothing throwing.
+ *
+ * The node chain cannot import these functions from here: they live in
+ * `three/tsl`, which drags a second full copy of three into the bundle, and that
+ * module is deliberately reached through a dynamic `import()` inside the
+ * chain's effect. So this map names the EXPORT rather than holding it, and the
+ * chain looks the name up on the module it already imported.
+ */
+export type ToneMappingNodeFunctionName =
+  | "acesFilmicToneMapping"
+  | "agxToneMapping"
+  | "neutralToneMapping";
+
+const NODE_FUNCTION_BY_RENDERER_TONE_MAPPING = new Map<ToneMapping, ToneMappingNodeFunctionName>([
+  [ACESFilmicToneMapping, "acesFilmicToneMapping"],
+  [AgXToneMapping, "agxToneMapping"],
+  [NeutralToneMapping, "neutralToneMapping"]
+]);
+
+/**
+ * The `three/tsl` export that reproduces a renderer tone curve.
+ *
+ * Throws on an unmapped curve for the same reason `composerToneMappingModeFor`
+ * does: a fallback would render a frame with a curve nobody chose.
+ */
+export function toneMappingNodeFunctionNameFor(rendererToneMapping: ToneMapping): ToneMappingNodeFunctionName {
+  const functionName = NODE_FUNCTION_BY_RENDERER_TONE_MAPPING.get(rendererToneMapping);
+  if (functionName === undefined) {
+    throw new Error(
+      `sceneToneMapping: no three/tsl function is declared for renderer tone mapping ${rendererToneMapping}. ` +
+        "Add it to NODE_FUNCTION_BY_RENDERER_TONE_MAPPING; a silently wrong curve is how this broke before."
+    );
+  }
+  return functionName;
+}
 
 /**
  * The composer mode that reproduces a renderer tone curve.

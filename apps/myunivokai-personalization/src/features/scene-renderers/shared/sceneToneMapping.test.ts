@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { ACESFilmicToneMapping, AgXToneMapping, LinearToneMapping, NoToneMapping } from "three";
+import { ACESFilmicToneMapping, LinearToneMapping, NeutralToneMapping, NoToneMapping } from "three";
 import { ToneMappingMode } from "postprocessing";
 import { describe, expect, it } from "vitest";
 import {
   composerToneMappingModeFor,
   DEFAULT_FAMILY_TONE_MAPPING,
   OCEAN_FAMILY_TONE_MAPPING,
-  rendererToneMappingForFamily
+  rendererToneMappingForFamily,
+  toneMappingNodeFunctionNameFor
 } from "./sceneToneMapping";
 
 /**
@@ -26,13 +27,54 @@ import {
  */
 describe("scene tone mapping", () => {
   it("maps each family's renderer curve to the matching composer mode", () => {
-    expect(composerToneMappingModeFor(DEFAULT_FAMILY_TONE_MAPPING)).toBe(ToneMappingMode.AGX);
+    expect(composerToneMappingModeFor(DEFAULT_FAMILY_TONE_MAPPING)).toBe(ToneMappingMode.NEUTRAL);
     expect(composerToneMappingModeFor(OCEAN_FAMILY_TONE_MAPPING)).toBe(ToneMappingMode.ACES_FILMIC);
   });
 
-  it("gives the ocean ACES and everything else AgX", () => {
+  it("gives the ocean ACES and everything else Khronos PBR Neutral", () => {
     expect(rendererToneMappingForFamily({ isOceanFamilyScene: true })).toBe(ACESFilmicToneMapping);
-    expect(rendererToneMappingForFamily({ isOceanFamilyScene: false })).toBe(AgXToneMapping);
+    expect(rendererToneMappingForFamily({ isOceanFamilyScene: false })).toBe(NeutralToneMapping);
+  });
+
+  /**
+   * THE CURVE IS DECLARED IN THREE PLACES, NOT TWO, and the third was a literal.
+   *
+   * `NodePostEffects.tsx` called `agxToneMapping` from `three/tsl` directly. It
+   * agreed with the composer by coincidence, and a change to the default curve
+   * would have split the two chains silently — the exact failure this module was
+   * written to close, reappearing one renderer over.
+   *
+   * These assert the mapping exists and that both chains resolve the SAME curve
+   * for the same family, which is the invariant; the literal names are checked
+   * against `three/tsl`'s real exports by the test below.
+   */
+  it("maps each family's renderer curve to the matching three/tsl function", () => {
+    expect(toneMappingNodeFunctionNameFor(DEFAULT_FAMILY_TONE_MAPPING)).toBe("neutralToneMapping");
+    expect(toneMappingNodeFunctionNameFor(OCEAN_FAMILY_TONE_MAPPING)).toBe("acesFilmicToneMapping");
+  });
+
+  it("throws rather than guessing when a curve has no declared three/tsl function", () => {
+    expect(() => toneMappingNodeFunctionNameFor(LinearToneMapping)).toThrow(/no three\/tsl function is declared/);
+    expect(() => toneMappingNodeFunctionNameFor(NoToneMapping)).toThrow(/no three\/tsl function is declared/);
+  });
+
+  /**
+   * A name is only a name until something checks it resolves. This one is looked
+   * up on a module reached through a dynamic `import()` inside an effect, so a
+   * typo would not be a type error and would not be a build error — it would be
+   * `applyToneCurve is not a function`, thrown inside a promise, on the frame the
+   * chain mounts.
+   *
+   * `three/tsl` is imported statically HERE and nowhere in the app, which is the
+   * point of the indirection: the test pays the second copy of three, the bundle
+   * does not.
+   */
+  it("names three/tsl exports that actually exist", async () => {
+    const tsl = (await import("three/tsl")) as unknown as Record<string, unknown>;
+    for (const rendererToneMapping of [DEFAULT_FAMILY_TONE_MAPPING, OCEAN_FAMILY_TONE_MAPPING]) {
+      const functionName = toneMappingNodeFunctionNameFor(rendererToneMapping);
+      expect(typeof tsl[functionName], `three/tsl has no export named ${functionName}`).toBe("function");
+    }
   });
 
   /**

@@ -337,3 +337,35 @@ threshold sweep. That proof is arithmetic, in
 paleness question by contradicting it — the star called pale measures saturation
 **0.495** against the other's **0.403** — without isolating what does read as
 washed out.
+
+> **That last sentence was the wrong comparison, and `sun-tone-curve/` below is
+> the right one.** Those two numbers are two seeds on the SAME build. The report
+> was about two BUILDS, and across those the sun lost 37% of its saturation to a
+> tone curve that had just been restored. Measuring the pair that was easy to
+> photograph rather than the pair the report named produced a true number that
+> answered nothing.
+
+### `sun-tone-curve/`
+
+Why the sun stopped being fiery. Four tone curves — no curve, AgX, ACES, Khronos
+PBR Neutral — applied to the colours the sun hands the renderer, over the sun
+texture's whole brightness ramp.
+
+Until `3f09796` the universe, forest and fallback families rendered with **no
+tone curve at all**, so every value above 1 clipped flat and kept all of its
+saturation. Restoring the curve was a real fix; the curve restored was AgX,
+which desaturates highlights by design. Measured: AgX keeps **0.632** of the old
+build's saturation and lifts middle grey from 0.18 to **0.215** — less colour
+and lighter darks, which is exactly "a sheet of frosted glass". Khronos PBR
+Neutral keeps **1.062** and takes middle grey down to 0.14, and is what shipped.
+
+```
+node demos/sun-tone-curve/measure.mjs   # the table, plus two checks on its own transcription
+node demos/sun-tone-curve/build.mjs     # -> dist/sun-tone-curve.html
+```
+
+**What it does not prove.** A frame is not these swatches — bloom, the grade,
+the vignette, the grain and the glow shell's additive blend all sit between this
+colour and a pixel, and none is modelled. The comparison holds anyway because
+all of them are identical across the four columns. It says nothing about the
+forest or the ocean, whose subjects are not a bright disc on black.
