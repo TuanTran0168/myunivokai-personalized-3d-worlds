@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "shoot": "playwright test",
+    "shoot:serve": "node scripts/serveStandaloneBuild.mjs",
     "shoot:report": "playwright show-report",
     "check:csp": "playwright test e2e/content-security-policy.spec.ts --project=desktop"
   },

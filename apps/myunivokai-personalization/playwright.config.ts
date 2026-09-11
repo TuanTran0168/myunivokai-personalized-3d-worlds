@@ -88,7 +88,11 @@ export default defineConfig({
     // measured and both unused by this app.
     {
       name: "webgpu",
-      testMatch: /scene-parity\.spec\.ts/,
+      // `star-is-lit` is here and not only in the two SwiftShader projects
+      // BECAUSE of what it asserts: a NaN fragment renders black on this driver
+      // and not on SwiftShader, so the property can only fail where the real GPU
+      // is. See e2e/star-is-lit.spec.ts.
+      testMatch: /(scene-parity|star-is-lit|sun-colour|driver-parity)\.spec\.ts/,
       // Four minutes, against the suite's 120 s default. A parity test renders
       // the same fixture through THREE renderers in one test, and each leg pays
       // its own renderer creation, lazy chunk, GLTF load and environment bake —
@@ -110,7 +114,17 @@ export default defineConfig({
     // upgrade is most likely to move — measuring it would compare two things at
     // once.
     //
-    command: `npm run build && npm run start -- -p ${APPLICATION_PORT} -H 127.0.0.1`,
+    // `npm run shoot:serve`, not `npm run start`. `next start` REFUSES to serve
+    // this app — `next.config.ts` sets `output: "standalone"` unconditionally
+    // because that is what the deployed container runs, and Next answers
+    // `next start` with *"does not work with output: standalone configuration"*.
+    // So this command could never produce a server, and `reuseExistingServer`
+    // hid that completely: with anything already listening on the port — a
+    // `next dev` from the local compose stack, say — Playwright attached to it
+    // and the suite measured the very thing the comment above forbids.
+    // scripts/serveStandaloneBuild.mjs serves the standalone build the way
+    // Dockerfile.prod does.
+    command: `npm run build && npm run shoot:serve`,
     // NEXT_PUBLIC_PARITY_HARNESS is set HERE and nowhere else. It is what lets
     // `?parityRenderer=` choose a renderer and pin the animation clock.
     //
@@ -131,7 +145,11 @@ export default defineConfig({
     // canvas is byte-for-byte the code it was before. The one real difference is
     // an extra lazy chunk that nothing loads — `three/webgpu` is imported
     // dynamically precisely so it stays out of every visitor's bundle.
-    env: { NEXT_PUBLIC_PARITY_HARNESS: "1" },
+    //
+    // PORT and HOSTNAME are here rather than as command flags for the same
+    // portability reason: the standalone server reads them from the environment,
+    // and `VAR=x cmd` is not a thing in the Windows shell this suite runs in.
+    env: { NEXT_PUBLIC_PARITY_HARNESS: "1", PORT: APPLICATION_PORT, HOSTNAME: "127.0.0.1" },
     url: APPLICATION_ORIGIN,
     reuseExistingServer: !process.env.CI,
     timeout: 300_000

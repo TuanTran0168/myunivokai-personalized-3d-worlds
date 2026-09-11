@@ -4,4 +4,18 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
+# The dev server starts through a script, not directly, because the compose file
+# mounts a named volume over /app/node_modules and Docker seeds such a volume
+# only once — so a dependency change reaches this image and never reaches a
+# container that already has a volume. The script's header carries the full
+# account and the failure it was written for.
+#
+# Recording the checksum here, after the install above, is what stops a FRESH
+# volume from reinstalling the tree Docker just seeded it with: the marker is
+# copied into the volume along with node_modules, and the first boot sees a match.
+COPY scripts/startDevelopmentContainer.sh ./scripts/
+RUN sh scripts/startDevelopmentContainer.sh --record-installed-lockfile-only
+
+# Read from the bind mount at run time, not from the copy above, so a change to
+# the script takes effect on restart rather than on rebuild.
+CMD ["sh", "/app/scripts/startDevelopmentContainer.sh"]

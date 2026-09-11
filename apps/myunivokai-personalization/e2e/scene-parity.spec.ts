@@ -7,10 +7,12 @@ import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
 // `frameMetrics.mjs` uses: it stays JavaScript so it can be run under bare node
 // alongside measure.mjs, and the declaration file keeps this a typed boundary.
 import {
+  BLANK_FRAME_LUMINANCE_DEVIATION,
   compareFrames,
   CROSS_BACKEND_TOLERANCE,
   describeComparison,
   inflatePng,
+  luminanceStandardDeviation,
   SAME_RENDERER_TOLERANCE,
   toleranceBreaches
 } from "./parityMetrics.mjs";
@@ -367,7 +369,31 @@ async function photographParityFrame(
       `The browser said: ${browserMessages.slice(-6).join(" | ").slice(0, 600)}`
   ).toHaveCount(1, { timeout: 10_000 });
   const screenshot = await sceneCanvas.screenshot({ animations: "disabled" });
-  return { frame: inflatePng(screenshot, inflateSync), backend, screenshot, browserMessages };
+  const frame = inflatePng(screenshot, inflateSync);
+
+  // DID THIS LEG DRAW ANYTHING? Asked before any comparison, because a
+  // comparison cannot tell.
+  //
+  // §26 Phase 5's node chain built its graph with a `null` centre node. three
+  // logged `THREE.TSL: TypeError: Cannot read properties of null (reading
+  // 'build')` — LOGGED, not thrown — `RenderPipeline` rendered an empty canvas,
+  // and this harness reported the two new backends as byte-identical to 0.00.
+  // Which was true. Two blank frames are identical, and the number was
+  // published before anyone looked at the image.
+  //
+  // Phase 1 had already recorded the shape of this (§30.3: a WGSL compile
+  // failure is invisible from inside the page and the draw is simply dropped).
+  // What was missing was this line.
+  const structure = luminanceStandardDeviation(frame);
+  expect(
+    structure,
+    `${fixture.name} on ${renderer.query}: the canvas is BLANK — luminance deviation ` +
+      `${structure.toFixed(2)}, floor ${BLANK_FRAME_LUMINANCE_DEVIATION}. The renderer reported success and ` +
+      `drew nothing, so every comparison below would have compared one flat colour with another. ` +
+      `The browser said: ${browserMessages.slice(-8).join(" | ").slice(0, 800)}`
+  ).toBeGreaterThan(BLANK_FRAME_LUMINANCE_DEVIATION);
+
+  return { frame, backend, screenshot, browserMessages, structure };
 }
 
 test.describe("scene parity across renderers", () => {

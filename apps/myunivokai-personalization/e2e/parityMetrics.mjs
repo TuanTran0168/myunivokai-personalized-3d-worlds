@@ -277,3 +277,231 @@ export function describeComparison(comparison) {
     `${(comparison.differingFraction * 100).toFixed(2)}% differing`
   );
 }
+
+/**
+ * THE FLOOR A FRAME HAS TO CLEAR TO COUNT AS A RENDER AT ALL.
+ *
+ * Standard deviation of luminance, in bytes of 255. A frame filled with one
+ * colour measures 0; every real frame this project produces measures tens.
+ *
+ * It exists because of a failure that passed every gate this harness had.
+ * §26 Phase 5's node chain built its graph with a `null` centre node, three
+ * logged `THREE.TSL: TypeError: Cannot read properties of null (reading
+ * 'build')` — logged, not thrown — and `RenderPipeline` then rendered an EMPTY
+ * canvas. The comparison duly reported the two new backends as **byte-identical
+ * to 0.00**, which was true and meaningless: two blank frames are identical.
+ * Phase 1 had already recorded this shape (§30.3, a dropped draw nothing
+ * reports); what was missing was a gate that asks whether a leg drew anything
+ * before asking whether two legs agree.
+ *
+ * 3 of 255, stated rather than fitted: it is above the noise of a gradient-only
+ * background and far below any frame with geometry in it. Measured over the
+ * frame's centred half — see `luminanceStandardDeviation`, and the reason is that
+ * an element screenshot includes the HTML overlays on top of the canvas.
+ */
+export const BLANK_FRAME_LUMINANCE_DEVIATION = 3;
+
+/** Rec. 709 luminance weights, matching three's own working colour space. */
+const LUMINANCE_RED_WEIGHT = 0.2126;
+const LUMINANCE_GREEN_WEIGHT = 0.7152;
+const LUMINANCE_BLUE_WEIGHT = 0.0722;
+
+/**
+ * Standard deviation of per-pixel luminance — how much STRUCTURE a frame has.
+ *
+ * Not a mean: a blank frame and a busy frame can share a mean. The deviation is
+ * what separates "the renderer drew the scene" from "the renderer drew the clear
+ * colour", which is the distinction a parity comparison cannot make on its own.
+ */
+/**
+ * How much of the frame's WIDTH and HEIGHT the structure test looks at, centred.
+ *
+ * Half, and it has to be a crop rather than the whole frame, because a
+ * Playwright element screenshot is a VIEWPORT capture clipped to the element's
+ * box — so a screenshot of the scene canvas contains every HTML overlay drawn on
+ * top of it. On this app's world page that is the title card, the DNA panel, the
+ * share box and the action bar, all of them identical on every leg.
+ *
+ * The first version of this gate measured the whole frame and passed a
+ * completely empty 3D canvas at a deviation of 26, because the HUD alone
+ * supplies that much structure. The middle of the frame is the one region that
+ * is scene on every fixture this suite renders.
+ */
+const STRUCTURE_REGION_FRACTION = 0.5;
+
+/**
+ * Standard deviation of per-pixel luminance over the centred crop — how much
+ * STRUCTURE the frame has where the scene is.
+ *
+ * Not a mean: a blank frame and a busy frame can share a mean. The deviation is
+ * what separates "the renderer drew the scene" from "the renderer drew the clear
+ * colour", which is the distinction a parity comparison cannot make on its own.
+ */
+export function luminanceStandardDeviation(frame) {
+  const { pixels, width, height } = frame;
+  const regionWidth = Math.max(1, Math.round(width * STRUCTURE_REGION_FRACTION));
+  const regionHeight = Math.max(1, Math.round(height * STRUCTURE_REGION_FRACTION));
+  const startX = Math.round((width - regionWidth) / 2);
+  const startY = Math.round((height - regionHeight) / 2);
+
+  let total = 0;
+  let squaredTotal = 0;
+  const sampleCount = regionWidth * regionHeight;
+  for (let y = startY; y < startY + regionHeight; y += 1) {
+    for (let x = startX; x < startX + regionWidth; x += 1) {
+      const offset = (y * width + x) * 4;
+      const luminance =
+        pixels[offset] * LUMINANCE_RED_WEIGHT +
+        pixels[offset + 1] * LUMINANCE_GREEN_WEIGHT +
+        pixels[offset + 2] * LUMINANCE_BLUE_WEIGHT;
+      total += luminance;
+      squaredTotal += luminance * luminance;
+    }
+  }
+  const mean = total / sampleCount;
+  const variance = Math.max(0, squaredTotal / sampleCount - mean * mean);
+  return Math.sqrt(variance);
+}
+
+/**
+ * TWO FRAMES COMPARED AT BLOCK RESOLUTION, WHICH IS THE RIGHT LENS FOR TWO
+ * DIFFERENT DRIVERS.
+ *
+ * `compareFrames` measures |a - b| per pixel. Between two rasterisers that is
+ * dominated by high-frequency disagreement — antialiasing coverage, anisotropic
+ * filtering, dither, shadow-map precision — none of which a person can see and
+ * all of which a per-pixel metric reports. Measured between SwiftShader and an
+ * RTX 4060 on this app's own fixtures: mean 9.75 to 30.02, worst 16x16 block
+ * 95.49 to 158.86, on frames that look the same.
+ *
+ * The failure worth catching there has the opposite shape. A NaN fragment, a
+ * dropped draw or an out-of-range value ruins a REGION: it changes what that part
+ * of the image IS, not how its edges are sampled. So this averages each block
+ * first and compares the averages — high-frequency noise cancels, a region going
+ * black does not.
+ */
+export function compareBlockMeans(left, right) {
+  if (left.width !== right.width || left.height !== right.height) {
+    throw new Error(
+      `parityMetrics: frame sizes differ (${left.width}x${left.height} against ${right.width}x${right.height})`
+    );
+  }
+  const { width, height } = left;
+  let totalDifference = 0;
+  let blockCount = 0;
+  let worstBlockDifference = 0;
+  let worstBlockAt = { x: 0, y: 0 };
+
+  for (let blockTop = 0; blockTop < height; blockTop += BLOCK_SIZE) {
+    for (let blockLeft = 0; blockLeft < width; blockLeft += BLOCK_SIZE) {
+      const blockRight = Math.min(blockLeft + BLOCK_SIZE, width);
+      const blockBottom = Math.min(blockTop + BLOCK_SIZE, height);
+      let leftTotal = 0;
+      let rightTotal = 0;
+      let sampleCount = 0;
+      for (let y = blockTop; y < blockBottom; y += 1) {
+        for (let x = blockLeft; x < blockRight; x += 1) {
+          const offset = (y * width + x) * 4;
+          leftTotal +=
+            left.pixels[offset] * LUMINANCE_RED_WEIGHT +
+            left.pixels[offset + 1] * LUMINANCE_GREEN_WEIGHT +
+            left.pixels[offset + 2] * LUMINANCE_BLUE_WEIGHT;
+          rightTotal +=
+            right.pixels[offset] * LUMINANCE_RED_WEIGHT +
+            right.pixels[offset + 1] * LUMINANCE_GREEN_WEIGHT +
+            right.pixels[offset + 2] * LUMINANCE_BLUE_WEIGHT;
+          sampleCount += 1;
+        }
+      }
+      const difference = Math.abs(leftTotal / sampleCount - rightTotal / sampleCount);
+      totalDifference += difference;
+      blockCount += 1;
+      if (difference > worstBlockDifference) {
+        worstBlockDifference = difference;
+        worstBlockAt = { x: blockLeft, y: blockTop };
+      }
+    }
+  }
+
+  return {
+    meanBlockDifference: totalDifference / blockCount,
+    worstBlockDifference,
+    worstBlockAt,
+    blockCount
+  };
+}
+
+export function describeBlockComparison(comparison) {
+  return (
+    `mean block ${comparison.meanBlockDifference.toFixed(2)} · worst block ` +
+    `${comparison.worstBlockDifference.toFixed(2)} at ${comparison.worstBlockAt.x},${comparison.worstBlockAt.y}`
+  );
+}
+
+/**
+ * Mean luminance inside one rectangle of the frame.
+ *
+ * The whole-frame average cannot answer "is the star lit": a star is a small
+ * bright disc in a mostly black sky, and its failure — going black — barely
+ * moves a frame-wide mean. So the region is named by the caller and the fixture
+ * pins the camera that puts the object in it.
+ */
+export function regionMeanLuminance(frame, region) {
+  const { pixels, width } = frame;
+  let total = 0;
+  let sampleCount = 0;
+  for (let y = region.top; y < region.bottom; y += 1) {
+    for (let x = region.left; x < region.right; x += 1) {
+      const offset = (y * width + x) * 4;
+      total +=
+        pixels[offset] * LUMINANCE_RED_WEIGHT +
+        pixels[offset + 1] * LUMINANCE_GREEN_WEIGHT +
+        pixels[offset + 2] * LUMINANCE_BLUE_WEIGHT;
+      sampleCount += 1;
+    }
+  }
+  return sampleCount === 0 ? 0 : total / sampleCount;
+}
+
+/**
+ * A channel at or above this byte is called clipped.
+ *
+ * 250 of 255, not 255, because the composer's grade and the AgX shoulder land a
+ * genuinely clipped value a byte or two below the ceiling and an exact-255 test
+ * would miss it. This is the number the tone-curve fix was measured with.
+ */
+export const CLIPPED_CHANNEL_BYTE = 250;
+
+/**
+ * THE ONE-FRAME MEASUREMENT, because the failure it exists for is not a
+ * difference between two frames.
+ *
+ * A missing tone curve does not make a scene differ from a reference — it makes
+ * a scene lose its highlights, and it does that to EVERY frame including the
+ * reference. For its whole life before the fix in §26 Phase 2 this app shipped a
+ * composer that assigned `NoToneMapping` and had no `<ToneMapping>` pass, so
+ * every linear value above 1 clipped flat: the sun rendered as a black disc with
+ * only its hottest granulation surviving, and the baseline shot of that was
+ * COMMITTED TO THIS REPOSITORY and reviewed by eye without anyone catching it.
+ *
+ * `scene-baseline.spec.ts` says to compare its images "by eye for CONTENT", and
+ * that policy is right — but a black sun IS content, and it still got through,
+ * twice, on two different pages. So the property gets an assertion instead of a
+ * reviewer: what fraction of this frame is clipped.
+ */
+export function clippedChannelFraction(frame, clippedByte = CLIPPED_CHANNEL_BYTE) {
+  const { pixels, width, height } = frame;
+  const pixelCount = width * height;
+  let clippedPixels = 0;
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    if (
+      pixels[offset] >= clippedByte ||
+      pixels[offset + 1] >= clippedByte ||
+      pixels[offset + 2] >= clippedByte
+    ) {
+      clippedPixels += 1;
+    }
+  }
+  return clippedPixels / pixelCount;
+}

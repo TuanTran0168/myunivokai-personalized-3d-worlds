@@ -44,6 +44,63 @@ export function toleranceBreaches(comparison: ParityComparison, tolerance: Parit
 
 export function describeComparison(comparison: ParityComparison): string;
 
+/**
+ * Standard deviation of per-pixel luminance over the frame's centred half: how
+ * much structure the frame has WHERE THE SCENE IS.
+ *
+ * The crop is load-bearing. A Playwright element screenshot is a viewport
+ * capture clipped to the element's box, so a shot of the scene canvas contains
+ * every HTML overlay on top of it — enough structure to pass an empty 3D canvas.
+ *
+ * A frame filled with one colour measures 0. The gate that asks whether a leg
+ * drew anything at all, before any comparison asks whether two legs agree.
+ */
+export function luminanceStandardDeviation(frame: DecodedFrame): number;
+
+/** The luminance deviation below which a frame is called blank. */
+export const BLANK_FRAME_LUMINANCE_DEVIATION: number;
+
+/**
+ * Share of pixels with any channel at or above `clippedByte`.
+ *
+ * The one-frame measurement: a missing tone curve clips every frame including
+ * the reference, so no comparison between frames can see it.
+ */
+export function clippedChannelFraction(frame: DecodedFrame, clippedByte?: number): number;
+
+/** Two frames compared at 16x16 block resolution, in luminance. */
+export type BlockComparison = {
+  /** Mean |difference of block means| over every block. */
+  meanBlockDifference: number;
+  /** The largest |difference of block means|. */
+  worstBlockDifference: number;
+  worstBlockAt: { x: number; y: number };
+  blockCount: number;
+};
+
+/**
+ * Averages each 16x16 block before comparing, which is the right lens for two
+ * different DRIVERS: high-frequency disagreement (antialiasing, filtering,
+ * dither) cancels, and a region that changed what it IS does not.
+ */
+export function compareBlockMeans(left: DecodedFrame, right: DecodedFrame): BlockComparison;
+
+export function describeBlockComparison(comparison: BlockComparison): string;
+
+/** A rectangle in frame pixels, top-left inclusive and bottom-right exclusive. */
+export type FrameRegion = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * Mean luminance inside one rectangle.
+ *
+ * A frame-wide mean cannot see a small bright object going dark; a named region
+ * can, and the fixture is what pins the camera that puts the object there.
+ */
+export function regionMeanLuminance(frame: DecodedFrame, region: FrameRegion): number;
+
+/** The byte at which a channel counts as clipped. */
+export const CLIPPED_CHANNEL_BYTE: number;
+
 /** Two runs of the SAME renderer. The stability gate; assert it first. */
 export const SAME_RENDERER_TOLERANCE: ParityTolerance;
 /** Two DIFFERENT backends. Looser on purpose, and deliberately not zero. */

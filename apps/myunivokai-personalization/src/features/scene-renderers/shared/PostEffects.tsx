@@ -14,44 +14,45 @@ import {
 import { useThree } from "@react-three/fiber";
 import { BlendFunction } from "postprocessing";
 import { Vector2 } from "three";
-import type { ScenePostFXConfig, ScenePostFXGradeConfig } from "@/lib/types";
-import { sceneGradeForTheme, type SceneGrade } from "@/lib/scene";
+import type { ScenePostFXConfig } from "@/lib/types";
 import type { PostProcessingProfile } from "./deviceQualityTier";
+import {
+  BLOOM_LUMINANCE_SMOOTHING,
+  BLOOM_LUMINANCE_THRESHOLD,
+  CHROMATIC_ABERRATION_MODULATION_OFFSET,
+  CHROMATIC_ABERRATION_OFFSET_X,
+  CHROMATIC_ABERRATION_OFFSET_Y,
+  DEFAULT_BLOOM_INTENSITY,
+  EVERY_POST_PROCESSING_PASS,
+  FILM_GRAIN_OPACITY,
+  FOREST_AMBIENT_OCCLUSION_DISTANCE_FALLOFF,
+  FOREST_AMBIENT_OCCLUSION_INTENSITY,
+  FOREST_AMBIENT_OCCLUSION_RADIUS,
+  resolveSceneGrade,
+  VIGNETTE_DARKNESS,
+  VIGNETTE_OFFSET
+} from "./postEffectsTuning";
 import {
   composerMultisamplingFor,
   shouldComputeAmbientOcclusionAtHalfResolution
 } from "./renderQuality";
 import { composerToneMappingModeFor, DEFAULT_FAMILY_TONE_MAPPING } from "./sceneToneMapping";
+import { NonNegativeColour } from "./NonNegativeColour";
 
-const DEFAULT_BLOOM_INTENSITY = 0.8;
-// Selective bloom by luminance: with the composer's HDR (half-float) buffer,
-// only deliberate emitters cross this line — the sun's >1 surface tint, the
-// star shaders' hot cores, additive pile-ups — while lit planets stay below
-// it and no longer leak muddy glow.
-const BLOOM_LUMINANCE_THRESHOLD = 0.85;
-const BLOOM_LUMINANCE_SMOOTHING = 0.2;
-// Multisampling is no longer a constant: it comes from the device pixel ratio
-// via composerMultisamplingFor, because an 8x-resolved RGBA16F target is the
-// single largest per-pixel cost in the frame and its value falls away as the
-// display's own density rises. See renderQuality.ts for the measurements.
-
-// Ground-contact ambient occlusion for the forest family (universe scenes are
-// emissive-lit and have no ground, so they skip it). Softly darkens the creases
-// where trees/rocks/animals meet the floor — the single biggest cue that pulls
-// the scene out of "flat cartoon" toward grounded realism. Radius is in world
-// units (~2 = the base of a trunk); values tuned for the forest's 6-8u trees.
-const FOREST_AO_RADIUS = 2;
-const FOREST_AO_INTENSITY = 2.2;
-const FOREST_AO_DISTANCE_FALLOFF = 1;
-
-// Cinematic finish: gentle edge darkening, film grain blended soft-light, and
-// a sub-pixel radial chromatic fringe. All of these merge into the composer's
-// single fullscreen pass, so they are effectively free.
-const VIGNETTE_OFFSET = 0.28;
-const VIGNETTE_DARKNESS = 0.55;
-const FILM_GRAIN_OPACITY = 0.06;
-const CHROMATIC_ABERRATION_OFFSET = new Vector2(0.0005, 0.001);
-const CHROMATIC_ABERRATION_MODULATION_OFFSET = 0.15;
+// EVERY TUNING VALUE THIS CHAIN USES NOW LIVES IN postEffectsTuning.ts, and it
+// moved there rather than staying here because §26 Phase 5 adds a SECOND chain
+// (NodePostEffects, three.js's own RenderPipeline) that has to be tuned
+// identically. A value declared in two places is the bug sceneToneMapping.ts was
+// written to close, and it closed it for one value only.
+//
+// Multisampling is not among them: it comes from the device pixel ratio via
+// composerMultisamplingFor, because an 8x-resolved RGBA16F target is the single
+// largest per-pixel cost in the frame and its value falls away as the display's
+// own density rises. See renderQuality.ts for the measurements.
+const CHROMATIC_ABERRATION_OFFSET = new Vector2(
+  CHROMATIC_ABERRATION_OFFSET_X,
+  CHROMATIC_ABERRATION_OFFSET_Y
+);
 
 // The tone curve, restored. `EffectComposer` sets gl.toneMapping =
 // NoToneMapping on mount, so for every family that mounts this chain the AgX
@@ -60,36 +61,6 @@ const CHROMATIC_ABERRATION_MODULATION_OFFSET = 0.15;
 // 250+ before this. The mode is derived from the renderer's own curve rather
 // than named again here; see sceneToneMapping.ts.
 const COMPOSER_TONE_MAPPING_MODE = composerToneMappingModeFor(DEFAULT_FAMILY_TONE_MAPPING);
-
-// Grade channels arrive from stored data (schemaVersion 1.2); clamp magnitudes
-// so a corrupt value can tint the frame, never destroy it.
-const MAXIMUM_GRADE_HUE_MAGNITUDE_RADIANS = Math.PI;
-const MAXIMUM_GRADE_SATURATION_MAGNITUDE = 1;
-const MAXIMUM_GRADE_BRIGHTNESS_MAGNITUDE = 0.5;
-const MAXIMUM_GRADE_CONTRAST_MAGNITUDE = 1;
-
-function resolveGradeChannel(value: number | undefined, fallback: number, maximumMagnitude: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return fallback;
-  }
-  return Math.min(maximumMagnitude, Math.max(-maximumMagnitude, value));
-}
-
-/**
- * Clamp + fallback resolution of the stored postFX grade (promoted into scene
- * data in schemaVersion 1.2). Worlds stored before 1.2 have no grade key and
- * resolve to the per-theme grade table in lib/scene.ts — the same values the
- * grade used to be hardcoded with, so old worlds keep grading identically.
- */
-function resolveSceneGrade(gradeConfig: ScenePostFXGradeConfig | undefined, theme: string | undefined): SceneGrade {
-  const themeGrade = sceneGradeForTheme(theme);
-  return {
-    hueRadians: resolveGradeChannel(gradeConfig?.hueRadians, themeGrade.hueRadians, MAXIMUM_GRADE_HUE_MAGNITUDE_RADIANS),
-    saturation: resolveGradeChannel(gradeConfig?.saturation, themeGrade.saturation, MAXIMUM_GRADE_SATURATION_MAGNITUDE),
-    brightness: resolveGradeChannel(gradeConfig?.brightness, themeGrade.brightness, MAXIMUM_GRADE_BRIGHTNESS_MAGNITUDE),
-    contrast: resolveGradeChannel(gradeConfig?.contrast, themeGrade.contrast, MAXIMUM_GRADE_CONTRAST_MAGNITUDE)
-  };
-}
 
 type PostEffectsProps = {
   postFX?: ScenePostFXConfig;
@@ -104,18 +75,11 @@ type PostEffectsProps = {
   postProcessingProfile?: PostProcessingProfile;
 };
 
-const EVERY_PASS: PostProcessingProfile = {
-  ambientOcclusion: true,
-  bloom: true,
-  lensAndGrain: true,
-  vignette: true
-};
-
 export function PostEffects({
   postFX,
   theme,
   ambientOcclusion = false,
-  postProcessingProfile = EVERY_PASS
+  postProcessingProfile = EVERY_POST_PROCESSING_PASS
 }: PostEffectsProps) {
   const bloomIntensity = postFX?.bloomIntensity ?? DEFAULT_BLOOM_INTENSITY;
   const grade = resolveSceneGrade(postFX?.grade, theme);
@@ -136,9 +100,9 @@ export function PostEffects({
     ambientOcclusion && postProcessingProfile.ambientOcclusion ? (
       <N8AO
         key="n8ao"
-        aoRadius={FOREST_AO_RADIUS}
-        intensity={FOREST_AO_INTENSITY}
-        distanceFalloff={FOREST_AO_DISTANCE_FALLOFF}
+        aoRadius={FOREST_AMBIENT_OCCLUSION_RADIUS}
+        intensity={FOREST_AMBIENT_OCCLUSION_INTENSITY}
+        distanceFalloff={FOREST_AMBIENT_OCCLUSION_DISTANCE_FALLOFF}
         halfRes={shouldComputeAmbientOcclusionAtHalfResolution(pixelRatio)}
       />
     ) : null,
@@ -152,6 +116,16 @@ export function PostEffects({
       />
     ) : null,
     <HueSaturation key="hue-saturation" hue={grade.hueRadians} saturation={grade.saturation} />,
+    // BETWEEN THE TWO GRADE EFFECTS, and the position is the whole point.
+    // `hue-saturation.frag` ends with `min(color, 1.0)` — it clamps the top and
+    // not the bottom — and a positive saturation drives the sun's blue channel
+    // negative because the star is the one object above 1.0 in linear space.
+    // `BrightnessContrast` is the one effect declaring an sRGB input space, so
+    // the composer encodes to sRGB before it with a `pow`, `pow` of a negative
+    // is undefined, and the NaN renders BLACK on the RTX 4060 and not on
+    // SwiftShader — which is what every committed screenshot is taken on. See
+    // NonNegativeColour.tsx for the bisect.
+    <NonNegativeColour key="non-negative-colour" />,
     <BrightnessContrast key="brightness-contrast" brightness={grade.brightness} contrast={grade.contrast} />,
     // AFTER the grade and BEFORE the lens effects, and the position is the
     // whole design decision.

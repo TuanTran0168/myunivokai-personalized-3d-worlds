@@ -306,3 +306,34 @@ here is a visual-parity result and none of them is the app's frame time. One
 finding is deliberately left open: `scene.environmentIntensity = 0` removes only
 **50.1%** of the light — linearly, with a floor — and the probe rules out the
 background and the mirror sphere's centre without identifying what the floor is.
+
+### `binary-sun-clearance/`
+
+Three pinned frames of the create form's live preview, kept because they settle
+two questions that arrived as one screenshot — **"why are there two suns?"** and
+**"why is the sun paler than the old build?"** — and the answers are different.
+
+The two suns are a 3% rare feature from `ba7b716`, rolled because the preview's
+seed contains the nickname and signing in autofills it. The **welding** of the
+two stars into one lumpy mass was a real bug: `BinarySun.tsx` orbited the
+companion at the world-unit constant 2.4 while the primary's radius is seeded
+over 1.52–2.18, so above core scale ≈1.24 — 59% of the seeded range — the
+companion's photosphere sat inside the primary's.
+
+```
+node demos/binary-sun-clearance/measure.mjs "label=path/to/shot.png"   # crops, and measures the star's colour
+```
+
+**No page and no build step**, unlike every demo above: the subject here is the
+shipped app, photographed through its own parity harness by
+`apps/myunivokai-personalization/e2e/create-form-preview.spec.ts`. A second
+implementation of the scene would be a worse witness than the scene.
+
+**What it does not prove.** The geometry is deliberately NOT measured from these
+pixels — the primary's additive glow shell sits above every threshold low enough
+to catch the companion's disc, and a region count swings between 1 and 8 over a
+threshold sweep. That proof is arithmetic, in
+`solar-system/binarySunGeometry.test.ts`. And the colour measurement answers the
+paleness question by contradicting it — the star called pale measures saturation
+**0.495** against the other's **0.403** — without isolating what does read as
+washed out.

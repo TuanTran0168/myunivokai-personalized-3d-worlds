@@ -42,6 +42,7 @@ import {
   adaptiveDevicePixelRatio
 } from "@/features/scene-renderers/shared/renderQuality";
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
+import { NodePostEffects } from "@/features/scene-renderers/shared/NodePostEffects";
 import { rendererToneMappingForFamily } from "@/features/scene-renderers/shared/sceneToneMapping";
 import {
   parityHarnessRequest,
@@ -310,6 +311,20 @@ export function UniverseCanvas({
     () => parityHarnessRequest(typeof window === "undefined" ? undefined : window.location.search),
     []
   );
+
+  /**
+   * Whether the renderer this canvas gets is a NODE renderer, which decides
+   * which post chain can mount at all.
+   *
+   * Derived from the same expression the `gl` prop uses, rather than from a
+   * second reading of the request: both of the harness's non-WebGL renderers are
+   * `WebGPURenderer`, one on each backend, and it is the RENDERER CLASS and not
+   * the backend that `RenderPipeline` requires. Keeping the two derivations
+   * beside each other is deliberate — a canvas rendering with a node renderer
+   * and mounting the composer would fail at construction, before a frame, with
+   * the whole canvas replaced by the failure boundary.
+   */
+  const rendersWithNodePipeline = parityHarness !== null && parityHarness.renderer !== PARITY_RENDERER_WEBGL;
 
   // Classified once per mount, before the first frame, because shadows and the
   // postprocessing chain are decided when the canvas is created and cannot be
@@ -635,7 +650,29 @@ export function UniverseCanvas({
                     fullscreen buffers to deliver one curve it already has. The
                     fix that landed for the other three families is the right one
                     for them and would be a regression here. */}
-                {isOceanFamilyScene ? null : (
+                {/* WHICH CHAIN, AND THE CONDITION IS A CAPABILITY RATHER THAN A
+                    PREFERENCE. §26 Phase 5 replaces `postprocessing` with
+                    three.js's `RenderPipeline`, and that pipeline CANNOT run on
+                    a `WebGLRenderer`: `PassNode` calls `getMRT`, `setMRT`,
+                    `getOutputBufferType`, `getOutputRenderTarget` and
+                    `contextNode`, none of which exist in three's WebGL build.
+                    The composer has the mirror-image problem — `setRenderer`
+                    reads `getContext().getContextAttributes()`, and a
+                    `GPUCanvasContext` has no such method — so each chain runs on
+                    exactly one renderer and neither can serve both.
+                    So the renderer decides, and today that means every visitor
+                    gets the composer while the harness's two node renderers get
+                    the node chain. Both read their tuning from
+                    postEffectsTuning.ts, and NodePostEffects.tsx carries the
+                    divergences that cannot be tuned away. */}
+                {isOceanFamilyScene ? null : rendersWithNodePipeline ? (
+                  <NodePostEffects
+                    postFX={scene?.postFX}
+                    theme={scene?.theme}
+                    ambientOcclusion={isForestFamilyScene}
+                    postProcessingProfile={deviceRenderProfile.postProcessing}
+                  />
+                ) : (
                   <PostEffects
                     postFX={scene?.postFX}
                     theme={scene?.theme}
