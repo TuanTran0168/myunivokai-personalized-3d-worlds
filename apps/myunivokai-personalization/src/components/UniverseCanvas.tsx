@@ -2,6 +2,7 @@
 
 import { Canvas, useFrame, useThree, type RootState } from "@react-three/fiber";
 import { Suspense, useMemo, useRef, useState } from "react";
+import { ACESFilmicToneMapping, AgXToneMapping } from "three";
 import type { Vector3 } from "three";
 import type { PlanetSceneConfig, SceneConfig } from "@/lib/types";
 import { backgroundColorFromScene, isForestScene, isOceanScene, pointsOfInterestFromScene, CANONICAL_FALLBACK_SEED } from "@/lib/scene";
@@ -42,13 +43,6 @@ import {
   adaptiveDevicePixelRatio
 } from "@/features/scene-renderers/shared/renderQuality";
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
-import { rendererToneMappingForFamily } from "@/features/scene-renderers/shared/sceneToneMapping";
-import {
-  parityHarnessRequest,
-  PARITY_RENDERER_WEBGL,
-  PARITY_RENDERER_WEBGPU_FORCED_WEBGL
-} from "@/features/scene-renderers/shared/parityHarness";
-import { ParityHarnessBridge } from "@/features/scene-renderers/shared/ParityHarnessBridge";
 import { PlanetPositionTrackerContext } from "@/features/scene-renderers/shared/PlanetPositionTracker";
 import { TerrainHeightSamplerContext, type TerrainHeightSampler } from "@/features/scene-renderers/shared/TerrainHeightSampler";
 
@@ -302,15 +296,6 @@ export function UniverseCanvas({
   revealWithoutFade = false,
   onSceneReady
 }: UniverseCanvasProps) {
-  // The parity harness's request, resolved once per mount for the same reason
-  // the classifications below are: which renderer to build is a decision the
-  // canvas makes when it is created. `null` in every build that does not set
-  // NEXT_PUBLIC_PARITY_HARNESS, which is every build but the harness's own.
-  const parityHarness = useMemo(
-    () => parityHarnessRequest(typeof window === "undefined" ? undefined : window.location.search),
-    []
-  );
-
   // Classified once per mount, before the first frame, because shadows and the
   // postprocessing chain are decided when the canvas is created and cannot be
   // walked back by a frame-rate reading the way the pixel ratio can.
@@ -504,21 +489,6 @@ export function UniverseCanvas({
         >
           <Canvas
             key={canvasRemountKey}
-            // "never" from the FIRST frame when the parity harness is driving,
-            // and that is not the same thing as switching it off once the scene
-            // has mounted.
-            //
-            // Setting it from inside an effect was tried and measured: R3F runs
-            // some number of real frames before the effect fires, the count
-            // depends on how fast the page loaded, and anything that INTEGRATES
-            // rather than reads the clock — the camera easing, a drifter's
-            // position, AdaptiveResolution's frame counter — carries that
-            // difference into the pinned frame. Two runs of the identical
-            // renderer disagreed by a worst-block error of 60 with 5.8% of
-            // pixels differing, which is the harness failing its own stability
-            // gate. As a prop, no frame the scene ever draws is one the harness
-            // did not drive.
-            frameloop={parityHarness ? "never" : "always"}
             camera={{ position: cameraPosition, fov: cameraFieldOfView }}
             // The forest (sun through the canopy) and the ocean (a single key
             // light through water) both cast real shadows; universe scenes are
@@ -530,79 +500,28 @@ export function UniverseCanvas({
             // The tier gates this, the family chooses it. A device that cannot
             // afford shadow mapping is not asked; one that can gets exactly the
             // behaviour it had before tiering existed.
-            //
-            // "percentage", not "soft", since three.js r182. R3F maps "soft" to
-            // `PCFSoftShadowMap` and three now REPLACES that at render time:
-            // `WebGLShadowMap.render` warns "PCFSoftShadowMap has been
-            // deprecated. Using PCFShadowMap instead." and assigns
-            // `this.type = PCFShadowMap` (three.module.js:9148-9151). So asking
-            // for "soft" bought a console warning on every frame and the other
-            // filter anyway. "percentage" IS `PCFShadowMap`, which r186 notes is
-            // "now soft as well" — the name changed, the picture did not.
             shadows={
-              deviceRenderProfile.allowsShadows && (isForestFamilyScene || isOceanFamilyScene) ? "percentage" : false
+              deviceRenderProfile.allowsShadows && (isForestFamilyScene || isOceanFamilyScene) ? "soft" : false
             }
             dpr={activeDevicePixelRatioRange}
             // AgX rolls hot highlights off more gracefully than the default ACES
-            // (no neon clipping on lit planets). The ocean is the exception, and
-            // it is not a preference: that family's whole grade was designed and
-            // proven against three.js's own ACES at a per-depth
-            // `toneMappingExposure` — the adaptation curve IS the exposure — so
-            // it needs the curve the design was measured with, not a second one
-            // applied on top of it.
+            // (no neon clipping on lit planets); sky layers opt out via
+            // toneMapped={false} and are unaffected.
             //
-            // THIS PROPERTY IS ONLY LIVE FOR THE OCEAN, and knowing that is the
-            // point of reading it from sceneToneMapping.ts: every other family
-            // mounts <PostEffects>, whose EffectComposer overwrites
-            // gl.toneMapping with NoToneMapping on mount. Those families get the
-            // same curve from a composer pass instead, derived from the same
-            // constant, and sceneToneMapping.test.ts asserts the two agree.
-            //
-            // The claim that "sky layers opt out via toneMapped={false} and are
-            // unaffected" used to sit here and was wrong twice over: with
-            // NoToneMapping there was no curve to opt out of, and a fullscreen
-            // composer pass cannot honour a per-material flag. The solar
-            // system's seven toneMapped={false} sites now mean "keep my >1 HDR
-            // values out of the in-shader curve so bloom can select on them",
-            // which is what they were reaching for, and the frame-wide curve
-            // rolls those values off at the end instead of clipping them.
-            gl={
-              parityHarness && parityHarness.renderer !== PARITY_RENDERER_WEBGL
-                ? // The parity harness's second and third renderers, and the
-                  // reason this is a FUNCTION: @react-three/fiber 9.7.0 awaits
-                  // the `gl` prop when it is one, so `WebGPURenderer.init()` —
-                  // which is async, and which is where the WebGL fallback is
-                  // decided — can complete before the first frame. Verified
-                  // from fiber's own source in §6.5 of the feasibility report;
-                  // this is the first place the app uses it.
-                  //
-                  // `three/webgpu` is imported dynamically. It is a second copy
-                  // of three, ~1 MB, and a static import would put it in the
-                  // main bundle of every visitor to serve a harness that only
-                  // runs on one machine.
-                  async (canvasProperties: Record<string, unknown>) => {
-                    const { WebGPURenderer } = await import("three/webgpu");
-                    const renderer = new WebGPURenderer({
-                      ...canvasProperties,
-                      antialias: true,
-                      powerPreference: "high-performance",
-                      forceWebGL: parityHarness.renderer === PARITY_RENDERER_WEBGPU_FORCED_WEBGL,
-                    });
-                    renderer.toneMapping = rendererToneMappingForFamily({ isOceanFamilyScene });
-                    await renderer.init();
-                    return renderer;
-                  }
-                : {
-                    preserveDrawingBuffer,
-                    powerPreference: "high-performance",
-                    toneMapping: rendererToneMappingForFamily({ isOceanFamilyScene }),
-                  }
-            }
+            // The ocean is the exception, and it is not a preference. That family's
+            // whole grade was designed and proven against three.js's own ACES at a
+            // per-depth `toneMappingExposure` — the adaptation curve IS the
+            // exposure — so it needs the curve the design was measured with, not a
+            // second one applied on top of it.
+            gl={{
+              preserveDrawingBuffer,
+              powerPreference: "high-performance",
+              toneMapping: isOceanFamilyScene ? ACESFilmicToneMapping : AgXToneMapping,
+            }}
             onCreated={disableShaderErrorCheckingInProduction}
             onPointerMissed={() => onSelectPlanet?.(null)}
           >
             <color attach="background" args={[backgroundColor]} />
-            {parityHarness ? <ParityHarnessBridge request={parityHarness} /> : null}
             <PlanetPositionTrackerContext.Provider value={planetPositionTrackerReference.current}>
             <TerrainHeightSamplerContext.Provider value={terrainHeightSamplerReference.current}>
               <Suspense fallback={<CanvasLoader />}>
@@ -617,24 +536,14 @@ export function UniverseCanvas({
                 {/* The ocean renders STRAIGHT TO THE CANVAS, with no composer.
                     Not a tuning choice — a correctness one. EffectComposer sets
                     gl.toneMapping = NoToneMapping on mount and expects a
-                    <ToneMapping> effect in the chain. The chain did not have
-                    one, so for the ocean's whole life its tone curve was a
+                    <ToneMapping> effect in the chain, which this one has never
+                    had. So for the ocean's whole life its tone curve was a
                     passthrough, `toneMappingExposure` was read by nothing, and
                     every linear value above 1 clipped flat to white — the cause
                     of every washed-out ocean frame reported so far.
                     Bypassing the chain restores the renderer's own ACES, makes
                     the per-depth exposure live again, and removes the need for
-                    the hand-injected curve that stood in for it.
-
-                    THE CHAIN NOW HAS A <ToneMapping>, and the ocean still does
-                    not use it. Two reasons, and only the second one is about the
-                    ocean: a composer pass is frame-wide, so it cannot read the
-                    per-depth `toneMappingExposure` that IS this family's
-                    adaptation curve (oceanRig.ts:313); and the ocean asks for no
-                    bloom, no AO and no grade, so the chain would cost two
-                    fullscreen buffers to deliver one curve it already has. The
-                    fix that landed for the other three families is the right one
-                    for them and would be a regression here. */}
+                    the hand-injected curve that stood in for it. */}
                 {isOceanFamilyScene ? null : (
                   <PostEffects
                     postFX={scene?.postFX}

@@ -1,5 +1,4 @@
 import { Color, type MeshStandardMaterial, type IUniform } from "three";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
 
 /**
  * Caustics on the seabed, by refraction rather than by noise.
@@ -220,12 +219,9 @@ export function applyCaustics(material: MeshStandardMaterial, uniforms: Caustics
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = requireShaderChunks(shader.vertexShader, "oceanCaustics vertex", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.worldPositionVertex
-    ])
+    shader.vertexShader = shader.vertexShader
       .replace(
-        SHADER_CHUNK_MARKERS.common,
+        "#include <common>",
         "#include <common>\nvarying vec3 vCausticWorldPosition;\nvarying float vCausticUpness;"
       )
       // Instancing has to be applied by hand here. three's own <worldpos_vertex>
@@ -236,7 +232,7 @@ export function applyCaustics(material: MeshStandardMaterial, uniforms: Caustics
       // every rock and every kelp strand would sample the caustic pattern at
       // the mesh origin, so the entire scatter would light up in unison.
       .replace(
-        SHADER_CHUNK_MARKERS.worldPositionVertex,
+        "#include <worldpos_vertex>",
         `#include <worldpos_vertex>
   vec4 oceanCausticPosition = vec4(transformed, 1.0);
   mat3 oceanCausticRotation = mat3(modelMatrix);
@@ -247,16 +243,11 @@ export function applyCaustics(material: MeshStandardMaterial, uniforms: Caustics
   vCausticWorldPosition = (modelMatrix * oceanCausticPosition).xyz;
   vCausticUpness = normalize(oceanCausticRotation * objectNormal).y;`
       );
-    shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "oceanCaustics fragment", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.toneMappingFragment
-    ])
-      .replace(
-        SHADER_CHUNK_MARKERS.common, "#include <common>\n" + CAUSTICS_CHUNK)
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\n" + CAUSTICS_CHUNK)
       // After tone mapping would wash them out; before it, a focus rolls off
       // through the same curve as every other highlight in the frame.
-      .replace(
-        SHADER_CHUNK_MARKERS.toneMappingFragment, CAUSTICS_APPLICATION + "\n#include <tonemapping_fragment>");
+      .replace("#include <tonemapping_fragment>", CAUSTICS_APPLICATION + "\n#include <tonemapping_fragment>");
   };
   material.needsUpdate = true;
 }

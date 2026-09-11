@@ -13,7 +13,6 @@ import {
   Quaternion,
   Vector3
 } from "three";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
 
 // The nature-1 asset catalog: every modelKey the backend config can emit maps
 // to self-hosted, draco-compressed CC0/CC-BY GLB files under
@@ -311,10 +310,8 @@ function recolorableFoliageMaterial(originalMaterial: Material): MeshStandardMat
     // Replace the stock map multiply: sample the leaf texture, collapse it to
     // luminance, remap into a gentle light range, and multiply that onto the
     // instance-colored diffuse. Result = season hue × texture detail.
-    shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "forestModels leaf recolour", [
-      SHADER_CHUNK_MARKERS.mapFragment
-    ]).replace(
-        SHADER_CHUNK_MARKERS.mapFragment,
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <map_fragment>",
       [
         "#ifdef USE_MAP",
         "  vec4 sampledLeafColor = texture2D( map, vMapUv );",

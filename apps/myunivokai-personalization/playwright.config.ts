@@ -64,74 +64,14 @@ export default defineConfig({
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
     // 375px is the narrow end the world page actually reflows at: the HUD
     // stops being a pointer-transparent overlay and becomes a scrolling column.
-    { name: "mobile", use: { ...devices["Desktop Chrome"], viewport: { width: 375, height: 812 } } },
-    // A THIRD project, on REAL GPU HARDWARE, and every part of this launch line
-    // is a measurement rather than a preference — see §19.7 of
-    // agent-system/research/webgpu-full-migration-feasibility-2026.md.
-    //
-    // The two projects above keep their SwiftShader pin, and should: their whole
-    // value is that two runs differ only by the code between them. But
-    // SwiftShader has no WebGPU at all, so a parity suite pinned to it cannot
-    // see the backend it exists to compare. This project is the other trade —
-    // the real driver, for the questions software rasterisation cannot answer.
-    //
-    // `channel: "chromium"` because Playwright's default `headless: true`
-    // launches `chromium_headless_shell`, a DIFFERENT BINARY since 1.49 that
-    // reports SwiftShader with zero flags and resolves `requestAdapter()` to
-    // null. And `--disable-dawn-features=use_dxc` because the pinned full
-    // Chromium enumerates the RTX 4060 and then fails `requestDevice()` with
-    // `DynamicLib.Open: dxil.dll Windows Error: 87`. Remove either one and every
-    // parity run silently photographs the WebGL fallback three times and reports
-    // that all three backends agree.
-    //
-    // It costs exactly two adapter features, `shader-f16` and `subgroups`, both
-    // measured and both unused by this app.
-    {
-      name: "webgpu",
-      testMatch: /scene-parity\.spec\.ts/,
-      // Four minutes, against the suite's 120 s default. A parity test renders
-      // the same fixture through THREE renderers in one test, and each leg pays
-      // its own renderer creation, lazy chunk, GLTF load and environment bake —
-      // the forest leg alone can spend most of a minute on models. The 120 s
-      // default timed the forest out mid-comparison, which reads exactly like a
-      // renderer failure and is not one.
-      timeout: 240_000,
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: { width: 1440, height: 900 },
-        channel: "chromium",
-        launchOptions: { args: ["--disable-dawn-features=use_dxc", "--force-device-scale-factor=1"] }
-      }
-    }
+    { name: "mobile", use: { ...devices["Desktop Chrome"], viewport: { width: 375, height: 812 } } }
   ],
   webServer: {
     // The production build, not `next dev`. Dev mode double-renders under
     // StrictMode and serves unminified React, which is the difference this
     // upgrade is most likely to move — measuring it would compare two things at
     // once.
-    //
     command: `npm run build && npm run start -- -p ${APPLICATION_PORT} -H 127.0.0.1`,
-    // NEXT_PUBLIC_PARITY_HARNESS is set HERE and nowhere else. It is what lets
-    // `?parityRenderer=` choose a renderer and pin the animation clock.
-    //
-    // On `env` rather than inline in the command, for two reasons that both
-    // bite: `NEXT_PUBLIC_*` is INLINED BY NEXT AT BUILD TIME, so prefixing only
-    // `npm run start` would set it far too late and the harness would read
-    // `undefined` in the very build it is meant to steer; and `VAR=x cmd` is not
-    // portable to a Windows shell, which is where this suite runs.
-    //
-    // Gated on a build-time variable rather than on NODE_ENV deliberately: this
-    // server IS a production build, so a NODE_ENV check would switch the harness
-    // off in the only place it runs — while a real deployment, which never sets
-    // the variable, cannot be steered onto an unshipped renderer by a query
-    // string. See shared/parityHarness.ts.
-    //
-    // It is set for ALL THREE projects because they share one server, and that
-    // is safe: absent the query parameter the harness resolves to `null` and the
-    // canvas is byte-for-byte the code it was before. The one real difference is
-    // an extra lazy chunk that nothing loads — `three/webgpu` is imported
-    // dynamically precisely so it stays out of every visitor's bundle.
-    env: { NEXT_PUBLIC_PARITY_HARNESS: "1" },
     url: APPLICATION_ORIGIN,
     reuseExistingServer: !process.env.CI,
     timeout: 300_000
