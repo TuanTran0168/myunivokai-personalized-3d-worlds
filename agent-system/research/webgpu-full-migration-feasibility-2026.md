@@ -1968,6 +1968,23 @@ convention. **Every phase ships and is independently revertable.**
 > real-driver assertion per ported family is the cheap insurance, and `star-is-lit.spec.ts` is the
 > pattern.
 
+> **A SECOND THING PHASES 6–10 INHERIT: AN ADDON IMPORT IS A BUILD-TIME DEPENDENCY OF THE WHOLE
+> PAGE, HARNESS-ONLY OR NOT.** Phase 5's chain imports three addons through a dynamic `import()`
+> inside a `useEffect`, and the comment above that call explains the dynamism as bundle hygiene —
+> keeping a second copy of three out of every visitor's main bundle. True, and it hides a second
+> property nobody stated: **a dynamic import defers execution, not resolution.** Webpack reads the
+> specifier at build time, and one that does not resolve is a build error on every page that
+> transitively reaches it. The owner's dev server proved it by failing to compile `page.tsx` over
+> `ChromaticAberrationNode.js` — a file no visitor's session would ever load.
+>
+> The trigger there was a stale container (`knowledge/frontend/source-overview.md` carries that half),
+> but the exposure is permanent and grows with these phases: `three/addons/*` maps to
+> `examples/jsm/*`, which is explicitly the part of three that carries no stability promise, and
+> Phases 6–8 add more of it. `threeSubpathImports.test.ts` walks the source for every `three/`
+> specifier and asserts it resolves, which puts the failure in a suite CI runs. It answers only the
+> bundler's question — does this name a file — so a rename INSIDE a file that still exists passes it
+> and fails typecheck instead.
+
 ### Phase 6 — Shared GLSL library → TSL
 
 - **Objective:** port `oceanSky.ts` (Preetham, Gerstner) once, serving three shaders.

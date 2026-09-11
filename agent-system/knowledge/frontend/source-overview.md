@@ -414,3 +414,31 @@ For integrated local development, root `docker-compose-local.yaml` builds this
 client with `NEXT_PUBLIC_GATEWAY_BASE_URL=http://localhost:41800`. The production
 Docker image uses exactly two stages, Next.js standalone output, and a non-root
 runtime user; the same image is declared in the Render Blueprint.
+
+**The dev container installs its own dependencies, and for one release it
+installed the wrong ones.** The app's compose file mounts a named volume over
+`/app/node_modules`, so that a Linux container never reads a Windows host's
+install — correct, and it stays. What was not accounted for is that Docker seeds
+a named volume from the image exactly once, while the volume is still empty:
+after that, a dependency change reaches the image and the host and never reaches
+a container that already has a volume. `d3944d8` moved three from 0.171.0 to
+0.185.1; the container went on serving 0.171.0 and the app stopped building on
+`three/addons/tsl/display/ChromaticAberrationNode.js`, an addon the older release
+does not ship. Next reports that as "Can't resolve", which is what a MISSING
+dependency looks like and was a STALE one — the same message, opposite fixes.
+`Dockerfile.local` now starts through `scripts/startDevelopmentContainer.sh`,
+which records the checksum of the lockfile it installed from and reinstalls when
+the repository's lockfile no longer matches, so the reconciliation happens on
+every start rather than when someone remembers `docker compose down -v`.
+
+The build-time half of that failure is worth separating from the container half,
+because it survives it. `NodePostEffects.tsx` reaches for those addons through a
+**dynamic** `import()`, inside a `useEffect`, on a chain only the parity harness
+mounts — and it still took down `page.tsx`. A dynamic import defers execution,
+not resolution: webpack reads the specifier at build time and an unresolvable one
+is a build error, so a harness-only code path is a build-time dependency of the
+ordinary page. `three/addons/*` maps to `examples/jsm/*`, the part of three that
+carries no stability promise, and Phases 6-10 of the WebGPU migration add more of
+it. `src/features/scene-renderers/shared/threeSubpathImports.test.ts` walks the
+source for every `three/` specifier and asserts each resolves, so a three upgrade
+that moves a file fails in a suite CI runs instead of on someone's dev server.
