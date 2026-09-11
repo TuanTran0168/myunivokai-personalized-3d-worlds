@@ -42,7 +42,6 @@ import { createFishSkinBake, type PhotophoreDot } from "./oceanFishSkinTexture";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { randomFromSeed } from "@/lib/scene";
 import { OCEAN_MODEL_BASE_PATH } from "./oceanFaunaModels";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
 
 /**
  * Species differ by HOW MUCH OF THE BODY undulates, not by how fast. That is
@@ -1499,12 +1498,9 @@ export function createSchool(
         ? "transformed.y += lateral;   // a cetacean oscillates VERTICALLY"
         : "transformed.x += lateral;";
 
-    shader.vertexShader = requireShaderChunks(shader.vertexShader, "oceanRigFauna undulation vertex", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.beginVertex
-    ])
+    shader.vertexShader = shader.vertexShader
       .replace(
-        SHADER_CHUNK_MARKERS.common,
+        "#include <common>",
         `#include <common>
           uniform float uCreatureTime; uniform float uOnset; uniform float uAmplitude;
           uniform float uWaves; uniform float uBeat; uniform float uSpan;
@@ -1514,7 +1510,7 @@ export function createSchool(
           ${GLSL_UNDULATION}`,
       )
       .replace(
-        SHADER_CHUNK_MARKERS.beginVertex,
+        "#include <begin_vertex>",
         `#include <begin_vertex>
           vBelly = position.y * uBellyScale;
           vAlong = along;
@@ -1522,16 +1518,12 @@ export function createSchool(
           ${axis}`,
       );
 
-    shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "oceanRigFauna undulation fragment", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.toneMappingFragment
-    ])
-      .replace(
-        SHADER_CHUNK_MARKERS.common, "#include <common>\nvarying float vBelly;\nvarying float vAlong;")
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying float vBelly;\nvarying float vAlong;")
       // Counter-shading: dark back, bright belly. It is why a school reads as a
       // flicker of light rather than a cloud of identical objects.
       .replace(
-        SHADER_CHUNK_MARKERS.toneMappingFragment,
+        "#include <tonemapping_fragment>",
         "gl_FragColor.rgb *= mix(1.7, 0.72, smoothstep(-0.16, 0.16, vBelly));\n#include <tonemapping_fragment>",
       );
   };

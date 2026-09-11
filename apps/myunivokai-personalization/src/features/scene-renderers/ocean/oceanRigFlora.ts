@@ -38,7 +38,6 @@ import {
 } from "three";
 import { randomFromSeed } from "@/lib/scene";
 import { applyCaustics, type CausticsUniforms } from "./oceanCaustics";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
 
 export type SwayUniforms = {
   uSwayTime: { value: number };
@@ -127,19 +126,16 @@ function createBladeBed(options: BladeOptions): InstancedMesh {
   });
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, sway);
-    shader.vertexShader = requireShaderChunks(shader.vertexShader, "oceanRigFlora sway vertex", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.beginVertex
-    ])
+    shader.vertexShader = shader.vertexShader
       .replace(
-        SHADER_CHUNK_MARKERS.common,
+        "#include <common>",
         `#include <common>
           uniform float uSwayTime; uniform vec2 uCurrent;
           attribute float aSwayPhase;
           varying float vHeightFraction; varying float vPlantTone;`,
       )
       .replace(
-        SHADER_CHUNK_MARKERS.beginVertex,
+        "#include <begin_vertex>",
         `#include <begin_vertex>
           vHeightFraction = clamp(position.y, 0.0, 1.0);
           vPlantTone = 0.72 + 0.56 * fract(sin(aSwayPhase * 12.9898) * 43758.5453);
@@ -150,19 +146,16 @@ function createBladeBed(options: BladeOptions): InstancedMesh {
           transformed.z += cos(uSwayTime * 0.83 + aSwayPhase * 1.7) * bend * 0.24;
           transformed.xz += uCurrent * bend * 0.5;`,
       );
-    shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "oceanRigFlora sway fragment", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.toneMappingFragment
-    ])
+    shader.fragmentShader = shader.fragmentShader
       .replace(
-        SHADER_CHUNK_MARKERS.common,
+        "#include <common>",
         "#include <common>\nvarying float vHeightFraction;\nvarying float vPlantTone;",
       )
       // Darkest at the ground — the contact shadow that stops vegetation
       // floating — brightest at the tip, where a translucent blade really does
       // catch the light.
       .replace(
-        SHADER_CHUNK_MARKERS.toneMappingFragment,
+        "#include <tonemapping_fragment>",
         "gl_FragColor.rgb *= mix(0.16, 1.32, smoothstep(0.0, 0.8, vHeightFraction)) * vPlantTone;\n#include <tonemapping_fragment>",
       );
   };

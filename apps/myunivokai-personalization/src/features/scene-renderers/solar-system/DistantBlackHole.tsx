@@ -7,7 +7,6 @@ import { Box3, Vector3, type Group, type Material, type Mesh, type MeshStandardM
 import type { SceneCameraConfig } from "@/lib/types";
 import { distantBlackHolePlacement } from "./distantBlackHolePlacement";
 import { BLACK_HOLE_MODEL_URL, BLACK_HOLE_TARGET_SIZE } from "./spacecraftCatalog";
-import { maximumTextureAnisotropy } from "@/features/scene-renderers/shared/textureAnisotropy";
 
 /**
  * Rare seed-gated black hole: a real, self-hosted GLB (Sketchfab CC-BY, see
@@ -40,7 +39,7 @@ export function DistantBlackHole({ seed, camera }: DistantBlackHoleProps) {
   // model's own emissive/tone-mapping is left untouched — boosting it blows the
   // disk into a screen-filling white bloom blob.
   useMemo(() => {
-    const maximumAnisotropy = maximumTextureAnisotropy(renderer);
+    const maximumAnisotropy = renderer.capabilities.getMaxAnisotropy();
     gltf.scene.traverse((object) => {
       const mesh = object as Mesh;
       if (!mesh.material) {

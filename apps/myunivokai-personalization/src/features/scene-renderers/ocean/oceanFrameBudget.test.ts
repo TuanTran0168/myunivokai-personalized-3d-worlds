@@ -144,54 +144,14 @@ const PRESETS = [
   },
 ] as const;
 
-/**
- * The prototype's own six views, rendered by this app from its parameters.
- *
- * PARTIALLY REBASELINED 2026-09-10, and the reason matters more than the
- * numbers, because two of these have moved AWAY from the prototype they exist to
- * be compared against — and not because of the change that re-shot them.
- *
- * The three.js 0.171.0 → 0.185.1 upgrade re-shot every frame in this repository,
- * and three of these assertions failed. They were then decomposed with a control
- * run: the same specs, on the same machine, with the upgrade branch's source
- * stashed so three 0.171.0 rendered them.
- *
- *                      recorded    0.171 control    0.185.1    prototype ref-*
- *   demo-above-water      0.635           0.473       0.480              0.546
- *   demo-abyssal-plain    0.205           0.110       0.112              0.190
- *   demo-reef             0.639           0.508       0.581              0.631
- *   demo-golden-hour      0.407           0.356       0.353              0.378
- *   demo-open-water       0.722           0.706       0.706              0.687
- *   demo-twilight         0.257           0.256       0.256              0.290
- *
- * Read the last two columns first. **The upgrade moved these frames by +0.007,
- * +0.002 and −0.003** — inside the ±0.024 phase noise measured between two runs
- * of identical code. r181's PBR changes, which the migration plan rated a HIGH
- * and silent risk, are not visible here at all. The drift is in the first two
- * columns: it happened between the day these numbers were recorded and the
- * current `staging`, on 0.171.0, for a reason **nobody has identified**.
- *
- * And the prototype column is what makes it a defect rather than a re-grade: the
- * `ref-*` frames are the prototype page, not the app, and they did not move
- * (±0.004 across all six). So the app has drifted away from a parity it once
- * held, on above-water and the abyssal plain, by roughly 0.07 and 0.08 luma.
- *
- * Only the three that failed are rebaselined. The three that still pass keep
- * their original anchors on purpose — a value inside tolerance is still a
- * historical record, and the tolerance is what guards it. `LUMA_TOLERANCE` is
- * NOT widened: the point of these bounds is to fail when the ocean moves, and
- * this is the second time they have done their job.
- */
+/** The prototype's own six views, rendered by this app from its parameters. */
 const PARITY = [
-  // Was 0.635, and 0.546 in the prototype. Rebaselined to the measured value;
-  // the ~0.07 gap to the prototype is an open regression, not an accepted look.
-  { shot: "demo-above-water", luma: 0.48 },
+  { shot: "demo-above-water", luma: 0.635 },
   { shot: "demo-golden-hour", luma: 0.407 },
   { shot: "demo-reef", luma: 0.639 },
   { shot: "demo-open-water", luma: 0.722 },
   { shot: "demo-twilight", luma: 0.257 },
-  // Was 0.205, and 0.190 in the prototype — the largest of the three gaps.
-  { shot: "demo-abyssal-plain", luma: 0.112 },
+  { shot: "demo-abyssal-plain", luma: 0.205 },
 ] as const;
 
 describe("what the ocean's frames contain", () => {
@@ -278,18 +238,10 @@ describe("what the ocean's frames contain", () => {
   // Rebaselined 2026-09-01 with the desktop set, and for the same reason — see
   // the note above PRESETS. Reef Crest moved furthest here too, 0.502 -> 0.340,
   // because it is the preset the depth change moved furthest.
-  //
-  // And Reef Crest moved furthest AGAIN on 2026-09-10, 0.340 -> 0.238, which is
-  // the third time this one preset has been the one that moves. Same
-  // decomposition as PARITY above: the three.js 0.185.1 upgrade is not the
-  // cause, the drift is already present on 0.171.0 at current `staging`, and it
-  // is unexplained. Its desktop twin (`ocean-shallow`, 0.432 recorded against
-  // 0.382 measured) is still inside tolerance, so whatever this is hits the
-  // phone layout about twice as hard — which is the one clue on offer.
   const MOBILE = [
     { shot: "ocean-surface", luma: 0.283, minimumSaturation: 0.1 },
     { shot: "ocean-daylight", luma: 0.519, minimumSaturation: 0.05 },
-    { shot: "ocean-shallow", luma: 0.238, minimumSaturation: 0.3 },
+    { shot: "ocean-shallow", luma: 0.34, minimumSaturation: 0.3 },
     { shot: "ocean-twilight", luma: 0.364, minimumSaturation: 0.3 },
     { shot: "ocean-abyss", luma: 0.197, minimumSaturation: 0.1 },
   ] as const;
