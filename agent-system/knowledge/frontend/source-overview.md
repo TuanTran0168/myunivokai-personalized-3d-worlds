@@ -255,6 +255,29 @@ layout's export and fails any route segment that asks to be prerendered again
   canvas's lagging family, not the form's), and `buildCreateFormPreviewScene`
   is the whole account-page backdrop: the world the create form would open with,
   from the profile on screen.
+
+**How far the live preview is a preview, which is further than it looks in one
+direction and not at all in another.** `previewSeedFromInputs` builds its seed
+from the payload — `"preview" | nickname | style | mood | interests | traits |
+colours` — so everything seeded off it is a deterministic function of the form:
+the sun's temperature class and HDR multiplier, the camera distance, the core
+scale, the belt, the comets. That determinism is what keeps the canvas still
+while somebody types. It also means **the nickname redraws the star**, and since
+`profileAutofill.ts` fills the nickname from the account's display name, signing
+in changes the world on screen without the visitor choosing anything about it —
+which the owner reported as the sun looking paler, and which is two different
+stars rather than one star rendered differently. Worked example, from the form's
+own defaults: an empty nickname draws tint `#FFFFFF` / glow `#FDB813` at HDR
+1.36, camera 8.66, core 1.22; `"Trần Đăng Tuấn"` draws tint `#FFE3C4` / glow
+`#FF9E4A` at HDR 1.39, camera 10.21, core 1.41.
+
+The other direction is the one to hold on to: **none of that survives clicking
+create.** `world_service.go` seeds the real world with `seed.NewWorldSeed()`,
+which is `"WLD-" + randomBase32(10)` and reads no input at all. So the preview
+promises the STYLE — the planet count and names come through the payload, as the
+bullet above says — and promises nothing about which star, camera or belt the
+saved world gets. A change to the preview's seeding is therefore a
+frontend-only decision: there is no preview-to-result match to break.
 - `components/AmbientBackdrop.tsx` — the fixed z-0 world behind a page, with the
   dpr cap, parked entry, dim and vignette. Shared by `/gallery` and `/account`;
   its content column carries `relative z-10` and the backdrop is its SIBLING,

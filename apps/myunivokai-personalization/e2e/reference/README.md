@@ -25,6 +25,22 @@ deliberately not pinned) all still move. **Compare these by eye, for content.**
 A planet missing, a canvas gone black, foliage that lost its seasonal recolour:
 those are what these images exist to catch. Two degrees of orbit are not.
 
+### The line above has been ignored once, expensively
+
+Measuring the universe's star across the three sets gives saturation 0.550,
+0.599 and **0.321** — a series that reads as a collapse arriving with the
+three@0.185.1 upgrade, and it was read that way, and it is wrong. Pinning the
+animation phase and changing nothing but the dependency puts the same star at
+saturation 0.381 on three 0.171.0 and **0.380** on 0.185.1. Fifteen releases
+move it by 0.001; the free phase moves it by 0.28.
+
+So the rule is sharper than "compare by eye": **a number taken off these images
+carries the camera and the phase along with the code, and the phase term is
+larger than anything a dependency is likely to do.** A question of the form "has
+this moved?" belongs in a spec that pins the clock through the parity harness —
+`sun-colour.spec.ts` is the worked example, and `driver-parity.spec.ts` is the
+same lesson learned a second time on a different axis.
+
 ## How to use them
 
 ```powershell
