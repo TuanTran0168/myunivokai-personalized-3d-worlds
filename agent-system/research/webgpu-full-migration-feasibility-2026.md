@@ -2452,6 +2452,41 @@ A 9:1 request comes back 1:1. Reading the source afterwards says why, twice over
 > `gl_PointCoord` on every builder. On the sprite path there is no need for it: the quad carries its
 > own `uv` attribute, which is what `gl_PointCoord` was standing in for.
 
+> **ATTEMPTED, MEASURED AND REVERTED THE SAME DAY: `Sprite.count` INSTANCING BREAKS THE FRAME, AND
+> IT IS NOT THE SHADER.** The universe's two point layers were ported onto the sprite path above —
+> `Sprite` with `count`, `positionNode` and `sizeNode` from `instancedBufferAttribute`, the fragment
+> maths in TSL — and the result is a WHITE CANVAS with the sun, the planets and the orbits faintly
+> visible underneath. Parity went from 12.19 to **151.84** of 255, 98.22% of pixels differing.
+>
+> Bisected, one variable at a time, on the real GPU:
+>
+>     both layers ported, as written        universe parity 12.19 -> 151.84, frame white
+>     both node layers disabled             frame renders correctly
+>     sizeNode pinned to a constant 3 px    still white
+>     colorNode replaced by a constant      still white
+>     size attenuation clamped by hand      still white
+>     count = 1 instead of count = N        FRAME RENDERS CORRECTLY
+>
+> The last line is the finding. **Nothing this app wrote is implicated** — not the size expression,
+> not the fragment graph, not the near-plane arithmetic — and every one of those was eliminated by
+> measurement rather than by argument. What fails is `Sprite.count > 1` with per-instance attributes
+> under this pipeline. `RenderObject.js:610` does honour `object.count` for the instance count, so
+> the draw is issued; what is not established is whether `instancedBufferAttribute` binds per
+> instance for a `Sprite` the way it does for an `InstancedMesh`, which is where the next attempt
+> should start.
+>
+> Two things are worth carrying beyond this file. **A NaN is not a local defect here**: the post
+> chain's bloom downsamples the whole frame through a mip chain, so one bad pixel returns as a white
+> screen — which is why the symptom looked like an exposure problem and not like a broken star.
+> And **the diagnostic needs the control frame**: `e2e/node-path-diagnostic.spec.ts` now shoots
+> `webgl` alongside the two node backends, because two of the wrong hypotheses above survived as long
+> as they did while the node frame was being compared against memory instead of against the frame it
+> is supposed to match.
+>
+> The port was reverted rather than landed behind its recorded divergence. The node path is
+> harness-only until Phase 9, so shipping it would have cost nothing visible — and it would have put
+> a 151.84 DEFECT into a ledger whose entries are supposed to be debts.
+
 So the four point layers — `SizedStarPoints`, `NebulaCloudPoints`, the ocean's marine motes and its bubbles —
 are an **architectural change**, not a port: their geometry contract changes, on a three version this project
 does not yet run. Every row in §8, §12, §13, §21 and §27.1 that reads `PointsNodeMaterial` + `sizeNode` +

@@ -31,6 +31,7 @@ const SCENE_ARRIVAL_MILLISECONDS = 8_000;
 const DIAGNOSTIC_TIMEOUT_MILLISECONDS = 300_000;
 const STACK_FRAMES_TO_PRINT = 24;
 const CONSOLE_MESSAGE_CHARACTER_LIMIT = 400;
+const SHOT_DIRECTORY = "e2e/shots/node-path-diagnostic";
 
 const DIAGNOSTIC_FIXTURES = [
   { name: "forest-world", worldId: natureWorld.world.id, family: "nature" },
@@ -38,7 +39,11 @@ const DIAGNOSTIC_FIXTURES = [
   { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean" }
 ] as const;
 
-const NODE_BACKENDS = ["webgpu-forcewebgl", "webgpu"] as const;
+// `webgl` is here as the CONTROL. A node-path frame is only interpretable
+// beside the frame it is supposed to match, and reading a mean absolute error
+// without the baseline picture is how a whole afternoon goes into the wrong
+// hypothesis.
+const NODE_BACKENDS = ["webgl", "webgpu-forcewebgl", "webgpu"] as const;
 
 type ParityHarnessWindow = Window & {
   __parityHarness?: { backend: string; advanceToPinnedTime: () => Promise<void> };
@@ -116,6 +121,16 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
       for (const pageError of pageErrors) {
         printStack(`\n--- ${pageError.message}`, pageError.stack);
       }
+
+      // A FRAME TO LOOK AT, because a mean absolute error does not say WHAT is
+      // wrong. `scene-parity.spec.ts` reports that the universe differs by 151
+      // of 255; only the picture says the difference is a flooded screen rather
+      // than a shifted one. Written under `e2e/shots/`, which this repo
+      // deliberately does not gitignore.
+      await page.screenshot({
+        path: `${SHOT_DIRECTORY}/${fixture.name}-${requestedRenderer}.png`,
+        animations: "disabled"
+      });
     });
   }
 }
