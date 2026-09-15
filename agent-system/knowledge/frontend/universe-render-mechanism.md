@@ -218,6 +218,55 @@ Quy tắc rút ra:
   cấu hình camera (`distantBlackHolePlacement.test.ts`), không phải hằng số
   chỉnh tay.
 
+### The same class again: a clearance measured against the default, not the range
+
+The black-hole placement above was an object solved in the wrong coordinate
+system. `BinarySun.tsx` was the same mistake in a cheaper form — a **world-unit
+constant checked against one configuration and then applied across a seeded
+range** — and it survived over a year because it is invisible at the value it
+was written at.
+
+The companion star orbited at the world-unit constant `2.4`, carrying the
+comment *"Inside the first planet orbit (3.2), outside the primary sun's glow
+shell."* Both halves are true of `DEFAULT_SUN_SCALE`. Neither is true of the sun
+the generator actually draws: the primary's radius is `core.scale ×
+SUN_SCALE_MULTIPLIER`, and `core.scale` is seeded over **1.05–1.50** — the same
+range in `world_config_builder.go:62` and in `lib/scene.ts` — so the primary
+swells from 1.52 to 2.18 world units while the companion's orbit stood still.
+Above core scale ≈**1.24** the companion's photosphere is inside the primary's
+and a binary world renders one lumpy star. That is 59% of the seeded range, so
+roughly 1.8% of universes (3% binary × 59%). Reported from a create-form preview
+at core scale 1.41, where the overlap is 0.34 world units.
+
+The rules that follow are narrower than the camera-framing ones above, and they
+apply to any rare feature that has to sit near something else:
+
+- **A clearance is a ratio, not a length.** The orbit is now expressed in
+  primary-surface radii, which cannot drift out of clearance whatever the seed
+  rolls. Any constant positioned relative to a seeded quantity has to be
+  expressed in that quantity's units, or it is only correct at one seed.
+- **The comment that asserts the clearance is the thing to distrust.** This one
+  named the number it cleared (3.2) and the shell it cleared (the glow), which
+  reads as having been checked. It had been — once, at one core scale.
+- **Sweep the generator's whole range in a unit test.**
+  `binarySunGeometry.test.ts` walks 1.05–1.50 in steps of 0.005 and also pulls
+  400 real preview scenes, so a generator that widens its range fails the sweep
+  instead of escaping it. Same shape as `distantBlackHolePlacement.test.ts`.
+- **A rare feature has no visual gate.** Nothing in `e2e/` pins a fixture with
+  `binary-sun` on, and `rareFeatures.test.ts` checks only that the lottery fires
+  at the right rate — not that what it fires renders correctly. Every one of
+  these features is in that position. Arithmetic is the affordable answer;
+  a fixture per feature is not.
+
+What is still wrong, and is a generator decision rather than a renderer one: the
+planets start at orbit radius 3.2 while the primary's surface can reach 2.18, and
+a companion star does not fit in what is left. The inclination added to its orbit
+takes it out of the planets' plane for most of a revolution, which makes the
+crossing rarer without removing it. Widening the inner orbit when `binary-sun` is
+rolled would remove it, and that is a change on both sides of the contract.
+
+Evidence, pinned and reproducible: `demos/binary-sun-clearance/`.
+
 ### Gắn model vào object chuyển động
 
 `OrbitingSpacecraft.tsx` KHÔNG couple vào `SolarPlanet`: nó đọc vị trí live
@@ -240,7 +289,59 @@ lại được cho bất kỳ vật thể nào cần "bám theo" object khác.
   chỉ vật tự đẩy màu HDR >1 (Sun ×1.5, sao) mới glow; vignette + film grain +
   chromatic aberration gộp 1 fullscreen pass; grade màu riêng từng theme qua
   `THEME_SCENE_GRADES`; MSAA 8.
-- **AgX tone mapping** đặt ở `UniverseCanvas` (`gl.toneMapping`), dpr `[1,3]`.
+- **Tone curve** — xem mục dưới. Không còn đặt riêng ở `UniverseCanvas` nữa:
+  `gl.toneMapping` ở đó là **vô hiệu** với mọi family mount composer, và cặp khai
+  báo bắt buộc nằm trong `sceneToneMapping.ts`.
+
+### A missing default is a look, and restoring it is a look change
+
+`UniverseCanvas` set `gl.toneMapping` to AgX, and for universe, forest and the
+fallback renderer **that line did nothing for the app's entire life**.
+`EffectComposer` assigns `gl.toneMapping = NoToneMapping` on mount
+(`@react-three/postprocessing`, comment: *"threejs disallows tonemapping on
+render targets"*) and it does not check whether the chain contains a
+`<ToneMapping>` pass. Those three chains did not. So those three families
+rendered with **no tone curve at all** and every linear value above 1 clipped
+flat. `sceneToneMapping.ts` and its test exist to make that state unreachable.
+
+The fix was right and its consequence was not priced:
+
+- **A flat clamp is not "no look". It is a look, and it is the one every world
+  in this app was authored against.** Clipping the top of a channel that is
+  already at the top changes nothing while the other channels stay put, so a
+  clipped highlight keeps ALL of its saturation. Nine months of "the sun is
+  fiery orange" was the clip.
+- The curve restored was AgX, picked while fixing the clipping rather than while
+  looking at the result. AgX desaturates as it approaches the top of its range —
+  that is *how* it avoids clipping. Measured over the sun's own colours
+  (`demos/sun-tone-curve/`): AgX keeps **0.632** of the clip's saturation and
+  lifts middle grey from 0.18 to **0.215**. Less colour and lighter darks is
+  what the owner reported as *"a sheet of frosted glass laid over the sun"*.
+- Shipped instead: **Khronos PBR Neutral** for those three families — 1.062 of
+  the old saturation, middle grey down to 0.14, a deep shadow from 0.02 to
+  0.0025. The ocean keeps ACES, which its per-depth `toneMappingExposure` grade
+  was actually designed against.
+
+The transferable rules:
+
+- **When a default turns out to have been dead, restoring it is a product
+  change, not a repair.** The correct move is to fix the wiring and then choose
+  the value by looking, because the value that was *declared* was never the
+  value anyone saw. Nobody chose AgX for this app; a dead prop did.
+- **Measure the pair the report names.** The first answer to "the sun is pale"
+  compared two SEEDS on one build and produced a true number that answered
+  nothing — the report was about two BUILDS. The easy comparison is rarely the
+  asked one.
+- **Check a transcription before trusting its output.** The tone curves had to
+  be transcribed from GLSL to be measured at all, and a colour-space matrix
+  transposed while transcribing gives plausible wrong colours silently. Two
+  cheap invariants catch it: every colour-space matrix row sums to 1 (white maps
+  to white), and a neutral in is a neutral out.
+- **A value declared in two places was declared in three.**
+  `NodePostEffects.tsx` called `agxToneMapping` from `three/tsl` as a literal,
+  agreeing with the composer by coincidence. It now looks the function up by
+  name from the same table, because the whole point of `sceneToneMapping.ts` is
+  that a curve has one declaration.
 
 ## Checklist thêm model/asset mới
 

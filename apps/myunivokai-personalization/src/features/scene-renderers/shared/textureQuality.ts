@@ -1,4 +1,5 @@
 import { SRGBColorSpace, type Texture, type WebGLRenderer } from "three";
+import { maximumTextureAnisotropy } from "./textureAnisotropy";
 
 /**
  * Texture sharpness defaults every scene texture should get.
@@ -27,7 +28,7 @@ import { SRGBColorSpace, type Texture, type WebGLRenderer } from "three";
  * needs no upload at all.
  */
 export function applyColorTextureQuality(texture: Texture, gl: WebGLRenderer): Texture {
-  const anisotropy = gl.capabilities.getMaxAnisotropy();
+  const anisotropy = maximumTextureAnisotropy(gl);
   if (texture.colorSpace === SRGBColorSpace && texture.anisotropy === anisotropy) {
     return texture;
   }
@@ -39,7 +40,7 @@ export function applyColorTextureQuality(texture: Texture, gl: WebGLRenderer): T
 
 /** Same anisotropy treatment for NON-color (data) maps: normal, roughness, alpha. */
 export function applyDataTextureQuality(texture: Texture, gl: WebGLRenderer): Texture {
-  const anisotropy = gl.capabilities.getMaxAnisotropy();
+  const anisotropy = maximumTextureAnisotropy(gl);
   if (texture.anisotropy === anisotropy) {
     return texture;
   }

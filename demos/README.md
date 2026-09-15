@@ -225,3 +225,147 @@ because that is what the service's own sighting range does, so distance effects
 are conservative. And it is single-scattering, so it over-saturates: most of
 what it computes sits outside sRGB and is brought back by desaturating just far
 enough to stop a channel going negative, then scaling the brightness down.
+
+### `webgpu-node-path/`
+
+Phase 1 of
+[agent-system/research/webgpu-full-migration-feasibility-2026.md](../agent-system/research/webgpu-full-migration-feasibility-2026.md):
+whether the WebGPU node path can carry this app's rendering **on the version
+already installed**, `three@0.171.0`. Not a style study — an instrument. Nine
+probes, each stating a claim and measuring it, run twice on the same machine:
+once on `WebGPURenderer`'s WebGPU backend and once on the same class with
+`forceWebGL: true`.
+
+```
+node demos/webgpu-node-path/build.mjs     # writes dist/webgpu-node-path.html
+node demos/webgpu-node-path/measure.mjs   # 62 graded claims, exits non-zero on any fault
+# then open demos/webgpu-node-path/dist/webgpu-node-path.html
+```
+
+The build splices in `three.webgpu.js`, which has no CommonJS bundle — three
+ships `three.cjs` for the WebGL renderer and nothing equivalent for WebGPU. So
+`three.core.js` travels as a `data:` URL module and the WebGPU build's two
+references to it are rewritten into a destructure and a dropped re-export. Both
+rewrites are asserted, because missing the *second* one produces a page that
+still tries to fetch `three.core.js` off the filesystem and dies on CORS.
+
+`measure.mjs` launches with `channel: "chromium"` **and**
+`--disable-dawn-features=use_dxc`. That is Phase 0's finding, not a preference:
+without both, every probe measures SwiftShader or the WebGL fallback and the
+page still reports success.
+
+**Nothing here passes on the absence of an exception**, because this path fails
+by falling back quietly. Three of the probes exist specifically to catch a
+plausible-looking wrong answer:
+
+| Claim | How it is checked |
+| --- | --- |
+| the renderer landed on the backend it was asked for | `backend.isWebGPUBackend` read after `init()`, per probe run, not assumed from the constructor argument |
+| `forestModels.ts`'s leaf patch ports to a `colorNode` unchanged | all 256 texels compared against the GLSL formula evaluated on the CPU, through a 32-step transfer curve measured in the same pass — worst channel error **0.78 of 255** |
+| the equirectangular environment is prefiltered, not sampled flat | a mirror sphere's peak-over-mean against a rough sphere's: **2.96 against 1.94**. A flat 2D sample would give the two the same distribution |
+| `scene.fog` follows three's own curve | eight quads at known camera-space depths against `1 - exp(-(density·depth)²)` — worst factor error **0.0064** |
+| the instruments themselves report | a deliberate 120 ms block must appear as a 120 ms gap, and a `PerformanceObserver` long-task count of zero was thrown away when it did not |
+
+**What it proves, and three of them contradict the report that commissioned it.**
+
+- **`PointsNodeMaterial.sizeNode` is inert and `pointUV` cannot compile on
+  WebGPU.** Sizes 3, 9 and 27 all render **one pixel** — the GLSL node builder
+  hardcodes `gl_PointSize = 1.0` (`three.webgpu.js:31735`), `sizeNode` is
+  declared and copied and never read, and WebGPU has no point size in the
+  specification at all. `PointUVNode.generate()` returns the literal string
+  `'vec2( gl_PointCoord.x, 1.0 - gl_PointCoord.y )'` for every builder, which
+  is not WGSL. The four point layers are an architectural change, not a port.
+- **A WGSL compile failure is invisible from inside the page.** Dawn rejects the
+  shader, Chrome logs it at browser level, three neither throws nor writes to
+  `console`, and the draw is dropped. Only the process driving the browser sees
+  it, which is why `measure.mjs` grades that one and the page cannot.
+- **The node path is 5× faster to first frame than its own WebGL backend**:
+  24 fresh pipelines in **93 ms** against **468 ms**, on one machine, one
+  driver. And **both block the main thread for the whole of it** — 97 ms and
+  470 ms of measured main-thread unavailability. `renderAsync` returns a
+  promise; it does not move compilation off the thread.
+- Everything the report was most worried about works: drei's two lighting
+  mechanisms (`Environment files=` and `Environment` + `Lightformer`, both
+  reproduced from drei's installed source), `FogExp2`, the `BackSide`
+  vertex-coloured sky dome with additive sprites, and the leaf patch as a
+  `colorNode`. None of the three "Unsupported … configuration" errors fired.
+- `glslFn` works only on the WebGL backend, and says so cleanly on WebGPU:
+  `FunctionNode: Function is not a WGSL code.`
+
+**Two traps a parity harness has to know about**, both measured here:
+`readRenderTargetPixelsAsync` returns row 0 as the **top** of the frame on
+WebGPU and the **bottom** on WebGL, so a naive diff of two backends' buffers
+reports a total mismatch that is not a rendering difference; and a render target
+skips the tone curve the canvas applies — the same linear 0.5 comes back as
+**127** from a target and **197** from the canvas.
+
+**What it does not prove.** It is vanilla three: no `<Canvas>`, no drei
+component, no Next.js, so it measures drei's mechanisms rather than the React
+wrappers around them. Its geometry is a stand-in for the app's, so no number
+here is a visual-parity result and none of them is the app's frame time. One
+finding is deliberately left open: `scene.environmentIntensity = 0` removes only
+**50.1%** of the light — linearly, with a floor — and the probe rules out the
+background and the mirror sphere's centre without identifying what the floor is.
+
+### `binary-sun-clearance/`
+
+Three pinned frames of the create form's live preview, kept because they settle
+two questions that arrived as one screenshot — **"why are there two suns?"** and
+**"why is the sun paler than the old build?"** — and the answers are different.
+
+The two suns are a 3% rare feature from `ba7b716`, rolled because the preview's
+seed contains the nickname and signing in autofills it. The **welding** of the
+two stars into one lumpy mass was a real bug: `BinarySun.tsx` orbited the
+companion at the world-unit constant 2.4 while the primary's radius is seeded
+over 1.52–2.18, so above core scale ≈1.24 — 59% of the seeded range — the
+companion's photosphere sat inside the primary's.
+
+```
+node demos/binary-sun-clearance/measure.mjs "label=path/to/shot.png"   # crops, and measures the star's colour
+```
+
+**No page and no build step**, unlike every demo above: the subject here is the
+shipped app, photographed through its own parity harness by
+`apps/myunivokai-personalization/e2e/create-form-preview.spec.ts`. A second
+implementation of the scene would be a worse witness than the scene.
+
+**What it does not prove.** The geometry is deliberately NOT measured from these
+pixels — the primary's additive glow shell sits above every threshold low enough
+to catch the companion's disc, and a region count swings between 1 and 8 over a
+threshold sweep. That proof is arithmetic, in
+`solar-system/binarySunGeometry.test.ts`. And the colour measurement answers the
+paleness question by contradicting it — the star called pale measures saturation
+**0.495** against the other's **0.403** — without isolating what does read as
+washed out.
+
+> **That last sentence was the wrong comparison, and `sun-tone-curve/` below is
+> the right one.** Those two numbers are two seeds on the SAME build. The report
+> was about two BUILDS, and across those the sun lost 37% of its saturation to a
+> tone curve that had just been restored. Measuring the pair that was easy to
+> photograph rather than the pair the report named produced a true number that
+> answered nothing.
+
+### `sun-tone-curve/`
+
+Why the sun stopped being fiery. Four tone curves — no curve, AgX, ACES, Khronos
+PBR Neutral — applied to the colours the sun hands the renderer, over the sun
+texture's whole brightness ramp.
+
+Until `3f09796` the universe, forest and fallback families rendered with **no
+tone curve at all**, so every value above 1 clipped flat and kept all of its
+saturation. Restoring the curve was a real fix; the curve restored was AgX,
+which desaturates highlights by design. Measured: AgX keeps **0.632** of the old
+build's saturation and lifts middle grey from 0.18 to **0.215** — less colour
+and lighter darks, which is exactly "a sheet of frosted glass". Khronos PBR
+Neutral keeps **1.062** and takes middle grey down to 0.14, and is what shipped.
+
+```
+node demos/sun-tone-curve/measure.mjs   # the table, plus two checks on its own transcription
+node demos/sun-tone-curve/build.mjs     # -> dist/sun-tone-curve.html
+```
+
+**What it does not prove.** A frame is not these swatches — bloom, the grade,
+the vignette, the grain and the glow shell's additive blend all sit between this
+colour and a pixel, and none is modelled. The comparison holds anyway because
+all of them are identical across the four columns. It says nothing about the
+forest or the ocean, whose subjects are not a bright disc on black.

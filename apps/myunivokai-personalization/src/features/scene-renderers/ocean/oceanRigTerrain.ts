@@ -37,6 +37,8 @@ import {
 } from "three";
 import { randomFromSeed } from "@/lib/scene";
 import { applyCaustics, createCausticsUniforms, type CausticsUniforms } from "./oceanCaustics";
+import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
+import { maximumTextureAnisotropy } from "@/features/scene-renderers/shared/textureAnisotropy";
 
 /**
  * How much clear water the viewer keeps around itself. Six metres is enough that
@@ -132,22 +134,29 @@ function applySlopeRock(material: MeshStandardMaterial, slopeRockShift: { value:
   material.onBeforeCompile = (shader, renderer) => {
     previous?.(shader, renderer);
     shader.uniforms.uSlopeRockShift = slopeRockShift;
-    shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>" + SEABED_SLOPE_VERTEX_DECLARATIONS)
+    shader.vertexShader = requireShaderChunks(shader.vertexShader, "oceanRigTerrain slope rock vertex", [
+      SHADER_CHUNK_MARKERS.common,
+      SHADER_CHUNK_MARKERS.worldPositionVertex
+    ])
       .replace(
-        "#include <worldpos_vertex>",
+        SHADER_CHUNK_MARKERS.common, "#include <common>" + SEABED_SLOPE_VERTEX_DECLARATIONS)
+      .replace(
+        SHADER_CHUNK_MARKERS.worldPositionVertex,
         `#include <worldpos_vertex>
   vSeabedUpness = normalize(mat3(modelMatrix) * objectNormal).y;`
       );
-    shader.fragmentShader = shader.fragmentShader
+    shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "oceanRigTerrain slope rock fragment", [
+      SHADER_CHUNK_MARKERS.common,
+      SHADER_CHUNK_MARKERS.mapFragment
+    ])
       .replace(
-        "#include <common>",
+        SHADER_CHUNK_MARKERS.common,
         "#include <common>" + SEABED_SLOPE_FRAGMENT_DECLARATIONS
       )
       // After the texture, before the light: this changes what the surface IS
       // made of, so it has to be in the albedo the lighting then reads.
       .replace(
-        "#include <map_fragment>",
+        SHADER_CHUNK_MARKERS.mapFragment,
         `#include <map_fragment>
   float seabedSlopeSine = sqrt(max(0.0, 1.0 - vSeabedUpness * vSeabedUpness));
   float seabedRockAmount = smoothstep(${SLOPE_ROCK_ONSET_SINE}, ${SLOPE_ROCK_FULL_SINE}, seabedSlopeSine);
@@ -359,7 +368,7 @@ export function createSeabed(options: SeabedOptions): Seabed {
   // every other seabed material here (colour is likewise a placeholder until
   // tintSeabed runs).
   const causticUniforms = createCausticsUniforms(0, 1, "#CFF6FF");
-  const anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const anisotropy = maximumTextureAnisotropy(renderer);
   const sand = createSandTextures(512, windDirectionRadians, anisotropy);
   sand.map.repeat.set(extent / 6, extent / 6);
   sand.normalMap.repeat.copy(sand.map.repeat);
