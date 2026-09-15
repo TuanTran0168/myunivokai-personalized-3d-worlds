@@ -2483,14 +2483,78 @@ A 9:1 request comes back 1:1. Reading the source afterwards says why, twice over
 > as they did while the node frame was being compared against memory instead of against the frame it
 > is supposed to match.
 >
-> The port was reverted rather than landed behind its recorded divergence. The node path is
-> harness-only until Phase 9, so shipping it would have cost nothing visible — and it would have put
-> a 151.84 DEFECT into a ledger whose entries are supposed to be debts.
+
+> **RESOLVED 2026-09-15, AND `Sprite.count` WAS INNOCENT TOO.** The block above named the last
+> surviving suspect correctly in shape and wrongly in substance: the draw call was never the problem.
+> `instancedBufferAttribute()` **does not make an attribute instanced** unless it is handed a real,
+> non-interleaved `InstancedBufferAttribute`. The port passed `new BufferAttribute(...)`, which reads
+> as obviously correct and is silently stepped per VERTEX.
+>
+>     createBufferAttribute's general return is
+>       new BufferAttributeNode(...).setUsage(usage)     BufferAttributeNode.js:387
+>     — .setInstanced(instanced) is NEVER CALLED. Only the mat3/mat4 branches call it,
+>       so the TRUE that the function's own name promises is dropped for every float, vec2 and vec3.
+>
+>     The one surviving route into node.instanced is the constructor reading it off the value:
+>       this.instanced = value.isInstancedBufferAttribute      :146
+>
+>     A raw array is worse. setup() wraps it in a plain InterleavedBuffer and sets the flag on
+>     the ATTRIBUTE (:355), but for an interleaved attribute both backends read the BUFFER:
+>       WebGPUAttributeUtils.js:307   and   WebGLBackend.js:2555
+>     three's own "@TODO: Add a possible: InstancedInterleavedBufferAttribute" is the admission.
+>
+> With a real `InstancedBufferAttribute`, WebGPU takes `WebGPUAttributeUtils.js:312` and emits
+> `stepMode: 'instance'`, and the WebGL2 backend takes `WebGLBackend.js:2551` and calls
+> `vertexAttribDivisor`. That is the entire fix — one constructor — and the previously reverted port
+> renders the full scene unchanged in every other respect.
+>
+> **Why the bisect stopped one step short, which is the lesson worth more than the fix.** A
+> per-vertex step makes all N instances re-read elements 0..3 of the instance buffer as the quad's
+> four corners; those are star world positions, so every sprite becomes screen-filling geometry and
+> bloom returns the frame white. `count = 1` draws exactly one such quad and the frame survives. So
+> `count` really was the boundary — and reading a boundary as a cause is how "`Sprite.count > 1` is
+> broken" got written down. The variable that moved was not the variable that mattered.
+>
+> The check that would have found it needs no GPU at all, and now exists as
+> `nodeMaterials.test.ts`: build the node through three's real `instancedBufferAttribute` and assert
+> the predicate the backends apply. It runs in a second.
+>
+> §30.2's own conclusion below stands, with one word changed: the four point layers are an
+> architectural change because their GEOMETRY CONTRACT changes, not because instancing is unavailable.
 
 So the four point layers — `SizedStarPoints`, `NebulaCloudPoints`, the ocean's marine motes and its bubbles —
-are an **architectural change**, not a port: their geometry contract changes, on a three version this project
-does not yet run. Every row in §8, §12, §13, §21 and §27.1 that reads `PointsNodeMaterial` + `sizeNode` +
-`pointUV` is corrected by this section.
+are an **architectural change**, not a port: their geometry contract changes — a sized point becomes an
+instanced quad — and two of the four have now made that change and measured it. Every row in §8, §12, §13,
+§21 and §27.1 that reads `PointsNodeMaterial` + `sizeNode` + `pointUV` is corrected by this section.
+
+> **PHASE 8 IS DONE FOR THE UNIVERSE AND THE PARITY NUMBER DID NOT MOVE: 12.19 BEFORE, 12.22 AFTER.**
+> The family now has no raw `ShaderMaterial` left — `node-path-diagnostic.spec.ts` prints zero
+> `THREE.NodeBuilder: Material "ShaderMaterial" is not compatible` for it, against six per node
+> backend for the ocean. This is the second family to reach that state and the second to keep its
+> gap, and two is no longer an anomaly: **§26's "the gap is the PORT (Phases 6-8), not the backend"
+> is wrong as a general claim.**
+>
+> What was eliminated, by measurement. `ParityHarnessBridge` now reports the scene it is about to
+> draw, and at the pinned moment all three backends agree on the clock (6.0000), the camera (position
+> and quaternion identical to four decimals) and the scene graph (50 drawn objects, world-position
+> checksum 26.501). Two confident hypotheses died on the first read — the camera rig's intro move,
+> which integrates across frames, and a difference in orbital phase — and neither cost more than one
+> run, because the harness was extended to answer the question instead of being reasoned about.
+>
+> What is left is not in the scene. Sampling the same scanline out of both frames, the node path sits
+> systematically brighter in the shadows and midtones ACROSS THE WHOLE FRAME, including the top edge
+> far from the sun (0.07 -> 0.10, 0.09 -> 0.14, 0.12 -> 0.19 of 1.0), while the saturated sun core
+> matches to 0.03. A global lift that spares the clipped highlights is the signature of the POST
+> CHAIN, and the two chains are two implementations of the same six passes: pmndrs' `EffectComposer`
+> against three's TSL nodes, bloom for bloom and vignette for vignette.
+>
+> NOT ESTABLISHED, and deliberately not guessed at: which pass, and how much. The experiment that
+> settles it is a run with post disabled on both paths, which needs a lever the harness does not have
+> — and inventing one to confirm a hypothesis is exactly how the two above died.
+>
+> **This changes what Phases 9 and 10 are for.** Phase 10 cannot judge the fallback against a moving
+> baseline, and the ocean's 57.02 can no longer be read as the cost of its six unported shaders:
+> some fraction of it is whatever the other two families are made of.
 
 ### 30.3 The failure mode is worse than Phase 0's, because the page cannot see it
 

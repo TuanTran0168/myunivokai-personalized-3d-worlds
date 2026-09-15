@@ -182,6 +182,73 @@ Three rules, each of which has already cost something:
   WebGL2 backend — and that is the configuration ~20% of users land on after
   the swap. `isNodeRenderer` therefore tests for `renderer.backend`, the same
   question `ParityHarnessBridge.describeBackend` asks.
+- **A sized point is a QUAD on the node path, and its per-instance attributes
+  must be `InstancedBufferAttribute`s.** WebGPU has no point size at all, so
+  `SizedStarPoints` and `NebulaCloudPoints` are a `Points` on the classic path
+  and an instanced `Sprite` on the node one — the only port so far where the
+  dual path changes the SCENE GRAPH and not just the shader. Build the per-item
+  values with `perInstanceAttribute()` from `shared/nodeMaterials.ts`; see the
+  trap below for why the obvious spelling does not work.
+
+### `instancedBufferAttribute()` does not make an attribute instanced
+
+Given a raw `Float32Array` or a plain `BufferAttribute` — the two shapes its own
+JSDoc lists first — three's `instancedBufferAttribute()` returns a node the GPU
+steps **once per vertex**. It does not warn, the shader compiles, and nothing
+throws. Three lines have to agree and only one input makes all three agree:
+
+1. `createBufferAttribute`'s general return is
+   `new BufferAttributeNode(...).setUsage(usage)` — **`.setInstanced()` is never
+   called** (`BufferAttributeNode.js:387`). Only its `mat3`/`mat4` branches call
+   it, so the `true` the function's name promises is dropped for every `float`,
+   `vec2` and `vec3`.
+2. The one surviving route into `node.instanced` is the constructor reading it
+   off the value: `this.instanced = value.isInstancedBufferAttribute` (`:146`).
+3. A raw array is worse: `setup()` wraps it in a plain `InterleavedBuffer` and
+   sets the flag on the ATTRIBUTE (`:355`), but for an interleaved attribute both
+   backends read it off the BUFFER — `WebGPUAttributeUtils.js:307` and
+   `WebGLBackend.js:2555`. three's own `@TODO: Add a possible:
+   InstancedInterleavedBufferAttribute` on the line above is the admission.
+
+So pass a real, non-interleaved `InstancedBufferAttribute`. WebGPU then takes
+`WebGPUAttributeUtils.js:312` and emits `stepMode: 'instance'`; the WebGL2
+backend takes `WebGLBackend.js:2551` and calls `vertexAttribDivisor`.
+
+**What it looks like when it is wrong is a white screen, nowhere near the
+cause.** A per-vertex step makes all N instances re-read elements 0..3 of the
+instance buffer as the quad's four corners. Those are star world positions,
+hundreds of units across, so every sprite becomes a pair of screen-filling
+triangles — and the bloom chain downsamples the whole frame through a mip
+pyramid and returns it white. `count = 1` draws one such quad and the frame
+survives, which is why bisecting on `count` found the boundary while bisecting
+on the shader maths never could: nothing in the shader was wrong.
+
+`nodeMaterials.test.ts` asserts all of this against three's real code, so a
+version bump that fixes `createBufferAttribute` fails a unit test in a second
+rather than a screenshot in ten minutes.
+
+### A finished port is not a matching frame
+
+Two families now have no hand-written shader left, and both still differ from
+the classic renderer:
+
+| family | fully ported | WebGPU vs WebGL | WebGPU vs forceWebGL |
+|---|---|---|---|
+| forest | yes | 19.49 | 1.24 |
+| universe | yes | 12.22 | 0.45 |
+| ocean | no, six `ShaderMaterial`s left | 57.02 | 0.02 |
+
+The universe is the sharper data point because its number **did not move**:
+12.19 before its two point shaders were ported, 12.22 after. What was eliminated
+by measurement, using `ParityHarnessBridge.readSceneState()`, is that at the
+pinned moment all three backends agree on the clock (6.0000), the camera
+(identical to four decimals) and the scene graph (50 drawn objects, world
+position checksum 26.501) — so the renderers are handed the same arrangement.
+What is left is a frame that sits systematically brighter in the shadows and
+midtones while the saturated highlights match, which is the signature of the
+**post chain**: pmndrs' `EffectComposer` and three's TSL nodes are two
+implementations of the same six passes. No shader port closes that, and Phase 10
+cannot judge the fallback until it is attributed.
 
 ### Camera focus (NASA-Eyes style)
 

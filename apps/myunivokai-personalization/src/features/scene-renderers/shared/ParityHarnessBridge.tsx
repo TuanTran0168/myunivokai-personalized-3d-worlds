@@ -2,13 +2,75 @@
 
 import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
-import { WebGLCoordinateSystem } from "three";
+import { Vector3, WebGLCoordinateSystem, type Object3D } from "three";
 import {
   pinnedClockTimestamps,
   PINNED_CLOCK_STEP_COUNT,
   type ParityHarnessRequest,
   PARITY_RENDERER_WEBGL
 } from "./parityHarness";
+
+/**
+ * How far apart two scene graphs are allowed to be and still be called the same
+ * arrangement. Two backends running identical arithmetic agree exactly; this
+ * exists so float noise in a matrix decomposition does not read as motion.
+ */
+const WORLD_POSITION_DECIMALS = 3;
+
+/** How many of the outermost drawn objects to name when the checksums disagree. */
+const FARTHEST_OBJECTS_TO_NAME = 6;
+
+/**
+ * WHAT IS ACTUALLY IN THE FRAME AND WHERE, so a divergence can be attributed to
+ * the scene or to the renderer instead of guessed at from a picture.
+ *
+ * Two frames of the same fixture at the same pinned clock and the same camera
+ * can still differ, and the two reasons are worlds apart: either the two
+ * renderers drew the SAME arrangement differently — a shader, a colour space, a
+ * blend — or they were handed DIFFERENT arrangements, which is not a renderer
+ * question at all. A mean absolute error cannot tell those apart and neither can
+ * looking at the images, which is how an afternoon goes into a wrong hypothesis.
+ *
+ * So this walks the graph the renderer is about to draw and reports the object
+ * count and a checksum over every drawn object's world position. Equal
+ * checksums mean the renderers were given the same scene.
+ */
+function summariseDrawnObjects(scene: Object3D) {
+  const worldPosition = new Vector3();
+  const farthest: { name: string; distance: number; position: string }[] = [];
+  let drawnObjectCount = 0;
+  let worldPositionChecksum = 0;
+  scene.updateMatrixWorld(true);
+  scene.traverse((object) => {
+    const drawable = object as { isMesh?: boolean; isPoints?: boolean; isSprite?: boolean; isLine?: boolean };
+    if (!drawable.isMesh && !drawable.isPoints && !drawable.isSprite && !drawable.isLine) return;
+    drawnObjectCount += 1;
+    object.getWorldPosition(worldPosition);
+    // Summed rather than hashed: the traversal order is the graph's order and is
+    // the same on both paths, but a sum says "these are the same positions"
+    // without also asserting "in the same order", and order is not the question.
+    worldPositionChecksum += worldPosition.x + worldPosition.y + worldPosition.z;
+    farthest.push({
+      name: object.name || object.type,
+      distance: worldPosition.length(),
+      position: worldPosition
+        .toArray()
+        .map((component) => component.toFixed(WORLD_POSITION_DECIMALS))
+        .join(",")
+    });
+  });
+  return {
+    drawnObjectCount,
+    worldPositionChecksum: Number(worldPositionChecksum.toFixed(WORLD_POSITION_DECIMALS)),
+    // A checksum says "the same or not". When the answer is "not", the next
+    // question is always "which object", so the few furthest from the origin —
+    // the ones a viewer would call the planets — are listed by name.
+    farthestObjects: farthest
+      .sort((left, right) => right.distance - left.distance)
+      .slice(0, FARTHEST_OBJECTS_TO_NAME)
+      .map((entry) => `${entry.name}@${entry.position}`)
+  };
+}
 
 /**
  * The only thing the Playwright side can reach into, and it reports what it
@@ -27,6 +89,8 @@ export function ParityHarnessBridge({ request }: { request: ParityHarnessRequest
   const renderer = useThree((state) => state.gl);
   const advance = useThree((state) => state.advance);
   const clock = useThree((state) => state.clock);
+  const camera = useThree((state) => state.camera);
+  const scene = useThree((state) => state.scene);
 
   useEffect(() => {
     // The frameloop is already "never" — `UniverseCanvas` passes it as a prop
@@ -63,12 +127,36 @@ export function ParityHarnessBridge({ request }: { request: ParityHarnessRequest
       if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
     };
 
+    /**
+     * Where the camera actually ended up, and what time the scene thinks it is.
+     *
+     * **A PINNED CLOCK IS NOT A PINNED SCENE, and this is what tells them
+     * apart.** The clock pin guarantees both backends see the same sixty deltas;
+     * it guarantees nothing about anything that INTEGRATES across them from a
+     * starting state — `CameraRig`'s intro move accumulates its own elapsed
+     * seconds, and its idle easing is `1 - exp(-k·dt)` toward a target. If the
+     * two paths begin that integration from different states, every object in
+     * the frame moves while the one at the camera's target stays put, and the
+     * diff reads exactly like a renderer difference.
+     *
+     * So this is the first question to ask of any parity number that will not
+     * explain itself: did the camera end up in the same place? One read, instead
+     * of the bisect that question otherwise costs.
+     */
+    const readSceneState = () => ({
+      elapsedTime: clock.elapsedTime,
+      cameraPosition: camera.position.toArray(),
+      cameraQuaternion: camera.quaternion.toArray(),
+      ...summariseDrawnObjects(scene)
+    });
+
     const harness = {
       backend,
       requestedRenderer: request.renderer,
       pinnedSeconds: request.pinnedSeconds,
       stepCount: PINNED_CLOCK_STEP_COUNT,
-      advanceToPinnedTime
+      advanceToPinnedTime,
+      readSceneState
     };
     (window as unknown as { __parityHarness?: typeof harness }).__parityHarness = harness;
 
@@ -83,7 +171,7 @@ export function ParityHarnessBridge({ request }: { request: ParityHarnessRequest
         delete (window as unknown as { __parityHarness?: unknown }).__parityHarness;
       }
     };
-  }, [advance, clock, renderer, request]);
+  }, [advance, camera, clock, renderer, request, scene]);
 
   return null;
 }

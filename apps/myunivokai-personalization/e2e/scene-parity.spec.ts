@@ -146,19 +146,33 @@ const KNOWN_WEBGPU_BLOCKERS: readonly { fragment: string; name: string }[] = [
  *
  * The two NEW backends agree with each other to 0.02 of 255 and both disagree
  * with today's renderer by 57. So the WebGL2 fallback is faithful to the WebGPU
- * path — §28.3 item 1's fallback half, answered — and the whole gap is the node
- * path rendering this scene differently from the classic renderer, which is what
- * the ocean's four raw GLSL `ShaderMaterial`s not being node materials looks
- * like from the outside. The gap is the PORT (Phases 6-8), not the backend.
+ * path — §28.3 item 1's fallback half, answered — and the gap is the node path
+ * rendering this scene differently from the classic renderer. Phase 4 read that
+ * as "the gap is the PORT (Phases 6-8), not the backend", because the ocean's
+ * raw GLSL `ShaderMaterial`s are exactly what the node builder refuses.
  *
- * **CORRECTED 2026-09-11: "the gap is the port" is true of the ocean and is NOT
- * the whole story.** The forest is now the first family with no hand-written
- * shader left, and it still differs from the classic renderer by 19.49 — while
- * its own two node backends agree to 1.24. A finished port is therefore not the
- * same thing as a matching frame, and the residual has to be attributed before
- * Phase 10 can judge the fallback. The forest's entry below names the
- * candidates. The fallback half of the claim stands on every fixture measured:
- * 0.02 ocean, 0.45 universe, 1.24 forest between WebGPU and forceWebGL.
+ * **CORRECTED, TWICE, AND THE SECOND TIME IS NOT A REFINEMENT OF THE FIRST.**
+ *
+ *   2026-09-11  The forest became the first family with no hand-written shader
+ *               left and STILL differs by 19.49. A finished port is therefore
+ *               not the same thing as a matching frame.
+ *   2026-09-15  The universe became the second, and its gap did not move at all
+ *               — 12.19 before the port, 12.22 after. Two families is no longer
+ *               an anomaly, and "the gap is the port" cannot be repaired by
+ *               narrowing it to the ocean.
+ *
+ * What the universe's entry below adds is that the residual has now been
+ * measured rather than only named: same clock, same camera, same fifty objects
+ * at the same world positions, and a frame that is systematically brighter in
+ * the shadows and midtones. That is the POST CHAIN — two implementations of the
+ * same six passes, pmndrs against three's TSL nodes — and no shader port closes
+ * it. **So the ocean's 57.02 is no longer evidence for what the ocean's own six
+ * shaders cost.** Some fraction of it is whatever the other two families are
+ * made of; the rest is measurable only once those six are ported.
+ *
+ * The fallback half of Phase 4's claim survives both corrections intact, on
+ * every fixture measured: 0.02 ocean, 0.45 universe, 1.24 forest between WebGPU
+ * and forceWebGL.
  */
 const DIVERGENCE_HEADROOM = 1.1;
 
@@ -170,13 +184,53 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
   differingFraction: number;
   closedBy: string;
 }[] = [
+  /**
+   * **THE UNIVERSE IS THE SECOND FULLY PORTED FAMILY, AND ITS NUMBER DID NOT
+   * MOVE.** Both entries below used to say they would be closed by Phase 8 —
+   * "SizedStarPoints and NebulaCloudPoints become node materials". Phase 8 is
+   * done: those two layers are node materials, the diagnostic prints zero
+   * `THREE.NodeBuilder: Material "ShaderMaterial" is not compatible` for this
+   * fixture (against six per node backend for the ocean), and the gap went from
+   * 12.19 to 12.22. That is not the port failing. It is the SAME correction the
+   * forest forced one entry down, arrived at from the other direction, and two
+   * families agreeing is no longer a coincidence: §26's "the gap is the PORT
+   * (Phases 6-8), not the backend" is wrong as a general claim.
+   *
+   * WHAT WAS ELIMINATED, by measurement rather than by argument. The harness now
+   * reports the scene it is about to draw (`ParityHarnessBridge.readSceneState`),
+   * and at the pinned moment all three backends agree on:
+   *
+   *   the clock          6.0000 on all three
+   *   the camera         position and quaternion identical to four decimals
+   *   the scene graph    50 drawn objects, world-position checksum 26.501
+   *
+   * So the renderers were handed the SAME arrangement of the SAME objects from
+   * the SAME viewpoint. Two confident hypotheses died there — the camera rig's
+   * intro, which integrates across frames, and a difference in orbital phase —
+   * and neither survived the first read.
+   *
+   * WHAT IS LEFT, AND IT IS NOT IN THE SCENE. Sampling the same scanline out of
+   * both frames, the node path sits systematically brighter in the shadows and
+   * midtones ACROSS THE WHOLE FRAME, including the top edge far from the sun
+   * (0.07 -> 0.10, 0.09 -> 0.14, 0.12 -> 0.19 of 1.0), while the saturated sun
+   * core matches to 0.03. A global lift that spares the clipped highlights is
+   * the signature of the POST CHAIN, and the two chains are two different
+   * implementations of the same six passes: pmndrs' `EffectComposer` against
+   * three's TSL nodes, bloom for bloom and vignette for vignette. Nothing a
+   * shader port touches.
+   *
+   * NOT ESTABLISHED, and deliberately not guessed at: which pass, and by how
+   * much. The experiment that would settle it is a run with post disabled on
+   * both paths; it needs a lever the harness does not have yet, and inventing
+   * one to confirm a hypothesis is how the last two died.
+   */
   {
     fixture: "universe-world",
     comparison: "forceWebGL against WebGL",
-    meanAbsoluteError: 11.99,
-    worstBlockError: 204.47,
-    differingFraction: 0.6069,
-    closedBy: "Phase 8 (SizedStarPoints and NebulaCloudPoints become node materials)"
+    meanAbsoluteError: 12.03,
+    worstBlockError: 204.74,
+    differingFraction: 0.6086,
+    closedBy: "the post chain, NOT a shader port — the universe has no GLSL left. See the block above."
   },
   // MEASURED FOR THE FIRST TIME 2026-09-11. This leg used to be tolerated as a
   // render failure rather than compared, and the universe's `WebGPU against
@@ -184,10 +238,10 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
   {
     fixture: "universe-world",
     comparison: "WebGPU against WebGL",
-    meanAbsoluteError: 12.19,
-    worstBlockError: 205.01,
-    differingFraction: 0.609,
-    closedBy: "Phase 8 (SizedStarPoints and NebulaCloudPoints become node materials)"
+    meanAbsoluteError: 12.22,
+    worstBlockError: 205.48,
+    differingFraction: 0.6109,
+    closedBy: "the post chain, NOT a shader port — the universe has no GLSL left. See the block above."
   },
   /**
    * THE FOREST'S FIRST NUMBERS EVER, AND THEY ARE NOT A PORT DEBT.

@@ -1,3 +1,4 @@
+import { InstancedBufferAttribute } from "three";
 import type * as ThreeTSL from "three/tsl";
 import type * as ThreeWebGPU from "three/webgpu";
 
@@ -113,6 +114,89 @@ export function isNodeRenderer(renderer: unknown): boolean {
  */
 export function nodeMaterialModulesFor(renderer: unknown): NodeMaterialModules | null {
   return isNodeRenderer(renderer) ? loadedNodeMaterialModules() : null;
+}
+
+/**
+ * The per-instance attribute that three will actually step once per instance.
+ *
+ * **THIS FUNCTION EXISTS BECAUSE `instancedBufferAttribute()` DOES NOT MAKE AN
+ * ATTRIBUTE INSTANCED, AND THE SYMPTOM IS A WHITE SCREEN RATHER THAN AN ERROR.**
+ * Passing it a raw `Float32Array` or a plain `BufferAttribute` — the two shapes
+ * its own JSDoc lists first — produces an attribute the GPU steps per VERTEX.
+ * Three places in three have to agree for instancing to happen, and only one
+ * input makes all three agree:
+ *
+ * 1. `createBufferAttribute`'s general return is
+ *    `new BufferAttributeNode(...).setUsage(usage)` — **`.setInstanced(instanced)`
+ *    is never called** (`BufferAttributeNode.js:387`). Only the `mat3` and `mat4`
+ *    branches above it call it, so the `true` that the function's own name
+ *    promises is dropped for every float, vec2 and vec3.
+ * 2. The one surviving route into `node.instanced` is the constructor, which
+ *    reads it off the value: `this.instanced = value.isInstancedBufferAttribute`
+ *    (`:146`). A plain `BufferAttribute` leaves it undefined.
+ * 3. A raw array is worse than useless. `setup()` wraps it in a plain
+ *    `InterleavedBuffer` and sets `isInstancedBufferAttribute` on the ATTRIBUTE
+ *    (`:355`) — but for an interleaved attribute both backends read the flag off
+ *    the BUFFER: `data.isInstancedInterleavedBuffer` in
+ *    `WebGPUAttributeUtils.js:307` and again in `WebGLBackend.js:2555`. three's
+ *    own `@TODO: Add a possible: InstancedInterleavedBufferAttribute`, one line
+ *    above, is the admission that this path cannot be instanced at all.
+ *
+ * A real, non-interleaved `InstancedBufferAttribute` is the only input that
+ * satisfies every one of them: WebGPU then takes `WebGPUAttributeUtils.js:312`
+ * and emits `stepMode: 'instance'`, and the WebGL2 backend takes
+ * `WebGLBackend.js:2551` and calls `vertexAttribDivisor`.
+ *
+ * **WHAT IT LOOKS LIKE WHEN IT IS WRONG, because the symptom points nowhere
+ * near the cause.** A per-vertex step makes all N instances re-read elements
+ * 0..3 of the instance buffer as though they were the quad's four corners.
+ * Those elements are star world positions — hundreds of units across — so every
+ * sprite becomes a pair of screen-filling triangles, and the bloom chain
+ * downsamples the whole frame through a mip pyramid and returns it as white.
+ * Setting `count = 1` draws exactly one such quad and the frame survives, which
+ * is why bisecting on `count` found the boundary and bisecting on the shader
+ * maths never could: nothing in the shader was wrong.
+ *
+ * `nodeMaterials.test.ts` asserts this against three's real code rather than
+ * against this description, so a version bump that changes any of the three
+ * lines above fails a unit test instead of a screenshot.
+ */
+export function perInstanceAttribute(values: Float32Array, componentsPerInstance: number): InstancedBufferAttribute {
+  return new InstancedBufferAttribute(values, componentsPerInstance);
+}
+
+/**
+ * Whether the GPU will step this attribute once per instance, asked the way the
+ * two backends ask it.
+ *
+ * This is `perInstanceAttribute`'s contract written as code, and it lives beside
+ * it rather than in the three test files that check it, because three copies of
+ * a predicate about someone else's internals is three copies that drift the
+ * first time three moves a line. Nothing at runtime calls it — each backend
+ * applies its own copy, at the lines named below — and that is the point: it
+ * exists so a test can ask the same question the renderer will, instead of
+ * restating the answer.
+ *
+ *   WebGPU  `WebGPUAttributeUtils.js:307` picks the flag off the BUFFER for an
+ *           interleaved attribute and `:312` off the ATTRIBUTE otherwise, then
+ *           emits `stepMode: 'instance'` or `'vertex'`.
+ *   WebGL2  `WebGLBackend.js:2551` and `:2555` make the same two-branch choice
+ *           and call `vertexAttribDivisor` only if one of them holds.
+ *
+ * The interleaved branch is what makes the raw-array overload unfixable: it
+ * produces an interleaved attribute, so both backends look for the flag on a
+ * buffer that never carries one.
+ */
+export function attributeStepsPerInstance(attribute: object): boolean {
+  const flags = attribute as {
+    isInterleavedBufferAttribute?: boolean;
+    isInstancedBufferAttribute?: boolean;
+    data?: { isInstancedInterleavedBuffer?: boolean };
+  };
+  if (flags.isInterleavedBufferAttribute === true) {
+    return flags.data?.isInstancedInterleavedBuffer === true;
+  }
+  return flags.isInstancedBufferAttribute === true;
 }
 
 /**

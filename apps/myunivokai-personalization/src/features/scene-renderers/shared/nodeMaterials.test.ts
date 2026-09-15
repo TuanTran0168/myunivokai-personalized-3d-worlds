@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { BufferAttribute } from "three";
+import { instancedBufferAttribute } from "three/tsl";
 import {
   isNodeRenderer,
   loadNodeMaterialModules,
   loadedNodeMaterialModules,
+  attributeStepsPerInstance,
   nodeMaterialModulesFor,
+  perInstanceAttribute,
   resetNodeMaterialModulesForTesting
 } from "./nodeMaterials";
 
@@ -106,5 +110,70 @@ describe("node material modules", () => {
   it("returns the modules for a node renderer once they have loaded", async () => {
     const modules = await loadNodeMaterialModules();
     expect(nodeMaterialModulesFor({ backend: { isWebGPUBackend: true } })).toBe(modules);
+  });
+});
+/**
+ * WHETHER AN ATTRIBUTE IS INSTANCED, ASKED OF THREE RATHER THAN OF A COMMENT.
+ *
+ * The predicate itself is `attributeStepsPerInstance`, declared beside
+ * `perInstanceAttribute` because it is that function's contract; its doc comment
+ * has the four lines in three that decide the answer.
+ *
+ * These assertions are the reason `perInstanceAttribute` exists. The first
+ * attempt at the universe's point layers passed `new BufferAttribute(...)` to
+ * `instancedBufferAttribute(...)` — a call that reads as obviously correct, is
+ * accepted without complaint, builds a shader that compiles, throws nothing, and
+ * renders a white screen. It cost a bisect on a real GPU to find, and the only
+ * thing that would have found it sooner is this file.
+ *
+ * So the subject here is three's behaviour, not ours. Every expectation below is
+ * measured through `three/tsl`'s real `instancedBufferAttribute`, which means a
+ * three upgrade that fixes `createBufferAttribute` — or breaks the working path
+ * — fails a unit test in a second instead of a screenshot in ten minutes.
+ */
+describe("per-instance attributes", () => {
+  const COMPONENTS_PER_INSTANCE = 3;
+  const INSTANCE_VALUES = new Float32Array([1, 2, 3, 4, 5, 6]);
+
+  it("steps per instance for the attribute perInstanceAttribute builds", () => {
+    const node = instancedBufferAttribute(
+      perInstanceAttribute(INSTANCE_VALUES, COMPONENTS_PER_INSTANCE),
+      "vec3"
+    ) as unknown as { instanced: boolean; attribute: object };
+
+    expect(node.instanced).toBe(true);
+    expect(attributeStepsPerInstance(node.attribute)).toBe(true);
+  });
+
+  /**
+   * THE BUG, PINNED. A plain `BufferAttribute` passed to a function called
+   * `instancedBufferAttribute` is not instanced, because
+   * `createBufferAttribute`'s general return never calls `.setInstanced()` —
+   * only its `mat3` and `mat4` branches do. The flag survives only when the
+   * VALUE carries it, which a plain attribute does not.
+   *
+   * This expectation asserts three is still wrong. When it stops being wrong the
+   * test fails, and that failure is the signal to simplify `perInstanceAttribute`
+   * away rather than a regression to fix.
+   */
+  it("does not step per instance for a plain BufferAttribute, which is the trap", () => {
+    const node = instancedBufferAttribute(
+      new BufferAttribute(INSTANCE_VALUES, COMPONENTS_PER_INSTANCE),
+      "vec3"
+    ) as unknown as { instanced: boolean; attribute: object };
+
+    expect(node.instanced).toBeFalsy();
+    expect(attributeStepsPerInstance(node.attribute)).toBe(false);
+  });
+
+  /**
+   * And the raw-array overload, which three's own JSDoc lists first, drops the
+   * flag before it reaches the node at all — `instanced` is literally `false` on
+   * a node built by a function whose entire purpose is to set it to true.
+   */
+  it("does not step per instance for a raw array, which is the documented overload", () => {
+    const node = instancedBufferAttribute(INSTANCE_VALUES, "vec3") as unknown as { instanced: boolean };
+
+    expect(node.instanced).toBe(false);
   });
 });

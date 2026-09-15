@@ -45,9 +45,40 @@ const DIAGNOSTIC_FIXTURES = [
 // hypothesis.
 const NODE_BACKENDS = ["webgl", "webgpu-forcewebgl", "webgpu"] as const;
 
-type ParityHarnessWindow = Window & {
-  __parityHarness?: { backend: string; advanceToPinnedTime: () => Promise<void> };
+type SceneState = {
+  elapsedTime: number;
+  cameraPosition: number[];
+  cameraQuaternion: number[];
+  drawnObjectCount: number;
+  worldPositionChecksum: number;
+  farthestObjects: string[];
 };
+
+type ParityHarnessWindow = Window & {
+  __parityHarness?: {
+    backend: string;
+    advanceToPinnedTime: () => Promise<void>;
+    readSceneState: () => SceneState;
+  };
+};
+
+/** Enough decimals to see a real difference and not enough to see float noise. */
+const POSE_DECIMALS = 4;
+
+function describeSceneState(state: SceneState): string {
+  const round = (component: number) => component.toFixed(POSE_DECIMALS);
+  return [
+    `clock ${round(state.elapsedTime)}`,
+    `camera [${state.cameraPosition.map(round).join(", ")}]`,
+    `facing [${state.cameraQuaternion.map(round).join(", ")}]`,
+    `${state.drawnObjectCount} drawn`,
+    `positions sum ${state.worldPositionChecksum}`
+  ].join("  ·  ");
+}
+
+function describeFarthestObjects(state: SceneState): string {
+  return state.farthestObjects.map((entry) => `    ${entry}`).join("\n");
+}
 
 async function serveWorldFixtures(page: Page) {
   const routes = [
@@ -116,6 +147,19 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
       } else {
         console.log("advanceToPinnedTime completed without throwing");
       }
+
+      // THE SECOND QUESTION, ASKED BEFORE THE PICTURE IS INTERPRETED: a pinned
+      // clock is not a pinned scene. `CameraRig`'s intro move and its idle
+      // easing both INTEGRATE across the sixty steps from whatever state they
+      // start in, and a camera that lands somewhere else moves every object in
+      // the frame except the one it is pointed at — which reads exactly like a
+      // renderer difference and is not one.
+      const sceneStateBeforeShot = await page.evaluate(() =>
+        (window as ParityHarnessWindow).__parityHarness!.readSceneState()
+      );
+      console.log(`scene state: ${describeSceneState(sceneStateBeforeShot)}`);
+
+      console.log(`outermost objects:\n${describeFarthestObjects(sceneStateBeforeShot)}`);
 
       console.log(`\npage errors: ${pageErrors.length}`);
       for (const pageError of pageErrors) {

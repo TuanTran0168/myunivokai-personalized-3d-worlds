@@ -1,9 +1,19 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
-import type { Blending } from "three";
-import { getNebulaCloudAtlasTexture, NEBULA_CLOUD_ATLAS_VARIANT_COUNT } from "../shared/nebulaCloudTexture";
+import type { Blending, Texture } from "three";
+import {
+  getNebulaCloudAtlasTexture,
+  NEBULA_CLOUD_ATLAS_VARIANT_COUNT
+} from "../shared/nebulaCloudTexture";
+import { useNodeMaterialModules } from "../shared/useNodeMaterialModules";
+import {
+  buildCloudPointsNodeLayer,
+  cloudPointsFragmentShaderGlsl,
+  CLOUD_POINTS_VERTEX_SHADER,
+  type CloudLayerAttributes
+} from "./nebulaCloudPointsMaterial";
 
 /**
  * A layer of large, faint, individually-rotated cloud sprites sampling one of
@@ -13,70 +23,15 @@ import { getNebulaCloudAtlasTexture, NEBULA_CLOUD_ATLAS_VARIANT_COUNT } from "..
  * "puffs". With additive blending the layer glows (nebula, galactic core);
  * with normal blending and dark colors it darkens what is behind it (the
  * Great Rift's dust).
+ *
+ * Two implementations, and they are different OBJECTS rather than different
+ * materials — a `Points` on the classic path, an instanced `Sprite` on the node
+ * one, because WebGPU has no point size. See `nebulaCloudPointsMaterial.ts`,
+ * and `shared/sizedStarPointsMaterial.ts` for why the two sizing expressions
+ * are the same expression.
  */
 
-const CLOUD_VERTEX_SHADER = /* glsl */ `
-  attribute float cloudSize;
-  attribute vec3 cloudColor;
-  attribute float cloudRotation;
-  attribute float cloudAlpha;
-  attribute float cloudVariant;
-  uniform float uPointScale;
-  varying vec3 vCloudColor;
-  varying float vCloudRotation;
-  varying float vCloudAlpha;
-  varying float vCloudVariant;
-
-  void main() {
-    vCloudColor = cloudColor;
-    vCloudRotation = cloudRotation;
-    vCloudAlpha = cloudAlpha;
-    vCloudVariant = cloudVariant;
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = cloudSize * (uPointScale / -mvPosition.z);
-    gl_Position = projectionMatrix * mvPosition;
-  }
-`;
-
-// Each sprite samples its atlas tile through a per-cloud rotation, so one
-// shared texture never reads as repeated stamps. Rotated corners are clamped
-// back into the tile, whose edge is fully transparent by construction.
-const CLOUD_FRAGMENT_SHADER = /* glsl */ `
-  uniform sampler2D uCloudMap;
-  uniform float uAtlasVariantCount;
-  uniform float uGlobalOpacity;
-  varying vec3 vCloudColor;
-  varying float vCloudRotation;
-  varying float vCloudAlpha;
-  varying float vCloudVariant;
-
-  void main() {
-    vec2 centeredCoord = gl_PointCoord - vec2(0.5);
-    float rotationCosine = cos(vCloudRotation);
-    float rotationSine = sin(vCloudRotation);
-    vec2 rotatedCoord = vec2(
-      centeredCoord.x * rotationCosine - centeredCoord.y * rotationSine,
-      centeredCoord.x * rotationSine + centeredCoord.y * rotationCosine
-    ) + vec2(0.5);
-    vec2 tileCoord = clamp(rotatedCoord, 0.0, 1.0);
-    float atlasU = (tileCoord.x + vCloudVariant) / uAtlasVariantCount;
-    float sampledAlpha = texture2D(uCloudMap, vec2(atlasU, tileCoord.y)).a;
-    float alpha = sampledAlpha * vCloudAlpha * uGlobalOpacity;
-    if (alpha < 0.004) {
-      discard;
-    }
-    gl_FragColor = vec4(vCloudColor, alpha);
-  }
-`;
-
-export type CloudLayerAttributes = {
-  positions: Float32Array;
-  colors: Float32Array;
-  sizes: Float32Array;
-  rotations: Float32Array;
-  alphas: Float32Array;
-  variants: Float32Array;
-};
+export type { CloudLayerAttributes };
 
 type NebulaCloudPointsProps = {
   clouds: CloudLayerAttributes;
@@ -88,14 +43,55 @@ type NebulaCloudPointsProps = {
 };
 
 const DEFAULT_RENDER_ORDER = 0;
+const HALF = 2;
 
-export function NebulaCloudPoints({
+function NodeCloudSprites({
   clouds,
   globalOpacity,
   blending,
-  renderOrder = DEFAULT_RENDER_ORDER,
+  renderOrder,
+  atlasTexture,
+  modules
+}: Required<Pick<NebulaCloudPointsProps, "clouds" | "globalOpacity" | "blending" | "renderOrder">> & {
+  atlasTexture: Texture;
+  modules: NonNullable<ReturnType<typeof useNodeMaterialModules>>;
+}) {
+  const layer = useMemo(
+    () => buildCloudPointsNodeLayer(modules, clouds, blending, atlasTexture),
+    [atlasTexture, blending, clouds, modules]
+  );
+
+  // Constructed here rather than by fiber, so nothing else will dispose them.
+  useEffect(() => {
+    return () => {
+      layer.material.dispose();
+      layer.geometry.dispose();
+    };
+  }, [layer]);
+
+  useFrame(() => {
+    layer.uniforms.globalOpacity.value = globalOpacity;
+  });
+
+  return (
+    <sprite
+      frustumCulled={false}
+      renderOrder={renderOrder}
+      count={layer.instanceCount}
+      geometry={layer.geometry}
+      material={layer.material}
+    />
+  );
+}
+
+function ClassicCloudPoints({
+  clouds,
+  globalOpacity,
+  blending,
+  renderOrder,
   geometryKey
-}: NebulaCloudPointsProps) {
+}: Required<Pick<NebulaCloudPointsProps, "clouds" | "globalOpacity" | "blending" | "renderOrder">> &
+  Pick<NebulaCloudPointsProps, "geometryKey">) {
   // Created once; useFrame keeps the values current without rebuilding the
   // material (a new uniforms object would recompile the shader program).
   const uniforms = useMemo(
@@ -107,11 +103,12 @@ export function NebulaCloudPoints({
     }),
     []
   );
+  const fragmentShader = useMemo(() => cloudPointsFragmentShaderGlsl(), []);
 
   useFrame((state) => {
     // Same sizeAttenuation convention as the star layers, so cloud sizes are
     // stable across window sizes and device pixel ratios.
-    uniforms.uPointScale.value = (state.size.height * state.gl.getPixelRatio()) / 2;
+    uniforms.uPointScale.value = (state.size.height * state.gl.getPixelRatio()) / HALF;
     uniforms.uGlobalOpacity.value = globalOpacity;
   });
 
@@ -126,13 +123,50 @@ export function NebulaCloudPoints({
         <bufferAttribute attach="attributes-cloudVariant" args={[clouds.variants, 1]} />
       </bufferGeometry>
       <shaderMaterial
-        vertexShader={CLOUD_VERTEX_SHADER}
-        fragmentShader={CLOUD_FRAGMENT_SHADER}
+        vertexShader={CLOUD_POINTS_VERTEX_SHADER}
+        fragmentShader={fragmentShader}
         uniforms={uniforms}
         transparent
         depthWrite={false}
         blending={blending}
       />
     </points>
+  );
+}
+
+export function NebulaCloudPoints({
+  clouds,
+  globalOpacity,
+  blending,
+  renderOrder = DEFAULT_RENDER_ORDER,
+  geometryKey
+}: NebulaCloudPointsProps) {
+  const nodeModules = useNodeMaterialModules();
+  const atlasTexture = useMemo(() => getNebulaCloudAtlasTexture(), []);
+
+  // A null atlas means no `document` — the texture is painted on a canvas — and
+  // a node graph cannot sample null. The classic path passes the same null into
+  // a uniform and draws nothing, which is the same outcome by a different route.
+  if (nodeModules && atlasTexture) {
+    return (
+      <NodeCloudSprites
+        clouds={clouds}
+        globalOpacity={globalOpacity}
+        blending={blending}
+        renderOrder={renderOrder}
+        atlasTexture={atlasTexture}
+        modules={nodeModules}
+      />
+    );
+  }
+
+  return (
+    <ClassicCloudPoints
+      clouds={clouds}
+      globalOpacity={globalOpacity}
+      blending={blending}
+      renderOrder={renderOrder}
+      geometryKey={geometryKey}
+    />
   );
 }
