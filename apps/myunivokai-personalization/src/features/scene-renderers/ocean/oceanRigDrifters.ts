@@ -23,11 +23,15 @@ import {
   InstancedMesh,
   Matrix4,
   NormalBlending,
+  Object3D,
   Points,
   ShaderMaterial,
   SphereGeometry,
+  Sprite,
+  type SpriteMaterial,
 } from "three";
 import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
+import { moteLayerBuild, MOTE_SEED_ATTRIBUTE } from "./oceanMoteMaterial";
 import {
   bubbleMaterial,
   jellyfishMaterial,
@@ -206,7 +210,12 @@ export type MoteUniforms = {
 };
 
 export type MoteLayer = {
-  points: Points;
+  /**
+   * A `Points` on the classic path and an instanced `Sprite` on the node one —
+   * see `createMoteLayer`. Declared as the base class because every caller only
+   * ever sets `visible`, moves it, or adds it to a group.
+   */
+  object: Object3D;
   uniforms: MoteUniforms;
   /** Bioluminescent layers flicker and blend additively; snow does neither. */
   living: boolean;
@@ -245,7 +254,12 @@ const MOTE_LAYERS: readonly MoteLayerSpec[] = [
   { key: "biolum", count: 900, radius: 80, height: 60, size: 2.6, color: "#5CF2E0", opacity: 0.95, fall: 0.05, living: true },
 ];
 
-function createMoteLayer(spec: MoteLayerSpec, random: Random, quality: "high" | "low"): MoteLayer {
+function createMoteLayer(
+  spec: MoteLayerSpec,
+  random: Random,
+  quality: "high" | "low",
+  nodeModules: NodeMaterialModules | null,
+): MoteLayer {
   // The low tier thins every layer rather than dropping one: losing the near
   // layer costs the medium cue that matters most, and losing the far one flattens
   // the depth. Keeping all four at a third of the count keeps the structure.
@@ -263,92 +277,48 @@ function createMoteLayer(spec: MoteLayerSpec, random: Random, quality: "high" | 
     seeds[i] = random();
   }
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("aMoteSeed", new Float32BufferAttribute(seeds, 1));
+  geometry.setAttribute(MOTE_SEED_ATTRIBUTE, new Float32BufferAttribute(seeds, 1));
 
-  const uniforms: MoteUniforms = {
-    uMoteTime: { value: 0 },
-    uFogColor: { value: new Color("#0A2438") },
-    uFogDensity: { value: 0.02 },
-    uMoteOpacity: { value: spec.opacity },
-  };
-
-  const material = new ShaderMaterial({
-    uniforms: {
-      ...uniforms,
-      uMoteColor: { value: new Color(spec.color) },
-      uMoteSize: { value: spec.size },
-      uMoteFall: { value: spec.fall },
-      uMoteSpan: { value: spec.height * 2 },
-      uMoteFlicker: { value: spec.living ? 1 : 0 },
+  const { geometry: spriteGeometry, material, instanceCount, uniforms } = moteLayerBuild(
+    {
+      size: spec.size,
+      color: spec.color,
+      opacity: spec.opacity,
+      fall: spec.fall,
+      span: spec.height * 2,
+      living: spec.living === true,
     },
-    transparent: true,
-    depthWrite: false,
-    // Snow blends NORMALLY; only the living layer is additive.
-    //
-    // Marine snow is mineral and organic debris — it REFLECTS the light already
-    // in the water, it does not make any. Blending 4200 flakes additively adds
-    // real light to every frame, and in the abyss, where the water itself is at
-    // 0.13, that is most of the frame's brightness. Bioluminescence is the
-    // opposite: it is emitted, so it is additive by definition.
-    blending: spec.living ? AdditiveBlending : NormalBlending,
-    fog: false,
-    vertexShader: /* glsl */ `
-      attribute float aMoteSeed;
-      uniform float uMoteTime;
-      uniform float uMoteSize;
-      uniform float uMoteFall;
-      uniform float uMoteSpan;
-      uniform float uMoteFlicker;
-      varying float vFogFactor;
-      varying float vFlicker;
-      void main(){
-        vec3 p = position;
-        // Marine snow falls. Slowly, and never in step: the seed offsets both the
-        // rate and the phase, so no two motes share a cycle.
-        p.y -= mod(uMoteTime * uMoteFall * (0.6 + aMoteSeed * 0.8) + aMoteSeed * uMoteSpan, uMoteSpan)
-             - uMoteSpan * 0.5;
-        p.x += sin(uMoteTime * 0.2 + aMoteSeed * 6.2831853) * 0.4;
-        vec4 viewPosition = modelViewMatrix * vec4(p, 1.0);
-        float viewDistance = -viewPosition.z;
-        vFogFactor = 1.0 - exp(-pow(max(0.0, viewDistance) * 0.02, 2.0));
-        // Living light pulses; a mineral flake does not.
-        vFlicker = mix(1.0, 0.45 + 0.55 * sin(uMoteTime * (1.4 + aMoteSeed * 3.0) + aMoteSeed * 12.0),
-                       uMoteFlicker);
-        // 300, not a smaller "safer" number: this is the demo's own constant,
-        // and undersizing it is why the motes read as barely-there specks
-        // instead of the "single highest-value cheap change" its own comment
-        // calls them. The per-seed jitter is an addition on top, not instead.
-        gl_PointSize = uMoteSize * (1.0 + aMoteSeed * 0.6) * (300.0 / max(1.0, viewDistance));
-        gl_Position = projectionMatrix * viewPosition;
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uFogColor;
-      uniform vec3 uMoteColor;
-      uniform float uMoteOpacity;
-      varying float vFogFactor;
-      varying float vFlicker;
-      void main(){
-        vec2 offset = gl_PointCoord - 0.5;
-        float radius = length(offset);
-        if (radius > 0.5) discard;
-        float alpha = pow(1.0 - radius * 2.0, 1.7) * uMoteOpacity * vFlicker;
-        gl_FragColor = vec4(mix(uMoteColor, uFogColor, vFogFactor), alpha * (1.0 - vFogFactor * 0.85));
-        // Not encoded, on the same grounds as the jellyfish above. The living
-        // layer is additive outright; the three marine-snow layers are alpha
-        // blended at 0.07 to 0.30 opacity, which is close enough to additive in
-        // effect that encoding them lifts the whole water column the same way.
-      }`,
-  });
+    seeds,
+    positions,
+    nodeModules,
+  );
 
-  const points = new Points(geometry, material);
-  points.frustumCulled = false;
+  // THE NODE PATH DRAWS A SPRITE AND THE CLASSIC PATH DRAWS POINTS, which is why
+  // this layer's field is an `Object3D` rather than a `Points`. WebGPU has no
+  // point size at all, so a sized mote has to be an instanced quad there — see
+  // `oceanMoteMaterial.ts`. Everything the rig does with it (`visible`,
+  // `position`, `group.add`) is `Object3D`, so nothing downstream cares which.
+  let object: Object3D;
+  if (spriteGeometry) {
+    // Its own quad, not the module-level one three shares between every sprite
+    // it constructs (`Sprite.js:69-93`); attaching to that would attach to every
+    // other sprite in the process, and this family mounts four of these.
+    const sprite = new Sprite(material as unknown as SpriteMaterial);
+    sprite.geometry = spriteGeometry;
+    sprite.count = instanceCount;
+    object = sprite;
+  } else {
+    object = new Points(geometry, material);
+  }
+  object.frustumCulled = false;
 
   return {
-    points,
+    object,
     uniforms,
     living: spec.living === true,
     dispose: () => {
       geometry.dispose();
+      spriteGeometry?.dispose();
       material.dispose();
     },
   };
@@ -358,6 +328,7 @@ function createMoteLayer(spec: MoteLayerSpec, random: Random, quality: "high" | 
 export function createMoteLayers(options: {
   random: Random;
   quality: "high" | "low";
+  nodeModules: NodeMaterialModules | null;
 }): MoteLayer[] {
-  return MOTE_LAYERS.map((spec) => createMoteLayer(spec, options.random, options.quality));
+  return MOTE_LAYERS.map((spec) => createMoteLayer(spec, options.random, options.quality, options.nodeModules));
 }

@@ -743,6 +743,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
   // uniform haze that reads as a dirty lens; the parallax between a near layer
   // and a far one is what reads as a medium. See oceanRigDrifters.ts.
   const moteLayers = createMoteLayers({
+    nodeModules,
     random: randomFromSeed(`${seed}:marine-snow`),
     quality,
   });
@@ -752,8 +753,8 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     // Snow keeps its authored opacity; the living layer rides bioluminescence,
     // so it is nearly out at the surface and full in the dark.
     if (layer.living) layer.uniforms.uMoteOpacity.value = 0.12 + biolum * 0.88;
-    layer.points.visible = !above;
-    group.add(layer.points);
+    layer.object.visible = !above;
+    group.add(layer.object);
     disposables.push(layer);
   }
 
@@ -1001,7 +1002,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       godRays.position.copy(cameraPosition);
       // The snow travels with the viewer: a fixed cloud is a box you swim out of.
       for (const layer of moteLayers) {
-        layer.points.position.set(cameraPosition.x, 0, cameraPosition.z);
+        layer.object.position.set(cameraPosition.x, 0, cameraPosition.z);
       }
       jellyfish.mesh.position.set(cameraPosition.x, 0, cameraPosition.z);
       surface.position.x = cameraPosition.x;

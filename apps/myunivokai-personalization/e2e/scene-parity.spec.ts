@@ -291,9 +291,9 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
   /**
    * **THE OCEAN IS PART PORTED, AND THIS ENTRY IS THE ONLY ONE THAT WILL MOVE
    * FOR MORE THAN ONE REASON.** Two of its six `ShaderMaterial`s — the jellyfish
-   * bell and the bubble stream — are node materials as of 2026-09-15; the
-   * surface, the backdrop, the god rays and marine snow are not, and neither are
-   * its eight `onBeforeCompile` patches.
+   * bell, the bubble stream and marine snow — are node materials as of
+   * 2026-09-15; the surface, the backdrop and the god rays are not, and neither
+   * are its eight `onBeforeCompile` patches.
    *
    * So the number below is a MIXTURE, and reading it as "what the ocean's
    * shaders cost" is what the two entries above already had to be corrected
@@ -306,27 +306,32 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
    * when the two drifters landed, which is exact, and it will reach 0 before
    * this entry can be deleted.
    *
-   * Why 57.02 became 57.07 rather than falling: before the port the node path
-   * drew no jellyfish and no bubbles at all, because the builder refused them.
-   * It now draws both, and drawing two correct layers onto a scene whose seabed
-   * is still wrong does not have to reduce a whole-frame mean. The bubble column
-   * has left the worst-block list entirely, which is the part that is checkable.
+   * Why the number RISES as the port proceeds — 57.02, then 57.07, then 57.30 —
+   * rather than falling. Before each step the node path drew those layers NOT AT
+   * ALL, because the builder refused them. It now draws them, onto a water column
+   * and a seabed that are still wrong, so an alpha-blended layer cannot cancel
+   * against the classic frame however faithful it is. The difference map says the
+   * same thing plainly: the flood is the god rays, the backdrop and the terrain
+   * patches, and the drifters appear only as small rings at the RIGHT positions.
+   *
+   * So this entry will keep rising until the water is ported, and that is not a
+   * regression. The refusal count is the number to watch until then.
    */
   {
     fixture: "ocean-shallow",
     comparison: "WebGPU against WebGL",
-    meanAbsoluteError: 57.07,
+    meanAbsoluteError: 57.3,
     worstBlockError: 150.77,
     differingFraction: 0.9821,
-    closedBy: "Phases 6-8 for PART of it — four shaders and eight patches remain — and the post chain for the rest"
+    closedBy: "Phases 6-8 for PART of it — three shaders and eight patches remain — and the post chain for the rest"
   },
   {
     fixture: "ocean-shallow",
     comparison: "forceWebGL against WebGL",
-    meanAbsoluteError: 57.07,
+    meanAbsoluteError: 57.3,
     worstBlockError: 151.2,
     differingFraction: 0.9821,
-    closedBy: "Phases 6-8 for PART of it — four shaders and eight patches remain — and the post chain for the rest"
+    closedBy: "Phases 6-8 for PART of it — three shaders and eight patches remain — and the post chain for the rest"
   }
 ];
 
