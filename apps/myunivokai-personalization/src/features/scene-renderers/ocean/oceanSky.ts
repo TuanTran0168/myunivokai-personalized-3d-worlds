@@ -1,3 +1,6 @@
+import type { Node } from "three/webgpu";
+import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
+
 /**
  * One sun, two media, and one sky function.
  *
@@ -136,6 +139,69 @@ export const BLUE_SEA_YAW_OFFSET_RADIANS = (118 * Math.PI) / 180;
  * conversion, so everything above 1.0 clips flat to white — which is what glare
  * in this renderer has actually been every time it has been reported.
  */
+/**
+ * THE SKY MODEL'S CONSTANTS, DECLARED ONCE SO BOTH SHADER LANGUAGES READ THEM.
+ *
+ * These lived inside the GLSL string as `const float` declarations and as bare
+ * literals. They were lifted out without changing a byte of the shader — the
+ * extraction was verified by comparing the rebuilt string against the committed
+ * one character for character — because §26's port needs a TSL twin of this
+ * function, and two copies of Preetham's fit is two copies that drift.
+ *
+ * `oceanSky.test.ts` keeps that honest from here on: it scans the GLSL for any
+ * numeric literal these constants cannot produce.
+ *
+ * Everything here except the last group comes from three.js's `Sky.js`, which
+ * comes from Preetham et al. Changing one is changing the atmosphere.
+ */
+const SKY_PI = 3.141592653589793;
+
+/** Optical depth of each medium at the zenith, in metres. */
+const RAYLEIGH_ZENITH_LENGTH = 8.4e3;
+const MIE_ZENITH_LENGTH = 1.25e3;
+
+/** cos of the sun's angular radius, and the width of its edge. */
+const SUN_ANGULAR_DIAMETER_COS = 0.9999566769464485;
+const SUN_DISC_EDGE_SOFTNESS = 0.00002;
+const SUN_DISC_INTENSITY = 19000;
+
+/** Phase-function normalisation: 3/(16π) and 1/(4π). */
+const THREE_OVER_SIXTEEN_PI = 0.05968310365946075;
+const ONE_OVER_FOUR_PI = 0.07957747154594767;
+
+/**
+ * The optical-path fit, and the reason a low sun is red.
+ *
+ * `1 / (cos(zenith) + 0.15 * (93.885 - zenithDegrees)^-1.253)` is Preetham's
+ * approximation of the air mass. The path grows without bound toward the
+ * horizon, blue is scattered out of it, and no amount of tuning elsewhere
+ * removes that — it can only be composed around.
+ */
+const AIR_MASS_COEFFICIENT = 0.15;
+const AIR_MASS_HORIZON_DEGREES = 93.885;
+const AIR_MASS_EXPONENT = -1.253;
+const DEGREES_PER_HALF_TURN = 180;
+
+/** The Rayleigh phase reads a cosine remapped from -1..1 into 0..1. */
+const COSINE_REMAP_SCALE = 0.5;
+const COSINE_REMAP_OFFSET = 0.5;
+
+/** Exponents in the in-scattering composition, verbatim from Sky.js. */
+const IN_SCATTER_POWER = 1.5;
+const IN_SCATTER_SUNSET_POWER = 0.5;
+const HORIZON_FALLOFF_POWER = 5;
+
+/** The ambient floor and the final scale, before the model's own gamma. */
+const AMBIENT_EXTINCTION_BASE = 0.1;
+const SKY_EXPOSURE = 0.04;
+const SKY_FLOOR_GREEN = 0.0003;
+const SKY_FLOOR_BLUE = 0.00075;
+const SKY_GAMMA_BASE = 1.2;
+const SKY_GAMMA_SUNFADE = 1.2;
+
+/** Guards a zero-length horizontal direction at the exact zenith. */
+const FLAT_DIRECTION_EPSILON = 1e-5;
+
 export const SKY_UNIFORMS_GLSL = /* glsl */ `
   uniform vec3 uSkySunDirection;
   uniform vec3 uBetaR;
@@ -146,12 +212,12 @@ export const SKY_UNIFORMS_GLSL = /* glsl */ `
 `;
 
 export const PREETHAM_SKY_GLSL = /* glsl */ `
-  const float SKY_PI = 3.141592653589793;
-  const float rayleighZenithLength = 8.4E3;
-  const float mieZenithLength = 1.25E3;
-  const float sunAngularDiameterCos = 0.9999566769464485;
-  const float THREE_OVER_SIXTEENPI = 0.05968310365946075;
-  const float ONE_OVER_FOURPI = 0.07957747154594767;
+  const float SKY_PI = ${SKY_PI};
+  const float rayleighZenithLength = ${RAYLEIGH_ZENITH_LENGTH.toExponential(1).replace("e+", "E")};
+  const float mieZenithLength = ${MIE_ZENITH_LENGTH.toExponential(2).replace("e+", "E")};
+  const float sunAngularDiameterCos = ${SUN_ANGULAR_DIAMETER_COS};
+  const float THREE_OVER_SIXTEENPI = ${THREE_OVER_SIXTEEN_PI};
+  const float ONE_OVER_FOURPI = ${ONE_OVER_FOUR_PI};
 
   float rayleighPhase(float cosTheta) {
     return THREE_OVER_SIXTEENPI * (1.0 + pow(cosTheta, 2.0));
@@ -159,7 +225,7 @@ export const PREETHAM_SKY_GLSL = /* glsl */ `
 
   float hgPhase(float cosTheta, float g) {
     float g2 = pow(g, 2.0);
-    float inverse = 1.0 / pow(1.0 - 2.0 * g * cosTheta + g2, 1.5);
+    float inverse = 1.0 / pow(1.0 - 2.0 * g * cosTheta + g2, ${IN_SCATTER_POWER});
     return ONE_OVER_FOURPI * ((1.0 - g2) * inverse);
   }
 
@@ -171,29 +237,29 @@ export const PREETHAM_SKY_GLSL = /* glsl */ `
     // out of it. It cannot be tuned away, only composed around.
     float zenithAngle = acos(max(0.0, dot(up, direction)));
     float inverse = 1.0 / (cos(zenithAngle) +
-      0.15 * pow(93.885 - ((zenithAngle * 180.0) / SKY_PI), -1.253));
+      ${AIR_MASS_COEFFICIENT} * pow(${AIR_MASS_HORIZON_DEGREES} - ((zenithAngle * ${DEGREES_PER_HALF_TURN}.0) / SKY_PI), ${AIR_MASS_EXPONENT}));
     float sR = rayleighZenithLength * inverse;
     float sM = mieZenithLength * inverse;
 
     vec3 Fex = exp(-(uBetaR * sR + uBetaM * sM));
 
     float cosTheta = dot(direction, uSkySunDirection);
-    vec3 betaRTheta = uBetaR * rayleighPhase(cosTheta * 0.5 + 0.5);
+    vec3 betaRTheta = uBetaR * rayleighPhase(cosTheta * ${COSINE_REMAP_SCALE} + ${COSINE_REMAP_OFFSET});
     vec3 betaMTheta = uBetaM * hgPhase(cosTheta, uMieG);
 
-    vec3 Lin = pow(uSunE * ((betaRTheta + betaMTheta) / (uBetaR + uBetaM)) * (1.0 - Fex), vec3(1.5));
+    vec3 Lin = pow(uSunE * ((betaRTheta + betaMTheta) / (uBetaR + uBetaM)) * (1.0 - Fex), vec3(${IN_SCATTER_POWER}));
     Lin *= mix(vec3(1.0),
-      pow(uSunE * ((betaRTheta + betaMTheta) / (uBetaR + uBetaM)) * Fex, vec3(0.5)),
-      clamp(pow(1.0 - dot(up, uSkySunDirection), 5.0), 0.0, 1.0));
+      pow(uSunE * ((betaRTheta + betaMTheta) / (uBetaR + uBetaM)) * Fex, vec3(${IN_SCATTER_SUNSET_POWER})),
+      clamp(pow(1.0 - dot(up, uSkySunDirection), ${HORIZON_FALLOFF_POWER}.0), 0.0, 1.0));
 
-    vec3 L0 = vec3(0.1) * Fex;
+    vec3 L0 = vec3(${AMBIENT_EXTINCTION_BASE}) * Fex;
     if (withDisc) {
-      float sundisk = smoothstep(sunAngularDiameterCos, sunAngularDiameterCos + 0.00002, cosTheta);
-      L0 += (uSunE * 19000.0 * Fex) * sundisk;
+      float sundisk = smoothstep(sunAngularDiameterCos, sunAngularDiameterCos + ${SUN_DISC_EDGE_SOFTNESS}, cosTheta);
+      L0 += (uSunE * ${SUN_DISC_INTENSITY}.0 * Fex) * sundisk;
     }
 
-    vec3 texColor = (Lin + L0) * 0.04 + vec3(0.0, 0.0003, 0.00075);
-    return pow(texColor, vec3(1.0 / (1.2 + 1.2 * uSunfade)));
+    vec3 texColor = (Lin + L0) * ${SKY_EXPOSURE} + vec3(0.0, ${SKY_FLOOR_GREEN}, ${SKY_FLOOR_BLUE});
+    return pow(texColor, vec3(1.0 / (${SKY_GAMMA_BASE} + ${SKY_GAMMA_SUNFADE} * uSunfade)));
   }
 
   // Snell's window, done properly: un-refract the view direction and ask the
@@ -202,9 +268,9 @@ export const PREETHAM_SKY_GLSL = /* glsl */ `
   // compressed horizon lands on its rim — which is the right way round, and the
   // difference between the iconic image and a lamp.
   vec3 skyThroughSnellsWindow(vec3 viewDirection, float sinTheta) {
-    float sinAir = min(1.0, sinTheta * 1.333);
+    float sinAir = min(1.0, sinTheta * ${WATER_REFRACTIVE_INDEX});
     float cosAir = sqrt(max(0.0, 1.0 - sinAir * sinAir));
-    vec3 flatDirection = normalize(vec3(viewDirection.x, 0.0, viewDirection.z) + vec3(1e-5));
+    vec3 flatDirection = normalize(vec3(viewDirection.x, 0.0, viewDirection.z) + vec3(${FLAT_DIRECTION_EPSILON.toExponential()}));
     return preethamSky(flatDirection * sinAir + vec3(0.0, 1.0, 0.0) * cosAir, true);
   }
 `;
@@ -265,3 +331,266 @@ export const GERSTNER_SURFACE_GLSL = (maxComponents: number) => /* glsl */ `
     jacobian = (1.0 + jxx) * (1.0 + jzz) - jxz * jxz;
   }
 `;
+
+/* ========================================================================
+   THE SAME SKY, AS A NODE GRAPH
+   ======================================================================== */
+
+/**
+ * The six values the sky model reads per view, as whatever node the calling
+ * material built them from.
+ *
+ * Passed in rather than created here because three materials share this
+ * function and each owns its own uniforms — the backdrop, the surface's
+ * reflection and the view up through Snell's window must never disagree about
+ * where the sun is, and they cannot disagree if they are handed the same nodes.
+ */
+export type SkyUniformNodes = {
+  sunDirection: Node<"vec3">;
+  betaRayleigh: Node<"vec3">;
+  betaMie: Node<"vec3">;
+  sunIntensity: Node<"float">;
+  sunFade: Node<"float">;
+  mieDirectionalG: Node<"float">;
+};
+
+/**
+ * Preetham's analytic daylight model as a TSL graph, from the constants above.
+ *
+ * **`withDisc` IS A JAVASCRIPT BOOLEAN AND THAT IS THE PORT, NOT A
+ * SIMPLIFICATION.** The GLSL takes a `bool` parameter and every call site passes
+ * a literal, so the branch is resolved before the shader exists in both
+ * languages — the difference is only that a node graph has no preprocessor and
+ * builds the branch it was asked for instead of compiling both. The reflection
+ * call passes false for a reason worth keeping: a mirrored 19000x solar disc
+ * seen through a wave normal is a field of white pixels, not a glitter path.
+ */
+export function preethamSkyNode(
+  modules: NodeMaterialModules,
+  uniforms: SkyUniformNodes,
+  direction: Node<"vec3">,
+  withDisc: boolean
+): Node<"vec3"> {
+  const { acos, clamp, cos, dot, exp, float, max, mix, pow, smoothstep, vec3 } = modules.tsl;
+  const { sunDirection, betaRayleigh, betaMie, sunIntensity, sunFade, mieDirectionalG } = uniforms;
+
+  const up = vec3(0, 1, 0);
+
+  // The air mass, and the reason a low sun is red — see AIR_MASS_COEFFICIENT.
+  const zenithAngle = acos(max(float(0), dot(up, direction)));
+  const airMass = float(1).div(
+    cos(zenithAngle).add(
+      float(AIR_MASS_COEFFICIENT).mul(
+        pow(
+          float(AIR_MASS_HORIZON_DEGREES).sub(zenithAngle.mul(DEGREES_PER_HALF_TURN).div(SKY_PI)),
+          float(AIR_MASS_EXPONENT)
+        )
+      )
+    )
+  );
+
+  const extinction = exp(
+    betaRayleigh.mul(float(RAYLEIGH_ZENITH_LENGTH).mul(airMass))
+      .add(betaMie.mul(float(MIE_ZENITH_LENGTH).mul(airMass)))
+      .negate()
+  );
+
+  const cosTheta = dot(direction, sunDirection);
+
+  const rayleighPhase = float(THREE_OVER_SIXTEEN_PI).mul(
+    float(1).add(pow(cosTheta.mul(COSINE_REMAP_SCALE).add(COSINE_REMAP_OFFSET), float(2)))
+  );
+  const gSquared = pow(mieDirectionalG, float(2));
+  const henyeyGreensteinPhase = float(ONE_OVER_FOUR_PI).mul(
+    float(1)
+      .sub(gSquared)
+      .div(pow(float(1).sub(mieDirectionalG.mul(2).mul(cosTheta)).add(gSquared), float(IN_SCATTER_POWER)))
+  );
+
+  const betaRayleighTheta = betaRayleigh.mul(rayleighPhase);
+  const betaMieTheta = betaMie.mul(henyeyGreensteinPhase);
+  const scatterRatio = betaRayleighTheta.add(betaMieTheta).div(betaRayleigh.add(betaMie));
+
+  const inScatter = pow(
+    sunIntensity.mul(scatterRatio).mul(float(1).sub(extinction)),
+    vec3(IN_SCATTER_POWER)
+  ).mul(
+    mix(
+      vec3(1, 1, 1),
+      pow(sunIntensity.mul(scatterRatio).mul(extinction), vec3(IN_SCATTER_SUNSET_POWER)),
+      clamp(pow(float(1).sub(dot(up, sunDirection)), float(HORIZON_FALLOFF_POWER)), float(0), float(1))
+    )
+  );
+
+  let directLight = vec3(AMBIENT_EXTINCTION_BASE, AMBIENT_EXTINCTION_BASE, AMBIENT_EXTINCTION_BASE).mul(extinction);
+  if (withDisc) {
+    const sunDisc = smoothstep(
+      float(SUN_ANGULAR_DIAMETER_COS),
+      float(SUN_ANGULAR_DIAMETER_COS + SUN_DISC_EDGE_SOFTNESS),
+      cosTheta
+    );
+    directLight = directLight.add(sunIntensity.mul(SUN_DISC_INTENSITY).mul(extinction).mul(sunDisc));
+  }
+
+  const exposed = inScatter
+    .add(directLight)
+    .mul(SKY_EXPOSURE)
+    .add(vec3(0, SKY_FLOOR_GREEN, SKY_FLOOR_BLUE));
+
+  return pow(
+    exposed,
+    vec3(1, 1, 1).div(float(SKY_GAMMA_BASE).add(sunFade.mul(SKY_GAMMA_SUNFADE)))
+  ) as unknown as Node<"vec3">;
+}
+
+/**
+ * The view up through Snell's window, as a node graph.
+ *
+ * Un-refracts the view direction and asks the atmosphere what is actually
+ * there: `sin(air) = 1.333 * sin(water)` inverts Snell, so the dark zenith lands
+ * at the centre of the cone and the compressed horizon lands on its rim. That is
+ * the right way round, and the difference between the iconic image and a lamp.
+ */
+export function skyThroughSnellsWindowNode(
+  modules: NodeMaterialModules,
+  uniforms: SkyUniformNodes,
+  viewDirection: Node<"vec3">,
+  sinTheta: Node<"float">
+): Node<"vec3"> {
+  const { float, max, min, normalize, sqrt, vec3 } = modules.tsl;
+
+  const sinAir = min(float(1), sinTheta.mul(WATER_REFRACTIVE_INDEX));
+  const cosAir = sqrt(max(float(0), float(1).sub(sinAir.mul(sinAir))));
+  const flatDirection = normalize(
+    vec3(viewDirection.x, 0, viewDirection.z).add(
+      vec3(FLAT_DIRECTION_EPSILON, FLAT_DIRECTION_EPSILON, FLAT_DIRECTION_EPSILON)
+    )
+  );
+  return preethamSkyNode(
+    modules,
+    uniforms,
+    flatDirection.mul(sinAir).add(vec3(0, 1, 0).mul(cosAir)) as unknown as Node<"vec3">,
+    true
+  );
+}
+
+/* ========================================================================
+   THE SAME SURFACE, AS A NODE GRAPH
+   ======================================================================== */
+
+/**
+ * The wave field's five uniforms, as whatever nodes the calling material built.
+ *
+ * `directions` and `terms` are ARRAY uniforms — one entry per wave component —
+ * and they are the first of those in this migration. `uniformArray` takes the
+ * same `Vector2[]` and `Vector4[]` the classic path puts in its `IUniform`, so
+ * both paths read one set of numbers built once in `oceanRig`.
+ */
+export type WaveUniformNodes = {
+  /**
+   * Typed by the one method this function calls rather than as three's
+   * `UniformArrayNode`: what the wave sum needs from an array uniform is
+   * indexed access, and saying so keeps the contract readable and independent
+   * of which node class `uniformArray` happens to return.
+   */
+  directions: { element: (index: Node<"int">) => Node<"vec2"> };
+  terms: { element: (index: Node<"int">) => Node<"vec4"> };
+  waveCount: Node<"int">;
+  choppiness: Node<"float">;
+  time: Node<"float">;
+};
+
+/** What one evaluation of the surface yields, and every caller needs all three. */
+export type OceanSurfaceNodes = {
+  offset: Node<"vec3">;
+  normal: Node<"vec3">;
+  /** Below zero the surface is overtaking itself, which is what breaking IS. */
+  jacobian: Node<"float">;
+};
+
+/**
+ * The Gerstner surface as a TSL graph, with the analytic normal and the folding
+ * Jacobian — the node twin of `GERSTNER_SURFACE_GLSL`.
+ *
+ * **IT RETURNS A STRUCT BECAUSE THE LOOP MUST RUN ONCE.** The GLSL uses three
+ * `out` parameters, which a node graph has no equivalent for; three separate
+ * builders would each rebuild the whole sum, and this sum is the most expensive
+ * thing in the ocean's vertex stage. A `struct` return keeps one loop and hands
+ * back all three, which is what the `out` parameters were doing.
+ *
+ * **BOTH FACES OF THE WATER CALL THIS.** Before the shared version existed, the
+ * sea seen from above and the ceiling seen from below ran different wave
+ * functions — two unrelated shapes for one sheet of water — which is the whole
+ * reason this lives here rather than in either material.
+ */
+export function oceanSurfaceNode(
+  modules: NodeMaterialModules,
+  uniforms: WaveUniformNodes,
+  horizontalPosition: Node<"vec2">,
+  maxComponents: number
+): OceanSurfaceNodes {
+  const { Break, Fn, If, Loop, cos, dot, float, normalize, sin, struct, vec3 } = modules.tsl;
+  const { directions, terms, waveCount, choppiness, time } = uniforms;
+
+  const OceanSurfaceStruct = struct({ offset: "vec3", normal: "vec3", jacobian: "float" }, "OceanSurface");
+
+  const evaluate = Fn(([position]: [Node<"vec2">]) => {
+    const offset = vec3(0, 0, 0).toVar();
+    const surfaceNormal = vec3(0, 1, 0).toVar();
+    const foldXX = float(0).toVar();
+    const foldZZ = float(0).toVar();
+    const foldXZ = float(0).toVar();
+
+    Loop(maxComponents, ({ i }: { i: Node<"int"> }) => {
+      If(i.greaterThanEqual(waveCount), () => {
+        Break();
+      });
+
+      const direction = directions.element(i);
+      const term = terms.element(i);
+      const amplitude = term.x;
+      const wavenumber = term.y;
+      const angularFrequency = term.z;
+      const theta = wavenumber
+        .mul(dot(direction, position))
+        .sub(angularFrequency.mul(time))
+        .add(term.w);
+      const cosine = cos(theta);
+      const sine = sin(theta);
+
+      // The horizontal half of the particle's circular orbit. It is the only
+      // reason a rendered sea has the asymmetric profile a real one has: sines
+      // give symmetric humps at any amplitude.
+      const steepness = choppiness.mul(amplitude);
+      offset.x.subAssign(direction.x.mul(steepness).mul(sine));
+      offset.z.subAssign(direction.y.mul(steepness).mul(sine));
+      offset.y.addAssign(amplitude.mul(cosine));
+
+      // GPU Gems 1, chapter 1, equation 12. Finite differences would need three
+      // extra evaluations of the whole sum per vertex and would still lag.
+      const slope = wavenumber.mul(amplitude);
+      surfaceNormal.x.subAssign(direction.x.mul(slope).mul(cosine));
+      surfaceNormal.z.subAssign(direction.y.mul(slope).mul(cosine));
+      surfaceNormal.y.subAssign(choppiness.mul(slope).mul(sine));
+      foldXX.subAssign(choppiness.mul(slope).mul(direction.x).mul(direction.x).mul(cosine));
+      foldZZ.subAssign(choppiness.mul(slope).mul(direction.y).mul(direction.y).mul(cosine));
+      foldXZ.subAssign(choppiness.mul(slope).mul(direction.x).mul(direction.y).mul(cosine));
+    });
+
+    // Collapses exactly where the surface is overtaking itself, and overtaking
+    // itself is what breaking IS. This is the foam mask.
+    const jacobian = float(1)
+      .add(foldXX)
+      .mul(float(1).add(foldZZ))
+      .sub(foldXZ.mul(foldXZ));
+
+    return OceanSurfaceStruct(offset, normalize(surfaceNormal), jacobian);
+  });
+
+  const evaluated = evaluate(horizontalPosition);
+  return {
+    offset: evaluated.get("offset") as unknown as Node<"vec3">,
+    normal: evaluated.get("normal") as unknown as Node<"vec3">,
+    jacobian: evaluated.get("jacobian") as unknown as Node<"float">
+  };
+}
