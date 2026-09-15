@@ -22,6 +22,7 @@ import {
   VIGNETTE_DARKNESS,
   VIGNETTE_OFFSET
 } from "./postEffectsTuning";
+import { DEFAULT_FAMILY_TONE_MAPPING, toneMappingNodeFunctionNameFor } from "./sceneToneMapping";
 import { shouldComputeAmbientOcclusionAtHalfResolution } from "./renderQuality";
 
 /**
@@ -242,7 +243,6 @@ export function NodePostEffects({
 
       const { RenderPipeline, NoToneMapping } = threeWebgpu;
       const {
-        agxToneMapping,
         dot,
         float,
         mix,
@@ -366,11 +366,21 @@ export function NodePostEffects({
       ) as Node<"vec3">;
 
       // THE TONE CURVE, here and not at the end. See the file comment.
+      //
+      // LOOKED UP BY NAME RATHER THAN CALLED AS A LITERAL, and that is the
+      // point. This line used to read `agxToneMapping(...)`, which was a THIRD
+      // declaration of a value `sceneToneMapping.ts` exists to hold once — it
+      // agreed with the composer chain by coincidence, and the day the default
+      // curve changed it would have left this chain grading differently from
+      // the one beside it with nothing to say so. The name comes from the same
+      // table the composer's mode does.
+      //
       // `toneMappingExposure` rather than a literal 1: it tracks
       // `renderer.toneMappingExposure`, which is the ocean family's per-depth
       // adaptation curve and must keep being readable if this chain ever serves
       // that family.
-      chain = vec4(agxToneMapping(graded, toneMappingExposure) as Node<"vec3">, chain.a);
+      const applyToneCurve = tsl[toneMappingNodeFunctionNameFor(DEFAULT_FAMILY_TONE_MAPPING)];
+      chain = vec4(applyToneCurve(graded, toneMappingExposure) as Node<"vec3">, chain.a);
 
       if (wantsLensAndGrain) {
         // `chromaticAberration(node, strength, center, scale)` is not pmndrs'

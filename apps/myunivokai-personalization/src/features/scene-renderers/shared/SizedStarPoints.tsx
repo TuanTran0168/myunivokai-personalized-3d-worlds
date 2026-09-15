@@ -1,8 +1,15 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import { AdditiveBlending } from "three";
+import {
+  buildStarPointsNodeLayer,
+  starPointsFragmentShaderGlsl,
+  STAR_POINTS_VERTEX_SHADER,
+  type StarLayerAttributes
+} from "./sizedStarPointsMaterial";
+import { useNodeMaterialModules } from "./useNodeMaterialModules";
 
 /**
  * Star points with a PER-STAR size, color and twinkle phase. three's stock
@@ -17,76 +24,18 @@ import { AdditiveBlending } from "three";
  * unconverted (a raw ShaderMaterial skips three's color-space and
  * tone-mapping chunks), so the authored hex palette is exactly what shows
  * on screen.
+ *
+ * **TWO IMPLEMENTATIONS, AND THEY ARE DIFFERENT OBJECTS RATHER THAN DIFFERENT
+ * MATERIALS.** This is the first port in §26 Phases 6-8 where the dual path
+ * changes the scene graph and not just the shader, because WebGPU has no point
+ * size at all: a sized star has to be a QUAD there. So the classic path stays a
+ * `Points` with a `ShaderMaterial`, and the node path is an instanced `Sprite`
+ * whose quad three expands to the same pixel size. Both are built from one set
+ * of constants in `sizedStarPointsMaterial.ts`; see that file for why the two
+ * sizing expressions are the same expression.
  */
 
-const STAR_VERTEX_SHADER = /* glsl */ `
-  attribute float starSize;
-  attribute vec3 starColor;
-  attribute float twinklePhase;
-  uniform float uPointScale;
-  varying vec3 vStarColor;
-  varying float vTwinklePhase;
-
-  void main() {
-    vStarColor = starColor;
-    vTwinklePhase = twinklePhase;
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = starSize * (uPointScale / -mvPosition.z);
-    gl_Position = projectionMatrix * mvPosition;
-  }
-`;
-
-// Two-component point-spread function, the way stars actually image: a tight
-// gaussian core plus an inverse-square halo (photographed star glow falls off
-// ~1/r^2), windowed so the sprite edge vanishes. Bright layers can also mix in
-// diffraction spikes — the 4+4-point cross flare aperture edges produce — via
-// uSpikeStrength (real photos only show spikes on the very brightest stars).
-// Core + halo can sum past 1.0 at the center; the framebuffer clamps per
-// channel, so bright star centers wash toward white while their edges keep
-// the star's tint — exactly how stars over-expose in photographs.
-const STAR_FRAGMENT_SHADER = /* glsl */ `
-  uniform float uTimeSeconds;
-  uniform float uGlobalOpacity;
-  uniform float uSpikeStrength;
-  varying vec3 vStarColor;
-  varying float vTwinklePhase;
-
-  void main() {
-    vec2 offsetFromCenter = gl_PointCoord * 2.0 - 1.0;
-    float normalizedDistance = length(offsetFromCenter);
-    if (normalizedDistance > 1.0) {
-      discard;
-    }
-    float coreIntensity = exp(-normalizedDistance * normalizedDistance * 16.0);
-    float edgeWindow = 1.0 - smoothstep(0.6, 1.0, normalizedDistance);
-    float haloIntensity = (0.03 / (normalizedDistance * normalizedDistance + 0.03)) * edgeWindow;
-    float spikeIntensity = 0.0;
-    if (uSpikeStrength > 0.0) {
-      float straightCross = pow(max(0.0, 1.0 - abs(offsetFromCenter.x * offsetFromCenter.y) * 28.0), 10.0);
-      vec2 diagonalCoord = vec2(
-        offsetFromCenter.x + offsetFromCenter.y,
-        offsetFromCenter.x - offsetFromCenter.y
-      ) * 0.7071;
-      float diagonalCross = pow(max(0.0, 1.0 - abs(diagonalCoord.x * diagonalCoord.y) * 28.0), 10.0);
-      spikeIntensity = (straightCross + 0.3 * diagonalCross) * (1.0 - normalizedDistance) * uSpikeStrength;
-    }
-    float twinkle = 0.85 + 0.15 * sin(uTimeSeconds * 1.4 + vTwinklePhase);
-    float intensity = (coreIntensity + 0.6 * haloIntensity + spikeIntensity) * twinkle * uGlobalOpacity;
-    if (intensity < 0.008) {
-      discard;
-    }
-    // Alpha stays 1.0: with additive blending the contribution is rgb * alpha,
-    // so baking intensity into rgb keeps the falloff linear instead of squared.
-    gl_FragColor = vec4(vStarColor * intensity, 1.0);
-  }
-`;
-
-export type StarLayerAttributes = {
-  positions: Float32Array;
-  colors: Float32Array;
-  sizes: Float32Array;
-  twinklePhases: Float32Array;
-};
+export type { StarLayerAttributes };
 
 type SizedStarPointsProps = {
   stars: StarLayerAttributes;
@@ -101,6 +50,7 @@ type SizedStarPointsProps = {
 const DEFAULT_GLOBAL_OPACITY = 1;
 const DEFAULT_SPIKE_STRENGTH = 0;
 const DEFAULT_RENDER_ORDER = 0;
+const HALF = 2;
 
 /**
  * Parses a #RRGGBB hex color into raw sRGB unit components, bypassing
@@ -116,13 +66,69 @@ export function hexColorToUnitRgb(hexColor: string): [number, number, number] {
   ];
 }
 
-export function SizedStarPoints({
+/**
+ * The node path: one instanced `Sprite` quad per star.
+ *
+ * `count` is `Sprite`'s own instancing field and three's docs say plainly it
+ * "can only be used with WebGPURenderer" — which is exactly the renderer this
+ * branch runs under.
+ *
+ * **`geometryKey` IS NOT USED HERE AND DOES NOT NEED TO BE.** It exists to force
+ * fiber to remount the classic path's declarative `<bufferGeometry>` when the
+ * arrays behind it change. This branch builds its geometry and material
+ * imperatively from `stars`, and every caller memoises that object on the inputs
+ * that produced it, so a changed layer is a changed reference and the `useMemo`
+ * below rebuilds on its own.
+ */
+function NodeStarSprites({
   stars,
-  globalOpacity = DEFAULT_GLOBAL_OPACITY,
-  spikeStrength = DEFAULT_SPIKE_STRENGTH,
-  renderOrder = DEFAULT_RENDER_ORDER,
+  globalOpacity,
+  spikeStrength,
+  renderOrder,
+  modules
+}: Required<Pick<SizedStarPointsProps, "stars" | "globalOpacity" | "spikeStrength" | "renderOrder">> & {
+  modules: ReturnType<typeof useNodeMaterialModules> & object;
+}) {
+  const layer = useMemo(
+    () => buildStarPointsNodeLayer(modules, stars, spikeStrength),
+    [modules, spikeStrength, stars]
+  );
+
+  // A node material and its geometry are constructed here rather than by fiber,
+  // so nothing else will dispose them.
+  useEffect(() => {
+    return () => {
+      layer.material.dispose();
+      layer.geometry.dispose();
+    };
+  }, [layer]);
+
+  useFrame((state) => {
+    layer.uniforms.timeSeconds.value = state.clock.elapsedTime;
+    layer.uniforms.globalOpacity.value = globalOpacity;
+    layer.uniforms.spikeStrength.value = spikeStrength;
+  });
+
+  return (
+    <sprite
+      frustumCulled={false}
+      renderOrder={renderOrder}
+      count={layer.instanceCount}
+      geometry={layer.geometry}
+      material={layer.material}
+    />
+  );
+}
+
+/** The classic path: a `Points` with a raw GLSL `ShaderMaterial`. */
+function ClassicStarPoints({
+  stars,
+  globalOpacity,
+  spikeStrength,
+  renderOrder,
   geometryKey
-}: SizedStarPointsProps) {
+}: Required<Pick<SizedStarPointsProps, "stars" | "globalOpacity" | "spikeStrength" | "renderOrder">> &
+  Pick<SizedStarPointsProps, "geometryKey">) {
   // Created once; useFrame keeps the values current without rebuilding the
   // material (a new uniforms object would recompile the shader program).
   const uniforms = useMemo(
@@ -134,12 +140,14 @@ export function SizedStarPoints({
     }),
     []
   );
+  const fragmentShader = useMemo(() => starPointsFragmentShaderGlsl(), []);
 
   useFrame((state) => {
     // Matches PointsMaterial's sizeAttenuation convention (half the drawing
     // buffer height), so star sizes stay consistent across window sizes and
-    // device pixel ratios.
-    uniforms.uPointScale.value = (state.size.height * state.gl.getPixelRatio()) / 2;
+    // device pixel ratios. three's node sprite path computes the same product
+    // from `screenDPR` and half the canvas height in logical units.
+    uniforms.uPointScale.value = (state.size.height * state.gl.getPixelRatio()) / HALF;
     uniforms.uTimeSeconds.value = state.clock.elapsedTime;
     uniforms.uGlobalOpacity.value = globalOpacity;
     uniforms.uSpikeStrength.value = spikeStrength;
@@ -159,13 +167,45 @@ export function SizedStarPoints({
         <bufferAttribute attach="attributes-twinklePhase" args={[stars.twinklePhases, 1]} />
       </bufferGeometry>
       <shaderMaterial
-        vertexShader={STAR_VERTEX_SHADER}
-        fragmentShader={STAR_FRAGMENT_SHADER}
+        vertexShader={STAR_POINTS_VERTEX_SHADER}
+        fragmentShader={fragmentShader}
         uniforms={uniforms}
         transparent
         depthWrite={false}
         blending={AdditiveBlending}
       />
     </points>
+  );
+}
+
+export function SizedStarPoints({
+  stars,
+  globalOpacity = DEFAULT_GLOBAL_OPACITY,
+  spikeStrength = DEFAULT_SPIKE_STRENGTH,
+  renderOrder = DEFAULT_RENDER_ORDER,
+  geometryKey
+}: SizedStarPointsProps) {
+  const nodeModules = useNodeMaterialModules();
+
+  if (nodeModules) {
+    return (
+      <NodeStarSprites
+        stars={stars}
+        globalOpacity={globalOpacity}
+        spikeStrength={spikeStrength}
+        renderOrder={renderOrder}
+        modules={nodeModules}
+      />
+    );
+  }
+
+  return (
+    <ClassicStarPoints
+      stars={stars}
+      globalOpacity={globalOpacity}
+      spikeStrength={spikeStrength}
+      renderOrder={renderOrder}
+      geometryKey={geometryKey}
+    />
   );
 }

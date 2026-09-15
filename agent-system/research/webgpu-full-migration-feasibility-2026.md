@@ -1985,10 +1985,55 @@ convention. **Every phase ships and is independently revertable.**
 > bundler's question — does this name a file — so a rename INSIDE a file that still exists passes it
 > and fails typecheck instead.
 
+### Phases 6–8 — two corrections to this plan, **made 2026-09-11 while starting them**
+
+> **(a) THE BLOCKER PHASE 6 WAS TOLD TO FIND NO LONGER EXISTS.**
+> `scene-parity.spec.ts`'s failure ledger carried *"forest on the node path throws mid-frame, cause
+> NOT located — Phase 6 should find it before porting the forest"*, with
+> `Cannot read properties of undefined (reading 'get')` and nothing else. Nothing else was available
+> because that suite is a ratchet: it records `error.message` and drops `error.stack`, which
+> Playwright puts on the same object.
+>
+> `e2e/node-path-diagnostic.spec.ts` was written to keep the stacks, and found there is nothing left
+> to catch. **All three families, on both node backends, on the real GPU: zero throws, zero page
+> errors.** Every leg reached its pinned frame.
+>
+>     forest-world    on webgpu-forcewebgl / webgpu    no throw, 0 page errors
+>     universe-world  on webgpu-forcewebgl / webgpu    no throw, 0 page errors
+>     ocean-shallow   on webgpu-forcewebgl / webgpu    no throw, 0 page errors
+>
+> Phase 5 closed it: the forest mounted `PostEffects`, and `EffectComposer` cannot be CONSTRUCTED
+> against a node renderer. The entry was recorded before the node chain existed and was never
+> re-checked. **A ledger of known failures has to be re-run, not read** — an entry that outlives its
+> cause reads as a live blocker and buys nobody anything.
+>
+> **(b) PHASE 6'S ORDER IS WRONG, AND THE RIGHT ONE IS BY FAMILY.**
+> This plan starts with the shared GLSL library because one port serves three shaders. True, and it
+> produces **nothing testable**: all three consumers of `oceanSky.ts` are still raw
+> `ShaderMaterial`s afterwards, so no scene changes, no parity number moves, and the first
+> verification of the biggest single port is at the end of it.
+>
+> The node path is **all-or-nothing** — one raw GLSL `ShaderMaterial` left in a scene is a scene
+> that cannot run on the node renderer — so the unit that produces a measurement is a FAMILY, not a
+> shader. Counting what each family still needs:
+>
+>     forest    1 patch  (forestModels.ts foliage recolour)
+>     universe  2 shaders (SizedStarPoints, NebulaCloudPoints — both instanced-quad rewrites, §30.2)
+>     ocean     7 shaders + 8 patches
+>
+> So the forest goes first: one patch, the lowest-complexity entry in §8.2, and a whole family
+> arriving on the node path at the end of it. It also has to establish the machinery every other
+> port needs — `shared/nodeMaterials.ts` and `shared/useNodeMaterialModules.ts`, which give a
+> synchronous answer to "is this a node renderer, and where are the node modules" without putting a
+> second copy of three in every visitor's bundle. That work is the real Phase 6, and porting the
+> shared ocean library is Phase 6b, immediately before the ocean's own shaders need it.
+
 ### Phase 6 — Shared GLSL library → TSL
 
 - **Objective:** port `oceanSky.ts` (Preetham, Gerstner) once, serving three shaders.
 - **Validation:** `oceanShaderSource.test.ts` adapted; ocean shots.
+- **Superseded by the correction above:** the dual-material machinery and the forest's single patch
+  land first, because they are what produces the first parity number.
 
 ### Phase 7 — The nine `onBeforeCompile` patches → node slots
 
@@ -2380,10 +2425,136 @@ A 9:1 request comes back 1:1. Reading the source afterwards says why, twice over
   (`:9638-9700`) — it needs an `instancePosition` instanced attribute and quad geometry, an entirely
   different geometry contract from `Points` — and r173 **removed it** (§4.2).
 
+> **UPDATED 2026-09-11, ON 0.185.1: THE CAPABILITY DID NOT GO AWAY, IT MOVED INTO
+> `PointsNodeMaterial` ITSELF.** Everything above still holds for a `Points` object — that path is
+> unchanged and still renders one pixel — but `PointsNodeMaterial.setupVertex` now DISPATCHES:
+>
+> ```js
+> setupVertex( builder ) {
+>   if ( builder.object.isPoints ) return super.setupVertex( builder );   // the 1-pixel path
+>   else return this.setupVertexSprite( builder );                       // sized quad expansion
+> }
+> ```
+>
+> `setupVertexSprite` (`src/materials/nodes/PointsNodeMaterial.js:89`) reads `sizeNode`, multiplies by
+> `screenDPR`, applies size attenuation with three's own comment *"follow WebGLRenderer's
+> implementation, and scale by half the canvas height in logical units"*, offsets by
+> `positionGeometry.xy`, divides by half the viewport and multiplies by `mvp.w` to compensate for the
+> perspective divide. **That is the entire `gl_PointSize` semantic, written by three, in the library.**
+>
+> So the four point shaders are still an ARCHITECTURAL_CHANGE — the geometry contract genuinely
+> changes from `Points` to a quad with per-instance attributes — but **the hard half is not ours to
+> write**, and the sizing maths that would have been the likeliest source of a subtle mismatch comes
+> from the same codebase as the baseline it is compared against. The estimate for Phase 8's four
+> point shaders should come down accordingly.
+>
+> **`pointUV` is still unusable and this does not change that.** `PointUVNode.generate()` still emits
+> `gl_PointCoord` on every builder. On the sprite path there is no need for it: the quad carries its
+> own `uv` attribute, which is what `gl_PointCoord` was standing in for.
+
+> **ATTEMPTED, MEASURED AND REVERTED THE SAME DAY: `Sprite.count` INSTANCING BREAKS THE FRAME, AND
+> IT IS NOT THE SHADER.** The universe's two point layers were ported onto the sprite path above —
+> `Sprite` with `count`, `positionNode` and `sizeNode` from `instancedBufferAttribute`, the fragment
+> maths in TSL — and the result is a WHITE CANVAS with the sun, the planets and the orbits faintly
+> visible underneath. Parity went from 12.19 to **151.84** of 255, 98.22% of pixels differing.
+>
+> Bisected, one variable at a time, on the real GPU:
+>
+>     both layers ported, as written        universe parity 12.19 -> 151.84, frame white
+>     both node layers disabled             frame renders correctly
+>     sizeNode pinned to a constant 3 px    still white
+>     colorNode replaced by a constant      still white
+>     size attenuation clamped by hand      still white
+>     count = 1 instead of count = N        FRAME RENDERS CORRECTLY
+>
+> The last line is the finding. **Nothing this app wrote is implicated** — not the size expression,
+> not the fragment graph, not the near-plane arithmetic — and every one of those was eliminated by
+> measurement rather than by argument. What fails is `Sprite.count > 1` with per-instance attributes
+> under this pipeline. `RenderObject.js:610` does honour `object.count` for the instance count, so
+> the draw is issued; what is not established is whether `instancedBufferAttribute` binds per
+> instance for a `Sprite` the way it does for an `InstancedMesh`, which is where the next attempt
+> should start.
+>
+> Two things are worth carrying beyond this file. **A NaN is not a local defect here**: the post
+> chain's bloom downsamples the whole frame through a mip chain, so one bad pixel returns as a white
+> screen — which is why the symptom looked like an exposure problem and not like a broken star.
+> And **the diagnostic needs the control frame**: `e2e/node-path-diagnostic.spec.ts` now shoots
+> `webgl` alongside the two node backends, because two of the wrong hypotheses above survived as long
+> as they did while the node frame was being compared against memory instead of against the frame it
+> is supposed to match.
+>
+
+> **RESOLVED 2026-09-15, AND `Sprite.count` WAS INNOCENT TOO.** The block above named the last
+> surviving suspect correctly in shape and wrongly in substance: the draw call was never the problem.
+> `instancedBufferAttribute()` **does not make an attribute instanced** unless it is handed a real,
+> non-interleaved `InstancedBufferAttribute`. The port passed `new BufferAttribute(...)`, which reads
+> as obviously correct and is silently stepped per VERTEX.
+>
+>     createBufferAttribute's general return is
+>       new BufferAttributeNode(...).setUsage(usage)     BufferAttributeNode.js:387
+>     — .setInstanced(instanced) is NEVER CALLED. Only the mat3/mat4 branches call it,
+>       so the TRUE that the function's own name promises is dropped for every float, vec2 and vec3.
+>
+>     The one surviving route into node.instanced is the constructor reading it off the value:
+>       this.instanced = value.isInstancedBufferAttribute      :146
+>
+>     A raw array is worse. setup() wraps it in a plain InterleavedBuffer and sets the flag on
+>     the ATTRIBUTE (:355), but for an interleaved attribute both backends read the BUFFER:
+>       WebGPUAttributeUtils.js:307   and   WebGLBackend.js:2555
+>     three's own "@TODO: Add a possible: InstancedInterleavedBufferAttribute" is the admission.
+>
+> With a real `InstancedBufferAttribute`, WebGPU takes `WebGPUAttributeUtils.js:312` and emits
+> `stepMode: 'instance'`, and the WebGL2 backend takes `WebGLBackend.js:2551` and calls
+> `vertexAttribDivisor`. That is the entire fix — one constructor — and the previously reverted port
+> renders the full scene unchanged in every other respect.
+>
+> **Why the bisect stopped one step short, which is the lesson worth more than the fix.** A
+> per-vertex step makes all N instances re-read elements 0..3 of the instance buffer as the quad's
+> four corners; those are star world positions, so every sprite becomes screen-filling geometry and
+> bloom returns the frame white. `count = 1` draws exactly one such quad and the frame survives. So
+> `count` really was the boundary — and reading a boundary as a cause is how "`Sprite.count > 1` is
+> broken" got written down. The variable that moved was not the variable that mattered.
+>
+> The check that would have found it needs no GPU at all, and now exists as
+> `nodeMaterials.test.ts`: build the node through three's real `instancedBufferAttribute` and assert
+> the predicate the backends apply. It runs in a second.
+>
+> §30.2's own conclusion below stands, with one word changed: the four point layers are an
+> architectural change because their GEOMETRY CONTRACT changes, not because instancing is unavailable.
+
 So the four point layers — `SizedStarPoints`, `NebulaCloudPoints`, the ocean's marine motes and its bubbles —
-are an **architectural change**, not a port: their geometry contract changes, on a three version this project
-does not yet run. Every row in §8, §12, §13, §21 and §27.1 that reads `PointsNodeMaterial` + `sizeNode` +
-`pointUV` is corrected by this section.
+are an **architectural change**, not a port: their geometry contract changes — a sized point becomes an
+instanced quad — and two of the four have now made that change and measured it. Every row in §8, §12, §13,
+§21 and §27.1 that reads `PointsNodeMaterial` + `sizeNode` + `pointUV` is corrected by this section.
+
+> **PHASE 8 IS DONE FOR THE UNIVERSE AND THE PARITY NUMBER DID NOT MOVE: 12.19 BEFORE, 12.22 AFTER.**
+> The family now has no raw `ShaderMaterial` left — `node-path-diagnostic.spec.ts` prints zero
+> `THREE.NodeBuilder: Material "ShaderMaterial" is not compatible` for it, against six per node
+> backend for the ocean. This is the second family to reach that state and the second to keep its
+> gap, and two is no longer an anomaly: **§26's "the gap is the PORT (Phases 6-8), not the backend"
+> is wrong as a general claim.**
+>
+> What was eliminated, by measurement. `ParityHarnessBridge` now reports the scene it is about to
+> draw, and at the pinned moment all three backends agree on the clock (6.0000), the camera (position
+> and quaternion identical to four decimals) and the scene graph (50 drawn objects, world-position
+> checksum 26.501). Two confident hypotheses died on the first read — the camera rig's intro move,
+> which integrates across frames, and a difference in orbital phase — and neither cost more than one
+> run, because the harness was extended to answer the question instead of being reasoned about.
+>
+> What is left is not in the scene. Sampling the same scanline out of both frames, the node path sits
+> systematically brighter in the shadows and midtones ACROSS THE WHOLE FRAME, including the top edge
+> far from the sun (0.07 -> 0.10, 0.09 -> 0.14, 0.12 -> 0.19 of 1.0), while the saturated sun core
+> matches to 0.03. A global lift that spares the clipped highlights is the signature of the POST
+> CHAIN, and the two chains are two implementations of the same six passes: pmndrs' `EffectComposer`
+> against three's TSL nodes, bloom for bloom and vignette for vignette.
+>
+> NOT ESTABLISHED, and deliberately not guessed at: which pass, and how much. The experiment that
+> settles it is a run with post disabled on both paths, which needs a lever the harness does not have
+> — and inventing one to confirm a hypothesis is exactly how the two above died.
+>
+> **This changes what Phases 9 and 10 are for.** Phase 10 cannot judge the fallback against a moving
+> baseline, and the ocean's 57.02 can no longer be read as the cost of its six unported shaders:
+> some fraction of it is whatever the other two families are made of.
 
 ### 30.3 The failure mode is worse than Phase 0's, because the page cannot see it
 

@@ -44,6 +44,7 @@ import {
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
 import { NodePostEffects } from "@/features/scene-renderers/shared/NodePostEffects";
 import { rendererToneMappingForFamily } from "@/features/scene-renderers/shared/sceneToneMapping";
+import { loadNodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 import {
   parityHarnessRequest,
   PARITY_RENDERER_WEBGL,
@@ -596,7 +597,18 @@ export function UniverseCanvas({
                   // main bundle of every visitor to serve a harness that only
                   // runs on one machine.
                   async (canvasProperties: Record<string, unknown>) => {
-                    const { WebGPURenderer } = await import("three/webgpu");
+                    // BOTH node modules, not just the renderer's, and this is
+                    // the load-bearing half of `shared/nodeMaterials.ts`.
+                    //
+                    // Every material Phases 6-8 port has to be constructed
+                    // SYNCHRONOUSLY, from inside a component or from a GLB walk,
+                    // and no component can await an import in its render. Fiber
+                    // awaits this factory before mounting a single child, so
+                    // this is the one place in the app where the wait is free.
+                    // After it, `loadedNodeMaterialModules()` answers
+                    // synchronously for the whole tree.
+                    const { webgpu } = await loadNodeMaterialModules();
+                    const { WebGPURenderer } = webgpu;
                     const renderer = new WebGPURenderer({
                       ...canvasProperties,
                       antialias: true,
