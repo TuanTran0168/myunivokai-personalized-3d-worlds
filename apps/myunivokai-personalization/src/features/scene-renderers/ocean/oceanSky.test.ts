@@ -1,4 +1,4 @@
-import { Vector2, Vector4 } from "three";
+import { Vector2, Vector3, Vector4 } from "three";
 import { describe, expect, it } from "vitest";
 import {
   oceanSurfaceNode,
@@ -10,6 +10,8 @@ import {
   SNELL_CRITICAL_ANGLE,
   WATER_REFRACTIVE_INDEX,
   skyCoefficients,
+  skyUniformNodes,
+  skyUniformValues,
   GERSTNER_SURFACE_GLSL,
   WAVE_UNIFORMS_GLSL,
   type SkyUniformNodes,
@@ -53,17 +55,16 @@ async function nodeMaterialModules(): Promise<NodeMaterialModules> {
   return { webgpu, tsl } as unknown as NodeMaterialModules;
 }
 
-async function skyUniformNodes(modules: NodeMaterialModules): Promise<SkyUniformNodes> {
-  const { uniform, vec3 } = modules.tsl;
-  const coefficients = skyCoefficients(Math.PI / 4);
-  return {
-    sunDirection: vec3(0, 1, 0) as unknown as SkyUniformNodes["sunDirection"],
-    betaRayleigh: vec3(...coefficients.betaR) as unknown as SkyUniformNodes["betaRayleigh"],
-    betaMie: vec3(...coefficients.betaM) as unknown as SkyUniformNodes["betaMie"],
-    sunIntensity: uniform(coefficients.sunE) as unknown as SkyUniformNodes["sunIntensity"],
-    sunFade: uniform(coefficients.sunfade) as unknown as SkyUniformNodes["sunFade"],
-    mieDirectionalG: uniform(coefficients.mieDirectionalG) as unknown as SkyUniformNodes["mieDirectionalG"]
-  };
+/**
+ * The production binding, EXERCISED rather than re-implemented.
+ *
+ * This was a second copy of `skyUniformNodes`, written before the real one
+ * existed. A duplicate is the one shape of test that is guaranteed not to catch
+ * the failure it is nearest to: the copy can be right while the binding every
+ * material actually uses is wrong, and the file stays green.
+ */
+async function testSkyUniformNodes(modules: NodeMaterialModules): Promise<SkyUniformNodes> {
+  return skyUniformNodes(modules, new Vector3(0, 1, 0), skyCoefficients(Math.PI / 4));
 }
 
 describe("ocean sky model", () => {
@@ -143,7 +144,7 @@ describe("ocean sky model", () => {
 
   it("builds the node graph against three's real TSL", async () => {
     const modules = await nodeMaterialModules();
-    const uniforms = await skyUniformNodes(modules);
+    const uniforms = await testSkyUniformNodes(modules);
     const direction = modules.tsl.vec3(0, 1, 0) as unknown as Parameters<typeof preethamSkyNode>[2];
 
     expect(preethamSkyNode(modules, uniforms, direction, false)).toBeDefined();
@@ -158,7 +159,7 @@ describe("ocean sky model", () => {
    */
   it("builds a different graph with and without the solar disc", async () => {
     const modules = await nodeMaterialModules();
-    const uniforms = await skyUniformNodes(modules);
+    const uniforms = await testSkyUniformNodes(modules);
     const direction = modules.tsl.vec3(0, 1, 0) as unknown as Parameters<typeof preethamSkyNode>[2];
 
     expect(preethamSkyNode(modules, uniforms, direction, true)).not.toBe(
@@ -168,7 +169,7 @@ describe("ocean sky model", () => {
 
   it("builds the Snell's window graph, which always asks for the disc", async () => {
     const modules = await nodeMaterialModules();
-    const uniforms = await skyUniformNodes(modules);
+    const uniforms = await testSkyUniformNodes(modules);
     const viewDirection = modules.tsl.vec3(0, 1, 0) as unknown as Parameters<
       typeof skyThroughSnellsWindowNode
     >[2];
@@ -274,5 +275,37 @@ describe("ocean surface wave field", () => {
     const owner = (node: unknown) => (node as { node?: unknown }).node;
     expect(owner(surface.offset)).toBe(owner(surface.normal));
     expect(owner(surface.offset)).toBe(owner(surface.jacobian));
+  });
+});
+
+describe("sky uniform binding", () => {
+  /**
+   * **A UNIFORM DECLARED AND NEVER BOUND READS ZERO AND REPORTS NOTHING.** A sky
+   * whose sun direction is the zero vector is a flat grey dome, not an error, so
+   * a name drifting between `SKY_UNIFORMS_GLSL` and the record that fills it
+   * produces a plausible wrong frame in silence. Both live in this module so
+   * that this check is possible at all.
+   */
+  it("binds exactly the uniforms the shared GLSL block declares", () => {
+    const declared = (SKY_UNIFORMS_GLSL.match(/uniform\s+\w+\s+(\w+)/g) ?? []).map(
+      (declaration) => declaration.split(/\s+/)[2]
+    );
+    const bound = Object.keys(skyUniformValues(new Vector3(0, 1, 0), skyCoefficients(Math.PI / 4)));
+
+    expect(declared.length).toBeGreaterThan(0);
+    expect(bound.slice().sort()).toEqual(declared.slice().sort());
+  });
+
+  it("gives the node path one node per uniform the classic path binds", async () => {
+    const modules = await nodeMaterialModules();
+    const coefficients = skyCoefficients(Math.PI / 4);
+    const nodes = skyUniformNodes(modules, new Vector3(0, 1, 0), coefficients);
+
+    expect(Object.keys(nodes).length).toBe(
+      Object.keys(skyUniformValues(new Vector3(0, 1, 0), coefficients)).length
+    );
+    for (const [name, node] of Object.entries(nodes)) {
+      expect(node, `${name} has no node`).toBeDefined();
+    }
   });
 });

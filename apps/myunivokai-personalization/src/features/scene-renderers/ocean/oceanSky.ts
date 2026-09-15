@@ -1,3 +1,4 @@
+import { Vector3 } from "three";
 import type { Node } from "three/webgpu";
 import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 
@@ -353,6 +354,57 @@ export type SkyUniformNodes = {
   sunFade: Node<"float">;
   mieDirectionalG: Node<"float">;
 };
+
+/**
+ * The six sky uniforms as a classic `IUniform` record, for every material that
+ * inlines `SKY_UNIFORMS_GLSL`.
+ *
+ * **THE DECLARATION AND THE BINDING ARE WRITTEN ONCE BECAUSE A MISMATCH DOES NOT
+ * FAIL.** A uniform declared in the GLSL and never bound reads ZERO, and a sky
+ * with a zero sun direction is a flat grey dome rather than an error — so a name
+ * drifting between `SKY_UNIFORMS_GLSL` and the object that fills it produces a
+ * plausible wrong frame and no message at all. `oceanSky.test.ts` asserts the
+ * two agree, which is only possible because both live here.
+ *
+ * Three materials SHARE one record by spreading it, so the sun cannot end up in
+ * two places at once.
+ */
+export function skyUniformValues(
+  sunDirection: Vector3,
+  coefficients: SkyCoefficients
+): Record<string, { value: unknown }> {
+  return {
+    uSkySunDirection: { value: sunDirection.clone() },
+    uBetaR: { value: new Vector3(...coefficients.betaR) },
+    uBetaM: { value: new Vector3(...coefficients.betaM) },
+    uSunE: { value: coefficients.sunE },
+    uSunfade: { value: coefficients.sunfade },
+    uMieG: { value: coefficients.mieDirectionalG }
+  };
+}
+
+/**
+ * The same six values as TSL uniform nodes, for the node path.
+ *
+ * Built once per rig and shared by every node material that calls the sky, the
+ * way the record above is shared on the classic path. Nothing writes to them
+ * after construction: the sun does not move within a world.
+ */
+export function skyUniformNodes(
+  modules: NodeMaterialModules,
+  sunDirection: Vector3,
+  coefficients: SkyCoefficients
+): SkyUniformNodes {
+  const { uniform } = modules.tsl;
+  return {
+    sunDirection: uniform(sunDirection.clone()) as unknown as Node<"vec3">,
+    betaRayleigh: uniform(new Vector3(...coefficients.betaR)) as unknown as Node<"vec3">,
+    betaMie: uniform(new Vector3(...coefficients.betaM)) as unknown as Node<"vec3">,
+    sunIntensity: uniform(coefficients.sunE) as unknown as Node<"float">,
+    sunFade: uniform(coefficients.sunfade) as unknown as Node<"float">,
+    mieDirectionalG: uniform(coefficients.mieDirectionalG) as unknown as Node<"float">
+  };
+}
 
 /**
  * Preetham's analytic daylight model as a TSL graph, from the constants above.

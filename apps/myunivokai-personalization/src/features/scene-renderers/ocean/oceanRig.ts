@@ -71,6 +71,8 @@ import {
   WAVE_UNIFORMS_GLSL,
   refractedSunElevationRadians,
   skyCoefficients,
+  skyUniformNodes,
+  skyUniformValues,
 } from "./oceanSky";
 import {
   OCEAN_RIG_SPECIES,
@@ -82,6 +84,7 @@ import {
 import { createSeabed, tintSeabed, type Seabed } from "./oceanRigTerrain";
 import { algaeDepthLimitMetres, createFlora, type Flora } from "./oceanRigFlora";
 import { SKY_HAZE, createSeaTop, type SeaTop } from "./oceanRigSurface";
+import { oceanBackdropMaterial } from "./oceanBackdropMaterial";
 import {
   createBubbles,
   createJellyfish,
@@ -104,6 +107,14 @@ const BOUNDARY_SIGHT_MULTIPLIER = 1.5;
  * to the horizon.
  */
 const BACKDROP_RADIUS_METRES = 420;
+/**
+ * How the dome's zenith is built from the key light: dimmed, then pulled toward
+ * the medium so the top of the frame is never a colour the water cannot reach.
+ */
+const BACKDROP_ZENITH_KEY_DIMMING = 0.85;
+const BACKDROP_ZENITH_MEDIUM_MIX = 0.3;
+/** The floor of the dome is the medium, darkened — nothing lights it from below. */
+const BACKDROP_FLOOR_DIMMING = 0.3;
 /**
  * The seabed mesh: how far it reaches, and how finely it is sampled at each
  * quality level. The vertex spacing that falls out of these two — 2.27 m and
@@ -268,14 +279,11 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     Math.sin(sunAzimuthRadians) * Math.cos(refracted),
   ).normalize();
   const coefficients = skyCoefficients(sunElevation);
-  const skyShared = {
-    uSkySunDirection: { value: sunAbove.clone() },
-    uBetaR: { value: new Vector3(...coefficients.betaR) },
-    uBetaM: { value: new Vector3(...coefficients.betaM) },
-    uSunE: { value: coefficients.sunE },
-    uSunfade: { value: coefficients.sunfade },
-    uMieG: { value: coefficients.mieDirectionalG },
-  };
+  const skyShared = skyUniformValues(sunAbove, coefficients);
+  // The same six numbers as nodes. Built once and shared by every node material
+  // that calls the sky, exactly as the record above is shared on the classic
+  // path — two materials with their own sun is the defect this shape prevents.
+  const skyNodes = nodeModules ? skyUniformNodes(nodeModules, sunAbove, coefficients) : null;
 
   // ---- the medium -------------------------------------------------------
   // ONE branch decides the whole scene. Above the waterline the medium is air,
@@ -438,71 +446,28 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
 
   // ---- the backdrop -----------------------------------------------------
   // Graded by view direction so the horizon is EXACTLY the fog colour and
-  // distant geometry dissolves instead of meeting a seam.
-  const backdropUniforms = {
-    uHorizon: { value: above ? new Color(SKY_HAZE) : fogColor.clone() },
-    uUp: { value: keyColor.clone().multiplyScalar(0.85).lerp(fogColor, 0.3) },
-    uDown: { value: fogColor.clone().multiplyScalar(0.3) },
-    // How much water is between the viewer and the dome, and how fast that
-    // water swallows a background. Both zero above the surface, where the
-    // "backdrop" is the sky and there is nothing in the way.
-    uWaterColor: { value: fogColor.clone() },
-    uFogDensity: { value: above ? 0 : palette.fogDensity },
-    uBackdropRadius: { value: BACKDROP_RADIUS_METRES },
-    // Underwater there is no sun in the backdrop — the surface layer owns it.
-    // Above water the backdrop IS the sky, so the same dome grows a disc, a Mie
-    // forward-scatter lobe and a reddened horizon, and all three fall out of
-    // Preetham rather than being three hand-tuned powers of a dot product.
-    uSunGlow: { value: above ? 1 : 0 },
-    ...skyShared,
-  };
+  // distant geometry dissolves instead of meeting a seam. Both shader languages
+  // live in oceanBackdropMaterial.ts; what stays here is the grading.
   const backdropGeometry = new SphereGeometry(BACKDROP_RADIUS_METRES, 32, 24);
-  const backdropMaterial = new ShaderMaterial({
-    uniforms: backdropUniforms,
-    side: BackSide,
-    depthWrite: false,
-    fog: false,
-    vertexShader: `varying vec3 vW;
-      void main(){ vW = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vW,1.0); }`,
-    fragmentShader: `
-      uniform vec3 uHorizon; uniform vec3 uUp; uniform vec3 uDown;
-      uniform float uSunGlow;
-      uniform vec3 uWaterColor; uniform float uFogDensity; uniform float uBackdropRadius;
-      ${SKY_UNIFORMS_GLSL}
-      varying vec3 vW;
-      ${PREETHAM_SKY_GLSL}
-      void main(){
-        vec3 dir = normalize(vW - cameraPosition);
-        vec3 c;
-        if (uSunGlow > 0.001) {
-          c = preethamSky(dir, true);
-        } else {
-          c = uHorizon;
-          c = mix(c, uUp,   pow(clamp( dir.y, 0.0, 1.0), 1.5));
-          c = mix(c, uDown, pow(clamp(-dir.y, 0.0, 1.0), 1.4));
-          // The same law every other underwater layer is subject to: a
-          // background falls toward the water colour by 1 - exp(-(d*k)^2).
-          //
-          // The dome did not have it, and it was the only thing in the scene
-          // that did not. So a viewer at 24 m — where the sighting range is a
-          // few metres and the far field is by definition uniform water — got
-          // uUp painted straight on: a pale grey-olive dome filling half the
-          // frame the moment the camera pitched toward the surface, measured at
-          // 0.55 mean luma and 0.07 saturation where the same frame without the
-          // dome measures 0.16 and 0.84. It reads as staring into the sun,
-          // because a large pale shape overhead is what that looks like.
-          //
-          // This is the fault demos/ocean-depth-rig already recorded once, in
-          // the other direction: the from-below SURFACE painting a dark ceiling
-          // until it was fogged by the medium. Same rule, other layer.
-          float swallow = 1.0 - exp(-pow(uBackdropRadius * uFogDensity, 2.0));
-          c = mix(c, uWaterColor, clamp(swallow, 0.0, 1.0));
-        }
-        gl_FragColor = vec4(c, 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`,
-  });
+  const backdropMaterial = oceanBackdropMaterial(
+    {
+      horizonColor: above ? new Color(SKY_HAZE) : fogColor.clone(),
+      upColor: keyColor
+        .clone()
+        .multiplyScalar(BACKDROP_ZENITH_KEY_DIMMING)
+        .lerp(fogColor, BACKDROP_ZENITH_MEDIUM_MIX),
+      downColor: fogColor.clone().multiplyScalar(BACKDROP_FLOOR_DIMMING),
+      waterColor: fogColor.clone(),
+      // How fast the water between the viewer and the dome swallows a
+      // background. Zero above the surface, where there is nothing in the way.
+      fogDensityPerMetre: above ? 0 : palette.fogDensity,
+      backdropRadiusMetres: BACKDROP_RADIUS_METRES,
+      drawsSky: above,
+    },
+    skyShared,
+    skyNodes,
+    nodeModules
+  );
   const backdrop = new Mesh(backdropGeometry, backdropMaterial);
   // The sky has to sit OUTSIDE the sea grid, which reaches 5.6 km. Underwater
   // the dome is a 420 m shell because that is past anything the water lets you

@@ -290,10 +290,10 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
   },
   /**
    * **THE OCEAN IS PART PORTED, AND THIS ENTRY IS THE ONLY ONE THAT WILL MOVE
-   * FOR MORE THAN ONE REASON.** Two of its six `ShaderMaterial`s — the jellyfish
-   * bell, the bubble stream and marine snow — are node materials as of
-   * 2026-09-15; the surface, the backdrop and the god rays are not, and neither
-   * are its eight `onBeforeCompile` patches.
+   * FOR MORE THAN ONE REASON.** Four of its six `ShaderMaterial`s — the jellyfish
+   * bell, the bubble stream, marine snow and the backdrop dome — are node
+   * materials as of 2026-09-15; the surface seen from below and the god rays are
+   * not, and neither are its eight `onBeforeCompile` patches.
    *
    * So the number below is a MIXTURE, and reading it as "what the ocean's
    * shaders cost" is what the two entries above already had to be corrected
@@ -303,8 +303,15 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
    * **THE PROGRESS SIGNAL FOR A PART-PORTED FAMILY IS NOT THIS NUMBER.**
    * `node-path-diagnostic.spec.ts` counts the node builder's refusals — one per
    * material still on the GLSL path — and prints it per backend. It went 6 -> 4
-   * when the two drifters landed, which is exact, and it will reach 0 before
-   * this entry can be deleted.
+   * when the two drifters landed, 4 -> 3 with marine snow and 3 -> 2 with the
+   * backdrop, which is exact, and it will reach 0 before this entry can be
+   * deleted.
+   *
+   * **AND THE BACKDROP IS THE CASE THAT PROVES WHY THIS ENTRY IS NOT THE
+   * SIGNAL.** Porting it moved the node frame by mean 0.00, with 0.00% of pixels
+   * differing: the dome is entirely occluded from this fixture's camera, so a
+   * real port of the largest surface in the scene is worth exactly nothing here.
+   * A number that cannot see a finished port cannot be used to grade one.
    *
    * Why the number RISES as the port proceeds — 57.02, then 57.07, then 57.30 —
    * rather than falling. Before each step the node path drew those layers NOT AT
@@ -323,7 +330,7 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
     meanAbsoluteError: 57.3,
     worstBlockError: 150.77,
     differingFraction: 0.9821,
-    closedBy: "Phases 6-8 for PART of it — three shaders and eight patches remain — and the post chain for the rest"
+    closedBy: "Phases 6-8 for PART of it — two shaders and eight patches remain — and the post chain for the rest"
   },
   {
     fixture: "ocean-shallow",
@@ -331,7 +338,7 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
     meanAbsoluteError: 57.3,
     worstBlockError: 151.2,
     differingFraction: 0.9821,
-    closedBy: "Phases 6-8 for PART of it — three shaders and eight patches remain — and the post chain for the rest"
+    closedBy: "Phases 6-8 for PART of it — two shaders and eight patches remain — and the post chain for the rest"
   }
 ];
 
