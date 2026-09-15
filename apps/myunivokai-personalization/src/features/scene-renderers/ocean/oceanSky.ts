@@ -1,4 +1,4 @@
-import { Vector3 } from "three";
+import { Vector2, Vector3, Vector4 } from "three";
 import type { Node } from "three/webgpu";
 import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 
@@ -551,6 +551,67 @@ export type WaveUniformNodes = {
   choppiness: Node<"float">;
   time: Node<"float">;
 };
+
+/**
+ * The wave field's five uniforms as a classic `IUniform` record, the twin of
+ * `WAVE_UNIFORMS_GLSL`.
+ *
+ * `uWaveTime` is the only one the rig writes after construction, and it writes
+ * it every frame. The node twin below hands that duty back explicitly rather
+ * than leaving a caller to find it.
+ */
+export function waveUniformValues(
+  directions: Vector2[],
+  terms: Vector4[],
+  waveCount: number,
+  choppiness: number
+): Record<string, { value: unknown }> {
+  return {
+    uWaveDir: { value: directions },
+    uWaveTerm: { value: terms },
+    uWaveCount: { value: waveCount },
+    uChoppiness: { value: choppiness },
+    uWaveTime: { value: 0 }
+  };
+}
+
+/**
+ * The same five values as TSL nodes, plus the one write the frame loop owes them.
+ *
+ * **THE CLOCK IS RETURNED AS A FUNCTION BECAUSE FORGETTING IT IS SILENT.** A
+ * wave field whose time never advances is not an error and not a blank frame —
+ * it is a perfectly plausible FROZEN sea, which on a still screenshot looks
+ * exactly like a working one. The classic path has the same hazard and hides it
+ * behind a record the rig happens to mutate; here the duty is in the type.
+ */
+export type WaveUniformNodeSet = {
+  nodes: WaveUniformNodes;
+  setElapsedSeconds: (seconds: number) => void;
+};
+
+export function waveUniformNodes(
+  modules: NodeMaterialModules,
+  directions: Vector2[],
+  terms: Vector4[],
+  waveCount: number,
+  choppiness: number
+): WaveUniformNodeSet {
+  const { int, uniform, uniformArray } = modules.tsl;
+  const elapsedSeconds = uniform(0);
+
+  return {
+    nodes: {
+      directions: uniformArray(directions, "vec2") as unknown as WaveUniformNodes["directions"],
+      terms: uniformArray(terms, "vec4") as unknown as WaveUniformNodes["terms"],
+      waveCount: int(waveCount) as unknown as Node<"int">,
+      choppiness: uniform(choppiness) as unknown as Node<"float">,
+      time: elapsedSeconds as unknown as Node<"float">
+    },
+    setElapsedSeconds: (seconds: number) => {
+      elapsedSeconds.value = seconds;
+    }
+  };
+}
 
 /** What one evaluation of the surface yields, and every caller needs all three. */
 export type OceanSurfaceNodes = {

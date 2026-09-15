@@ -38,6 +38,7 @@ import {
   type Texture,
   type WebGLRenderer,
 } from "three";
+import { foamFoldThreshold } from "./oceanSeaState";
 import {
   GERSTNER_SURFACE_GLSL,
   PREETHAM_SKY_GLSL,
@@ -245,7 +246,7 @@ export function createSeaTop(options: SeaTopOptions): SeaTop {
     // Where the surface Jacobian has to fall before the water counts as broken.
     // The mapping is a fit; the number going into it is measured, and that is
     // the difference between a sea state and a foam slider.
-    uFoamEdge: { value: 0.15 + 0.8 * Math.sqrt(Math.min(1, whitecapFraction / 0.04)) },
+    uFoamEdge: { value: foamFoldThreshold(whitecapFraction) },
     // The capillary ripple's weight against the Gerstner normal. Measured: at
     // 0.55 the sea's local contrast fell 40% against a normal-map-only surface,
     // because a physically correct Beaufort 4 sea is genuinely smooth and all

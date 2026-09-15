@@ -290,10 +290,10 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
   },
   /**
    * **THE OCEAN IS PART PORTED, AND THIS ENTRY IS THE ONLY ONE THAT WILL MOVE
-   * FOR MORE THAN ONE REASON.** Four of its six `ShaderMaterial`s — the jellyfish
-   * bell, the bubble stream, marine snow and the backdrop dome — are node
-   * materials as of 2026-09-15; the surface seen from below and the god rays are
-   * not, and neither are its eight `onBeforeCompile` patches.
+   * FOR MORE THAN ONE REASON.** Five of its six `ShaderMaterial`s — the jellyfish
+   * bell, the bubble stream, marine snow, the backdrop dome and the water's
+   * underside — are node materials as of 2026-09-15; the god rays are not, and
+   * neither are its eight `onBeforeCompile` patches.
    *
    * So the number below is a MIXTURE, and reading it as "what the ocean's
    * shaders cost" is what the two entries above already had to be corrected
@@ -303,15 +303,30 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
    * **THE PROGRESS SIGNAL FOR A PART-PORTED FAMILY IS NOT THIS NUMBER.**
    * `node-path-diagnostic.spec.ts` counts the node builder's refusals — one per
    * material still on the GLSL path — and prints it per backend. It went 6 -> 4
-   * when the two drifters landed, 4 -> 3 with marine snow and 3 -> 2 with the
-   * backdrop, which is exact, and it will reach 0 before this entry can be
-   * deleted.
+   * when the two drifters landed, 4 -> 3 with marine snow, 3 -> 2 with the
+   * backdrop and 2 -> 1 with the water's underside, which is exact, and it will
+   * reach 0 before this entry can be deleted.
    *
-   * **AND THE BACKDROP IS THE CASE THAT PROVES WHY THIS ENTRY IS NOT THE
-   * SIGNAL.** Porting it moved the node frame by mean 0.00, with 0.00% of pixels
-   * differing: the dome is entirely occluded from this fixture's camera, so a
-   * real port of the largest surface in the scene is worth exactly nothing here.
-   * A number that cannot see a finished port cannot be used to grade one.
+   * **AND THE TWO MOST RECENT PORTS MOVED IT IN OPPOSITE DIRECTIONS, NEITHER OF
+   * THEM A VERDICT ON THE PORT.** The backdrop moved the node frame by mean
+   * 0.00: underwater that dome paints `mix(gradient, waterColour, swallow)` with
+   * `swallow = 1 - exp(-(420 * 0.02)^2)` = 1.000, so it is a flat fill of the fog
+   * colour — and `oceanRig.ts` sets the renderer's CLEAR colour to that same fog
+   * colour. It was already painting what was there. The only residue is the tone
+   * curve, which a fragment goes through and a clear colour does not, and that
+   * residue measured 0.67 at its worst block: below the noise floor of 4.
+   *
+   * The water's underside then moved it the other way, 57.30 -> 61.43, and that
+   * is the shape the paragraph above describes. Before the port the node builder
+   * refused it and substituted a default `NodeMaterial`, which does not carry
+   * `side` — so a `DoubleSide` sheet became `FrontSide`, the only face a viewer
+   * underwater can see was culled, and the ceiling WAS NOT DRAWN. It is drawn
+   * now, over god rays and seabed patches that are still on the GLSL path, and an
+   * alpha sheet cannot cancel against a classic frame whose layers beneath it are
+   * still wrong.
+   *
+   * One number, two ports, and in neither case does it say whether the port is
+   * right. The refusal count does.
    *
    * Why the number RISES as the port proceeds — 57.02, then 57.07, then 57.30 —
    * rather than falling. Before each step the node path drew those layers NOT AT
@@ -327,18 +342,18 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
   {
     fixture: "ocean-shallow",
     comparison: "WebGPU against WebGL",
-    meanAbsoluteError: 57.3,
+    meanAbsoluteError: 61.43,
     worstBlockError: 150.77,
-    differingFraction: 0.9821,
-    closedBy: "Phases 6-8 for PART of it — two shaders and eight patches remain — and the post chain for the rest"
+    differingFraction: 0.9834,
+    closedBy: "Phases 6-8 for PART of it — one shader and eight patches remain — and the post chain for the rest"
   },
   {
     fixture: "ocean-shallow",
     comparison: "forceWebGL against WebGL",
-    meanAbsoluteError: 57.3,
+    meanAbsoluteError: 61.43,
     worstBlockError: 151.2,
-    differingFraction: 0.9821,
-    closedBy: "Phases 6-8 for PART of it — two shaders and eight patches remain — and the post chain for the rest"
+    differingFraction: 0.9834,
+    closedBy: "Phases 6-8 for PART of it — one shader and eight patches remain — and the post chain for the rest"
   }
 ];
 

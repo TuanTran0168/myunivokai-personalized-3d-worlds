@@ -63,7 +63,7 @@ import {
   waterPalette,
   type JerlovWaterType,
 } from "./oceanOptics";
-import { buildSeaState, foamFoldThreshold, type SeaState } from "./oceanSeaState";
+import { buildSeaState, type SeaState } from "./oceanSeaState";
 import {
   GERSTNER_SURFACE_GLSL,
   PREETHAM_SKY_GLSL,
@@ -73,6 +73,8 @@ import {
   skyCoefficients,
   skyUniformNodes,
   skyUniformValues,
+  waveUniformNodes,
+  waveUniformValues,
 } from "./oceanSky";
 import {
   OCEAN_RIG_SPECIES,
@@ -85,6 +87,7 @@ import { createSeabed, tintSeabed, type Seabed } from "./oceanRigTerrain";
 import { algaeDepthLimitMetres, createFlora, type Flora } from "./oceanRigFlora";
 import { SKY_HAZE, createSeaTop, type SeaTop } from "./oceanRigSurface";
 import { oceanBackdropMaterial } from "./oceanBackdropMaterial";
+import { oceanCeilingMaterial } from "./oceanCeilingMaterial";
 import {
   createBubbles,
   createJellyfish,
@@ -115,6 +118,27 @@ const BACKDROP_ZENITH_KEY_DIMMING = 0.85;
 const BACKDROP_ZENITH_MEDIUM_MIX = 0.3;
 /** The floor of the dome is the medium, darkened — nothing lights it from below. */
 const BACKDROP_FLOOR_DIMMING = 0.3;
+/**
+ * The water's underside, graded. Every one of these was written inline in the
+ * uniform block the material has now moved out of.
+ */
+const CEILING_DEEP_DIMMING = 0.25;
+const CEILING_SUN_COLOR = "#FFF6E2";
+const CEILING_BRIGHTNESS_BASE = 0.8;
+const CEILING_BRIGHTNESS_RANGE = 0.35;
+/** How much of the sky survives the trip down, as a share of the water's own value. */
+const CEILING_SKY_GAIN_BASE = 0.16;
+const CEILING_SKY_GAIN_RANGE = 0.62;
+/**
+ * The wave damping, which falls as the sea gets rougher: from below the eye sees
+ * SLOPES rather than crests, and full wave height turns the ceiling into
+ * corrugated iron.
+ */
+const CEILING_WAVE_DAMPING_MINIMUM = 0.2;
+const CEILING_WAVE_DAMPING_MAXIMUM = 0.85;
+const CEILING_WAVE_DAMPING_BASE = 0.22;
+const CEILING_WAVE_DAMPING_HEIGHT_SCALE = 0.3;
+const CEILING_WAVE_HEIGHT_FLOOR = 0.35;
 /**
  * The seabed mesh: how far it reaches, and how finely it is sampled at each
  * quality level. The vertex spacing that falls out of these two — 2.27 m and
@@ -356,13 +380,14 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
         : new Vector4(0, 0.1, 0, 0),
     );
   }
-  const waveShared = {
-    uWaveDir: { value: waveDirections },
-    uWaveTerm: { value: waveTerms },
-    uWaveCount: { value: WAVE_MAX },
-    uChoppiness: { value: seaState.choppiness },
-    uWaveTime: { value: 0 },
-  };
+  const waveShared = waveUniformValues(waveDirections, waveTerms, WAVE_MAX, seaState.choppiness);
+  // The same numbers as nodes, plus the clock write the frame loop owes them —
+  // handed back as a function because a frozen wave field is a plausible frame
+  // rather than an error, and on a still screenshot it looks exactly like a
+  // working one.
+  const waveNodeSet = nodeModules
+    ? waveUniformNodes(nodeModules, waveDirections, waveTerms, WAVE_MAX, seaState.choppiness)
+    : null;
 
   // ---- lights -----------------------------------------------------------
   // Key-to-fill discipline: a strong single key with a weak fill. An ambient
@@ -481,92 +506,34 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
   disposables.push(backdropGeometry, backdropMaterial);
 
   // ---- the surface, seen from below -------------------------------------
-  const surfaceUniforms = {
-    uWaterColor: { value: fogColor.clone() },
-    uDeepColor: { value: fogColor.clone().multiplyScalar(0.25) },
-    uSunColor: { value: new Color("#FFF6E2") },
-    uSunDirection: { value: sunBelow.clone() },
-    uBrightness: { value: 0.8 + brightness * 0.35 },
-    uFogDensity: { value: palette.fogDensity },
-    // How much of the sky survives the trip down. Anchored to the water's own
-    // value so the window keeps its ratio to the water at every depth.
-    uSkyGain: { value: 0.16 + palette.fogValue * 0.62 },
-    // Read from below the eye sees SLOPES, not crests; full height turns the
-    // ceiling into corrugated iron.
-    uWaveDamping: {
-      value: Math.min(0.85, Math.max(0.2, 0.22 + 0.3 / Math.max(0.35, seaState.significantHeightMetres))),
-    },
-    uFoamEdge: { value: foamFoldThreshold(seaState.whitecapFraction) },
-    ...skyShared,
-    ...waveShared,
-  };
   const surfaceGeometry = new PlaneGeometry(900, 900, high ? 280 : 120, high ? 280 : 120);
   surfaceGeometry.rotateX(-Math.PI / 2);
-  const surfaceMaterial = new ShaderMaterial({
-    uniforms: surfaceUniforms,
-    side: DoubleSide,
-    transparent: true,
-    fog: false,
-    vertexShader: `
-      uniform float uWaveDamping;
-      ${WAVE_UNIFORMS_GLSL(WAVE_MAX)}
-      varying vec3 vWorld; varying vec3 vWaveNormal;
-      ${GERSTNER_SURFACE_GLSL(WAVE_MAX)}
-      void main(){
-        vec3 world = (modelMatrix * vec4(position, 1.0)).xyz;
-        vec3 offset; vec3 normal; float fold;
-        oceanSurface(world.xz, offset, normal, fold);
-        world += offset * uWaveDamping;
-        vWorld = world;
-        vWaveNormal = normalize(mix(vec3(0.0, 1.0, 0.0), normal, uWaveDamping));
-        gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
-      }`,
-    fragmentShader: `
-      uniform vec3 uWaterColor; uniform vec3 uDeepColor; uniform vec3 uSunColor;
-      uniform vec3 uSunDirection; uniform float uBrightness; uniform float uFogDensity;
-      uniform float uSkyGain;
-      ${SKY_UNIFORMS_GLSL}
-      varying vec3 vWorld; varying vec3 vWaveNormal;
-      ${PREETHAM_SKY_GLSL}
-      void main(){
-        vec3 view = normalize(vWorld - cameraPosition);
-        vec3 n = normalize(vWaveNormal);
-        // Measure the critical angle against a TILTED normal, not the full wave
-        // normal: at a real swell height the window otherwise fragments into
-        // patches instead of holding as one disc.
-        vec3 tilted = normalize(mix(vec3(0.0, 1.0, 0.0), n, 0.32));
-        float upness = abs(dot(view, tilted));
-        float sinTheta = sqrt(max(0.0, 1.0 - upness * upness));
-        // Beyond sin(theta) = 1/1.333 nothing can refract in, so the surface
-        // goes total-internal-reflection: a mirror, not a window.
-        float window = 1.0 - smoothstep(0.70, 0.775, sinTheta);
-        // How far out across the cone we are: 0 at the zenith, 1 at the
-        // critical angle. The sky's own gradient, compressed.
-        float coneT = clamp(sinTheta / 0.75, 0.0, 1.0);
-        vec3 sky = skyThroughSnellsWindow(view, sinTheta) * uSkyGain;
-        // Ripple sparkle, strongest where refraction magnifies the slope,
-        // fading radially toward the window's rim instead of holding flat
-        // then cutting off with the window's own hard edge.
-        sky += uSunColor * pow(max(0.0, n.y), 6.0) * 0.06 * (1.0 - coneT);
-
-        vec3 mirror = mix(uDeepColor, uWaterColor, pow(upness, 0.7)) + uWaterColor * 0.85;
-        float fresnel = 0.02 + 0.98 * pow(1.0 - upness, 5.0);
-        vec3 color = mix(mirror, sky, window);
-        color = mix(color, uWaterColor, fresnel * (1.0 - window) * 0.6);
-
-        // The same extinction law the medium uses, because this sheet is IN the
-        // medium. Overhead it is metres away and survives; at the grazing angles
-        // that would otherwise paint the whole upper frame it is hundreds of
-        // metres away and is gone.
-        float d = length(vWorld - cameraPosition);
-        float swallow = 1.0 - exp(-pow(d * uFogDensity, 2.0));
-        color = mix(color, uWaterColor, clamp(swallow, 0.0, 1.0));
-
-        gl_FragColor = vec4(color * uBrightness, 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`,
-  });
+  const surfaceMaterial = oceanCeilingMaterial(
+    {
+      waterColor: fogColor.clone(),
+      deepColor: fogColor.clone().multiplyScalar(CEILING_DEEP_DIMMING),
+      sunColor: new Color(CEILING_SUN_COLOR),
+      brightness: CEILING_BRIGHTNESS_BASE + brightness * CEILING_BRIGHTNESS_RANGE,
+      fogDensityPerMetre: palette.fogDensity,
+      skyGain: CEILING_SKY_GAIN_BASE + palette.fogValue * CEILING_SKY_GAIN_RANGE,
+      waveDamping: Math.min(
+        CEILING_WAVE_DAMPING_MAXIMUM,
+        Math.max(
+          CEILING_WAVE_DAMPING_MINIMUM,
+          CEILING_WAVE_DAMPING_BASE +
+            CEILING_WAVE_DAMPING_HEIGHT_SCALE /
+              Math.max(CEILING_WAVE_HEIGHT_FLOOR, seaState.significantHeightMetres),
+        ),
+      ),
+    },
+    sunBelow,
+    skyShared,
+    waveShared,
+    skyNodes,
+    waveNodeSet ? waveNodeSet.nodes : null,
+    WAVE_MAX,
+    nodeModules,
+  );
   const surface = new Mesh(surfaceGeometry, surfaceMaterial);
   surface.position.y = viewerDepthMetres;
   // Crossing the waterline swaps WHICH FACE of the same sheet of water is being
@@ -950,6 +917,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       camera.getWorldPosition(cameraPosition);
       creatureTime.value = elapsed;
       waveShared.uWaveTime.value = elapsed;
+      if (waveNodeSet) waveNodeSet.setElapsedSeconds(elapsed);
       godRayUniforms.uTime.value = elapsed;
       for (const layer of moteLayers) layer.uniforms.uMoteTime.value = elapsed;
       jellyfish.uniforms.uJellyTime.value = elapsed;
