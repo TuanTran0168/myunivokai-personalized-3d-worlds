@@ -27,6 +27,17 @@ import {
   ShaderMaterial,
   SphereGeometry,
 } from "three";
+import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
+import {
+  bubbleMaterial,
+  jellyfishMaterial,
+  BUBBLE_ANCHOR_ATTRIBUTE,
+  BUBBLE_SEED_ATTRIBUTE,
+  JELLYFISH_ANCHOR_ATTRIBUTE,
+  JELLYFISH_SEED_ATTRIBUTE,
+  type BubbleFrameUniforms,
+  type JellyfishFrameUniforms,
+} from "./oceanDrifterMaterials";
 
 type Random = () => number;
 
@@ -34,11 +45,20 @@ type Random = () => number;
    JELLYFISH
    ======================================================================== */
 
-export type JellyfishUniforms = {
-  uJellyTime: { value: number };
-  uJellyColor: { value: Color };
-  uJellyGlow: { value: number };
-};
+/**
+ * Declared in `oceanDrifterMaterials.ts` because both implementations of the
+ * shader have to produce the same three, and re-exported here because that is
+ * where every caller already looks for it.
+ *
+ * **IN-PLACE MUTATION OF A COLOUR REACHES BOTH PATHS**, which is not obvious for
+ * the node one and was checked rather than assumed: `oceanRig` does
+ * `uniforms.uJellyColor.value.set(...).lerp(...)` without ever replacing the
+ * `Color`, and `UniformsGroup.updateColor` (`:419`) compares r, g and b against
+ * its cached copy every frame rather than watching for a new object. A node
+ * uniform that only noticed reassignment would have frozen this tint at its
+ * construction colour, on the node path only, with nothing thrown.
+ */
+export type JellyfishUniforms = JellyfishFrameUniforms;
 
 export type Jellyfish = {
   mesh: InstancedMesh;
@@ -59,17 +79,12 @@ export function createJellyfish(options: {
   random: Random;
   radius: number;
   columnHeight: number;
+  nodeModules: NodeMaterialModules | null;
 }): Jellyfish {
-  const { count, random, radius, columnHeight } = options;
+  const { count, random, radius, columnHeight, nodeModules } = options;
   // An open hemisphere, not a sphere: a bell has an underside, and cutting the
   // geometry at 0.62π is what lets the shader see it.
   const bell = new SphereGeometry(0.5, 14, 9, 0, Math.PI * 2, 0, Math.PI * 0.62);
-
-  const uniforms: JellyfishUniforms = {
-    uJellyTime: { value: 0 },
-    uJellyColor: { value: new Color("#7FE9FF") },
-    uJellyGlow: { value: 0.4 },
-  };
 
   const anchors = new Float32Array(count * 3);
   const seeds = new Float32Array(count);
@@ -82,65 +97,11 @@ export function createJellyfish(options: {
     anchors[i * 3 + 2] = Math.sin(angle) * distance;
     seeds[i] = random() * 10;
   }
-  bell.setAttribute("aJellyAnchor", new InstancedBufferAttribute(anchors, 3));
-  bell.setAttribute("aJellySeed", new InstancedBufferAttribute(seeds, 1));
+  bell.setAttribute(JELLYFISH_ANCHOR_ATTRIBUTE, new InstancedBufferAttribute(anchors, 3));
+  bell.setAttribute(JELLYFISH_SEED_ATTRIBUTE, new InstancedBufferAttribute(seeds, 1));
 
-  const material = new ShaderMaterial({
-    uniforms: { ...uniforms, uJellyColumn: { value: columnHeight } },
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-    fog: false,
-    vertexShader: /* glsl */ `
-      attribute vec3 aJellyAnchor;
-      attribute float aJellySeed;
-      uniform float uJellyTime;
-      uniform float uJellyColumn;
-      varying float vRim;
-      varying float vUnder;
-      void main(){
-        float pulse = sin(uJellyTime * 1.15 + aJellySeed * 6.2831853) * 0.5 + 0.5;
-        vec3 p = position;
-        // Contract and flare: the margin widens as the bell shortens.
-        p.xz *= 1.0 + pulse * 0.22;
-        p.y *= 1.0 - pulse * 0.30;
-        float bellScale = 0.34 + fract(aJellySeed) * 0.62;
-        float rise = mod(uJellyTime * 0.08 + aJellySeed, 1.0);
-        vec3 world = aJellyAnchor
-          + vec3(sin(uJellyTime * 0.11 + aJellySeed * 3.0) * 2.4,
-                 rise * uJellyColumn - uJellyColumn * 0.5,
-                 cos(uJellyTime * 0.09 + aJellySeed * 2.0) * 2.4)
-          + p * bellScale;
-        vec4 viewPosition = modelViewMatrix * vec4(world, 1.0);
-        vec3 viewNormal = normalize(mat3(modelViewMatrix) * normalize(position));
-        vRim = pow(1.0 - abs(dot(viewNormal, normalize(-viewPosition.xyz))), 1.6);
-        vUnder = smoothstep(0.4, -0.5, position.y);
-        gl_Position = projectionMatrix * viewPosition;
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uJellyColor;
-      uniform float uJellyGlow;
-      varying float vRim;
-      varying float vUnder;
-      void main(){
-        float alpha = (vRim * 0.85 + vUnder * 0.2) * uJellyGlow;
-        gl_FragColor = vec4(uJellyColor * (vRim * 1.4 + 0.15), alpha);
-        // NO TONE MAPPING, AND NO COLOUR-SPACE ENCODE. Both were added here in a
-        // sweep that required every fragment shader in the family to route
-        // through the renderer's curve, enforced by a test. The rule was right
-        // for opaque surfaces and wrong for this one, because this layer is
-        // ADDITIVE: it does not replace what is behind it, it is summed into an
-        // already sRGB-encoded framebuffer.
-        //
-        // sRGB encoding is steep near black — a linear 0.15 encodes to 0.40 —
-        // so encoding a small additive contribution inflates it by roughly two
-        // and a half times before it is added. Four layers doing that at once is
-        // a haze over every underwater frame, and on the god rays it was enough
-        // to clip 100% of the visible band to white once the camera started
-        // looking along the shafts. The prototype writes raw linear here for
-        // exactly this reason and every additive layer in it does the same.
-      }`,
-  });
+  const { material, uniforms } = jellyfishMaterial(columnHeight, nodeModules);
+
 
   const mesh = new InstancedMesh(bell, material, count);
   const identity = new Matrix4();
@@ -164,11 +125,8 @@ export function createJellyfish(options: {
    BUBBLE STREAMS
    ======================================================================== */
 
-export type BubbleUniforms = {
-  uBubbleTime: { value: number };
-  uBubbleTop: { value: number };
-  uBubbleTint: { value: Color };
-};
+/** Declared in `oceanDrifterMaterials.ts` — see `JellyfishUniforms` above. */
+export type BubbleUniforms = BubbleFrameUniforms;
 
 export type Bubbles = {
   mesh: InstancedMesh;
@@ -191,8 +149,9 @@ export function createBubbles(options: {
   random: Random;
   radiusOuter: number;
   ventCount?: number;
+  nodeModules: NodeMaterialModules | null;
 }): Bubbles {
-  const { count, random, radiusOuter, ventCount = 9 } = options;
+  const { count, random, radiusOuter, ventCount = 9, nodeModules } = options;
   const geometry = new IcosahedronGeometry(1, 1);
 
   const vents: [number, number][] = [];
@@ -213,55 +172,11 @@ export function createBubbles(options: {
     anchors[i * 3 + 2] = vent[1] + (random() - 0.5) * 0.7;
     seeds[i] = random() * 100;
   }
-  geometry.setAttribute("aBubbleAnchor", new InstancedBufferAttribute(anchors, 3));
-  geometry.setAttribute("aBubbleSeed", new InstancedBufferAttribute(seeds, 1));
+  geometry.setAttribute(BUBBLE_ANCHOR_ATTRIBUTE, new InstancedBufferAttribute(anchors, 3));
+  geometry.setAttribute(BUBBLE_SEED_ATTRIBUTE, new InstancedBufferAttribute(seeds, 1));
 
-  const uniforms: BubbleUniforms = {
-    uBubbleTime: { value: 0 },
-    uBubbleTop: { value: 40 },
-    uBubbleTint: { value: new Color("#DCF6FF") },
-  };
+  const { material, uniforms } = bubbleMaterial(nodeModules);
 
-  const material = new ShaderMaterial({
-    uniforms,
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-    fog: false,
-    vertexShader: /* glsl */ `
-      attribute vec3 aBubbleAnchor;
-      attribute float aBubbleSeed;
-      uniform float uBubbleTime;
-      uniform float uBubbleTop;
-      varying float vRim;
-      varying float vFade;
-      void main(){
-        float span = uBubbleTop;
-        float rise = mod(uBubbleTime * 0.42 + aBubbleAnchor.y * span + aBubbleSeed, span);
-        float climb = rise / span;
-        // A bubble expands as it rises: less pressure above it.
-        float grow = 1.0 + climb * 1.5;
-        float bubbleRadius = (0.035 + fract(aBubbleSeed) * 0.075) * grow;
-        vec3 wobble = vec3(
-          sin(rise * 1.7 + aBubbleSeed * 6.0) * 0.22 * grow, 0.0,
-          cos(rise * 1.5 + aBubbleSeed * 4.0) * 0.22 * grow);
-        vec3 world = vec3(aBubbleAnchor.x, rise, aBubbleAnchor.z) + wobble + position * bubbleRadius;
-        vec4 viewPosition = modelViewMatrix * vec4(world, 1.0);
-        vec3 viewNormal = normalize(mat3(modelViewMatrix) * position);
-        vRim = pow(1.0 - abs(dot(viewNormal, normalize(-viewPosition.xyz))), 2.2);
-        // Fade in at the vent and out at the top, so nothing pops.
-        vFade = smoothstep(1.0, 0.86, climb) * smoothstep(0.0, 0.04, climb);
-        gl_Position = projectionMatrix * viewPosition;
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uBubbleTint;
-      varying float vRim;
-      varying float vFade;
-      void main(){
-        gl_FragColor = vec4(uBubbleTint * vRim * 1.5, vRim * vFade * 0.85);
-        // Additive — see the jellyfish shader above for why nothing is encoded.
-      }`,
-  });
 
   const mesh = new InstancedMesh(geometry, material, count);
   const identity = new Matrix4();

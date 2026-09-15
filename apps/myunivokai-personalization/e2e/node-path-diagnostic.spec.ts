@@ -33,6 +33,15 @@ const STACK_FRAMES_TO_PRINT = 24;
 const CONSOLE_MESSAGE_CHARACTER_LIMIT = 400;
 const SHOT_DIRECTORY = "e2e/shots/node-path-diagnostic";
 
+/**
+ * What the node builder says when it is handed a raw GLSL `ShaderMaterial`.
+ *
+ * Matched as a substring rather than reproduced in full: the sentence carries
+ * the material's type name, and the count wants every refusal regardless of
+ * which class was refused.
+ */
+const NODE_BUILDER_REFUSAL = "is not compatible";
+
 const DIAGNOSTIC_FIXTURES = [
   { name: "forest-world", worldId: natureWorld.world.id, family: "nature" },
   { name: "universe-world", worldId: universeWorld.world.id, family: undefined },
@@ -102,12 +111,23 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
     test(`${fixture.name} on ${requestedRenderer}: whatever it throws, with frames`, async ({ page }) => {
       test.setTimeout(DIAGNOSTIC_TIMEOUT_MILLISECONDS);
 
+      // HOW MANY MATERIALS ARE STILL ON THE GLSL PATH, which is the only
+      // progress signal a part-ported family has.
+      //
+      // A family's parity number cannot move until the LAST of its raw shaders
+      // is ported, because the node path is all-or-nothing — so a nine-unit port
+      // measured only by parity has one measurement at the end and none before
+      // it. The node builder announces every refusal, once per material, and
+      // counting them turns "some of the ocean is ported" into a number that
+      // goes down.
+      let refusedMaterialCount = 0;
       const pageErrors: { message: string; stack: string }[] = [];
       page.on("pageerror", (error) => {
         pageErrors.push({ message: error.message, stack: error.stack ?? "(no stack)" });
       });
       page.on("console", (message) => {
         if (message.type() === "error") {
+          if (message.text().includes(NODE_BUILDER_REFUSAL)) refusedMaterialCount += 1;
           console.log(`console.error: ${message.text().slice(0, CONSOLE_MESSAGE_CHARACTER_LIMIT)}`);
         }
       });
@@ -160,6 +180,8 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
       console.log(`scene state: ${describeSceneState(sceneStateBeforeShot)}`);
 
       console.log(`outermost objects:\n${describeFarthestObjects(sceneStateBeforeShot)}`);
+
+      console.log(`materials still on the GLSL path: ${refusedMaterialCount}`);
 
       console.log(`\npage errors: ${pageErrors.length}`);
       for (const pageError of pageErrors) {

@@ -190,6 +190,33 @@ Three rules, each of which has already cost something:
   values with `perInstanceAttribute()` from `shared/nodeMaterials.ts`; see the
   trap below for why the obvious spelling does not work.
 
+### `positionLocal` stops being the geometry attribute the moment you set `positionNode`
+
+GLSL's `position` is the vertex attribute and nothing ever overwrites it. TSL's
+`positionLocal` looks like the same thing and is not: `NodeMaterial.setupPosition`
+does `positionLocal.assign( this.positionNode )` (`NodeMaterial.js:804`), so from
+then on it holds the DEFORMED result. The attribute is `positionGeometry`
+(`Position.js:33`, literally `attribute('position','vec3')`).
+
+Any port whose vertex shader both moves the vertex and reads `position` for
+something else — a normal, a local height, a radius — has to use
+`positionGeometry` for the second use. That is most of them: a sprite, a
+billboard, a shell and a deformed mesh all do it.
+
+**It fails by shading, not by geometry, which is why a number will not catch
+it.** The ocean's bubbles are drawn rim-only — `1 - |dot(normal, viewDir)|` with
+the normal taken from the sphere's own outward direction — so feeding that term
+the bubble's world position instead makes it near-constant across the sprite and
+the bubbles render as **solid white discs instead of rings**. Parity moved by
+0.15 of 255, comfortably inside the ocean's recorded headroom, and the suite
+stayed green. What caught it was cropping the two frames side by side: every
+bubble was in exactly the right place and none of them was the right shape.
+
+The same trap does not apply to `positionView`, which is what GLSL's
+`modelViewMatrix * vec4(world,1.0)` produces and is correct to use for near-plane
+and depth work — `sizedStarPointsMaterial.ts` and `nebulaCloudPointsMaterial.ts`
+both rely on that and both are right.
+
 ### `instancedBufferAttribute()` does not make an attribute instanced
 
 Given a raw `Float32Array` or a plain `BufferAttribute` — the two shapes its own

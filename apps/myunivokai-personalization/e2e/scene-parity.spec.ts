@@ -288,21 +288,45 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
     differingFraction: 0.8751,
     closedBy: "the AO retune and the PMREM bake, NOT a shader port — the forest has no GLSL left"
   },
+  /**
+   * **THE OCEAN IS PART PORTED, AND THIS ENTRY IS THE ONLY ONE THAT WILL MOVE
+   * FOR MORE THAN ONE REASON.** Two of its six `ShaderMaterial`s — the jellyfish
+   * bell and the bubble stream — are node materials as of 2026-09-15; the
+   * surface, the backdrop, the god rays and marine snow are not, and neither are
+   * its eight `onBeforeCompile` patches.
+   *
+   * So the number below is a MIXTURE, and reading it as "what the ocean's
+   * shaders cost" is what the two entries above already had to be corrected
+   * for. Some of it is the post chain, which the universe measured and which no
+   * shader port closes.
+   *
+   * **THE PROGRESS SIGNAL FOR A PART-PORTED FAMILY IS NOT THIS NUMBER.**
+   * `node-path-diagnostic.spec.ts` counts the node builder's refusals — one per
+   * material still on the GLSL path — and prints it per backend. It went 6 -> 4
+   * when the two drifters landed, which is exact, and it will reach 0 before
+   * this entry can be deleted.
+   *
+   * Why 57.02 became 57.07 rather than falling: before the port the node path
+   * drew no jellyfish and no bubbles at all, because the builder refused them.
+   * It now draws both, and drawing two correct layers onto a scene whose seabed
+   * is still wrong does not have to reduce a whole-frame mean. The bubble column
+   * has left the worst-block list entirely, which is the part that is checkable.
+   */
   {
     fixture: "ocean-shallow",
     comparison: "WebGPU against WebGL",
-    meanAbsoluteError: 57.02,
+    meanAbsoluteError: 57.07,
     worstBlockError: 150.77,
     differingFraction: 0.9821,
-    closedBy: "Phases 6-8 (the ocean's four raw GLSL shaders become TSL)"
+    closedBy: "Phases 6-8 for PART of it — four shaders and eight patches remain — and the post chain for the rest"
   },
   {
     fixture: "ocean-shallow",
     comparison: "forceWebGL against WebGL",
-    meanAbsoluteError: 57.02,
+    meanAbsoluteError: 57.07,
     worstBlockError: 151.2,
     differingFraction: 0.9821,
-    closedBy: "Phases 6-8 (the ocean's four raw GLSL shaders become TSL)"
+    closedBy: "Phases 6-8 for PART of it — four shaders and eight patches remain — and the post chain for the rest"
   }
 ];
 

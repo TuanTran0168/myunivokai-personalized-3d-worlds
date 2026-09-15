@@ -46,6 +46,7 @@ import {
   type WebGLRenderer,
 } from "three";
 import { randomFromSeed } from "@/lib/scene";
+import { nodeMaterialModulesFor } from "@/features/scene-renderers/shared/nodeMaterials";
 import { OCEAN_SUN_AZIMUTH_RADIANS } from "./oceanMath";
 import {
   AIR_SIGHTING_RANGE_METRES,
@@ -240,6 +241,12 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     cameraDistanceMetres = 20,
     quality = "high",
   } = options;
+
+  // Which material system is drawing, asked of the RENDERER rather than of the
+  // graphics API — see `shared/nodeMaterials.ts`. Null is the ordinary answer and
+  // means every material below builds its classic GLSL variant, which is what
+  // every visitor gets until Phase 9.
+  const nodeModules = nodeMaterialModulesFor(renderer);
 
   const group = new Group();
   const disposables: { dispose: () => void }[] = [];
@@ -757,6 +764,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     random: randomFromSeed(`${seed}:jellyfish`),
     radius: 62,
     columnHeight: 40,
+    nodeModules,
   });
   jellyfish.uniforms.uJellyGlow.value = 0.07 + biolum * 1.05;
   jellyfish.uniforms.uJellyColor.value.set("#7FE9FF").lerp(new Color("#48FFD5"), biolum);
@@ -837,6 +845,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       count: high ? 700 : 240,
       random: randomFromSeed(`${seed}:bubbles`),
       radiusOuter: 44,
+      nodeModules,
     });
     bubbles.uniforms.uBubbleTop.value = Math.min(floorClearance + 24, 90);
     bubbles.uniforms.uBubbleTint.value
