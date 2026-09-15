@@ -1,10 +1,22 @@
 # WebGPU-first migration feasibility — myunivokai's full 3D rendering stack
 
-> **Document status:** Research, with **Phases 0–5 of §26 executed and passed**. Nothing in the verdict
-> is approved, and **Phases 2–4 did modify production code** — the last rows of the Quality check say
-> exactly what a visitor now receives and what is gated behind a build flag. Phase 5 added a second
-> post chain behind that same flag and changed nothing a visitor receives; it also **found §25's
-> recommended architecture to be defined by an impossible step**, which is corrected in place.
+> **Document status:** Research, with **Phases 0–5 of §26 executed and passed, and Phases 6–8 blocked
+> one material short of complete**. Nothing in the verdict is approved, and **Phases 2–4 did modify
+> production code** — the last rows of the Quality check say exactly what a visitor now receives and
+> what is gated behind a build flag. Phase 5 added a second post chain behind that same flag and
+> changed nothing a visitor receives; it also **found §25's recommended architecture to be defined by
+> an impossible step**, which is corrected in place.
+>
+> **PHASES 6–8 STOPPED ON A LOOK DECISION, NOT ON AN ENGINEERING ONE (2026-09-15).** The universe and
+> the forest have no hand-written shader left, and the ocean is down to its god rays and eight
+> `onBeforeCompile` patches. The god rays cannot be ported faithfully: the classic path lets an
+> ADDITIVE layer write raw linear values into an already-encoded framebuffer, while the node path
+> encodes the whole composited frame once (`Renderer.needsFrameBufferTarget`, `Renderer.js:2446`),
+> and there is no per-material opt-out from a frame-wide pass. The shipped shader's own comment
+> records what encoding it does — the rays clipped the entire visible band of a 14 m reef to pure
+> white, 100% of measured pixels. The two paths therefore composite additively in DIFFERENT SPACES,
+> which is a decision about the ocean's look and belongs to the owner. See
+> `knowledge/frontend/threejs-scene-architecture.md`, "The two paths encode at different times".
 > **Raised:** 2026-09-09 by the owner — a full-stack feasibility study, not a "can we use WebGPU
 > somewhere" question.
 > **Last source review:** 2026-09-11

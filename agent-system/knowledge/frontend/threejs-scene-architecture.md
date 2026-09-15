@@ -263,7 +263,7 @@ the classic renderer:
 |---|---|---|---|
 | forest | yes | 19.49 | 1.24 |
 | universe | yes | 12.22 | 0.45 |
-| ocean | no, six `ShaderMaterial`s left | 57.02 | 0.02 |
+| ocean | no, one `ShaderMaterial` and eight patches left | 61.43 | 0.04 |
 
 The universe is the sharper data point because its number **did not move**:
 12.19 before its two point shaders were ported, 12.22 after. What was eliminated
@@ -276,6 +276,64 @@ midtones while the saturated highlights match, which is the signature of the
 **post chain**: pmndrs' `EffectComposer` and three's TSL nodes are two
 implementations of the same six passes. No shader port closes that, and Phase 10
 cannot judge the fallback until it is attributed.
+
+### A refused material is not drawn wrong — it is drawn with default render state
+
+When `NodeBuilder` meets a material it cannot convert it logs
+`Material "ShaderMaterial" is not compatible` and substitutes `new NodeMaterial()`
+(`NodeBuilder.js:3145`). The substitute carries none of the original's render
+state: not `side`, not `depthWrite`, not `blending`, not `transparent`.
+
+The consequence is the opposite of what the message suggests. A refused
+`BackSide` dome that the camera sits inside — the ocean's backdrop, its god rays
+— becomes `FrontSide`, is back-face culled, and **is not drawn at all**. So the
+node path's frame is not a mess of wrongly-shaded surfaces; it is a frame with
+holes in it, and the holes are invisible wherever something behind them happens
+to be the right colour.
+
+That is why every material port in this migration is accompanied by a test
+comparing `side`, `depthWrite`, `transparent` and `fog` between the two paths.
+The colour is the easy half.
+
+### The two paths encode at different times, and additive layers are where that shows
+
+This is the open architectural question of the ocean's port, and it is not a
+tuning detail.
+
+**The classic path encodes per material.** A `ShaderMaterial` that ends with
+`#include <tonemapping_fragment>` and `<colorspace_fragment>` applies ACES and
+sRGB itself; one that does not, writes raw linear values straight into an
+already-encoded framebuffer.
+
+**The node path encodes once, for the whole frame.** `Renderer.needsFrameBufferTarget`
+(`Renderer.js:2446`) is true whenever `toneMapping` is not `NoToneMapping` or the
+output colour space differs from the working one; the renderer then draws the
+scene into a linear target and runs one output transform over it
+(`Renderer.js:1778`). `UniverseCanvas.tsx:618` sets `renderer.toneMapping` to
+ACES on the `WebGPURenderer` for this family, so both conditions hold. The ocean
+mounts no post chain on either path — `isOceanFamilyScene ? null :` — so this
+renderer pass is the only encode there is.
+
+For every ordinary material the two are equivalent: one encode either way.
+
+**For ADDITIVE materials they are not.** The ocean's drifters and its god rays
+deliberately write `gl_FragColor` with no includes, because encoding a
+near-additive layer inflates it about two and a half times — linear 0.15 encodes
+to 0.40. The god ray shader carries the measurement in its own comment: encoded,
+the rays clipped the entire visible band of a 14 m reef to pure white, 100% of
+measured pixels. On the node path those same layers go through the frame-wide
+transform and ARE encoded.
+
+So the two paths do not merely differ in where the encode happens; they
+composite additively in different spaces. Classic adds linear values onto
+sRGB-encoded ones, which is physically wrong and is what the look was tuned
+against. The node path adds in linear and then tone maps, which is correct and
+is a different picture.
+
+**There is no per-material opt-out from a frame-wide pass**, so this cannot be
+closed by porting harder. It is a decision about which compositing model the
+ocean should have, and therefore a look decision. Until it is made, the god rays
+should not be ported: the shipped comment already predicts the result.
 
 ### Camera focus (NASA-Eyes style)
 
