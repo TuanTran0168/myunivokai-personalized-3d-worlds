@@ -292,8 +292,9 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
    * **THE OCEAN IS PART PORTED, AND THIS ENTRY IS THE ONLY ONE THAT WILL MOVE
    * FOR MORE THAN ONE REASON.** Five of its six `ShaderMaterial`s — the jellyfish
    * bell, the bubble stream, marine snow, the backdrop dome and the water's
-   * underside — are node materials as of 2026-09-15; the god rays are not, and
-   * neither are its eight `onBeforeCompile` patches.
+   * underside — are node materials as of 2026-09-15, and all eight of its
+   * `onBeforeCompile` patches have a node arm as of 2026-09-17. The god rays are
+   * still on the GLSL path and are blocked on a look decision, not on work.
    *
    * So the number below is a MIXTURE, and reading it as "what the ocean's
    * shaders cost" is what the two entries above already had to be corrected
@@ -338,22 +339,42 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
    *
    * So this entry will keep rising until the water is ported, and that is not a
    * regression. The refusal count is the number to watch until then.
+   *
+   * **AND PHASE 7 RAISED IT AGAIN, 61.43 -> 63.35, WITH THE REFUSAL COUNT
+   * UNMOVED AT 1.** That pairing is the whole point of the paragraph above. The
+   * eight patches were never refusals — a node material simply never reads
+   * `onBeforeCompile`, so before this the node frame had kelp that did not sway,
+   * a seabed with no caustics on it and fish that did not bend, and NOTHING
+   * anywhere reported that. They all run now. The frame gained detail, the
+   * detail carries the same encode residual that gives the universe 12.23 with
+   * no GLSL left at all, and more lit surface means more of it.
+   *
+   * NOT ESTABLISHED, and deliberately not guessed at: how much of the 1.92 is
+   * that residual and how much is the god rays still missing underneath it. The
+   * experiment that would separate them is the post-off lever the harness does
+   * not have, and inventing one to confirm a hypothesis is how two earlier ones
+   * died.
+   *
+   * The two node backends moved 0.04 -> 0.15 over the same change, which is the
+   * expected direction: the caustics are the only thing in this scene built on
+   * `dFdx`/`dFdy`, and screen-space derivatives are exactly where Dawn and the
+   * WebGL2 backend are entitled to differ. 0.15 of 255 is still agreement.
    */
   {
     fixture: "ocean-shallow",
     comparison: "WebGPU against WebGL",
-    meanAbsoluteError: 61.43,
-    worstBlockError: 150.77,
+    meanAbsoluteError: 63.35,
+    worstBlockError: 163.1,
     differingFraction: 0.9834,
-    closedBy: "Phases 6-8 for PART of it — one shader and eight patches remain — and the post chain for the rest"
+    closedBy: "Phases 6-8 for PART of it — one shader remains — and the post chain for the rest"
   },
   {
     fixture: "ocean-shallow",
     comparison: "forceWebGL against WebGL",
-    meanAbsoluteError: 61.43,
-    worstBlockError: 151.2,
+    meanAbsoluteError: 63.35,
+    worstBlockError: 163.57,
     differingFraction: 0.9834,
-    closedBy: "Phases 6-8 for PART of it — one shader and eight patches remain — and the post chain for the rest"
+    closedBy: "Phases 6-8 for PART of it — one shader remains — and the post chain for the rest"
   }
 ];
 

@@ -41,23 +41,18 @@ import { bodyForArchetype, type BodyArchetype } from "./oceanRigBodies";
 import { createFishSkinBake, type PhotophoreDot } from "./oceanFishSkinTexture";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { randomFromSeed } from "@/lib/scene";
+import { oceanFishMaterial } from "./oceanFishMaterial";
+import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 import { OCEAN_MODEL_BASE_PATH } from "./oceanFaunaModels";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
 
 /**
  * Species differ by HOW MUCH OF THE BODY undulates, not by how fast. That is
  * the whole taxonomy of fish locomotion in one number, and it is why an eel and
  * a tuna read as different animals from a silhouette alone.
  */
-export const GLSL_UNDULATION = /* glsl */ `
-  float bodyLateralOffset(float alongBody, float onset, float waves,
-                          float amplitude, float beatHertz, float elapsed, float phase) {
-    float span = max(1e-4, 1.0 - onset);
-    float envelope = max(0.0, (alongBody - onset) / span);
-    float p = beatHertz * elapsed * 6.2831853 - alongBody * waves * 6.2831853 + phase;
-    return envelope * envelope * amplitude * sin(p);
-  }
-`;
+// The travelling wave lives with the material that injects it. Re-exported
+// here because this is where every existing caller looks for it.
+export { GLSL_UNDULATION } from "./oceanFishMaterial";
 
 export type SwimStyle = {
   /** Fraction of the body that stays rigid. 0.88 is a swordfish, 0.55 an eel. */
@@ -1446,21 +1441,25 @@ export function createSchool(
   seed: string,
   creatureTime: { value: number },
   visibilityMetres = Number.POSITIVE_INFINITY,
+  /** Null on the classic path, which is every visitor today. */
+  nodeModules: NodeMaterialModules | null = null,
 ): School {
   // The body the school starts with, and for four species keeps forever. It used
   // to be a single-vertex placeholder with `visible = false`, which meant a
   // species was either upgraded to a GLB or never seen at all.
   const placeholder = bodyForArchetype(species.body);
-  const material = new MeshStandardMaterial({
-    color: new Color(species.color),
-    roughness: species.roughness ?? 0.44,
-    metalness: species.metalness ?? 0.3,
-    side: DoubleSide,
-    emissive: new Color("#000000"),
-    emissiveIntensity: 0,
-  });
   const bellyUniform = { value: 1 };
   const spanUniform = { value: species.swim.span ?? 0.5 };
+  const { material, synchronise: synchroniseUndulationNodes } = oceanFishMaterial({
+    color: species.color,
+    roughness: species.roughness,
+    metalness: species.metalness,
+    swim: species.swim,
+    creatureTime,
+    bellyUniform,
+    spanUniform,
+    nodeModules,
+  });
 
   // A skin bake only for species with no GLB to adopt — a species with one
   // gets its texture from the model itself the moment `adopt()` runs, and a
@@ -1480,61 +1479,6 @@ export function createSchool(
     material.map = skinBake.map;
     if (skinBake.emissiveMap) material.emissiveMap = skinBake.emissiveMap;
   }
-
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uCreatureTime = creatureTime;
-    shader.uniforms.uOnset = { value: species.swim.onset };
-    shader.uniforms.uAmplitude = { value: species.swim.amplitude };
-    shader.uniforms.uWaves = { value: species.swim.waves };
-    shader.uniforms.uBeat = { value: species.swim.beat };
-    shader.uniforms.uSpan = spanUniform;
-    shader.uniforms.uBellyScale = bellyUniform;
-
-    const axis = species.swim.mobuliform
-      ? `// The wave runs across the SPAN and grows toward the wingtip.
-         float span = clamp(abs(position.x) / uSpan, 0.0, 1.0);
-         float flap = sin(uCreatureTime * uBeat * 6.2831853 + aPhase - span * uWaves * 6.2831853);
-         transformed.y += flap * pow(span, 1.7) * uAmplitude;`
-      : species.swim.vertical
-        ? "transformed.y += lateral;   // a cetacean oscillates VERTICALLY"
-        : "transformed.x += lateral;";
-
-    shader.vertexShader = requireShaderChunks(shader.vertexShader, "oceanRigFauna undulation vertex", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.beginVertex
-    ])
-      .replace(
-        SHADER_CHUNK_MARKERS.common,
-        `#include <common>
-          uniform float uCreatureTime; uniform float uOnset; uniform float uAmplitude;
-          uniform float uWaves; uniform float uBeat; uniform float uSpan;
-          uniform float uBellyScale;
-          attribute float along; attribute float aPhase;
-          varying float vBelly; varying float vAlong;
-          ${GLSL_UNDULATION}`,
-      )
-      .replace(
-        SHADER_CHUNK_MARKERS.beginVertex,
-        `#include <begin_vertex>
-          vBelly = position.y * uBellyScale;
-          vAlong = along;
-          float lateral = bodyLateralOffset(along, uOnset, uWaves, uAmplitude, uBeat, uCreatureTime, aPhase);
-          ${axis}`,
-      );
-
-    shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "oceanRigFauna undulation fragment", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.toneMappingFragment
-    ])
-      .replace(
-        SHADER_CHUNK_MARKERS.common, "#include <common>\nvarying float vBelly;\nvarying float vAlong;")
-      // Counter-shading: dark back, bright belly. It is why a school reads as a
-      // flicker of light rather than a cloud of identical objects.
-      .replace(
-        SHADER_CHUNK_MARKERS.toneMappingFragment,
-        "gl_FragColor.rgb *= mix(1.7, 0.72, smoothstep(-0.16, 0.16, vBelly));\n#include <tonemapping_fragment>",
-      );
-  };
 
   const mesh = new InstancedMesh(placeholder, material, species.count);
   mesh.castShadow = true;
@@ -1695,6 +1639,10 @@ export function createSchool(
       pendingAdoptModel = model;
     },
     update: (elapsed, bounds, threats, cameraPosition) => {
+      // The node path's clock, belly scale and wing span are separate uniforms,
+      // and a school that never advances them is a school of rigid fish rather
+      // than a blank frame. No-op on the classic path.
+      synchroniseUndulationNodes();
       // An animal lives BETWEEN the boundaries. The two numbers that decide what
       // is in frame decide where it can be — and this is not cosmetic: without
       // it a manta on a reef swims through the sky, and no frame metric can see

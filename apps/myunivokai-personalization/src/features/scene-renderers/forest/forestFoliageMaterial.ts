@@ -1,5 +1,9 @@
 import { Color, MeshStandardMaterial, type Material } from "three";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
+import {
+  applyClassicShaderPatch,
+  requireShaderChunks,
+  SHADER_CHUNK_MARKERS
+} from "@/features/scene-renderers/shared/shaderChunkPatch";
 import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 
 /**
@@ -139,11 +143,11 @@ function classicFoliageMaterial(originalMaterial: Material): MeshStandardMateria
     metalness: FOLIAGE_METALNESS,
     color: new Color(FOLIAGE_BASE_COLOR)
   });
-  material.onBeforeCompile = (shader) => {
+  applyClassicShaderPatch(material, "forestModels leaf recolour", (shader) => {
     shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "forestModels leaf recolour", [
       SHADER_CHUNK_MARKERS.mapFragment
     ]).replace(SHADER_CHUNK_MARKERS.mapFragment, foliageMapFragmentGlsl());
-  };
+  });
   material.customProgramCacheKey = () => FOLIAGE_PROGRAM_CACHE_KEY;
   return material;
 }

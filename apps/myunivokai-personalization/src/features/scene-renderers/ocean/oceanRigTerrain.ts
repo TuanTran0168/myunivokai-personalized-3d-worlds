@@ -37,7 +37,17 @@ import {
 } from "three";
 import { randomFromSeed } from "@/lib/scene";
 import { applyCaustics, createCausticsUniforms, type CausticsUniforms } from "./oceanCaustics";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
+import type { Node } from "three/webgpu";
+import {
+  applyClassicShaderPatch,
+  requireShaderChunks,
+  SHADER_CHUNK_MARKERS
+} from "@/features/scene-renderers/shared/shaderChunkPatch";
+import {
+  addNodeMaterialChunkPatch,
+  standardMaterialForRenderer
+} from "@/features/scene-renderers/shared/nodeMaterialChunkPatch";
+import { nodeMaterialModulesFor, type NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 import { maximumTextureAnisotropy } from "@/features/scene-renderers/shared/textureAnisotropy";
 
 /**
@@ -129,10 +139,19 @@ const SEABED_SLOPE_FRAGMENT_DECLARATIONS = /* glsl */ `
  * Chains onto whatever is already on the material — `applyCaustics` uses the
  * same hook and the same convention.
  */
-function applySlopeRock(material: MeshStandardMaterial, slopeRockShift: { value: Color }): void {
+function applySlopeRock(
+  material: MeshStandardMaterial,
+  slopeRockShift: { value: Color },
+  nodeModules: NodeMaterialModules | null
+): void {
+  if (nodeModules && addNodeMaterialChunkPatch(material, slopeRockChunkPatch(nodeModules, slopeRockShift))) {
+    material.needsUpdate = true;
+    return;
+  }
+
   const previous = material.onBeforeCompile;
-  material.onBeforeCompile = (shader, renderer) => {
-    previous?.(shader, renderer);
+  applyClassicShaderPatch(material, "oceanRigTerrain slope rock", (shader, renderer) => {
+    previous?.(shader as never, renderer as never);
     shader.uniforms.uSlopeRockShift = slopeRockShift;
     shader.vertexShader = requireShaderChunks(shader.vertexShader, "oceanRigTerrain slope rock vertex", [
       SHADER_CHUNK_MARKERS.common,
@@ -162,8 +181,42 @@ function applySlopeRock(material: MeshStandardMaterial, slopeRockShift: { value:
   float seabedRockAmount = smoothstep(${SLOPE_ROCK_ONSET_SINE}, ${SLOPE_ROCK_FULL_SINE}, seabedSlopeSine);
   diffuseColor.rgb *= mix(vec3(1.0), uSlopeRockShift, seabedRockAmount);`
       );
-  };
+  });
   material.needsUpdate = true;
+}
+
+/**
+ * The same shift as a node graph, injected where `<map_fragment>` is replaced.
+ *
+ * **`normalWorld` REPLACES BOTH THE VARYING AND THE VERTEX INJECTION.** The
+ * classic patch has to declare `vSeabedUpness`, compute
+ * `normalize(mat3(modelMatrix) * objectNormal).y` in the vertex stage and carry
+ * it across; the node path has the world normal in the fragment stage already.
+ * The floor is a single non-instanced mesh, so the two expressions are the same
+ * number — a boulder would need the instance rotation as well, and gets
+ * `applyCaustics` rather than this.
+ *
+ * **AND IT GOES IN `diffuseColorMultiplier`, NOT IN THE LIT COLOUR.** This
+ * changes what the surface IS MADE OF, so it has to be in the albedo the
+ * lighting then reads — which is exactly what replacing `<map_fragment>` does
+ * and what multiplying the output would not.
+ *
+ * The shift colour is the same `Color` instance `tintSeabed` writes into with
+ * `setRGB`, so the two paths cannot be given different rock.
+ */
+function slopeRockChunkPatch(modules: NodeMaterialModules, slopeRockShift: { value: Color }) {
+  const { float, max, mix, normalWorld, smoothstep, sqrt, uniform, vec3 } = modules.tsl;
+  const shift = uniform(slopeRockShift.value) as unknown as Node<"vec3">;
+
+  return {
+    name: "oceanRigTerrain slope rock",
+    diffuseColorMultiplier: () => {
+      const upness = normalWorld.y;
+      const slopeSine = sqrt(max(float(0), float(1).sub(upness.mul(upness))));
+      const rockAmount = smoothstep(float(SLOPE_ROCK_ONSET_SINE), float(SLOPE_ROCK_FULL_SINE), slopeSine);
+      return mix(vec3(1, 1, 1), shift, rockAmount) as unknown as Node<"vec3">;
+    }
+  };
 }
 
 export const GLSL_TERRAIN_NOISE = /* glsl */ `
@@ -363,11 +416,16 @@ export type Seabed = {
 export function createSeabed(options: SeabedOptions): Seabed {
   const { extent, segments, windDirectionRadians, seed, renderer, cameraDistanceMetres } = options;
   const group = new Group();
+  // Null on the classic path, which is every visitor today. Read from the
+  // renderer rather than passed in, because the seabed is built from a rig that
+  // already has one and "is this a node renderer" is a question about the
+  // instance — see `nodeMaterials.ts`.
+  const nodeModules = nodeMaterialModulesFor(renderer);
   // Real values (strength, depth, colour) arrive later from tintSeabed, once
   // the water and lighting for this world are known — same two-phase build as
   // every other seabed material here (colour is likewise a placeholder until
   // tintSeabed runs).
-  const causticUniforms = createCausticsUniforms(0, 1, "#CFF6FF");
+  const causticUniforms = createCausticsUniforms(0, 1, "#CFF6FF", nodeModules);
   const anisotropy = maximumTextureAnisotropy(renderer);
   const sand = createSandTextures(512, windDirectionRadians, anisotropy);
   sand.map.repeat.set(extent / 6, extent / 6);
@@ -397,7 +455,7 @@ export function createSeabed(options: SeabedOptions): Seabed {
     return broad + dune + ripple;
   };
 
-  const floorMaterial = new MeshStandardMaterial({
+  const floorMaterial = standardMaterialForRenderer(nodeModules, {
     color: 0xffffff,
     map: sand.map,
     normalMap: sand.normalMap,
@@ -406,7 +464,7 @@ export function createSeabed(options: SeabedOptions): Seabed {
     metalness: 0,
   });
   const slopeRockShift = { value: new Color(1, 1, 1) };
-  applySlopeRock(floorMaterial, slopeRockShift);
+  applySlopeRock(floorMaterial, slopeRockShift, nodeModules);
   applyCaustics(floorMaterial, causticUniforms);
 
   const floorGeometry = new PlaneGeometry(extent, extent, segments, segments);
@@ -439,7 +497,7 @@ export function createSeabed(options: SeabedOptions): Seabed {
     positions.needsUpdate = true;
     base.computeVertexNormals();
 
-    const material = new MeshStandardMaterial({
+    const material = standardMaterialForRenderer(nodeModules, {
       color: 0xffffff,
       roughness: 0.95,
       metalness: 0,
