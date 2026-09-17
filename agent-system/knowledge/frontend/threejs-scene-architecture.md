@@ -263,7 +263,8 @@ the classic renderer:
 |---|---|---|---|
 | forest | yes | 19.49 | 1.24 |
 | universe | yes | 12.22 | 0.45 |
-| ocean | no, one `ShaderMaterial` left | 61.43 | 0.04 |
+| ocean, underwater | no, the god rays remain | 63.35 | 0.15 |
+| ocean, above water | **yes, nothing left** | **0.31** | **0.02** |
 
 The universe is the sharper data point because its number **did not move**:
 12.19 before its two point shaders were ported, 12.22 after. What was eliminated
@@ -404,6 +405,30 @@ no caustics, on the node path only, indistinguishable from a seabed in water too
 deep for them. Every ported uniform set that has a late write therefore hands
 back a `synchronise()` the frame loop must call, in the same shape and for the
 same reason `waveUniformNodes` hands back `setElapsedSeconds`.
+
+### A fully ported scene measures 0.31 between the two paths, and that attributes the rest
+
+The ocean seen from ABOVE the water is the first scene in this app with no
+hand-written GLSL left anywhere in it — the surface material is the last one it
+mounts, and the god rays are `visible = !above`. Measured 2026-09-17:
+
+| family | GLSL left | post chain | node against classic |
+| --- | --- | --- | --- |
+| universe | none | yes | 12.22 |
+| forest | none | yes | 19.49 |
+| **ocean, above water** | **none** | **no** | **0.31** |
+
+The ocean mounts no post chain on either path — `isOceanFamilyScene ? null :` —
+so this is the run with post disabled that §30.2 of the feasibility report said
+it could not do, arrived at by finding a scene that already had none rather than
+by adding a lever to the harness.
+
+**It does not identify which pass, and `ocean-surface` is a different scene
+rather than the universe with its chain switched off**, so the post chain is the
+most obvious remaining difference and not the only possible one. What it does
+settle is the question underneath: a fully ported scene reaches a third of a
+unit of 255 between backends, so whatever the other two families' residuals are
+made of, it is not the node path being unable to reproduce a frame.
 
 ### Camera focus (NASA-Eyes style)
 

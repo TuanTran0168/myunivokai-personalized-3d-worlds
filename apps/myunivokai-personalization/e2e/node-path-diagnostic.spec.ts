@@ -2,6 +2,7 @@ import { test, type Page } from "@playwright/test";
 import natureWorld from "./fixtures/nature-world.json";
 import universeWorld from "./fixtures/universe-world.json";
 import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
+import oceanSurfaceWorld from "./fixtures/ocean-surface-world.json";
 
 /**
  * THE STACKS `scene-parity.spec.ts` DELIBERATELY DOES NOT KEEP.
@@ -43,9 +44,16 @@ const SHOT_DIRECTORY = "e2e/shots/node-path-diagnostic";
 const NODE_BUILDER_REFUSAL = "is not compatible";
 
 const DIAGNOSTIC_FIXTURES = [
-  { name: "forest-world", worldId: natureWorld.world.id, family: "nature" },
-  { name: "universe-world", worldId: universeWorld.world.id, family: undefined },
-  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean" }
+  { name: "forest-world", worldId: natureWorld.world.id, family: "nature", oceanWorld: oceanShallowWorld },
+  { name: "universe-world", worldId: universeWorld.world.id, family: undefined, oceanWorld: oceanShallowWorld },
+  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean", oceanWorld: oceanShallowWorld },
+  // THE SAME SEA, FROM SIX METRES ABOVE IT — and the only fixture that mounts
+  // the surface material at all. `isAboveWater` is `viewerDepthMetres < 0`, so
+  // every other ocean fixture here is underwater and the sheet seen from above
+  // is never built. Without this one, the largest shader in §26 Phase 8 could be
+  // ported, refused, and drawn nowhere, and every number in this suite would be
+  // unchanged.
+  { name: "ocean-surface", worldId: oceanSurfaceWorld.world.id, family: "ocean", oceanWorld: oceanSurfaceWorld }
 ] as const;
 
 // `webgl` is here as the CONTROL. A node-path frame is only interpretable
@@ -89,11 +97,11 @@ function describeFarthestObjects(state: SceneState): string {
   return state.farthestObjects.map((entry) => `    ${entry}`).join("\n");
 }
 
-async function serveWorldFixtures(page: Page) {
+async function serveWorldFixtures(page: Page, oceanWorld: unknown) {
   const routes = [
     ["**/api/nature/**", natureWorld],
     ["**/api/universe/**", universeWorld],
-    ["**/api/ocean/**", oceanShallowWorld]
+    ["**/api/ocean/**", oceanWorld]
   ] as const;
   for (const [path, world] of routes) {
     await page.route(path, async (route) => {
@@ -132,7 +140,7 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
         }
       });
 
-      await serveWorldFixtures(page);
+      await serveWorldFixtures(page, fixture.oceanWorld);
       const familyParameter = fixture.family ? `family=${fixture.family}&` : "";
       await page.goto(
         `/worlds/${fixture.worldId}?${familyParameter}parityRenderer=${requestedRenderer}` +

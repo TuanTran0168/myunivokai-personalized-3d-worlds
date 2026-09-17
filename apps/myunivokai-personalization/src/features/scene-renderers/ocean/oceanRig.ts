@@ -553,6 +553,9 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       waveShared,
       whitecapFraction: seaState.whitecapFraction,
       quality,
+      skyNodes,
+      waveNodes: waveNodeSet ? waveNodeSet.nodes : null,
+      nodeModules,
     });
     seaTop.mesh.position.y = viewerDepthMetres;
     group.add(seaTop.mesh);
@@ -923,7 +926,10 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       for (const layer of moteLayers) layer.uniforms.uMoteTime.value = elapsed;
       jellyfish.uniforms.uJellyTime.value = elapsed;
       if (bubbles) bubbles.uniforms.uBubbleTime.value = elapsed;
-      if (seaTop) seaTop.uniforms.uTime.value = elapsed;
+      if (seaTop) {
+        seaTop.uniforms.uTime.value = elapsed;
+        seaTop.synchronise();
+      }
       if (flora) flora.update(elapsed);
       if (seabed) {
         seabed.causticUniforms.uCausticTime.value = elapsed;

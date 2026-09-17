@@ -3,6 +3,7 @@ import { inflateSync } from "node:zlib";
 import universeWorld from "./fixtures/universe-world.json";
 import natureWorld from "./fixtures/nature-world.json";
 import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
+import oceanSurfaceWorld from "./fixtures/ocean-surface-world.json";
 // A plain-ESM helper with a hand-written .d.mts beside it, the same shape
 // `frameMetrics.mjs` uses: it stays JavaScript so it can be run under bare node
 // alongside measure.mjs, and the declaration file keeps this a typed boundary.
@@ -75,7 +76,14 @@ const FIXTURES = {
 const PARITY_FIXTURES = [
   { name: "universe-world", worldId: universeWorld.world.id, family: undefined, oceanWorld: undefined },
   { name: "forest-world", worldId: natureWorld.world.id, family: "nature", oceanWorld: undefined },
-  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean", oceanWorld: oceanShallowWorld }
+  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean", oceanWorld: oceanShallowWorld },
+  // THE SAME SEA FROM SIX METRES ABOVE IT, and the only fixture in this suite
+  // that mounts the surface material. `isAboveWater` is `viewerDepthMetres < 0`,
+  // so every other ocean fixture is underwater and the sheet seen from above is
+  // never built — which means §26 Phase 8's largest port would otherwise move no
+  // number here at all. It is a fixture added to measure a thing, which is the
+  // only reason to add one.
+  { name: "ocean-surface", worldId: oceanSurfaceWorld.world.id, family: "ocean", oceanWorld: oceanSurfaceWorld }
 ] as const;
 
 const PARITY_RENDERERS = [
@@ -176,6 +184,50 @@ const KNOWN_WEBGPU_BLOCKERS: readonly { fragment: string; name: string }[] = [
  */
 const DIVERGENCE_HEADROOM = 1.1;
 
+/**
+ * **`ocean-surface` HAS NO ENTRY IN THIS LEDGER, AND THAT ABSENCE IS THE MOST
+ * USEFUL NUMBER THE HARNESS HAS PRODUCED.**
+ *
+ * The same sea from six metres above it, on 2026-09-17, needing no recorded
+ * debt at all:
+ *
+ *     ocean-surface · WebGPU against WebGL        mean 0.31 · 0.14% differing
+ *     ocean-surface · forceWebGL against WebGL    mean 0.30 · 0.08% differing
+ *     ocean-surface · WebGPU against forceWebGL   mean 0.02 · 0.08% differing
+ *
+ * It passes the raw cross-backend tolerance. Not "within its allowance" — there
+ * is no allowance. The node path and the classic path draw this scene the same.
+ *
+ * **AND IT ATTRIBUTES THE OTHER TWO FAMILIES' RESIDUALS, WHICH §30.2 GAVE UP
+ * ON.** That section says the universe's 12.22 is "the signature of the POST
+ * CHAIN", and then says plainly that the experiment which would settle it — a
+ * run with post disabled on both paths — "needs a lever the harness does not
+ * have", and that inventing one to confirm a hypothesis is how two earlier
+ * hypotheses died. No lever was invented. A scene that already had no post chain
+ * was measured instead:
+ *
+ *     family          hand-written GLSL left    post chain    node vs classic
+ *     universe        none                      yes           12.22
+ *     forest          none                      yes           19.49
+ *     ocean-surface   none                      NO            0.31
+ *
+ * Three families with no GLSL left. The two that mount a post chain sit twelve
+ * and nineteen units apart; the one that does not sits at a third of a unit.
+ *
+ * WHAT THIS DOES NOT PROVE. `ocean-surface` is a different scene, not the
+ * universe with its post chain switched off, so the post chain is the most
+ * obvious difference rather than the only one. It does not say WHICH pass, and
+ * it does not measure how much. What it does establish is that a fully ported
+ * scene reaches 0.31 between backends — so whatever the other two are made of,
+ * it is not the node path being unable to reproduce a frame.
+ *
+ * It is also the fixture without which §26 Phase 8's largest port would have
+ * been invisible. `isAboveWater` is `viewerDepthMetres < 0`; every other ocean
+ * fixture is underwater, the surface material is only built when the camera is
+ * out of the water, and the god rays are `visible = !above` — so above water the
+ * family has nothing left on the GLSL path at all, measured 0 on both node
+ * backends.
+ */
 const KNOWN_BACKEND_DIVERGENCE: readonly {
   fixture: string;
   comparison: string;
