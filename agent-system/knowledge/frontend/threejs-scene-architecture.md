@@ -333,8 +333,116 @@ is a different picture.
 
 **There is no per-material opt-out from a frame-wide pass**, so this cannot be
 closed by porting harder. It is a decision about which compositing model the
-ocean should have, and therefore a look decision. Until it is made, the god rays
-should not be ported: the shipped comment already predicts the result.
+ocean should have, and therefore a look decision.
+
+#### The decision, and the arithmetic that made it rather than taste
+
+Made 2026-09-17. **No compensating scalar exists**, and that is arithmetic
+rather than an opinion. Matching the two spaces needs `E(b + r') = E(b) + r`, so
+the node-path correction is `r' = r / E'(b)` — the reciprocal derivative of the
+encode AT THE BACKDROP. For sRGB, `E'(x) = 0.4396 · x^(-0.5833)`:
+
+    backdrop 0.05 (deep water)     E' = 2.54
+    backdrop 0.10 (midwater)       E' = 1.68
+    backdrop 0.20 (lit shallows)   E' = 1.12
+
+One shaft crosses all three in the same frame. A single constant fits one row
+and is wrong by more than a factor of two at the others, and a constant chosen
+to make one measurement agree is an invented lever dressed as physics.
+
+So the god rays were ported FAITHFULLY, and the difference is stated instead:
+on the node path the rays read brighter where the water is darkest, and their
+tops read softer because ACES rolls off a sum the classic path let clip. The
+node path's model is also the physically correct one — light adds in linear, and
+adding a linear quantity to an sRGB-encoded one is an error rather than a
+convention. The shipped shader carries the receipt in its own comment history:
+the strength was halved to 1.05 and put back to 2.2, and a hard 0.62 ceiling was
+added and then removed once the renderer's ACES was back to do the roll-off
+"properly". Both are the tuning of an additive layer against the encode it lands
+in. The lever, if the classic look is wanted back, is
+`GOD_RAY_STRENGTH_MULTIPLE` — one number, and it moves both paths.
+
+#### And it is now 9.6 of 255, measured rather than argued
+
+Porting the god rays took `ocean-shallow` from **63.35 to 9.90** against the
+classic renderer — five sixths of the gap, on one material that was being
+refused and drawn nowhere. What is left isolates the compositing difference,
+because two ocean fixtures differ in exactly one structural way:
+
+| fixture | additive layers | post chain | GLSL left | node vs classic |
+| --- | --- | --- | --- | --- |
+| ocean, above water | none | no | none | **0.31** |
+| ocean, underwater | five | no | none | **9.90** |
+
+The five are the god rays, three marine-snow layers plus the bioluminescent
+fourth, the jellyfish and the bubbles. **So 9.6 of 255 is what the
+additive-compositing-space difference costs on a scene built out of it.** Not
+proven: these are two different scenes rather than one scene with its additive
+layers switched off, and this does not apportion the 9.90 between the layers.
+
+### The node renderer cannot preserve its drawing buffer, and two features read it
+
+Measured 2026-09-17 (§26 Phase 9), sampling the canvas the way both production
+sites sample it, same fixture, three renderers:
+
+| renderer | samples carrying alpha | `toDataURL` length |
+| --- | --- | --- |
+| `WebGLRenderer` | **256/256** | 1.6–3.4 MB |
+| `WebGPURenderer` / WebGPU | **0/256** | 38 KB |
+| `WebGPURenderer` / WebGL2 | **0/256** | 38 KB |
+
+**BOTH NODE BACKENDS FAIL, WHICH IS WHAT RULES OUT WEBGPU PRESENT-TIME
+SEMANTICS.** The WebGL2 backend is the same graphics API as the working row.
+What differs is one option that does not exist: `preserveDrawingBuffer` appears
+twice in `three.module.js` (`:16074` reads it from the parameters, `:16372`
+hands it to `getContext`) and **zero times in `three.webgpu.js`**.
+`WebGPURendererParameters` does not declare it, so passing it is a typecheck
+error rather than a silent no-op — the one piece of luck here.
+
+Two features read that buffer. `features/transitions/sceneStill.ts` already
+fails safe on exactly this signal and returns null, so a transition CUTS instead
+of warping a transparent rectangle. `lib/exportImage.ts` did not, and would have
+handed the visitor a fully transparent PNG with a success message; it now runs
+the same check and returns false.
+
+**The real fix is to stop reading the canvas.** Rendering the export into an
+offscreen render target is backend-neutral, more robust than
+`preserveDrawingBuffer` ever was, and a separate piece of work. Until then this
+is what keeps the node renderer's rollout flag off, and
+`e2e/node-path-diagnostic.spec.ts` records the defect as a RATCHET: the day it
+starts working, the test fails and says to delete the guard.
+
+### The two backends of one renderer disagree about the first mount, in opposite directions
+
+Measured 2026-09-17 (§26 Phase 11). Main-thread time BLOCKED during a first
+mount — the unit `UniverseCanvas.tsx:398-450` measures and the one a visitor
+feels:
+
+| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
+| --- | --- | --- | --- |
+| universe | 2410 ms | 2547 ms | **1046 ms** |
+| forest | 3596 ms | **14660 ms** | **890 ms** |
+| ocean, underwater | 1069 ms | **4947 ms** | **734 ms** |
+| ocean, above water | 203 ms | 257 ms | **144 ms** |
+
+The WebGPU backend blocks LESS than the classic renderer on every fixture, and
+the forest — this app's worst first mount — drops from 3.6 s in three long tasks
+to 0.9 s in one. That is the freeze this repo has spent sprints on, measurably
+smaller, and it is the migration's only performance argument holding up in the
+app rather than in a probe.
+
+**The same change makes the WebGL2 backend four times worse on the heavy
+scenes**, while leaving the light ones alone. The cost is not "the node path" —
+it is the node path's pipeline creation running synchronously on a backend with
+no async pipeline API to use. That backend is what roughly a fifth of visitors
+get, which makes this an open question about the fallback rather than a footnote.
+
+Wall-clock time for the same sixty frames is higher on the node path everywhere
+(the forest: 3488 ms classic, 7677 ms on WebGPU), because the pipelines are
+still being built inside those frames. Both are true and they measure different
+things. Neither is a steady-state frame rate: the harness draws with
+`frameloop="never"` precisely so that it never measures one, and every page is a
+cold shader cache.
 
 ### The node path's equivalent of a chunk patch is a subclass, not a node assignment
 

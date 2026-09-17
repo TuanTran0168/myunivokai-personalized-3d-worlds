@@ -1,4 +1,4 @@
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import natureWorld from "./fixtures/nature-world.json";
 import universeWorld from "./fixtures/universe-world.json";
 import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
@@ -194,6 +194,78 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
       console.log(`\npage errors: ${pageErrors.length}`);
       for (const pageError of pageErrors) {
         printStack(`\n--- ${pageError.message}`, pageError.stack);
+      }
+
+      // CAN THIS CANVAS STILL BE READ BACK? §10.3 lists two production sites
+      // that do it — `lib/exportImage.ts` calls `toDataURL` for the download
+      // button, and `features/transitions/sceneStill.ts` draws the canvas into
+      // a 2D context and samples the centre pixel to decide whether to warp or
+      // to cut — and both depend on the canvas still holding an image AFTER the
+      // frame has been presented.
+      //
+      // **`preserveDrawingBuffer` IS WHAT BUYS THAT ON THE CLASSIC PATH, AND IT
+      // DOES NOT EXIST ON THE NODE ONE.** Zero occurrences of the string in
+      // `three.webgpu.js`; `WebGPURendererParameters` does not declare it. §10.3
+      // calls this "VISUAL_PARITY_RISK to test, not a blocker" and this is the
+      // test. It runs on all three renderers, so the classic leg is the control
+      // rather than an assumption.
+      const readback = await page.evaluate(() => {
+        const sceneCanvas = document.querySelector("canvas");
+        if (!sceneCanvas) return { found: false, dataUrlLength: 0, opaqueSamples: 0, sampleCount: 0 };
+        const dataUrl = sceneCanvas.toDataURL("image/png");
+        // The same route `sceneStill.ts` takes, at a size that costs nothing:
+        // a blank readback is blank everywhere, so a coarse grid answers it.
+        const SAMPLE_GRID_SIZE = 16;
+        const probe = document.createElement("canvas");
+        probe.width = SAMPLE_GRID_SIZE;
+        probe.height = SAMPLE_GRID_SIZE;
+        const probeContext = probe.getContext("2d");
+        if (!probeContext) return { found: true, dataUrlLength: dataUrl.length, opaqueSamples: 0, sampleCount: 0 };
+        probeContext.drawImage(sceneCanvas, 0, 0, SAMPLE_GRID_SIZE, SAMPLE_GRID_SIZE);
+        const pixels = probeContext.getImageData(0, 0, SAMPLE_GRID_SIZE, SAMPLE_GRID_SIZE).data;
+        let opaqueSamples = 0;
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (pixels[index + 3] > 0) opaqueSamples += 1;
+        }
+        return {
+          found: true,
+          dataUrlLength: dataUrl.length,
+          opaqueSamples,
+          sampleCount: pixels.length / 4
+        };
+      });
+      console.log(
+        `canvas readback: ${readback.opaqueSamples}/${readback.sampleCount} samples carry alpha` +
+          ` · toDataURL ${readback.dataUrlLength} characters`
+      );
+      expect(readback.found, "the scene canvas must exist to be read back").toBe(true);
+
+      // **RECORDED AS A RATCHET, THE WAY `KNOWN_BACKEND_DIVERGENCE` RECORDS A
+      // PIXEL DEBT**, because this is a defect that is currently true and is
+      // meant to stop being true. Measured 2026-09-17 on every fixture:
+      //
+      //     WebGLRenderer              256/256 samples carry alpha
+      //     WebGPURenderer / WebGPU      0/256
+      //     WebGPURenderer / WebGL2      0/256
+      //
+      // Both node backends fail, which is what rules out WebGPU present-time
+      // semantics: the WebGL2 one fails for the same reason, and the reason is
+      // that `preserveDrawingBuffer` does not exist anywhere in
+      // `three.webgpu.js` so it cannot be asked for on either.
+      //
+      // The day three, or Chrome, or a rebuild of the export onto an offscreen
+      // render target makes this work, THIS TEST FAILS and says to delete the
+      // guard in `lib/exportImage.ts`. That is the intended way for it to end.
+      if (requestedRenderer === "webgl") {
+        expect(
+          readback.opaqueSamples,
+          "the classic renderer is the control here — a blank readback means the route stopped setting preserveDrawingBuffer"
+        ).toBeGreaterThan(0);
+      } else {
+        expect(
+          readback.opaqueSamples,
+          "the node renderer read the canvas back — the recorded defect is fixed, so delete this branch and the guard in lib/exportImage.ts"
+        ).toBe(0);
       }
 
       // A FRAME TO LOOK AT, because a mean absolute error does not say WHAT is
