@@ -89,6 +89,12 @@ rise above the water plane while the rig still believed it was submerged. The
 camera half is fixed and the plan records what shipped and why it differs from
 what the plan first asked for. Read it before touching the ocean camera, the
 depth bands, or the fauna.
+[webgpu-graphics-upgrade-roadmap.md](frontend/webgpu-graphics-upgrade-roadmap.md)
+— what the WebGPU renderer makes possible now that the migration is finished,
+in four stages, **none of them built**. Every stage is behind a gate, and two of
+the gates are shut because the instrument that would open them does not exist
+yet. Read its §1 before proposing any graphics work on the node path: it is the
+list of what is measured and what is still an estimate.
 
 ## backlog/
 

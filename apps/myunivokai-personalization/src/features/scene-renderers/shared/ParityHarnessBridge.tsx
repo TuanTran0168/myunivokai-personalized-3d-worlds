@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
 import { Vector3, WebGLCoordinateSystem, type Object3D } from "three";
+import { lastNodePipelineWarmUp } from "./nodePipelineWarmUp";
 import {
   pinnedClockTimestamps,
   PINNED_CLOCK_STEP_COUNT,
@@ -152,6 +153,18 @@ export function ParityHarnessBridge({ request }: { request: ParityHarnessRequest
 
     const harness = {
       backend,
+      /**
+       * How the node pipeline warm-up ended, or null while it is still running.
+       *
+       * §26 Phase 13. `first-mount-cost.spec.ts` polls this before advancing
+       * the clock, because the two numbers it reports would otherwise be taken
+       * across a boundary that moved: with the warm-up in flight the frames are
+       * held, so \"sixty pinned frames\" would start measuring a wait rather than
+       * a render. Reads the module record at CALL time rather than closing over
+       * a value, so a harness registered before the warm-up settled still
+       * answers with the settled one.
+       */
+      readPipelineWarmUp: () => lastNodePipelineWarmUp(),
       requestedRenderer: request.renderer,
       pinnedSeconds: request.pinnedSeconds,
       stepCount: PINNED_CLOCK_STEP_COUNT,
