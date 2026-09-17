@@ -108,18 +108,20 @@ type cacheBucketValue struct {
 	misses int64
 }
 
-// clientRenderBucketKey is the {tier, family, outcome} triple a browser
-// reports. Like httpBucketKey it is a comparable struct rather than a joined
-// string, so a separator cannot appear inside a component and merge two
-// buckets.
+// clientRenderBucketKey is the {tier, family, outcome, graphics backend}
+// tuple a browser reports. Like httpBucketKey it is a comparable struct rather
+// than a joined string, so a separator cannot appear inside a component and
+// merge two buckets.
 //
-// It needs no overflow key. The three components are closed sets validated on
-// arrival — 3 tiers x 4 families x 2 outcomes — so the map is bounded at 24
-// entries by the contract rather than by a backstop.
+// It needs no overflow key. Every component is a closed set validated on
+// arrival — 3 tiers x 4 families x 2 outcomes x 4 backends — so the map is
+// bounded at 96 entries by the contract rather than by a backstop, against
+// maximumTrackedRoutePatterns' 400.
 type clientRenderBucketKey struct {
-	qualityTier int
-	family      contracts.WorldFamily
-	outcome     string
+	qualityTier     int
+	family          contracts.WorldFamily
+	outcome         string
+	graphicsBackend string
 }
 
 // Collector is the in-memory aggregate. One instance per process, shared by
@@ -244,17 +246,33 @@ func (collector *Collector) RecordCacheLookup(namespace string, hit bool) {
 // The report is validated by the handler before this is called, and the key is
 // dropped rather than stored if it is not one of the closed set — a value that
 // reached here unvalidated must not become a row.
-func (collector *Collector) RecordClientRender(qualityTier int, family contracts.WorldFamily, outcome string) {
+func (collector *Collector) RecordClientRender(qualityTier int, family contracts.WorldFamily, outcome, graphicsBackend string) {
 	if collector == nil {
 		return
 	}
-	report := contracts.ClientRenderReportData{QualityTier: qualityTier, Family: family, Outcome: outcome}
+	report := contracts.ClientRenderReportData{
+		QualityTier:     qualityTier,
+		Family:          family,
+		Outcome:         outcome,
+		GraphicsBackend: graphicsBackend,
+	}
 	if report.Validate() != nil {
 		return
 	}
+	// Normalised HERE as well as in Validate, because the key is what becomes a
+	// primary-key column: a report with no graphicsBackend — which is every
+	// report from a bundle cached before §26 Phase 12 — must land in the same
+	// bucket as one that says "unknown", not in an empty-string bucket beside
+	// it.
+	key := clientRenderBucketKey{
+		qualityTier:     qualityTier,
+		family:          family,
+		outcome:         outcome,
+		graphicsBackend: contracts.NormaliseClientRenderBackend(graphicsBackend),
+	}
 	collector.mutex.Lock()
 	defer collector.mutex.Unlock()
-	collector.clientRenderBuckets[clientRenderBucketKey{qualityTier: qualityTier, family: family, outcome: outcome}]++
+	collector.clientRenderBuckets[key]++
 }
 
 // Snapshot drains everything collected so far into one envelope's worth of
@@ -344,10 +362,11 @@ func (collector *Collector) Snapshot(instanceID string, bucketStart time.Time, b
 		data.ClientRenderBuckets = make([]contracts.ClientRenderBucket, 0, len(clientRenderBuckets))
 		for key, count := range clientRenderBuckets {
 			data.ClientRenderBuckets = append(data.ClientRenderBuckets, contracts.ClientRenderBucket{
-				QualityTier: key.qualityTier,
-				Family:      key.family,
-				Outcome:     key.outcome,
-				Count:       count,
+				QualityTier:     key.qualityTier,
+				Family:          key.family,
+				Outcome:         key.outcome,
+				GraphicsBackend: key.graphicsBackend,
+				Count:           count,
 			})
 		}
 		sort.Slice(data.ClientRenderBuckets, func(first, second int) bool {
@@ -358,7 +377,10 @@ func (collector *Collector) Snapshot(instanceID string, bucketStart time.Time, b
 			if left.Family != right.Family {
 				return left.Family < right.Family
 			}
-			return left.Outcome < right.Outcome
+			if left.Outcome != right.Outcome {
+				return left.Outcome < right.Outcome
+			}
+			return left.GraphicsBackend < right.GraphicsBackend
 		})
 	}
 	return data

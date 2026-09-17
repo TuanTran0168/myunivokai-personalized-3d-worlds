@@ -51,6 +51,8 @@
  * from signals the browser hands over for free. That is what is below.
  */
 
+import { WEBGPU_ADAPTER_SOFTWARE, type WebGPUAdapterAvailability } from "./webgpuSupport";
+
 /**
  * Three tiers, because the profiles below differ in three meaningful ways and a
  * fourth bucket would have nothing distinct to say.
@@ -110,6 +112,19 @@ export type DeviceRenderCapabilities = {
   maximumTextureSize?: number;
   /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA GeForce RTX 4060 ...)". */
   rendererDescription?: string;
+  /**
+   * What WebGPU this machine has, when the canvas is going to use it.
+   *
+   * **UNDEFINED WHENEVER THE NODE RENDERER IS OFF, WHICH IS THE POINT.** Every
+   * other field here describes the WebGL context that used to be the only one
+   * that mattered, and a machine drawing through `WebGLRenderer` is not made
+   * slower by owning a software WebGPU adapter it never touches. So this is
+   * probed only when the canvas is actually going to build a node renderer, and
+   * a build with the rollout flag off classifies exactly as it did before this
+   * field existed. See `webgpuSupport.ts` for why the probe stops at the
+   * adapter.
+   */
+  webgpuAdapter?: WebGPUAdapterAvailability;
 };
 
 /**
@@ -161,6 +176,16 @@ export function classifyDeviceQualityTier(capabilities: DeviceRenderCapabilities
   // `isUnderAutomation` above: the visual suite runs software GL deliberately,
   // and must keep measuring the profile that ships.
   if (!capabilities.isUnderAutomation && describesSoftwareRenderer(capabilities.rendererDescription)) {
+    return QUALITY_TIER_MINIMAL;
+  }
+
+  // A SOFTWARE WEBGPU ADAPTER IS THE ONE THING THE WEBGL PROBE ABOVE CANNOT
+  // SEE, and it is the reason this field exists. That probe reads a throwaway
+  // WebGL context, so a machine with a real GPU on WebGL and a CPU rasteriser on
+  // WebGPU answers "RTX 4060" and then renders every frame on the processor — at
+  // the top tier, with shadows and eight passes of post. Same strength of signal
+  // as the marker check above, same automation exemption, same reason.
+  if (!capabilities.isUnderAutomation && capabilities.webgpuAdapter === WEBGPU_ADAPTER_SOFTWARE) {
     return QUALITY_TIER_MINIMAL;
   }
 

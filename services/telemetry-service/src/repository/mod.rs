@@ -18,9 +18,9 @@ use async_trait::async_trait;
 use time::OffsetDateTime;
 
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
-    HttpTotals, IngestOutcome, RollupBatch, RouteAggregate, StatusClassCount, VolumeBucket,
-    WakeSignalBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
+    ErrorCodeAggregate, HourOfDayBucket, HttpTotals, IngestOutcome, RollupBatch, RouteAggregate,
+    StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 use crate::error::Result;
 
@@ -81,6 +81,15 @@ pub trait RollupRepository: Send + Sync {
         &self,
         since: OffsetDateTime,
     ) -> Result<Vec<ClientRenderAggregate>>;
+
+    /// Which renderer drew, across every tier and outcome — §19.5's estimated
+    /// WebGPU/WebGL2 split, counted. Asked on its own rather than as a fourth
+    /// dimension of the aggregate above; `ClientRenderBackendAggregate` says
+    /// why.
+    async fn client_render_backend_aggregates(
+        &self,
+        since: OffsetDateTime,
+    ) -> Result<Vec<ClientRenderBackendAggregate>>;
     async fn route_aggregates(&self, since: OffsetDateTime) -> Result<Vec<RouteAggregate>>;
 
     /// The oldest interval actually stored, which is not always the one that

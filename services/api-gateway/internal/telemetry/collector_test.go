@@ -263,14 +263,15 @@ func TestEverySnapshotSatisfiesTheContract(t *testing.T) {
 func TestClientRenderReportsFoldIntoABoundedKeySpace(t *testing.T) {
 	collector := NewCollector()
 	for reportIndex := 0; reportIndex < 5; reportIndex++ {
-		collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered)
+		collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendWebGPU)
 	}
-	collector.RecordClientRender(contracts.ClientRenderTierMinimal, contracts.WorldFamilyOcean, contracts.ClientRenderOutcomeWebGLFailed)
+	collector.RecordClientRender(contracts.ClientRenderTierMinimal, contracts.WorldFamilyOcean, contracts.ClientRenderOutcomeWebGLFailed, contracts.ClientRenderBackendWebGL)
 	// Every one of these would be a new map key if it were stored, which is
 	// the thing a browser must not be able to do.
-	collector.RecordClientRender(9, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered)
-	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamily("city"), contracts.ClientRenderOutcomeRendered)
-	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyNature, "slow")
+	collector.RecordClientRender(9, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendWebGL)
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamily("city"), contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendWebGL)
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyNature, "slow", contracts.ClientRenderBackendWebGL)
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyNature, contracts.ClientRenderOutcomeRendered, "vulkan")
 
 	data := collector.Snapshot("instance", time.Now().UTC(), time.Minute)
 	if len(data.ClientRenderBuckets) != 2 {
@@ -289,7 +290,7 @@ func TestClientRenderReportsFoldIntoABoundedKeySpace(t *testing.T) {
 // interval, and a count that survived a flush would be added twice by the sink.
 func TestClientRenderBucketsAreDrainedByASnapshot(t *testing.T) {
 	collector := NewCollector()
-	collector.RecordClientRender(contracts.ClientRenderTierBalanced, contracts.WorldFamilyNature, contracts.ClientRenderOutcomeRendered)
+	collector.RecordClientRender(contracts.ClientRenderTierBalanced, contracts.WorldFamilyNature, contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendWebGL2)
 	if first := collector.Snapshot("instance", time.Now().UTC(), time.Minute); len(first.ClientRenderBuckets) != 1 {
 		t.Fatalf("first snapshot = %+v", first.ClientRenderBuckets)
 	}
@@ -309,5 +310,49 @@ func TestClientRenderBucketsAreDrainedByASnapshot(t *testing.T) {
 // handler calls straight into it — so this must not panic.
 func TestANilCollectorAcceptsAClientRenderReportAndDoesNothing(t *testing.T) {
 	var collector *Collector
-	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered)
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendWebGPU)
+}
+
+// §26 Phase 12 / §19.5. The share of visitors on WebGL2 was an ESTIMATE — "~20%,
+// plausibly more", weighted from global traffic for a Vietnam-skewed audience —
+// and this field is what replaces it with a count. So the two properties that
+// decide whether the count is worth reading are asserted here: the same scene on
+// two backends must be two rows, and a bundle that predates the field must land
+// somewhere rather than nowhere.
+func TestClientRenderReportsSeparateTheGraphicsBackends(t *testing.T) {
+	collector := NewCollector()
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendWebGPU)
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendWebGL2)
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendWebGL2)
+
+	data := collector.Snapshot("instance", time.Now().UTC(), time.Minute)
+	if len(data.ClientRenderBuckets) != 2 {
+		t.Fatalf("one tier, one family and one outcome on two backends folded into %+v", data.ClientRenderBuckets)
+	}
+	// Sorted by backend last, so webgl2 precedes webgpu.
+	if data.ClientRenderBuckets[0].GraphicsBackend != contracts.ClientRenderBackendWebGL2 || data.ClientRenderBuckets[0].Count != 2 {
+		t.Fatalf("first bucket = %+v", data.ClientRenderBuckets[0])
+	}
+	if data.ClientRenderBuckets[1].GraphicsBackend != contracts.ClientRenderBackendWebGPU || data.ClientRenderBuckets[1].Count != 1 {
+		t.Fatalf("second bucket = %+v", data.ClientRenderBuckets[1])
+	}
+}
+
+// A BROWSER HOLDS A CACHED BUNDLE FOR AS LONG AS IT HOLDS IT. Reports with no
+// graphicsBackend arrive for days after the deploy that adds the field, and
+// refusing them would turn a schema addition into an outage of the platform's
+// own numbers. They fold into the unknown bucket, beside the reports that say so
+// explicitly rather than in an empty-string bucket of their own.
+func TestAReportFromABundleThatPredatesTheFieldIsCountedAsUnknown(t *testing.T) {
+	collector := NewCollector()
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered, "")
+	collector.RecordClientRender(contracts.ClientRenderTierHigh, contracts.WorldFamilyUniverse, contracts.ClientRenderOutcomeRendered, contracts.ClientRenderBackendUnknown)
+
+	data := collector.Snapshot("instance", time.Now().UTC(), time.Minute)
+	if len(data.ClientRenderBuckets) != 1 {
+		t.Fatalf("an absent backend and an explicit unknown did not share a bucket: %+v", data.ClientRenderBuckets)
+	}
+	if data.ClientRenderBuckets[0].GraphicsBackend != contracts.ClientRenderBackendUnknown || data.ClientRenderBuckets[0].Count != 2 {
+		t.Fatalf("bucket = %+v", data.ClientRenderBuckets[0])
+	}
 }

@@ -401,32 +401,69 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
    * detail carries the same encode residual that gives the universe 12.23 with
    * no GLSL left at all, and more lit surface means more of it.
    *
-   * NOT ESTABLISHED, and deliberately not guessed at: how much of the 1.92 is
-   * that residual and how much is the god rays still missing underneath it. The
-   * experiment that would separate them is the post-off lever the harness does
-   * not have, and inventing one to confirm a hypothesis is how two earlier ones
-   * died.
-   *
    * The two node backends moved 0.04 -> 0.15 over the same change, which is the
    * expected direction: the caustics are the only thing in this scene built on
    * `dFdx`/`dFdy`, and screen-space derivatives are exactly where Dawn and the
    * WebGL2 backend are entitled to differ. 0.15 of 255 is still agreement.
+   *
+   * **AND THEN THE GOD RAYS LANDED AND IT FELL TO 9.90, WHICH ANSWERS THE
+   * PARAGRAPH BELOW RATHER THAN CONFIRMING IT.** 63.35 -> 9.90 on one material.
+   * The paragraph that used to sit here said it was "NOT ESTABLISHED... how much
+   * of the 1.92 is that residual and how much is the god rays still missing
+   * underneath it", and declined to guess. It is established now, and the answer
+   * is not the one the shape of the question suggested: the god rays were not a
+   * contribution UNDERNEATH the residual, they were **five sixths of the whole
+   * number**. A 24-step additive raymarch over the entire hemisphere was being
+   * refused and drawn nowhere, and everything else in this fixture was being
+   * compared through the hole it left.
+   *
+   * **WHAT IS LEFT IS 9.90, AND TWO OCEAN FIXTURES NOW ISOLATE IT.** Both mount
+   * no post chain on either path, both have no hand-written GLSL left anywhere,
+   * both are the same family with the same renderer settings, and they differ in
+   * one structural way — what they are made of:
+   *
+   *     ocean-surface    no additive layers          0.31
+   *     ocean-shallow    five additive layers        9.90
+   *
+   * The five are the god rays, the three marine-snow layers and the
+   * bioluminescent fourth, plus the jellyfish and the bubbles. Every one of them
+   * deliberately writes RAW LINEAR with no encode, which on the classic path adds
+   * linear values onto an sRGB-encoded framebuffer and on the node path adds them
+   * before a frame-wide encode — see `oceanGodRays.ts`, which carries the
+   * arithmetic for why no scalar reconciles the two. **So 9.6 of 255 is what the
+   * additive-compositing-space difference costs on a scene built out of it**,
+   * measured rather than argued, on the day the last GLSL in the app ran out.
+   *
+   * WHAT THIS STILL DOES NOT PROVE. The two fixtures are different scenes, not
+   * one scene with its additive layers switched off, so "what they are made of"
+   * is the most obvious remaining difference and not the only possible one. It
+   * does not apportion the 9.90 between the six layers.
+   *
+   * The two node backends moved 0.15 -> 0.31 over this change, and that is the
+   * expected direction for exactly the reason `oceanGodRays.ts` predicts in
+   * advance: the march is jittered by a hash of the fragment's screen position,
+   * `gl_FragCoord` and TSL's `screenCoordinate` do not share a Y origin, and a
+   * chaotic hash of a different input is a different offset. The banding it
+   * breaks up is gone on both; the noise it leaves behind is not the same noise.
+   * 0.31 of 255 is still agreement.
    */
   {
     fixture: "ocean-shallow",
     comparison: "WebGPU against WebGL",
-    meanAbsoluteError: 63.35,
-    worstBlockError: 163.1,
-    differingFraction: 0.9834,
-    closedBy: "Phases 6-8 for PART of it — one shader remains — and the post chain for the rest"
+    meanAbsoluteError: 9.9,
+    worstBlockError: 146.76,
+    differingFraction: 0.7535,
+    closedBy:
+      "nothing that is left to port — the family has no GLSL and no post chain, and what remains is the additive-compositing-space difference oceanGodRays.ts derives"
   },
   {
     fixture: "ocean-shallow",
     comparison: "forceWebGL against WebGL",
-    meanAbsoluteError: 63.35,
-    worstBlockError: 163.57,
-    differingFraction: 0.9834,
-    closedBy: "Phases 6-8 for PART of it — one shader remains — and the post chain for the rest"
+    meanAbsoluteError: 9.79,
+    worstBlockError: 147.63,
+    differingFraction: 0.7524,
+    closedBy:
+      "nothing that is left to port — the family has no GLSL and no post chain, and what remains is the additive-compositing-space difference oceanGodRays.ts derives"
   }
 ];
 
