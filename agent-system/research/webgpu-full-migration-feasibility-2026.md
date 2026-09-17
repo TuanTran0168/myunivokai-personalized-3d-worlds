@@ -1,15 +1,35 @@
 # WebGPU-first migration feasibility — myunivokai's full 3D rendering stack
 
-> **Document status:** Research, with **Phases 0–5 of §26 executed and passed, and Phases 6–8 blocked
-> one material short of complete**. Nothing in the verdict is approved, and **Phases 2–4 did modify
+> **Document status:** Research, with **Phases 0–5, 7 and 8 of §26 executed and passed, and Phases
+> 6–8 blocked one material short of complete — that material being the god rays, which are only
+> mounted UNDERWATER**. Nothing in the verdict is approved, and **Phases 2–4 did modify
 > production code** — the last rows of the Quality check say exactly what a visitor now receives and
 > what is gated behind a build flag. Phase 5 added a second post chain behind that same flag and
 > changed nothing a visitor receives; it also **found §25's recommended architecture to be defined by
 > an impossible step**, which is corrected in place.
 >
+> **PHASE 8 IS COMPLETE EXCEPT UNDERWATER, AND IT PRODUCED THIS REPORT'S BEST NUMBER (2026-09-17).**
+> The sea seen from above is ported, and above water the ocean has NO hand-written GLSL left —
+> refusals 0 on both node backends. A new fixture, `e2e/fixtures/ocean-surface-world.json`, exists
+> because without it that port would have moved no number at all: every other ocean fixture is
+> underwater and the surface material is only built when `viewerDepthMetres < 0`. That fixture
+> measures **0.31 between the node path and the classic one, with no recorded debt** — and because
+> the ocean mounts no post chain, it is the post-disabled run §30.2 said the harness could not
+> perform. Three families with no GLSL left: the two with a post chain sit at 12.22 and 19.49, the
+> one without at 0.31. See `knowledge/frontend/threejs-scene-architecture.md`.
+>
+> **PHASE 7 IS COMPLETE (2026-09-17).** All nine `onBeforeCompile` patches have a node arm. Three
+> findings came out of it, all recorded in `knowledge/frontend/threejs-scene-architecture.md`: the
+> node-path equivalent of a chunk patch is a `NodeMaterial` SUBCLASS overriding a `setup*` step, not
+> a `positionNode`/`outputNode` assignment — both of those REPLACE what three computed, and
+> `positionNode` in particular is read after instancing and discards the instance matrix, which
+> collapses an entire instanced bed onto the world origin; a dropped patch reports NOTHING, which is
+> worse than a refused material and is why every patch site now goes through a guard with a
+> source-scanning test behind it; and a uniform written after the material is built needs an explicit
+> copy step, without which the seabed renders at caustic strength ZERO on the node path only.
+>
 > **PHASES 6–8 STOPPED ON A LOOK DECISION, NOT ON AN ENGINEERING ONE (2026-09-15).** The universe and
-> the forest have no hand-written shader left, and the ocean is down to its god rays and eight
-> `onBeforeCompile` patches. The god rays cannot be ported faithfully: the classic path lets an
+> the forest have no hand-written shader left, and the ocean is down to its god rays. The god rays cannot be ported faithfully: the classic path lets an
 > ADDITIVE layer write raw linear values into an already-encoded framebuffer, while the node path
 > encodes the whole composited frame once (`Renderer.needsFrameBufferTarget`, `Renderer.js:2446`),
 > and there is no per-material opt-out from a frame-wide pass. The shipped shader's own comment
@@ -2047,18 +2067,42 @@ convention. **Every phase ships and is independently revertable.**
 - **Superseded by the correction above:** the dual-material machinery and the forest's single patch
   land first, because they are what produces the first parity number.
 
-### Phase 7 — The nine `onBeforeCompile` patches → node slots
+### Phase 7 — The nine `onBeforeCompile` patches → node slots — **DONE 2026-09-17, PASSED**
 
 - **Objective:** four slots, uniform pattern (§7.3). Start with `oceanRigFlora.ts` (lowest
   complexity) and finish with `oceanCaustics.ts` (highest).
 - **Validation:** per-patch shots; the caustics Jacobian is the one to watch.
+- **What actually happened.** The order held — kelp, seabed slope rock, fauna, caustics — but "four
+  slots" was wrong in both directions. There are THREE injection points, not four
+  (`<begin_vertex>`, `<map_fragment>`, `<tonemapping_fragment>`; `<common>` is declarations, which a
+  node graph does not have, and `<worldpos_vertex>` is a varying the node path already provides).
+  And they are not slots at all: see the correction below.
+- **THE PLAN'S "UNIFORM PATTERN" DOES NOT EXIST AS A NODE ASSIGNMENT.** §7.3 assumed each marker
+  maps to a material property. It does not — `positionNode` and `outputNode` REPLACE rather than
+  inject, and `positionNode` is read AFTER instancing (`NodeBuilder`: `NodeMaterial.js:796` then
+  `:802`), so using it on an `InstancedMesh` discards the instance matrix and stacks every instance
+  on the world origin. The mechanism that works is a `NodeMaterial` subclass overriding the `setup*`
+  step, which is what three documents on `setupOutput` itself.
+- **AND THE FAILURE MODE IS SILENT, WHICH CHANGED WHAT THIS PHASE HAD TO BUILD FIRST.**
+  `onBeforeCompile` does not exist on a node material; assigning it is legal and is never read. So
+  the first deliverable was detection — `applyClassicShaderPatch` plus a source-scanning test — not
+  a port. The refusal count cannot see any of this: it was 1 before this phase and 1 after, because
+  a dropped patch is not a refusal.
 
-### Phase 8 — The nine raw GLSL shaders → TSL
+### Phase 8 — The nine raw GLSL shaders → TSL — **DONE 2026-09-17 except the god rays**
 
 - **Objective:** the remaining six after Phase 6, plus the four point/sprite shaders.
 - **Note:** the in-box transpiler (§8.3) assists the maths bodies; hand-finish naming per
   [`../rules/coding-style.md`](../rules/coding-style.md).
 - **Validation:** shot per shader; the star colour-management bypass needs explicit attention.
+- **THE VALIDATION AS WRITTEN WOULD HAVE PASSED ON AN UNPORTED SHADER.** "Shot per shader" assumes
+  every shader appears in a shot. The sea top does not: it is built only when the camera is above
+  the water, and no fixture in this repository was. The port was therefore accompanied by the
+  fixture that makes it visible, and the rule this leaves behind is the one worth keeping — before
+  porting a material, find the frame that would change if you did not.
+- **What is left is the god rays, and they are only mounted underwater.** `godRays.visible = !above`,
+  so above water the ocean family is entirely free of hand-written GLSL. The blocker is the
+  additive-encode look decision recorded at the top of this document, not remaining work.
 
 ### Phase 9 — Renderer swap, tier probe, device-loss path
 

@@ -553,6 +553,9 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       waveShared,
       whitecapFraction: seaState.whitecapFraction,
       quality,
+      skyNodes,
+      waveNodes: waveNodeSet ? waveNodeSet.nodes : null,
+      nodeModules,
     });
     seaTop.mesh.position.y = viewerDepthMetres;
     group.add(seaTop.mesh);
@@ -756,6 +759,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       caustics: seabed.causticUniforms,
       currentStrength: Math.min(1.4, 0.4 + seaState.significantHeightMetres * 0.3),
       quality,
+      nodeModules,
     });
     flora.tint(fogColor, brightness);
     seabed.group.add(flora.group);
@@ -831,7 +835,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     if (!speciesIsPresent(species, viewerDepthMetres, seafloorInSight, surfaceInSight)) continue;
     // Visible from the first frame, with a procedural body. A GLB is an upgrade
     // applied under the running animation, not a precondition for existing.
-    const school = createSchool(species, seed, creatureTime, range);
+    const school = createSchool(species, seed, creatureTime, range, nodeModules);
     if (species.nearField) {
       // Near-field animals keep their own colour and lift it with a matching
       // emissive, so the one warm note a reef has does not get graded away by
@@ -922,9 +926,17 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       for (const layer of moteLayers) layer.uniforms.uMoteTime.value = elapsed;
       jellyfish.uniforms.uJellyTime.value = elapsed;
       if (bubbles) bubbles.uniforms.uBubbleTime.value = elapsed;
-      if (seaTop) seaTop.uniforms.uTime.value = elapsed;
+      if (seaTop) {
+        seaTop.uniforms.uTime.value = elapsed;
+        seaTop.synchronise();
+      }
       if (flora) flora.update(elapsed);
-      if (seabed) seabed.causticUniforms.uCausticTime.value = elapsed;
+      if (seabed) {
+        seabed.causticUniforms.uCausticTime.value = elapsed;
+        // The node twins of the four caustics uniforms, three of which are
+        // written after the material was built. See `oceanCaustics.ts`.
+        seabed.causticUniforms.synchronise();
+      }
 
       // Keep the god-ray noise plane perpendicular to the light, or the beams
       // become clouds.

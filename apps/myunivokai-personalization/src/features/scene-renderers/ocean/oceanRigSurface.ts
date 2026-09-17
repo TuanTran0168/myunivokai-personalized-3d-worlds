@@ -39,17 +39,14 @@ import {
   type WebGLRenderer,
 } from "three";
 import { foamFoldThreshold } from "./oceanSeaState";
-import {
-  GERSTNER_SURFACE_GLSL,
-  PREETHAM_SKY_GLSL,
-  SKY_UNIFORMS_GLSL,
-  WAVE_UNIFORMS_GLSL,
-} from "./oceanSky";
+import { oceanSeaTopMaterial, seaTopUniformValues, type SeaTopUniformValues } from "./oceanSeaTopMaterial";
+import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
+import type { SkyUniformNodes, WaveUniformNodes } from "./oceanSky";
 import { maximumTextureAnisotropy } from "@/features/scene-renderers/shared/textureAnisotropy";
 
-/** The sky's own colours, used where a constant is honest. */
-export const SKY_HAZE = "#9BBBD2";
-export const FOAM_WHITE = "#EAF6FF";
+// Declared with the material that paints them. Re-exported here because this
+// is where every existing caller looks for them.
+export { FOAM_WHITE, SKY_HAZE } from "./oceanSeaTopMaterial";
 
 /**
  * A tileable normal map for the capillary ripple.
@@ -197,24 +194,17 @@ export function createSeaGrid(
   return geometry;
 }
 
-export type SeaTopUniforms = {
-  uTime: { value: number };
-  uSize: { value: number };
-  uFoam: { value: number };
-  uFoamEdge: { value: number };
-  uDetail: { value: number };
-  uExposure: { value: number };
-  uSunColor: { value: Color };
-  uWaterColor: { value: Color };
-  uDeepColor: { value: Color };
-  uHorizonColor: { value: Color };
-  uFoamColor: { value: Color };
-  [key: string]: { value: unknown };
-};
+export type SeaTopUniforms = SeaTopUniformValues;
 
 export type SeaTop = {
   mesh: Mesh;
   uniforms: SeaTopUniforms;
+  /**
+   * Advances the node path's own clock, which is a separate uniform from the
+   * classic one. A no-op on the classic path, and a sea that never advances it
+   * is a still sea rather than a blank frame.
+   */
+  synchronise: () => void;
   dispose: () => void;
 };
 
@@ -228,159 +218,39 @@ export type SeaTopOptions = {
   /** Monahan's whitecap coverage, 0..1, mapped onto the fold threshold. */
   whitecapFraction: number;
   quality: "high" | "low";
+  /** The node twins of the two shared sets. Null on the classic path. */
+  skyNodes: SkyUniformNodes | null;
+  waveNodes: WaveUniformNodes | null;
+  nodeModules: NodeMaterialModules | null;
 };
 
 export function createSeaTop(options: SeaTopOptions): SeaTop {
-  const { renderer, waveMax, skyShared, waveShared, whitecapFraction, quality } = options;
+  const { renderer, waveMax, skyShared, waveShared, whitecapFraction, quality, skyNodes, waveNodes, nodeModules } =
+    options;
   const high = quality === "high";
   const normals = createWaterNormalTexture(renderer);
 
-  const uniforms = {
-    uTime: { value: 0 },
-    uNormals: { value: normals },
-    // 103 m is Water.js's own largest lookup period; dividing the world by this
-    // brings the whole cascade down to a scale a viewer six metres up can
-    // actually resolve. At 1.0 the sea is smooth streaks.
-    uSize: { value: 5.0 },
-    uFoam: { value: 1.0 },
-    // Where the surface Jacobian has to fall before the water counts as broken.
-    // The mapping is a fit; the number going into it is measured, and that is
-    // the difference between a sea state and a foam slider.
-    uFoamEdge: { value: foamFoldThreshold(whitecapFraction) },
-    // The capillary ripple's weight against the Gerstner normal. Measured: at
-    // 0.55 the sea's local contrast fell 40% against a normal-map-only surface,
-    // because a physically correct Beaufort 4 sea is genuinely smooth and all
-    // of the sparkle lives in the scale below the vertices.
-    uDetail: { value: 1.25 },
-    uExposure: { value: 1.0 },
-    uSunColor: { value: new Color("#FFF1D2") },
-    uWaterColor: { value: new Color("#0A6E9A") },
-    uDeepColor: { value: new Color("#031B27") },
-    uHorizonColor: { value: new Color(SKY_HAZE) },
-    uFoamColor: { value: new Color(FOAM_WHITE) },
-    ...skyShared,
-    ...waveShared,
-  };
+  const uniformValues = seaTopUniformValues(normals, foamFoldThreshold(whitecapFraction));
+  // The classic path binds one flat record: this material's own uniforms plus
+  // the two shared sets every other caller of the sky and the wave field binds.
+  const uniforms = { ...uniformValues, ...skyShared, ...waveShared };
 
   const geometry = createSeaGrid(high ? 300 : 140, high ? 256 : 128, 1.1, 5600);
-  const material = new ShaderMaterial({
+  const { material, synchronise } = oceanSeaTopMaterial(
+    uniformValues,
     uniforms,
-    side: DoubleSide,
-    fog: false,
-    vertexShader: /* glsl */ `
-      uniform float uTime;
-      ${WAVE_UNIFORMS_GLSL(waveMax)}
-      varying vec3 vWorld; varying vec3 vWaveNormal; varying float vFold;
-      ${GERSTNER_SURFACE_GLSL(waveMax)}
-      void main(){
-        vec3 world = (modelMatrix * vec4(position, 1.0)).xyz;
-        vec3 offset; vec3 waveNormal; float fold;
-        oceanSurface(world.xz, offset, waveNormal, fold);
-        world += offset;
-        vWorld = world;
-        vWaveNormal = waveNormal;
-        vFold = fold;
-        gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform sampler2D uNormals;
-      uniform float uTime; uniform float uSize; uniform float uFoam;
-      uniform float uFoamEdge; uniform float uDetail; uniform float uExposure;
-      uniform vec3 uSunColor;
-      uniform vec3 uWaterColor; uniform vec3 uDeepColor;
-      uniform vec3 uHorizonColor; uniform vec3 uFoamColor;
-      ${SKY_UNIFORMS_GLSL}
-      varying vec3 vWorld; varying vec3 vWaveNormal; varying float vFold;
-      ${PREETHAM_SKY_GLSL}
-
-      // Verbatim from three.js Water.js, constants included. The four divisors
-      // (103, 107, 8907/9803, 1091/1027) and the four scroll rates are the whole
-      // reason it does not look like a tiled texture: the periods are mutually
-      // prime enough that the sum never repeats inside a frame.
-      vec4 getNoise(vec2 uv){
-        vec2 uv0 = (uv / 103.0) + vec2(uTime / 17.0, uTime / 29.0);
-        vec2 uv1 = uv / 107.0 - vec2(uTime / -19.0, uTime / 31.0);
-        vec2 uv2 = uv / vec2(8907.0, 9803.0) + vec2(uTime / 101.0, uTime / 97.0);
-        vec2 uv3 = uv / vec2(1091.0, 1027.0) - vec2(uTime / 109.0, uTime / -113.0);
-        vec4 sampled = texture2D(uNormals, uv0) + texture2D(uNormals, uv1)
-                     + texture2D(uNormals, uv2) + texture2D(uNormals, uv3);
-        return sampled * 0.5 - 1.0;
-      }
-
-      void main(){
-        vec4 sampled = getNoise(vWorld.xz * uSize);
-        // Two scales of normal, with different jobs. The Gerstner normal is the
-        // SHAPE of the sea and it is exact; the texture is the capillary ripple
-        // riding on it, which is where the sparkle lives and which no vertex
-        // budget could ever resolve.
-        vec3 ripple = normalize(sampled.xzy * vec3(1.5, 1.0, 1.5));
-        vec3 n = normalize(vWaveNormal + vec3(ripple.x, 0.0, ripple.z) * uDetail);
-
-        vec3 toEye = cameraPosition - vWorld;
-        float viewDistance = length(toEye);
-        vec3 eyeDirection = normalize(toEye);
-
-        // Water.js's own sunLight(): shiny 100, spec 2, diffuse 0.5. The
-        // specular is the glitter path; the diffuse is what stops far water
-        // going flat.
-        vec3 mirrored = normalize(reflect(-uSkySunDirection, n));
-        float alignment = max(0.0, dot(eyeDirection, mirrored));
-        vec3 specular = pow(alignment, 100.0) * uSunColor * 2.0;
-        vec3 diffuse = max(dot(uSkySunDirection, n), 0.0) * uSunColor * 0.5;
-
-        vec3 skyDirection = normalize(reflect(-eyeDirection, n));
-        skyDirection.y = abs(skyDirection.y);
-        // The disc is excluded from the REFLECTION and left to the specular
-        // term: a mirrored 19000x sun disc through a wave normal is a field of
-        // white pixels the size of the tone map's shoulder, not a glitter path.
-        vec3 sky = preethamSky(skyDirection, false);
-
-        float theta = max(dot(eyeDirection, n), 0.0);
-        // Physical rf0 for water is 0.02. Water.js uses 0.3 to compensate for a
-        // dim mirror texture; our sky is analytic and correctly bright, so the
-        // honest number works and the grazing horizon stays a mirror.
-        float rf0 = 0.02;
-        float reflectance = rf0 + (1.0 - rf0) * pow(1.0 - theta, 5.0);
-        // Upwelling scatter: the only colour the water body itself has, and
-        // strongest looking straight down into it.
-        vec3 scatter = mix(uDeepColor, uWaterColor, theta) * (0.34 + theta * 1.15);
-        // The whole sky dome lights the water body, not just the sun. Without
-        // this the non-reflective half of every wave has one directional source
-        // and the sea reads as metal.
-        scatter += uHorizonColor * 0.13;
-
-        vec3 color = mix(scatter + diffuse * 0.55, sky + specular, reflectance);
-
-        // Foam where the surface FOLDS. The Jacobian of the Gerstner
-        // displacement collapses exactly where a real wave is overtaking
-        // itself, which is what breaking IS — so foam appears on the forward
-        // face of steep crests and nowhere else, without being told to. The
-        // second, uncorrelated lace pattern stops it reading as a stripe
-        // painted along the crest line.
-        float breaking = smoothstep(uFoamEdge, uFoamEdge - 0.34, vFold);
-        float lace = smoothstep(0.02, 0.42, sampled.x);
-        color = mix(color, uFoamColor, clamp(breaking * lace * uFoam, 0.0, 0.86));
-
-        // Aerial perspective. In air, distance is haze, not absorption. The
-        // haze colour is the sky in THAT direction just above the horizon — so
-        // the sea does not fade toward one average colour, it fades toward
-        // whatever the sky actually is behind it, and the horizon dissolves
-        // even when the sun is low and the two sides of the sky disagree.
-        vec3 hazeDirection = normalize(vec3(-eyeDirection.x, 0.045, -eyeDirection.z));
-        float haze = 1.0 - exp(-viewDistance * 0.00030);
-        color = mix(color, preethamSky(hazeDirection, false), clamp(haze, 0.0, 1.0));
-
-        gl_FragColor = vec4(color * uExposure, 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`,
-  });
+    waveMax,
+    skyNodes,
+    waveNodes,
+    nodeModules
+  );
 
   const mesh = new Mesh(geometry, material);
   mesh.frustumCulled = false;
   return {
     mesh,
-    uniforms: uniforms as unknown as SeaTopUniforms,
+    uniforms: uniformValues,
+    synchronise,
     dispose: () => {
       geometry.dispose();
       material.dispose();

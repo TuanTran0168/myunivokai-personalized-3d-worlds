@@ -100,3 +100,78 @@ export function requireShaderChunks(
   }
   return shaderSource;
 }
+
+/**
+ * THE SECOND WAY A PATCH GOES MISSING, AND THE ONE THAT REPORTS NOTHING AT ALL.
+ *
+ * `requireShaderChunks` above catches a marker that three stopped emitting. It
+ * cannot catch the failure this migration introduced, because in that one the
+ * patch is never even offered a shader: **`onBeforeCompile` does not exist on a
+ * node material.** Assigning it is legal JavaScript, the property sits there,
+ * and nothing ever reads it. No refusal, no console line, no thrown error — the
+ * kelp simply stops swaying and the seabed simply stops being rock.
+ *
+ * That is strictly worse than a refused `ShaderMaterial`. A refusal at least
+ * prints `Material "ShaderMaterial" is not compatible` and drops the draw, which
+ * is visible. A dropped patch leaves a material that draws correctly in every
+ * respect but the one the patch was for, and the frame still looks like a frame.
+ *
+ * So every patch site goes through here, and a site that has not been given a
+ * node arm says so the first time it is built on the node path — loudly, once
+ * per material, naming itself. It reports and continues for the same reason
+ * `requireShaderChunks` does: a scene drawing without its caustics is worth more
+ * than a blank rectangle, and `WebGLFailureBoundary` exists for real failures.
+ *
+ * `shaderChunkPatchSites.test.ts` is the other half: it scans the source for
+ * direct `onBeforeCompile =` assignments, so a new patch written without this
+ * helper fails a unit test rather than waiting for someone to mount it on the
+ * node renderer and notice the sea floor is flat.
+ */
+export function applyClassicShaderPatch(
+  material: object,
+  patchName: string,
+  patch: (shader: ClassicShader, renderer: unknown) => void
+): void {
+  if (isNodeMaterialInstance(material)) {
+    console.error(
+      `${patchName}: this is a node material, and \`onBeforeCompile\` is never called on one — ` +
+        "the patch was NOT applied and the scene will render without it. A patch site needs a node " +
+        "arm (see forest/forestFoliageMaterial.ts) before it can be used on the node path. " +
+        "See shared/shaderChunkPatch.ts."
+    );
+    return;
+  }
+  (material as { onBeforeCompile: unknown }).onBeforeCompile = patch;
+}
+
+/**
+ * The parts of three's `onBeforeCompile` shader object every patch here uses.
+ *
+ * Narrower than three's own `WebGLProgramParametersWithUniforms`, and named
+ * rather than inlined at each call site, because the alternative is each patch
+ * casting the parameter itself — which is a cast per patch that nothing checks
+ * against the next three release.
+ */
+export type ClassicShader = {
+  uniforms: Record<string, unknown>;
+  vertexShader: string;
+  fragmentShader: string;
+};
+
+/**
+ * Whether three will assemble this material's shader from a node graph.
+ *
+ * `NodeMaterial` sets `this.isNodeMaterial = true` in its constructor
+ * (`NodeMaterial.js:69`), and every node material in the library extends it —
+ * including `MeshStandardNodeMaterial`, which also extends
+ * `MeshStandardMaterial`, so `instanceof MeshStandardMaterial` is true for both
+ * kinds and cannot be used to tell them apart. The flag can.
+ *
+ * Asking the instance rather than the renderer is deliberate and mirrors
+ * `isNodeRenderer` in `nodeMaterials.ts`: the question here is which shader
+ * system will compile THIS material, and a material built by a factory that was
+ * handed the wrong modules is exactly the case a renderer check would miss.
+ */
+export function isNodeMaterialInstance(material: object): boolean {
+  return (material as { isNodeMaterial?: boolean }).isNodeMaterial === true;
+}

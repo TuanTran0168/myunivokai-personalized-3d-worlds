@@ -263,7 +263,8 @@ the classic renderer:
 |---|---|---|---|
 | forest | yes | 19.49 | 1.24 |
 | universe | yes | 12.22 | 0.45 |
-| ocean | no, one `ShaderMaterial` and eight patches left | 61.43 | 0.04 |
+| ocean, underwater | no, the god rays remain | 63.35 | 0.15 |
+| ocean, above water | **yes, nothing left** | **0.31** | **0.02** |
 
 The universe is the sharper data point because its number **did not move**:
 12.19 before its two point shaders were ported, 12.22 after. What was eliminated
@@ -334,6 +335,100 @@ is a different picture.
 closed by porting harder. It is a decision about which compositing model the
 ocean should have, and therefore a look decision. Until it is made, the god rays
 should not be ported: the shipped comment already predicts the result.
+
+### The node path's equivalent of a chunk patch is a subclass, not a node assignment
+
+This is the finding of §26 Phase 7 and it cost a wrong port before it was
+understood.
+
+Nine materials in this app INJECT into a shader three otherwise assembles
+itself. The kelp bends `transformed` and keeps three's lighting; the seabed
+multiplies `diffuseColor` and keeps three's texture; the caustics add to
+`gl_FragColor` and keep three's fog. None of them replaces anything, and on the
+classic path `onBeforeCompile` plus a `#include` marker is exactly an injection.
+
+**`positionNode` and `outputNode` are not the node-path spellings of those
+markers.** Both REPLACE the value three computed, and what they replace is
+load-bearing:
+
+- `NodeMaterial.setupPosition` applies instancing at `NodeMaterial.js:796` and
+  reads `positionNode` at `:802` — **after** it — then does
+  `positionLocal.assign(...)`, which discards the instance matrix outright. A
+  kelp bed ported that way does not sway wrongly. Every blade collapses onto the
+  world origin, because each instance's position WAS that matrix.
+- `outputNode` is read at `:545`, after `setupOutput` has already folded fog
+  into the result, so a multiply expressed there scales the fog as well as the
+  surface. The classic patches all sit at `<tonemapping_fragment>`, which three's
+  fragment shaders place BEFORE `<fog_fragment>` (`meshphysical.glsl.js`, last
+  six lines).
+
+The mechanism that does inject is the one three documents on `setupOutput`
+itself (`NodeMaterial.js:1160-1178`): **subclass the node material, override the
+setup step, modify the ambient property node, and hand control back to
+`super`.** That puts the change exactly where the chunk marker puts it and keeps
+everything three does around it. `shared/nodeMaterialChunkPatch.ts` is that
+subclass, with the three injection points named:
+
+    <begin_vertex>          ->  localPositionOffset     (setupPosition)
+    <map_fragment>          ->  diffuseColorMultiplier  (setupDiffuseColor)
+    <tonemapping_fragment>  ->  litColorAdjustment      (setupOutput)
+
+**Two things get shorter rather than longer on the node path.**
+`positionWorld` and `normalWorld` are always available in the fragment stage and
+are already instanced — `Instance.js:213` and `:237` assign through
+`positionLocal` and `normalLocal`. The caustics patch's entire vertex stage, two
+varyings and an `#ifdef USE_INSTANCING` branch exist only because three's
+`<worldpos_vertex>` hides its `worldPosition` behind
+`#if defined(USE_ENVMAP) || ...` and may not emit it at all. None of that is
+needed here.
+
+### A dropped patch is worse than a refused material, because nothing reports it
+
+A refused `ShaderMaterial` prints `Material "ShaderMaterial" is not compatible`
+and drops the draw. **`onBeforeCompile` does not exist on a node material**:
+assigning it is legal JavaScript, the property sits on the object, three never
+reads it, and the effect is simply gone. No refusal, no console line, no thrown
+error — the kelp stops swaying, the seabed stops being rock, the sand stops
+having caustics on it, and the frame still looks like a frame.
+
+So every patch site in this app goes through `applyClassicShaderPatch`, which
+refuses to attach to a node material and says which patch was dropped, and
+`shaderChunkPatchSites.test.ts` scans the source the bundler builds so the next
+patch cannot be written without a node arm.
+
+**The same shape bites the uniforms.** Three of the caustics' four values are
+written AFTER the material exists — `tintSeabed` supplies strength, colour and
+depth once the world's water and lighting are known, and the frame loop writes
+the clock. A node uniform initialised from the same number at build time holds
+the placeholder forever, and for strength the placeholder is ZERO: a seabed with
+no caustics, on the node path only, indistinguishable from a seabed in water too
+deep for them. Every ported uniform set that has a late write therefore hands
+back a `synchronise()` the frame loop must call, in the same shape and for the
+same reason `waveUniformNodes` hands back `setElapsedSeconds`.
+
+### A fully ported scene measures 0.31 between the two paths, and that attributes the rest
+
+The ocean seen from ABOVE the water is the first scene in this app with no
+hand-written GLSL left anywhere in it — the surface material is the last one it
+mounts, and the god rays are `visible = !above`. Measured 2026-09-17:
+
+| family | GLSL left | post chain | node against classic |
+| --- | --- | --- | --- |
+| universe | none | yes | 12.22 |
+| forest | none | yes | 19.49 |
+| **ocean, above water** | **none** | **no** | **0.31** |
+
+The ocean mounts no post chain on either path — `isOceanFamilyScene ? null :` —
+so this is the run with post disabled that §30.2 of the feasibility report said
+it could not do, arrived at by finding a scene that already had none rather than
+by adding a lever to the harness.
+
+**It does not identify which pass, and `ocean-surface` is a different scene
+rather than the universe with its chain switched off**, so the post chain is the
+most obvious remaining difference and not the only possible one. What it does
+settle is the question underneath: a fully ported scene reaches a third of a
+unit of 255 between backends, so whatever the other two families' residuals are
+made of, it is not the node path being unable to reproduce a frame.
 
 ### Camera focus (NASA-Eyes style)
 
