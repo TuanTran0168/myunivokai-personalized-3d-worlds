@@ -12,8 +12,8 @@ use sqlx::Row;
 
 use crate::domain::{
     BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
-    ErrorCodeAggregate, HourOfDayBucket,
-    HttpTotals, LatencySummary, RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
+    ErrorCodeAggregate, HourOfDayBucket, HttpTotals, LatencySummary, RouteAggregate,
+    StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 
 /// The eight columns `statements::histogram_sum_columns!` produces, in order.

@@ -22,15 +22,14 @@
 
 use myunivokai_contracts::{
     TelemetryBackendSummary, TelemetryCacheSummary, TelemetryClientRenderBackendSummary,
-    TelemetryClientRenderSummary,
-    TelemetryErrorCodeCount, TelemetryHourBucket, TelemetryRouteSummary, TelemetryStatusClassCount,
-    TelemetryVolumePoint,
+    TelemetryClientRenderSummary, TelemetryErrorCodeCount, TelemetryHourBucket,
+    TelemetryRouteSummary, TelemetryStatusClassCount, TelemetryVolumePoint,
 };
 
 use crate::domain::{
     BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
-    ErrorCodeAggregate, HourOfDayBucket,
-    RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
+    ErrorCodeAggregate, HourOfDayBucket, RouteAggregate, StatusClassCount, VolumeBucket,
+    WakeSignalBucket,
 };
 
 /// Every percentage on every telemetry screen, rounded in exactly one place.

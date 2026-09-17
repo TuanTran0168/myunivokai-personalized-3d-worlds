@@ -20,8 +20,8 @@ pub mod window;
 
 pub use aggregate::{
     BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
-    ErrorCodeAggregate, HourOfDayBucket,
-    HttpTotals, RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
+    ErrorCodeAggregate, HourOfDayBucket, HttpTotals, RouteAggregate, StatusClassCount,
+    VolumeBucket, WakeSignalBucket,
 };
 pub use latency::LatencySummary;
 pub use rollup::{

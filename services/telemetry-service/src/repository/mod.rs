@@ -19,9 +19,8 @@ use time::OffsetDateTime;
 
 use crate::domain::{
     BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
-    ErrorCodeAggregate, HourOfDayBucket,
-    HttpTotals, IngestOutcome, RollupBatch, RouteAggregate, StatusClassCount, VolumeBucket,
-    WakeSignalBucket,
+    ErrorCodeAggregate, HourOfDayBucket, HttpTotals, IngestOutcome, RollupBatch, RouteAggregate,
+    StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 use crate::error::Result;
 

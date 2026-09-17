@@ -22,9 +22,8 @@ use time::OffsetDateTime;
 use super::RollupRepository;
 use crate::domain::{
     BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
-    ErrorCodeAggregate, HourOfDayBucket,
-    HttpTotals, IngestOutcome, LatencySummary, RollupBatch, RouteAggregate, StatusClassCount,
-    VolumeBucket, WakeSignalBucket,
+    ErrorCodeAggregate, HourOfDayBucket, HttpTotals, IngestOutcome, LatencySummary, RollupBatch,
+    RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 use crate::error::{Error, Result};
 
@@ -486,7 +485,8 @@ impl RollupRepository for InMemoryRollupRepository {
         // would return more rows than the database and let a test pass on a
         // shape the screen never sees.
         let mut grouped: BTreeMap<(i16, String), i64> = BTreeMap::new();
-        for ((bucket_start, quality_tier, _family, outcome, _backend), count) in &state.client_render
+        for ((bucket_start, quality_tier, _family, outcome, _backend), count) in
+            &state.client_render
         {
             if *bucket_start < since {
                 continue;
