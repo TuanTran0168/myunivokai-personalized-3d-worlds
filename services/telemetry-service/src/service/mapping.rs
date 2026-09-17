@@ -21,13 +21,15 @@
 //! [Rust API Guidelines]: https://rust-lang.github.io/api-guidelines/interoperability.html#conversions-use-the-standard-traits-from-asref-asmut-c-conv-traits
 
 use myunivokai_contracts::{
-    TelemetryBackendSummary, TelemetryCacheSummary, TelemetryClientRenderSummary,
+    TelemetryBackendSummary, TelemetryCacheSummary, TelemetryClientRenderBackendSummary,
+    TelemetryClientRenderSummary,
     TelemetryErrorCodeCount, TelemetryHourBucket, TelemetryRouteSummary, TelemetryStatusClassCount,
     TelemetryVolumePoint,
 };
 
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
+    ErrorCodeAggregate, HourOfDayBucket,
     RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 
@@ -131,6 +133,15 @@ impl From<ClientRenderAggregate> for TelemetryClientRenderSummary {
         Self {
             quality_tier: aggregate.quality_tier,
             outcome: aggregate.outcome,
+            count: aggregate.count,
+        }
+    }
+}
+
+impl From<ClientRenderBackendAggregate> for TelemetryClientRenderBackendSummary {
+    fn from(aggregate: ClientRenderBackendAggregate) -> Self {
+        Self {
+            graphics_backend: aggregate.graphics_backend,
             count: aggregate.count,
         }
     }

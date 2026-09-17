@@ -11,7 +11,8 @@ use sqlx::postgres::PgRow;
 use sqlx::Row;
 
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
+    ErrorCodeAggregate, HourOfDayBucket,
     HttpTotals, LatencySummary, RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 
@@ -139,6 +140,15 @@ pub fn client_render_aggregate(row: &PgRow) -> Result<ClientRenderAggregate, sql
     Ok(ClientRenderAggregate {
         quality_tier: row.try_get("quality_tier")?,
         outcome: row.try_get("outcome")?,
+        count: row.try_get("count")?,
+    })
+}
+
+pub fn client_render_backend_aggregate(
+    row: &PgRow,
+) -> Result<ClientRenderBackendAggregate, sqlx::Error> {
+    Ok(ClientRenderBackendAggregate {
+        graphics_backend: row.try_get("graphics_backend")?,
         count: row.try_get("count")?,
     })
 }

@@ -233,7 +233,12 @@ func (data HTTPRollupData) Validate() error {
 		// arrival. This side is what telemetry-service trusts, and a bucket
 		// key it cannot store is better refused at the envelope than written
 		// as a row nothing queries.
-		report := ClientRenderReportData{QualityTier: bucket.QualityTier, Family: bucket.Family, Outcome: bucket.Outcome}
+		report := ClientRenderReportData{
+			QualityTier:     bucket.QualityTier,
+			Family:          bucket.Family,
+			Outcome:         bucket.Outcome,
+			GraphicsBackend: bucket.GraphicsBackend,
+		}
 		if err := report.Validate(); err != nil {
 			return fmt.Errorf("clientRenderBuckets.%d: %w", bucketIndex, err)
 		}
@@ -288,11 +293,11 @@ type TelemetryRouteListQueryData struct {
 // resolution and lost its WebGL context produces exactly the same HTTP rollup
 // as a desktop that rendered everything.
 //
-// The key space is deliberately tiny — quality tier x family x outcome — and
-// that is the whole reason this rides the existing envelope instead of a new
-// per-event stream. Three tiers, four families and two outcomes is 24 keys
-// against maximumTrackedRoutePatterns' 400, so it needs no overflow bucket and
-// no cardinality guard.
+// The key space is deliberately tiny — quality tier x family x outcome x
+// graphics backend — and that is the whole reason this rides the existing
+// envelope instead of a new per-event stream. Three tiers, four families, two
+// outcomes and four backends is 96 keys against maximumTrackedRoutePatterns'
+// 400, so it needs no overflow bucket and no cardinality guard.
 //
 // It also carries no identity, by construction rather than by redaction: there
 // is no world id, no account id, no session id, no user-agent string and no
@@ -307,7 +312,10 @@ type ClientRenderBucket struct {
 	// lost or never created. Two counters rather than a boolean per report,
 	// because the question asked of this table is always "how many of each".
 	Outcome string `json:"outcome"`
-	Count   int64  `json:"count"`
+	// GraphicsBackend is which renderer actually drew, asked of the renderer
+	// rather than of the build flag. See ClientRenderReportData.
+	GraphicsBackend string `json:"graphicsBackend"`
+	Count           int64  `json:"count"`
 }
 
 // The tiers a browser can report. They mirror the frontend's
@@ -326,6 +334,58 @@ const (
 	ClientRenderOutcomeWebGLFailed = "webgl_failed"
 )
 
+// The graphics backends a browser may report, which is §19.5 of
+// agent-system/research/webgpu-full-migration-feasibility-2026.md turned from
+// an estimate into a measurement.
+//
+// That section puts ~20% of visitors on WebGL2 and says plainly why the real
+// number is likely worse for this product: caniuse weights GLOBAL traffic and
+// this audience is Vietnam-skewed, and the in-app browsers that a shared
+// universe link arrives through — Facebook, Instagram, TikTok, Zalo — are
+// WebView-backed and unverified. It then says one field on the envelope that
+// already exists would replace the estimate. This is that field.
+//
+// It reports what the RENDERER SAYS IT IS, never what the build asked for.
+// WebGPURenderer installs its own fallback and switches to its WebGL2 backend
+// when requestDevice rejects — which is exactly the population this field
+// exists to count, and a value derived from the rollout flag would count it as
+// WebGPU.
+const (
+	// ClientRenderBackendUnknown is the value a report carries when it cannot
+	// tell, and the value an ABSENT field normalises to.
+	//
+	// **This is what keeps the rollout of this field from zeroing the chart it
+	// is added to.** A browser holds a cached bundle for as long as it holds
+	// it, so reports from the previous frontend arrive for days after a deploy
+	// with no graphicsBackend at all. Refusing those would turn a schema
+	// addition into an outage of the platform's own numbers, which is a strange
+	// way to learn something.
+	ClientRenderBackendUnknown = "unknown"
+	// ClientRenderBackendWebGL is WebGLRenderer — every visitor before §26
+	// Phase 12 flips the flag.
+	ClientRenderBackendWebGL = "webgl"
+	// ClientRenderBackendWebGPU is WebGPURenderer on its WebGPU backend.
+	ClientRenderBackendWebGPU = "webgpu"
+	// ClientRenderBackendWebGL2 is WebGPURenderer on its WebGL2 backend: the
+	// node materials and the node post chain, drawn through the older API.
+	// §18.4 is emphatic that this is a SECOND PRODUCTION RENDERER rather than a
+	// compatibility stub, and this is the counter that says how second.
+	ClientRenderBackendWebGL2 = "webgl2"
+)
+
+// NormaliseClientRenderBackend maps an absent value onto the unknown bucket and
+// leaves everything else for Validate to judge.
+//
+// A function rather than a default inside Validate, because the collector needs
+// the same mapping before it builds a bucket key — two copies of "empty means
+// unknown" would be two chances to disagree about what an old bundle reports.
+func NormaliseClientRenderBackend(graphicsBackend string) string {
+	if graphicsBackend == "" {
+		return ClientRenderBackendUnknown
+	}
+	return graphicsBackend
+}
+
 // ClientRenderReportData is what a browser POSTs. One report, not a batch: a
 // visitor's page loads one scene, and accepting an array would let one request
 // move a counter by an arbitrary amount.
@@ -337,6 +397,10 @@ type ClientRenderReportData struct {
 	QualityTier int         `json:"qualityTier"`
 	Family      WorldFamily `json:"family"`
 	Outcome     string      `json:"outcome"`
+	// GraphicsBackend is which renderer drew, or empty from a bundle that
+	// predates the field — which normalises to "unknown" rather than being
+	// refused. See the constants above.
+	GraphicsBackend string `json:"graphicsBackend"`
 }
 
 // Validate is stricter than the other request types in this file because it is
@@ -356,6 +420,17 @@ func (data ClientRenderReportData) Validate() error {
 	case ClientRenderOutcomeRendered, ClientRenderOutcomeWebGLFailed:
 	default:
 		return fmt.Errorf("outcome must be %q or %q", ClientRenderOutcomeRendered, ClientRenderOutcomeWebGLFailed)
+	}
+	switch NormaliseClientRenderBackend(data.GraphicsBackend) {
+	case ClientRenderBackendUnknown, ClientRenderBackendWebGL, ClientRenderBackendWebGPU, ClientRenderBackendWebGL2:
+	default:
+		return fmt.Errorf(
+			"graphicsBackend must be %q, %q, %q or %q",
+			ClientRenderBackendUnknown,
+			ClientRenderBackendWebGL,
+			ClientRenderBackendWebGPU,
+			ClientRenderBackendWebGL2,
+		)
 	}
 	return nil
 }
@@ -527,6 +602,10 @@ type TelemetryOverviewResponseData struct {
 	// a determined caller can add to these counters, and nothing keyed to real
 	// money or real access may depend on them.
 	ClientRender []TelemetryClientRenderSummary `json:"clientRender"`
+	// ClientRenderBackends is which renderer actually drew. Omitted rather than
+	// sent empty by a service that predates it, so an admin build newer than
+	// its telemetry service renders the rest of the page instead of an error.
+	ClientRenderBackends []TelemetryClientRenderBackendSummary `json:"clientRenderBackends,omitempty"`
 	// OldestBucketStart is what actually exists in the store, which is not
 	// always what was asked for: a service that has been asleep for a week has
 	// no data for most of a 24-hour window, and a chart that does not say so
@@ -547,6 +626,26 @@ type TelemetryClientRenderSummary struct {
 	Outcome     string `json:"outcome"`
 	Count       int64  `json:"count"`
 }
+
+// TelemetryClientRenderBackendSummary is one graphics backend's share of the
+// window, across every tier, family and outcome.
+//
+// **THIS ROW IS THE POINT OF §26 PHASE 12**, and it is a separate summary from
+// the one above for the reason that one already gives about the family:
+// splitting a small number further answers a question nobody asked. The
+// question this one answers IS the split. §19.5 of the migration study put
+// roughly 20% of visitors on WebGL2 and said plainly why the real figure is
+// likely worse here — caniuse weights GLOBAL traffic, this audience is
+// Vietnam-skewed, and the in-app browsers a shared universe link arrives
+// through are WebView-backed and unverified. This is that estimate, counted.
+//
+// Like every row beside it, a browser filled this, and a determined caller can
+// add to it. Nothing keyed to real money or real access may depend on it.
+type TelemetryClientRenderBackendSummary struct {
+	GraphicsBackend string `json:"graphicsBackend"`
+	Count           int64  `json:"count"`
+}
+
 
 // TelemetryRouteSummary is one row of the per-route table.
 type TelemetryRouteSummary struct {

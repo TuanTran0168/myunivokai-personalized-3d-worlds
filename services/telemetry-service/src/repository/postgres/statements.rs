@@ -92,9 +92,9 @@ ON CONFLICT (bucket_start, service) DO UPDATE SET
 /// row, and two gateway instances flushing the same minute must add to each
 /// other.
 pub const UPSERT_CLIENT_RENDER_ROLLUP: &str = "
-INSERT INTO client_render_rollups (bucket_start, quality_tier, family, outcome, count)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (bucket_start, quality_tier, family, outcome) DO UPDATE SET
+INSERT INTO client_render_rollups (bucket_start, quality_tier, family, outcome, graphics_backend, count)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (bucket_start, quality_tier, family, outcome, graphics_backend) DO UPDATE SET
     count = client_render_rollups.count + EXCLUDED.count";
 
 pub const UPSERT_CACHE_ROLLUP: &str = "
@@ -270,6 +270,18 @@ FROM client_render_rollups
 WHERE bucket_start >= $1
 GROUP BY quality_tier, outcome
 ORDER BY quality_tier, outcome";
+
+/// Grouped by the graphics backend ALONE, across every tier, family and
+/// outcome — see `ClientRenderBackendAggregate` for why this is its own query
+/// rather than a fourth column on the one above.
+pub const SELECT_CLIENT_RENDER_BACKEND: &str = "
+SELECT
+    graphics_backend,
+    COALESCE(SUM(count), 0)::BIGINT AS count
+FROM client_render_rollups
+WHERE bucket_start >= $1
+GROUP BY graphics_backend
+ORDER BY graphics_backend";
 
 pub const SELECT_OLDEST_BUCKET: &str =
     "SELECT MIN(bucket_start) AS oldest_bucket_start FROM http_rollups";

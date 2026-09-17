@@ -82,6 +82,19 @@ pub struct ClientRenderAggregate {
     pub count: i64,
 }
 
+/// One graphics backend's share of the window.
+///
+/// **A SEPARATE AGGREGATE RATHER THAN A FOURTH COLUMN ON THE ONE ABOVE**, and
+/// for the reason that one already gives for dropping the family: splitting a
+/// small number four more ways answers a question nobody asked. The question
+/// this one answers IS the backend split — §19.5's ~20% estimate, counted — so
+/// it is asked on its own, across every tier and outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRenderBackendAggregate {
+    pub graphics_backend: String,
+    pub count: i64,
+}
+
 /// One backend service's round-trip summary. This is the question end-to-end
 /// response time cannot answer: `/api/{family}/worlds` reaches universe or
 /// nature depending on the family, and both wear the same route template.

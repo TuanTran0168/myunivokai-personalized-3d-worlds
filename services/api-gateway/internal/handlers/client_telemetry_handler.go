@@ -21,7 +21,7 @@ import (
 //  2. There is no count. One request is one render. A caller that could send
 //     its own count could move a chart with a single request instead of a
 //     rate-limited many.
-//  3. The key space is 24 combinations, so no caller can create a series —
+//  3. The key space is 96 combinations, so no caller can create a series —
 //     only add to one that already exists.
 //  4. The route sits on the product surface, behind that group's per-IP token
 //     bucket in Redis and its body limit.
@@ -60,6 +60,6 @@ func (handler *ClientTelemetryHandler) Report(responseWriter http.ResponseWriter
 	// on nil — so the route answers 204 with telemetry off rather than 500,
 	// which is what keeps the frontend from needing to know whether the
 	// platform is currently counting.
-	handler.collector.RecordClientRender(report.QualityTier, report.Family, report.Outcome)
+	handler.collector.RecordClientRender(report.QualityTier, report.Family, report.Outcome, report.GraphicsBackend)
 	responseWriter.WriteHeader(http.StatusNoContent)
 }

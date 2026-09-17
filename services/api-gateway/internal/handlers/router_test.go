@@ -551,7 +551,14 @@ func TestTheClientRenderRouteIsNotShadowedByTheFamilyWildcard(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/telemetry/render",
-		strings.NewReader(`{"qualityTier":3,"family":"universe","outcome":"rendered"}`))
+		// WITH the graphicsBackend field, because `decodeJSONBody` calls
+		// `DisallowUnknownFields` — so a frontend that starts sending a field
+		// this gateway has not shipped yet gets a 400 on every report, and the
+		// chart goes flat rather than wrong. That makes the deploy order a
+		// requirement rather than a preference: gateway first, then frontend.
+		// The reverse case, a report WITHOUT the field, is covered by
+		// contracts.TestAClientRenderReportWithoutAGraphicsBackendIsAcceptedAsUnknown.
+		strings.NewReader(`{"qualityTier":3,"family":"universe","outcome":"rendered","graphicsBackend":"webgpu"}`))
 	request.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(response, request)
 

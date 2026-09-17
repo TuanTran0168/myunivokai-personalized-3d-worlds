@@ -104,16 +104,26 @@ pub struct CacheBucket {
 ///
 /// Every other bucket in this envelope is measured at the gateway and so
 /// answers "what did the platform do"; none of them can answer "what did the
-/// visitor get". The key space is quality tier x family x outcome — 24
-/// combinations — which is why it rides this envelope rather than a per-event
-/// stream, and it carries no identity of any kind by construction.
+/// visitor get". The key space is quality tier x family x outcome x graphics
+/// backend — 96 combinations — which is why it rides this envelope rather than
+/// a per-event stream, and it carries no identity of any kind by construction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientRenderBucket {
     pub quality_tier: i16,
     pub family: String,
     pub outcome: String,
+    /// Which renderer actually drew. Absent on every envelope published by a
+    /// gateway older than this field, which is why it defaults rather than
+    /// being required — and why the default is the unknown bucket rather than
+    /// an empty string.
+    #[serde(default = "unknown_graphics_backend")]
+    pub graphics_backend: String,
     pub count: i64,
+}
+
+fn unknown_graphics_backend() -> String {
+    CLIENT_RENDER_BACKEND_UNKNOWN.to_owned()
 }
 
 /// The tiers and outcomes a browser may report. Duplicated from
@@ -125,6 +135,18 @@ pub const CLIENT_RENDER_TIER_BALANCED: i16 = 2;
 pub const CLIENT_RENDER_TIER_HIGH: i16 = 3;
 pub const CLIENT_RENDER_OUTCOME_RENDERED: &str = "rendered";
 pub const CLIENT_RENDER_OUTCOME_WEBGL_FAILED: &str = "webgl_failed";
+
+/// The graphics backends a browser may report, mirroring `contracts/go`.
+///
+/// §19.5 of the WebGPU migration study put ~20% of visitors on WebGL2 and said
+/// plainly that the real number is likely worse here — caniuse weights global
+/// traffic, this audience is Vietnam-skewed, and the in-app browsers a shared
+/// universe link arrives through are WebView-backed and unverified. These four
+/// values are what turn that estimate into a count.
+pub const CLIENT_RENDER_BACKEND_UNKNOWN: &str = "unknown";
+pub const CLIENT_RENDER_BACKEND_WEBGL: &str = "webgl";
+pub const CLIENT_RENDER_BACKEND_WEBGPU: &str = "webgpu";
+pub const CLIENT_RENDER_BACKEND_WEBGL2: &str = "webgl2";
 
 /// The world families a client report may name. This crate deliberately does
 /// not mirror all of `contracts/go`'s world types — telemetry-service stores a
@@ -226,6 +248,17 @@ impl HttpRollupData {
             ) {
                 return Err(format!(
                     "clientRenderBuckets.{index}.outcome must be \"rendered\" or \"webgl_failed\""
+                ));
+            }
+            if !matches!(
+                bucket.graphics_backend.as_str(),
+                CLIENT_RENDER_BACKEND_UNKNOWN
+                    | CLIENT_RENDER_BACKEND_WEBGL
+                    | CLIENT_RENDER_BACKEND_WEBGPU
+                    | CLIENT_RENDER_BACKEND_WEBGL2
+            ) {
+                return Err(format!(
+                    "clientRenderBuckets.{index}.graphicsBackend is not a renderer this platform ships"
                 ));
             }
             if bucket.count < 0 {
@@ -421,9 +454,11 @@ pub struct TelemetryOverviewResponseData {
     pub backends: Vec<TelemetryBackendSummary>,
     pub cache: Vec<TelemetryCacheSummary>,
     pub wake_signals: Vec<TelemetryVolumePoint>,
-    /// The only field here browsers fill. See Go's `ClientRender`.
+    /// The only fields here browsers fill. See Go's `ClientRender`.
     #[serde(default)]
     pub client_render: Vec<TelemetryClientRenderSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub client_render_backends: Vec<TelemetryClientRenderBackendSummary>,
     #[serde(
         default,
         with = "time::serde::rfc3339::option",
@@ -437,6 +472,15 @@ pub struct TelemetryOverviewResponseData {
 pub struct TelemetryClientRenderSummary {
     pub quality_tier: i16,
     pub outcome: String,
+    pub count: i64,
+}
+
+/// One graphics backend's share of the window. See Go's
+/// `TelemetryClientRenderBackendSummary` — this row is the point of §26 Phase 12.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelemetryClientRenderBackendSummary {
+    pub graphics_backend: String,
     pub count: i64,
 }
 
@@ -711,6 +755,7 @@ mod tests {
             quality_tier: CLIENT_RENDER_TIER_HIGH,
             family: "universe".to_owned(),
             outcome: CLIENT_RENDER_OUTCOME_RENDERED.to_owned(),
+            graphics_backend: CLIENT_RENDER_BACKEND_WEBGPU.to_owned(),
             count: 1,
         });
         assert!(!data.is_empty());

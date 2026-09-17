@@ -19,7 +19,8 @@ use time::OffsetDateTime;
 use super::RollupRepository;
 use crate::config::Config;
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
+    ErrorCodeAggregate, HourOfDayBucket,
     HttpTotals, IngestOutcome, RollupBatch, RouteAggregate, StatusClassCount, VolumeBucket,
     WakeSignalBucket,
 };
@@ -155,6 +156,7 @@ impl RollupRepository for PostgresRollupRepository {
                 .bind(row.quality_tier)
                 .bind(row.family.as_str())
                 .bind(row.outcome.as_str())
+                .bind(row.graphics_backend.as_str())
                 .bind(row.count)
                 .execute(&mut *transaction)
                 .await?;
@@ -295,6 +297,20 @@ impl RollupRepository for PostgresRollupRepository {
         Ok(fetched
             .iter()
             .map(rows::client_render_aggregate)
+            .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?)
+    }
+
+    async fn client_render_backend_aggregates(
+        &self,
+        since: OffsetDateTime,
+    ) -> Result<Vec<ClientRenderBackendAggregate>> {
+        let fetched = sqlx::query(statements::SELECT_CLIENT_RENDER_BACKEND)
+            .bind(since)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(fetched
+            .iter()
+            .map(rows::client_render_backend_aggregate)
             .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?)
     }
 

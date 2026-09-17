@@ -13,7 +13,8 @@
 use std::sync::Arc;
 
 use myunivokai_contracts::{
-    TelemetryOverviewQueryData, TelemetryRouteListQueryData, CLIENT_RENDER_OUTCOME_RENDERED,
+    TelemetryOverviewQueryData, TelemetryRouteListQueryData, CLIENT_RENDER_BACKEND_WEBGL2,
+    CLIENT_RENDER_BACKEND_WEBGPU, CLIENT_RENDER_OUTCOME_RENDERED,
     CLIENT_RENDER_OUTCOME_WEBGL_FAILED, CLIENT_RENDER_TIER_HIGH, CLIENT_RENDER_TIER_MINIMAL,
 };
 use telemetry_service::domain::IngestOutcome;
@@ -73,20 +74,23 @@ async fn ingest_one_realistic_minute(service: &TelemetryService, instance: &str)
             cache_bucket("world:v1", 30, 4),
             cache_bucket("share:v1", 0, 2),
         ],
-        // Two tiers and both outcomes, so the aggregate below is exercising a
-        // group-by rather than a single row — and so the failing branch is in
-        // the fixture that the whole-pipeline test reads.
+        // Two tiers, both outcomes and two graphics backends, so the two
+        // aggregates below are each exercising a group-by rather than a single
+        // row — and so the failing branch is in the fixture that the
+        // whole-pipeline test reads.
         &[
             client_render_bucket(
                 CLIENT_RENDER_TIER_HIGH,
                 "universe",
                 CLIENT_RENDER_OUTCOME_RENDERED,
+                CLIENT_RENDER_BACKEND_WEBGPU,
                 9,
             ),
             client_render_bucket(
                 CLIENT_RENDER_TIER_MINIMAL,
                 "ocean",
                 CLIENT_RENDER_OUTCOME_WEBGL_FAILED,
+                CLIENT_RENDER_BACKEND_WEBGL2,
                 2,
             ),
         ],
@@ -153,6 +157,24 @@ async fn one_flush_answers_every_question_the_telemetry_screen_asks() {
         .find(|row| row.outcome == CLIENT_RENDER_OUTCOME_RENDERED)
         .expect("the rendered row");
     assert_eq!(rendered.count, 9);
+
+    // §19.5's estimated WebGPU/WebGL2 split, counted. A SEPARATE aggregate from
+    // the one above, grouped by the backend alone across every tier, family and
+    // outcome — so the two rows here are the same two reports counted along a
+    // different axis, not a finer slice of the same table.
+    assert_eq!(overview.client_render_backends.len(), 2);
+    let on_webgpu = overview
+        .client_render_backends
+        .iter()
+        .find(|row| row.graphics_backend == CLIENT_RENDER_BACKEND_WEBGPU)
+        .expect("the webgpu row");
+    assert_eq!(on_webgpu.count, 9);
+    let on_webgl2 = overview
+        .client_render_backends
+        .iter()
+        .find(|row| row.graphics_backend == CLIENT_RENDER_BACKEND_WEBGL2)
+        .expect("the webgl2 row");
+    assert_eq!(on_webgl2.count, 2);
     let job_cache = overview
         .cache
         .iter()
