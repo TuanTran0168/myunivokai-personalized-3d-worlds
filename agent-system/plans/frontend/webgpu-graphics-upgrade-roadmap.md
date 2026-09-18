@@ -1,7 +1,10 @@
 # WebGPU graphics upgrade roadmap — what the node path makes possible, and in what order
 
-> **Document status:** Active plan, nothing below is built
-> **Written:** 2026-09-17, branch `feat/fe/webgpu-migration-phase-13`
+> **Document status:** Active plan. **Corrected and expanded 2026-09-18 —
+> read §0 first**, it lists what this document got wrong before anything was
+> built on it.
+> **Written:** 2026-09-17, branch `feat/fe/webgpu-migration-phase-13`;
+> corrected 2026-09-18, branch `feat/fe/webgpu-graphics-upgrade`
 > **Companion to:** [`../../research/webgpu-full-migration-feasibility-2026.md`](../../research/webgpu-full-migration-feasibility-2026.md)
 > (the migration itself, §26 Phases 0–13) and
 > [`../../knowledge/frontend/threejs-scene-architecture.md`](../../knowledge/frontend/threejs-scene-architecture.md)
@@ -22,6 +25,51 @@ has.
 
 ---
 
+## 0. Corrections, made 2026-09-18 before a line was built on this
+
+This document was written in one pass at the end of §26 Phase 13 and was not
+reviewed. A six-way audit of the render path then checked it against the code
+and against the migration report, and **four of its load-bearing claims were
+wrong**. They are corrected in place below; they are listed here because a
+reader who skipped them would build the wrong thing first.
+
+**1. §1 said the fallback's first-mount cost was mostly solved. It is not.**
+The row read "node/WebGL2 now below it on three fixtures of four". The measured
+table says node/WebGL2 is below the classic renderer on **one** fixture, the
+universe. What is true of three fixtures is each one against ITSELF before the
+warm-up existed — a different comparison, and the plan quietly swapped them. So
+the day the flag goes on, a fifth of visitors take a **13.6 s** freeze on the
+forest and a **2.9 s** freeze underwater.
+
+**2. There is therefore a SECOND rollout blocker, and this plan named only one.**
+Stage 0's canvas readback is real. So is the forest's fallback first mount. A
+rollout gated only on the readback would ship the freeze.
+
+**3. Stage 3's premise was half wrong in the app's favour.** The linear HDR
+buffer it proposes to introduce is **already the default** — `Renderer` defaults
+`outputBufferType` to `HalfFloatType` and `PassNode` stamps its target from
+`getOutputBufferType()`, so the universe and the forest have had it since
+Phase 5. Only the ocean lacks one, because it mounts no chain. Stage 3's real
+scope is one family.
+
+**4. And Stage 3 forbade the cheapest way to give the ocean that buffer, on a
+blocker that does not exist on this path.** It said a frame-wide pass "cannot
+read" the per-depth `toneMappingExposure`. On the node path it can:
+`toneMappingExposure` is `rendererReference( 'toneMappingExposure', 'float' )`,
+a uniform that tracks the renderer, and `NodePostEffects.tsx` already uses it
+with a comment saying it must keep working "if this chain ever serves that
+family". The blocker was true of `postprocessing`@6.39.4 and was inherited
+without rechecking.
+
+**One more, smaller and in the other direction.** §6 rejects GPU procedural
+texture generation because "§24.1 attributes 1121 ms of the forest's remount to
+`texSubImage2D`". That 1121 ms is the solar-system family's committed 8K JPEGs
+(8192x4096, 134 MB of RGBA once decoded). **No procedural bake in this repo is
+anywhere near 8K** — the largest is the gas giant's 1024x512. The rejection may
+still be right; the reason given for it is not.
+
+---
+
 ## 1. The state this plan starts from
 
 Everything in this section is measured, and each number names where.
@@ -32,8 +80,9 @@ Everything in this section is measured, and each number names where.
 | Rollout flag | `NEXT_PUBLIC_NODE_RENDERER`, **off** | §26 Phase 12 |
 | Visual parity vs `WebGLRenderer` | universe **12.22**, forest **19.49**, ocean **9.90** of 255 | §26 Phases 8, 10 |
 | Fallback vs primary | universe 0.44, forest 1.31, ocean 0.02 of 255 | §26 Phases 4, 5 |
-| First mount, blocked main thread | node/WebGPU below classic everywhere; node/WebGL2 now below it on three fixtures of four | §26 Phases 11, 13 |
-| The forest on node/WebGL2 | **13.6 s blocked against the classic renderer's 3.6 s**, and precompiling the pipelines barely moved it | §26 Phase 13 |
+| First mount, blocked main thread | node/WebGPU below classic on every fixture. **node/WebGL2 is below it on ONE of four** — see §0 | §26 Phases 11, 13 |
+| node/WebGL2 against classic, blocked | universe 1244 vs 2094 · forest **13593 vs 3596** · ocean 2872 vs 1129 · surface 307 vs 214 ms | §26 Phase 13 |
+| HDR compositing | **already the default** on the node chain; the ocean is the one family without a chain | `Renderer` `outputBufferType`, `PassNode` |
 | Canvas readback | **broken on both node backends** — `preserveDrawingBuffer` does not exist there | §26 Phase 9 |
 | Steady-state frame rate on the node path | **never measured** | §26 Phase 11 |
 | GPU compute in the app | none | §15 |
@@ -45,7 +94,7 @@ claim below unfalsifiable until Stage 1 exists.
 
 ---
 
-## 2. Stage 0 — Stop reading the canvas (the rollout's only named blocker)
+## 2. Stage 0 — Stop reading the canvas (one of the two rollout blockers)
 
 **Gate: open. This is the next piece of work, and nothing else here starts
 before it.**
@@ -63,11 +112,25 @@ fails safe and the caller cuts. `lib/exportImage.ts` now refuses rather than
 downloading a transparent PNG. Both are guards, not fixes: with the flag on, a
 visitor loses the download button and every scene change becomes a hard cut.
 
+**Measured 2026-09-18, and it settles which defect this is.** The diagnostic
+used to report only "0 of 256 samples carry alpha", which cannot tell a buffer
+that was cleared from a buffer whose alpha channel is zero — and those need
+completely different fixes, one a renderer parameter and one a rewrite. It now
+counts colour separately. The answer on both node backends is **0/256 alpha and
+0/256 colour**, against 256/256 and 256/256 on the classic renderer: the buffer
+is empty, not transparent. There is no cheap fix.
+
 **The fix is to render the picture instead of scraping it.** An offscreen render
-target, drawn on demand, read back with `readRenderTargetPixelsAsync` — which
-exists on both `WebGLRenderer` and the node `Renderer`, so it is one
-implementation for both paths and is more robust than `preserveDrawingBuffer`
-ever was.
+target, drawn on demand, read back with `readRenderTargetPixelsAsync`.
+
+**It is NOT one implementation for both paths, and this plan said it was.** The
+two methods share a name and nothing else: `WebGLRenderer`'s takes
+`( renderTarget, x, y, width, height, buffer, activeCubeFaceIndex, textureIndex )`
+and fills a buffer the caller allocates; the node `Renderer`'s takes
+`( renderTarget, x, y, width, height, textureIndex, faceIndex )` and returns the
+data itself. A single call site cannot serve both, so the capture needs a small
+per-renderer adapter — which is a dozen lines, not a redesign, but it has to be
+in the plan rather than discovered.
 
 **What makes it a piece of work rather than a patch, and it is the honest
 reason it is not in Phase 13.** The readback becomes asynchronous, and all three
@@ -89,7 +152,11 @@ transitions warp a real still on all three, and the RATCHET in
 
 ## 3. Stage 1 — A sustained-load harness (the instrument every later stage needs)
 
-**Gate: open. Independent of Stage 0 and can run beside it.**
+**Gate: open, and this is the one that goes FIRST.** The plan originally put
+Stage 0 first because it is the rollout blocker. That was an ordering by
+urgency rather than by dependency: Stage 0 unblocks shipping, Stage 1 unblocks
+knowing, and every stage below Stage 1 makes a performance claim that cannot be
+checked until it exists. Stage 0 can run beside it.
 
 **What is missing, exactly.** The parity harness draws with `frameloop="never"`
 and steps a pinned clock sixty times, *precisely so that it never measures a
@@ -185,12 +252,33 @@ reaching for — the strength halved to 1.05 and put back to 2.2, a 0.62 ceiling
 added and then removed "once the renderer's ACES was back to do the roll-off
 properly".
 
-**What it costs and what it must not break.** Two fullscreen float buffers on a
-family that deliberately has none, on a path where the per-depth
-`toneMappingExposure` **is** the adaptation curve and a frame-wide pass cannot
-read it. That last point is not a detail — it is the documented reason the ocean
-bypasses the composer at all, and any design that does not answer it is wrong
-before it is written.
+**Corrected 2026-09-18 — see §0, items 3 and 4.** Two things this section said
+were wrong, and both made the stage look harder than it is.
+
+The float buffer is **not** a new capability to introduce: `Renderer` defaults
+`outputBufferType` to `HalfFloatType` and `PassNode` stamps its render target
+from `getOutputBufferType()`, so the universe and the forest have composited in
+linear half-float since Phase 5. **The ocean is the only family without one**,
+and only because `UniverseCanvas` mounts no chain for it.
+
+And the reason it mounts no chain — "a frame-wide pass cannot read the per-depth
+`toneMappingExposure`" — is false on this path. `toneMappingExposure` is
+`rendererReference( 'toneMappingExposure', 'float' )`: a uniform that tracks the
+renderer property `oceanRig.ts` sets once per rig build. `NodePostEffects.tsx`
+already uses it, with a comment saying it must keep working "if this chain ever
+serves that family". The blocker is real for `postprocessing`@6.39.4 and was
+inherited from it without rechecking.
+
+**So the design is smaller than the stage as written.** Either give the ocean a
+minimal node chain — a scene pass and the tone-map node it already has — or
+pass `outputType: HalfFloatType` to the renderer, which configures the CANVAS
+as `RGBA16Float` with an extended tone-mapping mode and adds no fullscreen
+buffer at all. The second has not been tried and is one constructor argument.
+
+**What it must still not break.** The ocean's grade was designed and measured
+against three's own ACES at a per-depth exposure. Any chain that serves it must
+apply exactly that curve at exactly that exposure, and the parity harness is
+what says whether it did.
 
 **Done means:** the ocean's node-vs-classic number is explained rather than
 smaller — a look decision the owner has seen, with both frames side by side in
@@ -198,7 +286,98 @@ smaller — a look decision the owner has seen, with both frames side by side in
 
 ---
 
-## 6. Stage 4 — What this plan deliberately does not propose
+## 6. Stage 4 — The surfacing the scenes already paid for and were not getting
+
+**Gate: OPEN, and it needed no WebGPU at all. Every visitor gets this today, on
+both renderer paths.** It is in this document because an audit run for WebGPU
+upgrades kept finding things that were simply wrong, and a plan that lists
+screen-space reflections while two animals render as chrome is a plan with its
+priorities inverted.
+
+**Built 2026-09-18** on branch `feat/fe/webgpu-graphics-upgrade`:
+
+| Defect | What a visitor saw | Fix |
+| --- | --- | --- |
+| `animal-bear.glb` and `animal-boar.glb` surface only through `KHR_materials_pbrSpecularGlossiness`, which three 0.185.1 does not implement | a white, fully metallic, mirror-rough bear and boar — 2 of the 8 forest animals | converted to metallic-roughness by `scripts/convertSpecularGlossinessModels.mjs`; the committed WebP diffuse maps were already inside the files |
+| every tree, decor mesh, landmark and animal had `receiveShadow = false` | nothing in the forest self-shadowed: a trunk in its own canopy's shadow was lit as if in the open | `receiveShadow` on, everywhere the shadow camera reaches |
+| every texture arriving inside a `.glb` kept `anisotropy = 1` | bark and leaf cards smeared into grey mips at walking distance | `applyLoadedModelTextureQuality` in the one model walk they all pass through |
+| the forest ground's normal and ARM maps were loaded with `useTexture` and never touched | the largest surface in the family, seen almost entirely at grazing angles, dissolving a few metres out | the same helper, which had existed since the planets were sharpened and was called only from `solar-system/` |
+| the shared ripple normal map set `minFilter = LinearFilter` | three allocates no mips at all, so a 256px scrolling normal map fed a specular highlight from level 0 at every distance — crawling sparkle on the pond and the river | `LinearMipmapLinearFilter` |
+
+**The ratchet that keeps them fixed.** `committedModelAssets.test.ts` reads
+three's own `EXTENSIONS` map out of the installed `GLTFLoader.js` and fails if
+any committed model REQUIRES an extension that map does not contain. It was run
+against the unconverted bear and fails on it, which is the only evidence that a
+passing test means anything.
+
+**Still open in this stage, and both are the ocean's:**
+
+- **Ocean fauna have no material maps at all**, and `oceanRigFauna.ts` deletes
+  `uv`, `uv1`, `uv2` and `tangent` from every geometry it merges — so a normal
+  or roughness map could not be sampled even if one were added. Thirteen of the
+  sixteen models ship zero images. The code already names the symptom
+  (`oceanRig.ts:778`, "this is why the giant Pacific octopus rendered with zero
+  visible texture") and works around it by assigning `emissiveMap = map`.
+- **The 58 GLBs were produced under three incompatible compression policies**
+  and no pipeline is committed, so "re-export the ocean fauna with maps" has no
+  reproducible command behind it yet.
+
+---
+
+## 7. Stage 5 — The effects the node path actually unlocks
+
+**Gate: SHUT until Stage 1. Every item here is a frame-time claim.**
+
+three 0.185.1 ships an effect library that only the node path can use —
+`three/addons/tsl/display/` — and the app currently mounts eight of about forty
+nodes. These are the ones an audit of the three families picked out, ranked by
+how much they change what a person sees. **None is a small change**, and each
+one's WebGL2 answer has to be measured rather than reasoned about, because a
+per-pixel raymarch is free on WebGPU and is not free on the backend a fifth of
+visitors get.
+
+| Upgrade | What changes | Node | Risk |
+| --- | --- | --- | --- |
+| **God rays occluded by the trees** (`GodraysNode`) | the forest's sun shafts are six additive billboards today and pass through trunks; this makes them a shadow-aware raymarch broken up by the canopy the shadow map already holds | `display/GodraysNode.js` | needs the main light casting shadows, which the forest already does; 64-step march on WebGL2 is the question |
+| **Temporal antialiasing** (`TRAANode`) | the only item on this list that probably BUYS frame time: it replaces the multisampling Phase 9 wired into the constructor, and an 8x-resolved target is the largest per-pixel cost in the frame | `display/TRAANode.js` | ghosting on the fast-moving layers — the ocean's drifters and the forest's weather |
+| **Screen-space reflections on water** (`SSRNode`) | the app has no scene reflections of any kind; the pond, the river and the sea surface all fake it | `display/SSRNode.js` | grazing-angle only, or it reads as a mirror floor |
+| **Translucent foliage and jellyfish** | backlit leaves and drifting bells are the two places subsurface scattering is the whole look, and both are luminance remaps today | `MeshSSSNodeMaterial` — **not** `display/SSSNode.js`, which is a screen-space denoiser and not subsurface scattering | a per-material change, so it has to survive the parity harness |
+| **Lens flare on the sun** (`LensflareNode`) | the universe family's bloom already selects the sun; a flare is what the frame is missing | `display/LensflareNode.js` | taste — it is the one item here that can look cheap |
+| **Planet atmosphere** | a scattering rim shell the solar family does not have | app-side TSL | none beyond cost |
+| **Clustered lighting** (`ClusteredLightsNode`) | the only item found that the WebGL2 backend genuinely cannot have | `lighting/ClusteredLightsNode.js` | splits the two backends' look, which Architecture A exists to avoid |
+
+**The rule for this stage, and it is the one Phase 13 learned the hard way:**
+an effect that improves the WebGPU leg and regresses the WebGL2 leg has not
+improved this app. Every row above gets three legs and a percentile, or it does
+not ship.
+
+---
+
+## 8. Stage 6 — The asset pipeline, which is where the first mount actually goes
+
+**Gate: OPEN for the measurement, SHUT for the change until Stage 1.**
+
+**The 8K JPEGs are the real owner of §24.1's 1121 ms.** `8k_earth_daymap.jpg`
+is 4.4 MB on disk and 8192x4096x4 = **134 MB of RGBA once decoded**, and the
+solar-system catalogue holds several. KTX2/BasisU would upload them
+GPU-compressed with mipmaps and no decode at all — and three 0.185.1 already
+ships `KTX2Loader`, the Basis transcoder (`examples/jsm/libs/basis/`) and an
+explicit WebGPU branch, while drei ships the `Ktx2` wrapper. The decoder would
+be self-hosted exactly as the DRACO one already is, for the CSP reason
+`modelDecoders.ts` documents.
+
+It is not free: ETC1S on disk is larger than a well-compressed JPEG, so this
+trades download bytes for GPU bytes and a stall. **That trade needs the
+measurement Stage 1 produces**, and it is the clearest case on this list of a
+change that is obviously right in GPU terms and not obviously right in total.
+
+**Also open here, and cheaper:** there is no LOD of any kind in the app, and the
+repo already contains the low-detail asset that would prove it out
+(`tree-fir-distant.glb` beside `tree-fir-realistic.glb`).
+
+---
+
+## 9. What this plan deliberately does not propose
 
 Each of these has been considered and rejected, with the reason, so that a later
 reader finds an argument rather than an omission.
@@ -208,13 +387,13 @@ reader finds an argument rather than an omission.
 | **GPU frustum / occlusion culling** | The ocean disables frustum culling today, on purpose. Turning it back on in a different place changes what is drawn, which is a behaviour change dressed as an optimisation (§15.2). |
 | **FFT ocean instead of analytic Gerstner** | A redesign, not an upgrade. The sea state, optics and depth curve are pure TypeScript with tests behind them, and replacing the wave model throws that away to buy detail nobody has asked for (§15.2). |
 | **Moving creature behaviour to compute** | Seeded, unit-tested, and the determinism it guarantees is a product property. §15.2 says avoid; nothing since has changed that. |
-| **Procedural texture generation on the GPU** | The 2D-canvas bakes are one-time and measured. §24.1 attributes 1121 ms of the forest's remount to `texSubImage2D` uploading them — that is an upload cost, and generating them on the GPU does not remove an upload, it moves it. |
+| **Procedural texture generation on the GPU** | Still not proposed, but **the reason given here was wrong** (§0). The 1121 ms of `texSubImage2D` is the solar-system family's committed 8K JPEGs; the largest procedural bake in the repo is 1024x512. The honest reason is that the bakes are one-time, seeded and unit-tested, and moving them to the GPU trades that for a saving nobody has measured. The 8K JPEGs are a separate and better target — see Stage 4. |
 | **A percentage-based rollout** | Decided in Phase 12 and re-affirmed here: it needs a stable per-visitor identifier, and this app deliberately has none. That absence is what lets an unauthenticated browser POST into the platform's own numbers. |
 | **Retiring `WebGLRenderer`** | Not while the classic path is what every visitor renders through. `WebGLRenderer` is not deprecated anywhere in r171–r186, so the fallback is not on borrowed time and there is no deadline forcing this. |
 
 ---
 
-## 7. The three decisions this plan closes
+## 10. The three decisions this plan closes
 
 Presented for approval at the end of Phase 12 and decided on 2026-09-17, with
 the owner's instruction to decide them rather than hold them.
@@ -237,7 +416,7 @@ standing decision rather than a phase-local one.
 
 ---
 
-## 8. What this document does not prove
+## 11. What this document does not prove
 
 - **No stage below Stage 1 has a measurement.** Every performance claim here is
   a prediction with a named gate in front of it, and the gate exists because the
@@ -250,3 +429,14 @@ standing decision rather than a phase-local one.
   ungathered** (§28.3 item 4), and cannot be gathered from this machine. That is
   an argument for turning the flag on and reading the failure counts, not an
   argument for any stage above.
+- **Stage 5's table is a reading of three's source, not of its behaviour.** Every
+  node named there was confirmed to exist in the installed 0.185.1 with the
+  signature claimed. Not one has been run in this app. §30.2 of the migration
+  report is the standing warning about exactly that distinction: `sizeNode` and
+  `pointUV` are both present in the export list and both do nothing, and the
+  only way that was found was by running them.
+- **Stage 4's five fixes are verified mechanically and not photographically.**
+  The unit ratchet proves the bear is no longer asking for an extension three
+  cannot read; it does not prove the bear looks like a bear. That is what the
+  re-taken shoot is for, and it is the reason the shoot is part of "done" in
+  `agents/frontend-agent.md` rather than optional.

@@ -235,7 +235,13 @@ export function ForestTrees({ trees, terrain, season, terrainHeightSampler, path
           }
         }
         mesh.castShadow = true;
-        mesh.receiveShadow = false;
+        // A TRUNK STANDING IN ITS OWN CANOPY'S SHADOW WAS LIT AS IF IN THE
+        // OPEN. Trees are the tallest and densest thing in the family and the
+        // only one that can shadow itself; with this false, nothing in the
+        // forest self-shadowed and every trunk read as a flat cylinder. The
+        // shadow map is already rendered for the casting pass, so this buys
+        // the picture back for one sample per fragment.
+        mesh.receiveShadow = true;
         return mesh;
       });
       buckets.push({ variant, instances, instancedMeshes });

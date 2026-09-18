@@ -35,6 +35,7 @@ import {
   ROCK_MODEL_DEFINITIONS,
   type StaticInstanceTransform
 } from "./forestModels";
+import { applyDataTextureQuality } from "../shared/textureQuality";
 
 const GROUND_SEGMENTS_PER_SIDE = 160;
 // The ground reaches far past the treeline so a zoomed-out view never sees the
@@ -137,6 +138,16 @@ export function ForestTerrain({
 
   // Relief maps for the ground (albedo stays vertex-color, season-driven).
   const [groundNormalMap, groundArmMap] = useTexture([GROUND_NORMAL_MAP_URL, GROUND_ARM_MAP_URL]);
+  // THE GROUND IS THE LARGEST SURFACE IN THE FAMILY AND IS SEEN ALMOST ENTIRELY
+  // AT GRAZING ANGLES, which is the exact case anisotropic filtering exists
+  // for. It is tiled every GROUND_TILE_WORLD_SIZE units across a disc wider
+  // than the treeline, and at `anisotropy = 1` it dissolved into grey mush a
+  // few metres out. Both are DATA maps — a normal map and a packed
+  // ambient-occlusion/roughness/metalness map — so neither may be tagged sRGB.
+  useMemo(() => {
+    applyDataTextureQuality(groundNormalMap);
+    applyDataTextureQuality(groundArmMap);
+  }, [groundArmMap, groundNormalMap]);
 
   const groundMesh = useMemo(() => {
     const groundRadius = treelineRadius * GROUND_RADIUS_BEYOND_TREELINE_MULTIPLIER;
