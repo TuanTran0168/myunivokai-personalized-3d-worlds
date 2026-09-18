@@ -84,7 +84,7 @@ Everything in this section is measured, and each number names where.
 | node/WebGL2 against classic, blocked | universe 1244 vs 2094 · forest **13593 vs 3596** · ocean 2872 vs 1129 · surface 307 vs 214 ms | §26 Phase 13 |
 | HDR compositing | **already the default** on the node chain; the ocean is the one family without a chain | `Renderer` `outputBufferType`, `PassNode` |
 | Canvas readback | **broken on both node backends** — `preserveDrawingBuffer` does not exist there | §26 Phase 9 |
-| Steady-state frame rate on the node path | **never measured** | §26 Phase 11 |
+| Steady-state frame cost | **measured 2026-09-18** — forest 7.40 ms a frame classic against 1.00 ms node; see Stage 1 | `sustained-load.spec.ts` |
 | GPU compute in the app | none | §15 |
 
 Two of those rows are the whole reason this document is ordered the way it is.
@@ -150,7 +150,7 @@ transitions warp a real still on all three, and the RATCHET in
 
 ---
 
-## 3. Stage 1 — A sustained-load harness (the instrument every later stage needs)
+## 3. Stage 1 — A sustained-load harness (the instrument every later stage needs) — **BUILT**
 
 **Gate: open, and this is the one that goes FIRST.** The plan originally put
 Stage 0 first because it is the rollout blocker. That was an ordering by
@@ -186,6 +186,62 @@ real driver, and its output is percentiles with the machine named beside them.
 
 **Done means:** a number for today's renderer on all four fixtures, committed as
 the baseline that every stage below is measured against.
+
+### BUILT 2026-09-18, and the baseline is below
+
+`e2e/sustained-load.spec.ts` on the `webgpu` project, driven by
+`measureSustainedFrames` on the parity harness. Sixty warm-up frames stepped and
+discarded, three hundred timed at a fixed sixty-per-second timeline, percentiles
+by nearest rank. RTX 4060 Laptop, ANGLE/D3D11, one run per cell.
+
+**Milliseconds per frame, p50 / p99 / worst:**
+
+| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
+| --- | --- | --- | --- |
+| universe | 0.50 / 9.60 / **496.1** | 0.10 / 0.20 / 0.30 | 0.10 / 0.70 / 6.40 |
+| forest | **7.40** / 9.00 / 236.3 | 1.00 / 2.30 / 3.70 | 1.00 / 2.50 / 69.9 |
+| ocean, underwater | 0.70 / 9.70 / 28.2 | 0.70 / 1.80 / 3.90 | 1.00 / 4.00 / 97.2 |
+| ocean, above water | 0.00 / 0.20 / 0.30 | 0.10 / 0.80 / 3.40 | 0.10 / 0.50 / 0.70 |
+
+**THE FOREST COSTS 7.40 ms A FRAME ON THE RENDERER EVERY VISITOR HAS, AND 1.00 ms
+ON THE ONE THEY DO NOT.** That is 44% of a 60 fps budget against 6%, and it is
+the first steady-state number this project has ever had. Phase 11 measured the
+first mount and found the node path better; this measures every frame after it
+and finds the same thing, larger.
+
+**What it is NOT: proof that the node renderer is seven times faster.** The
+draw accounting says the two legs were asked for similar but not identical work
+— the forest's classic leg draws 215 calls over 8.07M triangles, the node/WebGPU
+leg 173 over 6.51M — so about a fifth of the gap is less geometry, not faster
+drawing. And the node/WebGPU column understates itself: its per-frame number is
+CPU submission, and the queue drain after the three hundred frames is **579 ms**
+on the forest, which is another ~1.9 ms a frame of GPU work that had not
+finished. Classic and node/WebGL2 drain in 0.0 ms because they have no queue to
+drain. **Corrected for both, the forest is roughly 7.4 ms against roughly 3 ms.**
+Still the largest single performance difference measured on this migration.
+
+**Where the difference is, measured rather than assumed.** The two families that
+mount a post chain are the two with the gap; the ocean, which mounts none on
+either path, agrees to within 0.3 ms on every leg. So this is the cost of
+`postprocessing`'s `EffectComposer` against three's `RenderPipeline`, not of
+`WebGLRenderer` against `Renderer`.
+
+**The worst frames are the other finding, and they belong to the classic path.**
+A 496 ms frame on the universe and a 236 ms frame on the forest, one per run,
+against a worst of 3.7 ms on node/WebGL2. One frame in three hundred is not a
+frame rate problem, it is a visible hitch, and the instrument that would have
+found it did not exist until now.
+
+**A defect in the instrument, named rather than worked around.** On the two
+node/WebGL2 cells that mount the post chain, the draw accounting reports "2
+calls, 2 triangles" — a bare composite — where the WebGPU leg of the same
+fixture reports 173 calls over 6.5M triangles. The ocean's node/WebGL2 cells,
+which mount no chain, account correctly. So `info` on that backend does not
+accumulate across a chained frame the way `autoReset = false` promises. **This
+is a hole in the instrument, not a claim about the scene**: §26 Phases 5 and 10
+already photographed those legs and found them within 0.44 and 1.31 of 255 of
+the WebGPU leg, so they are drawing the forest. Two of twelve cells therefore
+have timings that can be trusted and draw counts that cannot.
 
 ---
 
