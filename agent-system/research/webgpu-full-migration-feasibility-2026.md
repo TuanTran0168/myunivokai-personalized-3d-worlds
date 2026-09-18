@@ -1,8 +1,11 @@
 # WebGPU-first migration feasibility — myunivokai's full 3D rendering stack
 
-> **Document status:** Research, with **Phases 0–12 of §26 executed. The app has no hand-written
-> GLSL left in any family, and no material is refused on either node backend.** Phase 13 is
-> deliberately not started. Nothing in the verdict is approved, and **Phases 2–4 did modify
+> **Document status:** Research, with **all thirteen phases of §26 executed. The app has no
+> hand-written GLSL left in any family, and no material is refused on either node backend.** Phase 13
+> is done as one item rather than as written: the pipelines now compile off the main thread on both
+> node backends, and the compute work it listed moved to
+> [`../plans/frontend/webgpu-graphics-upgrade-roadmap.md`](../plans/frontend/webgpu-graphics-upgrade-roadmap.md),
+> each item behind the gate that would open it. Nothing in the verdict is approved, and **Phases 2–4 did modify
 > production code** — the last rows of the Quality check say exactly what a visitor now receives and
 > what is gated behind a build flag. Phase 5 added a second post chain behind that same flag and
 > changed nothing a visitor receives; it also **found §25's recommended architecture to be defined by
@@ -18,6 +21,16 @@
 > twice in `three.module.js` and zero times in `three.webgpu.js` — so the canvas reads back fully
 > transparent and the PNG export and the transition stills have nothing to read. See §10.3 and §26
 > Phase 9.
+>
+> **PHASE 13 (2026-09-17) FOUND THAT THE WEBGL2 BACKEND ALWAYS HAD AN ASYNCHRONOUS PIPELINE PATH AND
+> NOTHING WAS ASKING FOR IT.** `Renderer.compileAsync()` is the only route to `createRenderPipelineAsync` on
+> WebGPU and to `KHR_parallel_shader_compile` on WebGL2, and the app never called it — which is the
+> whole of the column §24.3 predicted and §17 named as able to force Architecture B. Blocked
+> main-thread time on a first mount now falls by 56%, 44% and 14% on three fixtures of four on the
+> fallback backend, with the classic renderer unmoved as the control. **The forest falls 11% and is
+> the open question this leaves**: 13.6 s against the classic renderer’s 3.6 s, after a warm-up that
+> reported compiled. About 5.5 s of it is the GTAO pass, measured; the rest is unattributed and the
+> leading hypothesis is texture upload rather than pipeline creation.
 >
 > **PHASE 8 IS NOW COMPLETE, INCLUDING UNDERWATER (2026-09-17).** The god rays are ported. The look
 > decision below was made rather than deferred, on arithmetic rather than taste, and the measurement
@@ -2297,15 +2310,109 @@ that it never measures one.
   that it should not. The canvas readback does: the download button would produce a transparent PNG
   and every scene transition would cut. That is the named prerequisite for turning it on.
 
-### Phase 13 — Only now, optimisation — **NOT STARTED, deliberately**
+### Phase 13 — Only now, optimisation — **DONE 2026-09-17, one item: the pipelines**
 
-Compute, indirect draw, storage buffers, GPU simulation — §15, §30 of the brief. Not before parity.
+- **Objective as written:** compute, indirect draw, storage buffers, GPU simulation — §15, §30 of the
+  brief. **Not started, and §15.2 is why**: every compute candidate trades determinism or behaviour
+  for speed this app has not been shown to need, and the instrument that would show it does not
+  exist. [`../plans/frontend/webgpu-graphics-upgrade-roadmap.md`](../plans/frontend/webgpu-graphics-upgrade-roadmap.md)
+  is where they went, each behind the gate that would open it.
+- **What this phase did instead:** the one optimisation whose case was already made by a measurement
+  in this document. Phase 11 found the node path's only number going the wrong way — the WebGL2
+  backend blocking four times the classic renderer on a first mount — and §17 names that as the
+  finding that could still force Architecture B.
 
-> **AND PARITY IS NOT REACHED, on this report's own terms.** Three families sit at 12.22, 19.49 and
-> 9.90 of 255 against the classic renderer, and §30.2's attribution of the first two — the post chain
-> — was never confirmed by an experiment that isolates it. The ocean's 9.90 IS attributed, to the
-> additive-compositing-space difference, and that difference is a look change rather than a defect.
-> None of that is a reason to start optimising a path most visitors do not yet render through.
+**THE MEASUREMENT WAS TAKEN ON THREE.JS'S SYNCHRONOUS PIPELINE PATH, ON BOTH BACKENDS, AND TAKING THE
+OTHER ONE IS A SINGLE CALL.** `Renderer.compileAsync()` (`three.webgpu.js:60065`) assigns
+`this._compilationPromises`, and that array is the only thing either backend tests:
+
+| backend | `promises === null` (what `render()` does) | `promises !== null` (what `compileAsync` does) |
+| --- | --- | --- |
+| WebGPU | `device.createRenderPipeline`, `:82517` | `createRenderPipelineAsync`, `:82546` |
+| WebGL2 | `_completeCompile` inline, `:72632` | poll `COMPLETION_STATUS_KHR` from rAF, `:72602` |
+
+`this.parallel` is `extensions.get( 'KHR_parallel_shader_compile' )` (`:71353`). So the extension is
+present, three supports it, and **it was unreachable** — which is the whole of the WebGL2 column
+Phase 11 measured. §24.3's prediction was right about the symptom and wrong about the cause: it is
+not that this app has many distinct materials, it is that nothing was asking for the asynchronous
+path.
+
+**AND THE FIRST ATTEMPT WARMED THE WRONG RENDER CONTEXT, WHICH IS THE PART WORTH KEEPING.**
+`renderer.compileAsync( scene, camera )` compiles for the context the renderer is in when it is
+called. A render object is cached under its render context and the context under its render target
+and MRT (`this._renderContexts.get( renderTarget, this._mrt )`, `:60094`) — so a scene compiled
+against the canvas and then DRAWN into a `PassNode`'s target is a different render object with a
+different pipeline, and the work is done twice. three says so itself, in `PassNode.compileAsync`'s
+doc comment (`:40913`): *"this method must be called after the pass configuration is complete. So
+calls like setMRT() and getTextureNode() must proceed the precompilation."* Measured, universe on
+the WebGL2 backend, blocked main thread: **2851 ms** before, **1753 ms** compiling against the
+canvas, **1244 ms** compiling through the pass. So the families that mount the node post
+chain warm up through `NodePostEffects`'s scene pass, and the ocean — which renders straight to the
+canvas with no chain — takes the renderer's own.
+
+**Result, blocked main-thread time during a first mount, same machine, one run per cell:**
+
+| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
+| --- | --- | --- | --- |
+| universe | 2170 → 2094 | 2851 → **1244** | 1013 → **708** |
+| forest | 3647 → 3596 | 15286 → **13593** | 975 → **834** |
+| ocean, underwater | 1113 → 1129 | 5092 → **2872** | 869 → **513** |
+| ocean, above water | 214 → 214 | 358 → **307** | 202 → **160** |
+
+**The classic column is the control and it does not move**, which is the property this change had to
+have: `rendererCompilesPipelinesAsynchronously` returns false for a renderer with no `backend`, and
+the warm-up is not even mounted unless a node renderer is being built. `WebGLRenderer` has a
+`compileAsync` of its own (`three.module.js:17472`) and
+[`../agents/frontend-agent.md`](../agents/frontend-agent.md) records that it "was tried and does
+nothing on this project's driver" — a different class, a different implementation, and that note
+still stands for the path every visitor renders through.
+
+**THE FOREST DOES NOT MOVE EITHER, AND THAT IS THE FINDING THIS PHASE HANDS ON.** Three fixtures of
+four fall by roughly half on the fallback backend; the forest falls 11%, from 15.3 s to 13.6 s
+blocked, after a warm-up that reported **compiled** in 7.1 s. So on the forest, the pipelines were
+built off the main thread AND the main thread still blocked for thirteen seconds — the two are not
+the same work.
+
+One experiment was run against it and is recorded rather than summarised. With GTAO removed from the
+node chain, the forest's WebGL2 leg fell from 14829 ms to **9288 ms** while the warm-up's own
+duration barely changed (7332 → 6944 ms). So roughly 5.5 s is the ambient-occlusion pass, whose quad
+materials are not in the scene and which no `compileAsync` on this path reaches. **The remaining
+~9 s is UNATTRIBUTED.** The leading hypothesis is that it is not pipeline work at all: §24.1 measured
+1121 ms of the forest's 2108 ms remount as `texSubImage2D` uploading 8K textures on the CLASSIC
+renderer, and a texture upload is not something a pipeline warm-up can move. The experiment that
+would settle it is a first mount with the forest's canvas bakes downscaled, against this same table.
+Until then this is a hypothesis with a prior, not a result.
+
+**WHAT THE PHASE COSTS, STATED RATHER THAN BURIED.** The canvas holds its frames until the warm-up
+settles, because a frame drawn while `compileAsync` is in flight builds its own pipelines the
+synchronous way and pays the cost anyway. So wall-clock time to the first drawn frame RISES on every
+node fixture — on the forest by about seven seconds, for no reduction in blocked time. That is a bad
+trade on one fixture of four, it is the fixture this app's worst first mount belongs to, and it is
+bounded rather than fixed: `NODE_PIPELINE_WARM_UP_CEILING_MILLISECONDS` is 10 s, after which the
+frames start and three builds the pipelines as it goes. **Phase 11's unit was blocked time and this
+phase keeps it, but the forest is a case where the two units disagree, and the roadmap's Stage 1
+exists partly to stop that being settled by argument.**
+
+- **Files:** `shared/nodePipelineWarmUp.ts` (the policy, the ceiling, the scene-pass handoff),
+  `shared/NodePipelineWarmUpBridge.tsx` (the component), `UniverseCanvas.tsx` (the frame hold),
+  `shared/NodePostEffects.tsx` (announces its scene pass after configuration),
+  `shared/ParityHarnessBridge.tsx` and `e2e/first-mount-cost.spec.ts` (the measurement).
+- **Validation:** typecheck, lint, 1063 unit tests across 89 files, and the 12 cells above green on
+  the `webgpu` project with `SHOOT_PORT=41399`.
+
+### Phase 13's three approvals, taken 2026-09-17
+
+Presented at the end of Phase 12 and decided here, with the owner's instruction to decide rather than
+hold them. All three are accepted as they stand, and the reasoning is in
+[`../plans/frontend/webgpu-graphics-upgrade-roadmap.md`](../plans/frontend/webgpu-graphics-upgrade-roadmap.md) §7:
+the god rays keep the faithful port and the difference is documented; a lost `GPUDevice` falls back
+to `WebGPURenderer` + `forceWebGL` rather than to `WebGLRenderer`; and there is no percentage
+rollout.
+
+> **THE FLAG IS STILL OFF, AND PHASE 13 DOES NOT CHANGE THAT.** §10.3's canvas readback is the named
+> prerequisite and it is untouched here — see the roadmap's Stage 0, which is the next piece of work
+> and says why it is a branch of its own rather than a patch. Parity is also still 12.22, 19.49 and
+> 9.90 of 255 on the three families, unmoved by this phase, which touched no shader.
 
 ---
 

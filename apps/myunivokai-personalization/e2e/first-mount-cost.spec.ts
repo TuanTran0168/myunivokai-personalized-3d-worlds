@@ -55,6 +55,19 @@ const HARNESS_READY_TIMEOUT_MILLISECONDS = 60_000;
 const SCENE_ARRIVAL_MILLISECONDS = 2_500;
 const MEASUREMENT_TIMEOUT_MILLISECONDS = 240_000;
 
+/**
+ * How long to wait for the node pipeline warm-up to settle before advancing.
+ *
+ * §26 Phase 13. On the node path `UniverseCanvas` holds its frames until
+ * `compileAsync` resolves, so advancing the clock before then would measure a
+ * wait rather than a render, and would move the warm-up INSIDE the "sixty
+ * pinned frames" number instead of beside it. Comfortably above the app's own
+ * `NODE_PIPELINE_WARM_UP_CEILING_MILLISECONDS` of 10 s, because what is
+ * being waited for is a report that the ceiling itself guarantees will arrive —
+ * this only has to outlast it.
+ */
+const WARM_UP_TIMEOUT_MILLISECONDS = 30_000;
+
 const RENDERERS = ["webgl", "webgpu-forcewebgl", "webgpu"] as const;
 
 const FIXTURES = [
@@ -64,8 +77,14 @@ const FIXTURES = [
   { name: "ocean-surface", worldId: oceanSurfaceWorld.world.id, family: "ocean", oceanWorld: oceanSurfaceWorld }
 ] as const;
 
+type NodePipelineWarmUpReport = { outcome: string; milliseconds: number };
+
 type ParityHarnessWindow = Window & {
-  __parityHarness?: { advanceToPinnedTime: () => Promise<void>; backend: string };
+  __parityHarness?: {
+    advanceToPinnedTime: () => Promise<void>;
+    backend: string;
+    readPipelineWarmUp: () => NodePipelineWarmUpReport | null;
+  };
   __longTaskTotalMilliseconds?: number;
   __longTaskCount?: number;
 };
@@ -137,6 +156,25 @@ for (const fixture of FIXTURES) {
       });
       const readyMilliseconds = Date.now() - navigationStart - SCENE_ARRIVAL_MILLISECONDS;
 
+      // THE WARM-UP FIRST, AND ITS COST STAYS INSIDE THE NUMBERS BELOW. It runs
+      // before this read, so whatever it spent on the main thread is already in
+      // `blockedBeforeFrames` — which is the honest place for it. The claim
+      // this file tests is that the TOTAL goes down, not that the work moved
+      // somewhere the measurement cannot see.
+      //
+      // The classic leg has no warm-up to wait for and must not wait for one:
+      // the component is mounted only where a node renderer is being built, so
+      // that the path every visitor renders through while the rollout flag is
+      // off is byte-for-byte the code it was before this phase.
+      if (renderer !== "webgl") {
+        await page.waitForFunction(
+          () => (window as ParityHarnessWindow).__parityHarness?.readPipelineWarmUp() !== null,
+          undefined,
+          { timeout: WARM_UP_TIMEOUT_MILLISECONDS }
+        );
+      }
+      const warmUp = await page.evaluate(() => (window as ParityHarnessWindow).__parityHarness!.readPipelineWarmUp());
+
       const blockedBeforeFrames = await page.evaluate(
         () => (window as ParityHarnessWindow).__longTaskTotalMilliseconds ?? 0
       );
@@ -159,6 +197,7 @@ for (const fixture of FIXTURES) {
       console.log(
         `${fixture.name} · ${renderer} (${backend})\n` +
           `    to first registration   ${readyMilliseconds.toFixed(0)} ms\n` +
+          `    pipeline warm-up        ${warmUp ? `${warmUp.milliseconds} ms (${warmUp.outcome})` : "not run"}\n` +
           `    sixty pinned frames     ${frameMilliseconds.toFixed(0)} ms\n` +
           `    main thread blocked     ${blockedTotal.toFixed(0)} ms in ${longTaskCount} long tasks` +
           ` (${blockedBeforeFrames.toFixed(0)} ms of it before the frames)`
