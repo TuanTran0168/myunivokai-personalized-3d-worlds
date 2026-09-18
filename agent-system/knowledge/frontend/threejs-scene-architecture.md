@@ -449,48 +449,36 @@ things. Neither is a steady-state frame rate: the harness draws with
 `frameloop="never"` precisely so that it never measures one, and every page is a
 cold shader cache.
 
-### The asynchronous pipeline path existed on both backends and nothing was asking for it
+### The asynchronous pipeline path exists on both backends, nothing asks for it, and asking broke the forest
 
-§26 Phase 13. The sentence above — "a backend with no async pipeline API to use" — was wrong, and
-this is the correction. three's WebGL backend holds `KHR_parallel_shader_compile`
-(`three.webgpu.js:71353`) and both backends branch on one array:
+§26 Phase 13, built 2026-09-17 and **reverted 2026-09-18**. The correction above still stands — the
+sentence "a backend with no async pipeline API to use" was wrong. three's WebGL backend holds
+`KHR_parallel_shader_compile` (`three.webgpu.js:71353`) and both backends branch on one array:
 
 | backend | what `render()` gets | what `compileAsync()` gets |
 | --- | --- | --- |
 | WebGPU | `device.createRenderPipeline` | `createRenderPipelineAsync` |
 | WebGL2 | link status read inline | `COMPLETION_STATUS_KHR` polled from rAF |
 
-`Renderer._compilationPromises` is that array and it is non-null only inside `compileAsync`. So the
-app now warms its pipelines before the first frame, and `UniverseCanvas` holds the frame loop until
-it settles — a frame drawn during the warm-up would create its own pipelines synchronously and pay
-the cost anyway.
+`Renderer._compilationPromises` is that array and it is non-null only inside `compileAsync`.
 
-**WHICH RENDER CONTEXT IS COMPILED AGAINST DECIDES WHETHER ANY OF IT IS REUSED.** A render object is
-cached under its render context, and the context under its render target and MRT, so a scene
-compiled against the canvas and then drawn into a `PassNode`'s target is a different object with a
-different pipeline. The families that mount `NodePostEffects` therefore warm up through its scene
-pass, which is why that component announces it; the ocean, which renders straight to the canvas,
-takes the renderer's own `compileAsync`. Compiling through the pass rather than the canvas took the
-universe's WebGL2 leg from 1753 ms of blocked time to 1244 ms.
+**AND THE APP DOES NOT CALL IT, BECAUSE CALLING IT FAILS THE PARITY RATCHET.** Two versions were
+tried. Compiling through `PassNode.compileAsync` — which is what the render-context caching says is
+correct — runs before `PassNode.setup()` has given the pass's target its half-float type, and the
+WebGL2 backend reuses those pipelines: **the forest rendered nothing at all on that backend** while
+the renderer reported success. Compiling through `renderer.compileAsync( scene, camera )` instead
+draws correctly and still moves pixels: the universe's two node backends went from 0.45 to 0.88 of
+255 on a worst block of 52 against a tolerance of 40. Removing the warm-up restores every recorded
+number exactly.
 
-Blocked main-thread time on a first mount, after:
+The likely mechanism is that `compileAsync` advances the node frame — `nodeFrame.renderId ++` and
+`nodeFrame.update()` — and the node post chain's film grain is a function of `time`. That explains
+the direction and not the magnitude, so the debts were not re-recorded against it.
 
-| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
-| --- | --- | --- | --- |
-| universe | 2094 ms | 1244 ms | 708 ms |
-| forest | 3596 ms | **13593 ms** | 834 ms |
-| ocean, underwater | 1129 ms | 2872 ms | 513 ms |
-| ocean, above water | 214 ms | 307 ms | 160 ms |
-
-**The forest is the one that did not move**, and it is the open question this leaves. Removing GTAO
-from the node chain takes its WebGL2 leg from 14829 ms to 9288 ms, so about 5.5 s is one post pass
-the warm-up cannot reach. The remaining ~9 s is unattributed; the leading hypothesis is texture
-upload rather than pipeline creation, on the strength of §24.1's 1121 ms of `texSubImage2D` in the
-forest's remount on the classic renderer. Not proven, and named as such.
-
-Wall-clock time to the first drawn frame RISES on every node fixture, because the frames wait. On the
-forest that is about seven seconds bought for nothing, bounded by a 10 s ceiling after which the
-frames start regardless.
+**What this leaves.** A measured first-mount saving of roughly 45% on three fixtures of four, which
+the app cannot currently take, and a known reason why. Anyone re-introducing it needs the pixel
+delta explained first, and needs to run `scene-parity.spec.ts` rather than only
+`first-mount-cost.spec.ts` — which is exactly how this got to `staging` in the first place.
 
 ### The node path's equivalent of a chunk patch is a subclass, not a node assignment
 

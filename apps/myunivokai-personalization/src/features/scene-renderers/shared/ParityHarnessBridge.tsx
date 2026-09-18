@@ -3,7 +3,14 @@
 import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
 import { Vector3, WebGLCoordinateSystem, type Object3D } from "three";
-import { lastNodePipelineWarmUp } from "./nodePipelineWarmUp";
+import {
+  summariseSustainedLoad,
+  sustainedFrameTimestamps,
+  SUSTAINED_FRAME_INTERVAL_SECONDS,
+  SUSTAINED_SAMPLE_FRAME_COUNT,
+  SUSTAINED_WARM_UP_FRAME_COUNT,
+  type SustainedLoadReport
+} from "./sustainedLoad";
 import {
   pinnedClockTimestamps,
   PINNED_CLOCK_STEP_COUNT,
@@ -151,20 +158,94 @@ export function ParityHarnessBridge({ request }: { request: ParityHarnessRequest
       ...summariseDrawnObjects(scene)
     });
 
+    /**
+     * WHAT A FRAME COSTS ONCE THE SCENE HAS SETTLED. Stage 1 of the graphics
+     * upgrade roadmap, and `sustainedLoad.ts` carries the argument for why it
+     * steps the clock rather than letting requestAnimationFrame set the pace.
+     *
+     * Two phases, and the split is the measurement. The warm-up frames are
+     * stepped and thrown away — they hold the first-use texture uploads and the
+     * camera's opening move, neither of which is what "a frame costs" means.
+     * The sampled frames continue the SAME timeline rather than restarting it,
+     * so nothing that integrates is handed its opening state twice.
+     *
+     * The GPU queue is drained once at the end rather than per frame. Draining
+     * every frame would serialise the pipeline and measure a machine nobody
+     * has; draining never would let work pile up behind the last timed frame
+     * and report a cost the GPU had not yet paid. Once at the end puts any
+     * backlog into `drainMilliseconds`, where it can be read rather than
+     * hidden.
+     */
+    const measureSustainedFrames = async (): Promise<
+      SustainedLoadReport & { drainMilliseconds: number; lastFrameDrawCalls: number; lastFrameTriangles: number }
+    > => {
+      clock.elapsedTime = 0;
+      clock.oldTime = clock.startTime;
+      for (const timestamp of sustainedFrameTimestamps(SUSTAINED_WARM_UP_FRAME_COUNT)) {
+        advance(timestamp);
+      }
+      const queue = (renderer as { backend?: { device?: { queue?: { onSubmittedWorkDone?: () => Promise<void> } } } })
+        .backend?.device?.queue;
+      if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
+
+      const frameMilliseconds: number[] = [];
+      for (const timestamp of sustainedFrameTimestamps(SUSTAINED_SAMPLE_FRAME_COUNT, SUSTAINED_WARM_UP_FRAME_COUNT)) {
+        const startedAt = performance.now();
+        advance(timestamp);
+        frameMilliseconds.push(performance.now() - startedAt);
+      }
+      const drainStartedAt = performance.now();
+      if (queue?.onSubmittedWorkDone) await queue.onSubmittedWorkDone();
+      const drainMilliseconds = performance.now() - drainStartedAt;
+
+      // ONE MORE FRAME, DRAWN ONLY TO BE COUNTED — because a cheap frame and an
+      // empty frame produce the same millisecond, and without this the table
+      // cannot tell a 7x saving from a 7x omission.
+      //
+      // **`info` RESETS ITSELF PER `render()` CALL, NOT PER FRAME, AND THAT IS
+      // WHAT MAKES THE NAIVE READ USELESS.** A family with a post chain issues
+      // several `render()` calls per frame — the scene, then a fullscreen quad
+      // per pass — so reading the counters afterwards reports the LAST pass and
+      // nothing else. The first version of this did exactly that and reported
+      // "1 triangle" for a forest: a fullscreen triangle, correctly counted, and
+      // a completely wrong answer to the question. Switching `autoReset` off and
+      // resetting once by hand makes the counters cover the whole frame.
+      //
+      // The two renderers do not agree on the field name either. Classic
+      // `WebGLInfo` exposes `{ frame, calls, triangles, points, lines }` where
+      // `calls` IS the draw count; the node `Info` exposes `drawCalls` for that
+      // and uses `calls` for cumulative `render()` calls. Reading one name would
+      // silently report the wrong quantity for one of the two legs.
+      const info = (renderer as {
+        info?: {
+          autoReset?: boolean;
+          reset?: () => void;
+          render?: { calls?: number; drawCalls?: number; triangles?: number };
+        };
+      }).info;
+      const previousAutoReset = info?.autoReset;
+      if (info) {
+        info.autoReset = false;
+        info.reset?.();
+      }
+      advance((SUSTAINED_WARM_UP_FRAME_COUNT + SUSTAINED_SAMPLE_FRAME_COUNT + 1) * SUSTAINED_FRAME_INTERVAL_SECONDS);
+      const accountedDrawCalls = info?.render?.drawCalls ?? info?.render?.calls ?? -1;
+      const accountedTriangles = info?.render?.triangles ?? -1;
+      if (info && previousAutoReset !== undefined) {
+        info.autoReset = previousAutoReset;
+      }
+
+      return {
+        ...summariseSustainedLoad(frameMilliseconds),
+        drainMilliseconds,
+        lastFrameDrawCalls: accountedDrawCalls,
+        lastFrameTriangles: accountedTriangles
+      };
+    };
+
     const harness = {
       backend,
-      /**
-       * How the node pipeline warm-up ended, or null while it is still running.
-       *
-       * §26 Phase 13. `first-mount-cost.spec.ts` polls this before advancing
-       * the clock, because the two numbers it reports would otherwise be taken
-       * across a boundary that moved: with the warm-up in flight the frames are
-       * held, so \"sixty pinned frames\" would start measuring a wait rather than
-       * a render. Reads the module record at CALL time rather than closing over
-       * a value, so a harness registered before the warm-up settled still
-       * answers with the settled one.
-       */
-      readPipelineWarmUp: () => lastNodePipelineWarmUp(),
+      measureSustainedFrames,
       requestedRenderer: request.renderer,
       pinnedSeconds: request.pinnedSeconds,
       stepCount: PINNED_CLOCK_STEP_COUNT,

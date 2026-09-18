@@ -7,6 +7,7 @@ import {
   BufferGeometry,
   DataTexture,
   LinearFilter,
+  LinearMipmapLinearFilter,
   RepeatWrapping,
   RGBAFormat,
   Vector2,
@@ -21,6 +22,7 @@ import {
   waterSurfaceRingCount,
   waterSurfaceTriangleIndices
 } from "./forestWaterMath";
+import { applyDataTextureQuality } from "../shared/textureQuality";
 
 // Real-looking water needs FOUR things, and the biggest one is geometry.
 //
@@ -156,7 +158,18 @@ function createRippleNormalTexture(): DataTexture {
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
   texture.magFilter = LinearFilter;
-  texture.minFilter = LinearFilter;
+  // MIPMAPPED, AND IT USED NOT TO BE. A non-mipmap `minFilter` tells three not
+  // to allocate or upload mip levels at all, so this normal map was being
+  // point-sampled from level 0 at every distance — a 256px image tiled once
+  // every RIPPLE_WORLD_TILE_SIZE units, scrolling, feeding a specular
+  // highlight. That is the textbook recipe for the crawling sparkle the pond
+  // and the river had at anything past close range, and the fix is the filter
+  // rather than a bigger texture.
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  // Grazing angles are what a water plane is made of, so the same argument as
+  // the forest floor applies here — see shared/textureQuality.ts.
+  applyDataTextureQuality(texture);
   texture.needsUpdate = true;
   return texture;
 }

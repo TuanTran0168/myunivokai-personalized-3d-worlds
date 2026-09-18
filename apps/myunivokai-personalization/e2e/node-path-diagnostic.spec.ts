@@ -211,7 +211,7 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
       // rather than an assumption.
       const readback = await page.evaluate(() => {
         const sceneCanvas = document.querySelector("canvas");
-        if (!sceneCanvas) return { found: false, dataUrlLength: 0, opaqueSamples: 0, sampleCount: 0 };
+        if (!sceneCanvas) return { found: false, dataUrlLength: 0, opaqueSamples: 0, colouredSamples: 0, sampleCount: 0 };
         const dataUrl = sceneCanvas.toDataURL("image/png");
         // The same route `sceneStill.ts` takes, at a size that costs nothing:
         // a blank readback is blank everywhere, so a coarse grid answers it.
@@ -220,22 +220,34 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
         probe.width = SAMPLE_GRID_SIZE;
         probe.height = SAMPLE_GRID_SIZE;
         const probeContext = probe.getContext("2d");
-        if (!probeContext) return { found: true, dataUrlLength: dataUrl.length, opaqueSamples: 0, sampleCount: 0 };
+        if (!probeContext)
+          return { found: true, dataUrlLength: dataUrl.length, opaqueSamples: 0, colouredSamples: 0, sampleCount: 0 };
         probeContext.drawImage(sceneCanvas, 0, 0, SAMPLE_GRID_SIZE, SAMPLE_GRID_SIZE);
         const pixels = probeContext.getImageData(0, 0, SAMPLE_GRID_SIZE, SAMPLE_GRID_SIZE).data;
+        // ALPHA AND COLOUR ARE COUNTED SEPARATELY, BECAUSE "0 OF 256 CARRY
+        // ALPHA" DOES NOT SAY WHICH DEFECT THIS IS. A buffer that was cleared
+        // after presentation reads back black AND transparent. A buffer that is
+        // intact but whose alpha channel is zero reads back with the scene's
+        // colours and no alpha — and that second one is a renderer parameter,
+        // not a missing feature. The two need completely different fixes and
+        // the first version of this probe could not tell them apart.
         let opaqueSamples = 0;
+        let colouredSamples = 0;
         for (let index = 0; index < pixels.length; index += 4) {
           if (pixels[index + 3] > 0) opaqueSamples += 1;
+          if (pixels[index] > 0 || pixels[index + 1] > 0 || pixels[index + 2] > 0) colouredSamples += 1;
         }
         return {
           found: true,
           dataUrlLength: dataUrl.length,
           opaqueSamples,
+          colouredSamples,
           sampleCount: pixels.length / 4
         };
       });
       console.log(
-        `canvas readback: ${readback.opaqueSamples}/${readback.sampleCount} samples carry alpha` +
+        `canvas readback: ${readback.opaqueSamples}/${readback.sampleCount} samples carry alpha,` +
+          ` ${readback.colouredSamples}/${readback.sampleCount} carry colour` +
           ` · toDataURL ${readback.dataUrlLength} characters`
       );
       expect(readback.found, "the scene canvas must exist to be read back").toBe(true);

@@ -31,6 +31,7 @@ import {
   type SpecialAnimalDefinition,
   type SpecialBirdDefinition
 } from "./forestModels";
+import { applyLoadedModelTextureQuality } from "../shared/textureQuality";
 
 // Real animals: Quaternius' animated GLB pack (deer/fox/wolf play their Walk
 // clip) plus static CC models for boar/rabbit/bird, which fall back to a
@@ -151,10 +152,14 @@ function AnimalModel({ modelKey, walkSpeed, isPausedRef, coatColor, emissiveInte
   const modelRootRef = useRef<Group>(null);
 
   const clonedScene = useMemo(() => {
+    applyLoadedModelTextureQuality(gltf.scene);
     const cloned = SkeletonUtils.clone(gltf.scene);
     const coat = coatColor ? new Color(coatColor) : null;
     cloned.traverse((object) => {
       object.castShadow = true;
+      // An animal that walks under the canopy and stays lit as if in a clearing
+      // is the thing a visitor notices first, because it MOVES between the two.
+      object.receiveShadow = true;
       const mesh = object as Mesh;
       if (!coat || !mesh.isMesh) {
         return;
