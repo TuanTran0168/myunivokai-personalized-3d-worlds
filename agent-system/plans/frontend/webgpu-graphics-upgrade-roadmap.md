@@ -194,31 +194,41 @@ the baseline that every stage below is measured against.
 discarded, three hundred timed at a fixed sixty-per-second timeline, percentiles
 by nearest rank. RTX 4060 Laptop, ANGLE/D3D11, one run per cell.
 
-**Milliseconds per frame, p50 / p99 / worst:**
+**Milliseconds per frame, p50 / p99 / worst.** Re-measured 2026-09-18 after §26 Phase 13's pipeline
+warm-up was reverted; the numbers are within run-to-run noise of the first version, which is itself
+worth knowing — the warm-up changed the first mount and did not change the settled frame.
 
 | fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
 | --- | --- | --- | --- |
-| universe | 0.50 / 9.60 / **496.1** | 0.10 / 0.20 / 0.30 | 0.10 / 0.70 / 6.40 |
-| forest | **7.40** / 9.00 / 236.3 | 1.00 / 2.30 / 3.70 | 1.00 / 2.50 / 69.9 |
-| ocean, underwater | 0.70 / 9.70 / 28.2 | 0.70 / 1.80 / 3.90 | 1.00 / 4.00 / 97.2 |
-| ocean, above water | 0.00 / 0.20 / 0.30 | 0.10 / 0.80 / 3.40 | 0.10 / 0.50 / 0.70 |
+| universe | 0.50 / 3.70 / **113.4** | 0.10 / 0.20 / 0.30 | 0.10 / 0.40 / 8.70 |
+| forest | **7.00** / 8.80 / 232.3 | 1.00 / 1.30 / 4.40 | 1.00 / 3.60 / 65.6 |
+| ocean, underwater | 0.70 / 15.60 / 39.7 | 0.70 / 1.80 / 3.10 | 2.00 / 4.70 / 81.4 |
+| ocean, above water | 0.00 / 0.30 / 0.50 | 0.10 / 0.50 / 1.10 | 0.10 / 0.70 / 2.10 |
 
-**THE FOREST COSTS 7.40 ms A FRAME ON THE RENDERER EVERY VISITOR HAS, AND 1.00 ms
-ON THE ONE THEY DO NOT.** That is 44% of a 60 fps budget against 6%, and it is
-the first steady-state number this project has ever had. Phase 11 measured the
-first mount and found the node path better; this measures every frame after it
-and finds the same thing, larger.
+**THE FOREST COSTS 7.00 ms A FRAME ON THE RENDERER EVERY VISITOR HAS AND 1.00 ms
+ON THE ONE THEY DO NOT.** That is 42% of a 60 fps budget against 6%, and it is
+the first steady-state number this project has ever had.
 
-**What it is NOT: proof that the node renderer is seven times faster.** The
-draw accounting says the two legs were asked for similar but not identical work
-— the forest's classic leg draws 215 calls over 8.07M triangles, the node/WebGPU
-leg 173 over 6.51M — so about a fifth of the gap is less geometry, not faster
-drawing. And the node/WebGPU column understates itself: its per-frame number is
-CPU submission, and the queue drain after the three hundred frames is **579 ms**
-on the forest, which is another ~1.9 ms a frame of GPU work that had not
-finished. Classic and node/WebGL2 drain in 0.0 ms because they have no queue to
-drain. **Corrected for both, the forest is roughly 7.4 ms against roughly 3 ms.**
-Still the largest single performance difference measured on this migration.
+**Where the difference is, measured rather than assumed.** The two families that
+mount a post chain are the two with a gap. The ocean, which mounts none on
+either path, agrees to within 0.3 ms on p50. So this is `postprocessing`s
+`EffectComposer` against three’s `RenderPipeline`, not `WebGLRenderer` against
+`Renderer` — a reason to want the rollout that is independent of WebGPU.
+
+**The worst frames are the other finding and they belong to the classic path.**
+113 ms on the universe, 232 ms on the forest, 40 ms underwater, one per run,
+against a worst of 4.4 ms on node/WebGL2. One frame in three hundred is not a
+frame-rate problem, it is a visible hitch, and nothing in this repo could see it
+until now.
+
+**What it is NOT: proof that the node renderer is several times faster.** The
+draw accounting says the legs were asked for similar but not identical work, and
+the node/WebGPU column understates itself — its per-frame number is CPU
+submission, and the queue drain after three hundred frames is hundreds of
+milliseconds, which is GPU work that had not finished. Classic and node/WebGL2
+drain in 0.0 ms because they have no queue to drain. Every comparison ACROSS the
+three legs carries both caveats; the comparison this instrument is for is a
+fixture against itself, on one leg, before and after a change.
 
 **Where the difference is, measured rather than assumed.** The two families that
 mount a post chain are the two with the gap; the ocean, which mounts none on

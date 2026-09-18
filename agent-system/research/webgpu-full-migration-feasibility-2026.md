@@ -2,8 +2,8 @@
 
 > **Document status:** Research, with **all thirteen phases of §26 executed. The app has no
 > hand-written GLSL left in any family, and no material is refused on either node backend.** Phase 13
-> is done as one item rather than as written: the pipelines now compile off the main thread on both
-> node backends, and the compute work it listed moved to
+> is done as one item rather than as written, and **that one item was then reverted** — the compute
+> work it listed moved to
 > [`../plans/frontend/webgpu-graphics-upgrade-roadmap.md`](../plans/frontend/webgpu-graphics-upgrade-roadmap.md),
 > each item behind the gate that would open it. Nothing in the verdict is approved, and **Phases 2–4 did modify
 > production code** — the last rows of the Quality check say exactly what a visitor now receives and
@@ -21,6 +21,9 @@
 > twice in `three.module.js` and zero times in `three.webgpu.js` — so the canvas reads back fully
 > transparent and the PNG export and the transition stills have nothing to read. See §10.3 and §26
 > Phase 9.
+>
+> **PHASE 13 WAS REVERTED ON 2026-09-18 — see its section, which is now about the reversal.** What
+> follows is what it found, which stands; what it built failed the parity ratchet and is out.
 >
 > **PHASE 13 (2026-09-17) FOUND THAT THE WEBGL2 BACKEND ALWAYS HAD AN ASYNCHRONOUS PIPELINE PATH AND
 > NOTHING WAS ASKING FOR IT.** `Renderer.compileAsync()` is the only route to `createRenderPipelineAsync` on
@@ -2310,95 +2313,85 @@ that it never measures one.
   that it should not. The canvas readback does: the download button would produce a transparent PNG
   and every scene transition would cut. That is the named prerequisite for turning it on.
 
-### Phase 13 — Only now, optimisation — **DONE 2026-09-17, one item: the pipelines**
+### Phase 13 — REVERTED 2026-09-18, and the reversal is the finding
 
-- **Objective as written:** compute, indirect draw, storage buffers, GPU simulation — §15, §30 of the
-  brief. **Not started, and §15.2 is why**: every compute candidate trades determinism or behaviour
-  for speed this app has not been shown to need, and the instrument that would show it does not
-  exist. [`../plans/frontend/webgpu-graphics-upgrade-roadmap.md`](../plans/frontend/webgpu-graphics-upgrade-roadmap.md)
-  is where they went, each behind the gate that would open it.
-- **What this phase did instead:** the one optimisation whose case was already made by a measurement
-  in this document. Phase 11 found the node path's only number going the wrong way — the WebGL2
-  backend blocking four times the classic renderer on a first mount — and §17 names that as the
-  finding that could still force Architecture B.
+**The optimisation this phase shipped on 2026-09-17 was removed the next day, because it fails the
+parity ratchet.** What it found about three.js is still true and still useful; what it did to the app
+was not acceptable, and the way it reached `staging` is the part worth keeping.
 
-**THE MEASUREMENT WAS TAKEN ON THREE.JS'S SYNCHRONOUS PIPELINE PATH, ON BOTH BACKENDS, AND TAKING THE
-OTHER ONE IS A SINGLE CALL.** `Renderer.compileAsync()` (`three.webgpu.js:60065`) assigns
-`this._compilationPromises`, and that array is the only thing either backend tests:
+#### What it found, which stands
+
+`Renderer.compileAsync()` (`three.webgpu.js:60065`) assigns `this._compilationPromises`, and that
+array is the only thing either backend tests:
 
 | backend | `promises === null` (what `render()` does) | `promises !== null` (what `compileAsync` does) |
 | --- | --- | --- |
 | WebGPU | `device.createRenderPipeline`, `:82517` | `createRenderPipelineAsync`, `:82546` |
 | WebGL2 | `_completeCompile` inline, `:72632` | poll `COMPLETION_STATUS_KHR` from rAF, `:72602` |
 
-`this.parallel` is `extensions.get( 'KHR_parallel_shader_compile' )` (`:71353`). So the extension is
-present, three supports it, and **it was unreachable** — which is the whole of the WebGL2 column
-Phase 11 measured. §24.3's prediction was right about the symptom and wrong about the cause: it is
-not that this app has many distinct materials, it is that nothing was asking for the asynchronous
-path.
+`this.parallel` is `extensions.get( 'KHR_parallel_shader_compile' )` (`:71353`). The extension is
+present, three supports it, and **nothing in this app was asking for it**. §24.3 was right about the
+symptom and wrong about the cause: not "many distinct materials", but "nothing requested the
+asynchronous path".
 
-**AND THE FIRST ATTEMPT WARMED THE WRONG RENDER CONTEXT, WHICH IS THE PART WORTH KEEPING.**
-`renderer.compileAsync( scene, camera )` compiles for the context the renderer is in when it is
-called. A render object is cached under its render context and the context under its render target
-and MRT (`this._renderContexts.get( renderTarget, this._mrt )`, `:60094`) — so a scene compiled
-against the canvas and then DRAWN into a `PassNode`'s target is a different render object with a
-different pipeline, and the work is done twice. three says so itself, in `PassNode.compileAsync`'s
-doc comment (`:40913`): *"this method must be called after the pass configuration is complete. So
-calls like setMRT() and getTextureNode() must proceed the precompilation."* Measured, universe on
-the WebGL2 backend, blocked main thread: **2851 ms** before, **1753 ms** compiling against the
-canvas, **1244 ms** compiling through the pass. So the families that mount the node post
-chain warm up through `NodePostEffects`'s scene pass, and the ocean — which renders straight to the
-canvas with no chain — takes the renderer's own.
+#### What it did, which was not acceptable
 
-**Result, blocked main-thread time during a first mount, same machine, one run per cell:**
+Two versions were built and both failed, in different ways, and only the ratchet found either.
 
-| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
-| --- | --- | --- | --- |
-| universe | 2170 → 2094 | 2851 → **1244** | 1013 → **708** |
-| forest | 3647 → 3596 | 15286 → **13593** | 975 → **834** |
-| ocean, underwater | 1113 → 1129 | 5092 → **2872** | 869 → **513** |
-| ocean, above water | 214 → 214 | 358 → **307** | 202 → **160** |
+**Version one compiled through `PassNode.compileAsync` for the families that mount the node post
+chain**, on the correct observation that pipelines are cached per render context and a scene
+compiled against the CANVAS is not the scene drawn into a PASS. **`PassNode.compileAsync` runs
+before `PassNode.setup()` ever has**, so the pass's render target has not yet been given its
+half-float type (`:40943`) or its sample count, and the WebGL2 backend then reuses those pipelines.
+Measured with `scene-parity.spec.ts`: **the forest rendered NOTHING on the WebGL2 backend** —
+luminance deviation 1.02 against a blank floor of 3, `GL_INVALID_OPERATION: glDrawArrays: Active
+draw buffers with missing fragment shader outputs` every frame, and the renderer reporting success.
 
-**The classic column is the control and it does not move**, which is the property this change had to
-have: `rendererCompilesPipelinesAsynchronously` returns false for a renderer with no `backend`, and
-the warm-up is not even mounted unless a node renderer is being built. `WebGLRenderer` has a
-`compileAsync` of its own (`three.module.js:17472`) and
-[`../agents/frontend-agent.md`](../agents/frontend-agent.md) records that it "was tried and does
-nothing on this project's driver" — a different class, a different implementation, and that note
-still stands for the path every visitor renders through.
+**Version two used `renderer.compileAsync( scene, camera )` for every family.** The forest drew
+again, and the ratchet still failed: the universe's two node backends read **0.88** of 255 against a
+recorded 0.45, on a worst block of 52.08 against a tolerance of 40, and the forest read 2.03 against
+1.21. Removing the warm-up entirely restores every number exactly — universe **0.45**, forest
+**1.21**, ocean **0.31**, ocean-surface **0.02**, six of six green.
 
-**THE FOREST DOES NOT MOVE EITHER, AND THAT IS THE FINDING THIS PHASE HANDS ON.** Three fixtures of
-four fall by roughly half on the fallback backend; the forest falls 11%, from 15.3 s to 13.6 s
-blocked, after a warm-up that reported **compiled** in 7.1 s. So on the forest, the pipelines were
-built off the main thread AND the main thread still blocked for thirteen seconds — the two are not
-the same work.
+**The mechanism is named and not fully proven.** `compileAsync` does `nodeFrame.renderId ++` and
+`nodeFrame.update()` (`:60104-60108`), and the node post chain's film grain is
+`screenUV.mul( float( 1 ).add( time ) )` — so a warm-up shifts the grain's phase on the node legs
+and not on the classic one. That explains the direction. It does **not** comfortably explain a worst
+block of 52 from a 6%-opacity soft-light grain, so the debts were NOT re-recorded against it: a
+ratchet loosened on an unproven explanation is a ratchet switched off.
 
-One experiment was run against it and is recorded rather than summarised. With GTAO removed from the
-node chain, the forest's WebGL2 leg fell from 14829 ms to **9288 ms** while the warm-up's own
-duration barely changed (7332 → 6944 ms). So roughly 5.5 s is the ambient-occlusion pass, whose quad
-materials are not in the scene and which no `compileAsync` on this path reaches. **The remaining
-~9 s is UNATTRIBUTED.** The leading hypothesis is that it is not pipeline work at all: §24.1 measured
-1121 ms of the forest's 2108 ms remount as `texSubImage2D` uploading 8K textures on the CLASSIC
-renderer, and a texture upload is not something a pipeline warm-up can move. The experiment that
-would settle it is a first mount with the forest's canvas bakes downscaled, against this same table.
-Until then this is a hypothesis with a prior, not a result.
+#### The cost of the reversal, stated rather than hidden
 
-**WHAT THE PHASE COSTS, STATED RATHER THAN BURIED.** The canvas holds its frames until the warm-up
-settles, because a frame drawn while `compileAsync` is in flight builds its own pipelines the
-synchronous way and pays the cost anyway. So wall-clock time to the first drawn frame RISES on every
-node fixture — on the forest by about seven seconds, for no reduction in blocked time. That is a bad
-trade on one fixture of four, it is the fixture this app's worst first mount belongs to, and it is
-bounded rather than fixed: `NODE_PIPELINE_WARM_UP_CEILING_MILLISECONDS` is 10 s, after which the
-frames start and three builds the pipelines as it goes. **Phase 11's unit was blocked time and this
-phase keeps it, but the forest is a case where the two units disagree, and the roadmap's Stage 1
-exists partly to stop that being settled by argument.**
+Blocked main-thread time on a first mount, with the warm-up against without:
 
-- **Files:** `shared/nodePipelineWarmUp.ts` (the policy, the ceiling, the scene-pass handoff),
-  `shared/NodePipelineWarmUpBridge.tsx` (the component), `UniverseCanvas.tsx` (the frame hold),
-  `shared/NodePostEffects.tsx` (announces its scene pass after configuration),
-  `shared/ParityHarnessBridge.tsx` and `e2e/first-mount-cost.spec.ts` (the measurement).
-- **Validation:** typecheck, lint, 1063 unit tests across 89 files, and the 12 cells above green on
-  the `webgpu` project with `SHOOT_PORT=41399`.
+    fixture              node/WebGL2        node/WebGPU
+    universe             1557  ->  2500      654  ->  965
+    forest              16245  ->  17793      902  ->  963
+    ocean, underwater    2890  ->  4913      471  ->  686
+    ocean, above water    257  ->  300      150  ->  193
+
+**So the warm-up was a real improvement on every fixture, and it is a real improvement the app
+cannot take.** Between 20% and 45% of the blocked first mount, given up to keep a ratchet that six
+of six comparisons now pass. **And the forest's 13593 ms in the original Phase 13 table was
+measured on a backend that was drawing nothing at all**, which is the second reason that table
+could not be trusted — and the first reason to distrust a number arriving in the direction you
+were hoping for.
+
+Run-to-run spread on the forest's WebGL2 cell is wide — 15286 ms before Phase 13 and 17793 ms
+today, both without a warm-up — so that fixture's column is a range rather than a reading.
+
+#### How it reached `staging`, which is the part to keep
+
+Phase 13 validated itself with `first-mount-cost.spec.ts` — the instrument for the thing it was
+optimising — and did not re-run `scene-parity.spec.ts`, the ratchet that exists to catch what an
+optimisation might break. Phases 9-11 ran both. **A phase that measures only its own objective will
+ship this again**, and no amount of care inside the change substitutes for running the gate that was
+built for the class of defect.
+
+> **THE FLAG IS STILL OFF and §10.3's canvas readback is still what keeps it off.** Re-measured
+> 2026-09-18 with the diagnostic counting colour separately from alpha: **0/256 alpha and 0/256
+> colour** on both node backends against 256/256 and 256/256 on the classic renderer. The buffer is
+> empty rather than transparent, so there is no cheap fix.
 
 ### Phase 13's three approvals, taken 2026-09-17
 

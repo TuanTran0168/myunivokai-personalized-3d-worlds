@@ -22,7 +22,6 @@ import {
   VIGNETTE_DARKNESS,
   VIGNETTE_OFFSET
 } from "./postEffectsTuning";
-import { announceScenePassForWarmUp, withdrawScenePassForWarmUp, type ScenePassForWarmUp } from "./nodePipelineWarmUp";
 import { DEFAULT_FAMILY_TONE_MAPPING, toneMappingNodeFunctionNameFor } from "./sceneToneMapping";
 import { shouldComputeAmbientOcclusionAtHalfResolution } from "./renderQuality";
 
@@ -226,7 +225,6 @@ export function NodePostEffects({
   useEffect(() => {
     let cancelled = false;
     let builtPipeline: NodeRenderPipeline | null = null;
-    let announcedScenePass: ScenePassForWarmUp | null = null;
     const rendererToneMappingBeforeMount = renderer.toneMapping;
 
     const build = async () => {
@@ -471,22 +469,6 @@ export function NodePostEffects({
       // requires and what the mount condition in UniverseCanvas guarantees.
       builtPipeline = new RenderPipeline(renderer as unknown as Renderer, chain);
 
-      // THE SCENE PASS IS OFFERED TO THE WARM-UP LAST, AND THE POSITION IS
-      // THREE'S REQUIREMENT RATHER THAN A PREFERENCE. `PassNode.compileAsync`'s
-      // own doc comment (`three.webgpu.js:40913`) says it "must be called after
-      // the pass configuration is complete. So calls like setMRT() and
-      // getTextureNode() must proceed the precompilation" — and `getTextureNode`
-      // is called up to three times above, for the AO pass's depth and normals
-      // and for the chain's own colour. Announcing after the pipeline exists is
-      // the one position where every one of those has happened.
-      //
-      // WHY IT IS ANNOUNCED AT ALL. A family with this chain does not draw its
-      // scene to the canvas; it draws it into this pass's render target with an
-      // MRT. Pipelines are cached per render context, so a warm-up compiled
-      // against the canvas builds a set the first frame cannot use and pays for
-      // both. nodePipelineWarmUp.ts carries three's line numbers for that.
-      announceScenePassForWarmUp(scenePass as unknown as ScenePassForWarmUp);
-      announcedScenePass = scenePass as unknown as ScenePassForWarmUp;
       if (cancelled) {
         builtPipeline.dispose?.();
         return;
@@ -499,7 +481,6 @@ export function NodePostEffects({
     return () => {
       cancelled = true;
       builtPipeline?.dispose?.();
-      if (announcedScenePass) withdrawScenePassForWarmUp(announcedScenePass);
       setPipeline(null);
       // Hand the renderer back the curve it had. `EffectComposer` does the same on
       // unmount, and the reason to copy it is that this component can be

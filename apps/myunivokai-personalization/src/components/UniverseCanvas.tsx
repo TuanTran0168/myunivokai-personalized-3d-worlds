@@ -51,7 +51,6 @@ import { rendererToneMappingForFamily } from "@/features/scene-renderers/shared/
 import { loadNodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 import { parityHarnessRequest } from "@/features/scene-renderers/shared/parityHarness";
 import { ParityHarnessBridge } from "@/features/scene-renderers/shared/ParityHarnessBridge";
-import { NodePipelineWarmUpBridge } from "@/features/scene-renderers/shared/NodePipelineWarmUpBridge";
 import {
   buildsNodeRenderer,
   forcesWebGLBackend,
@@ -398,11 +397,6 @@ export function UniverseCanvas({
   // the same render that swaps the canvas already sees isSceneReady=false,
   // so the veil covers the swap without a single black frame leaking through.
   const [lastReadyCanvasKey, setLastReadyCanvasKey] = useState<string | null>(null);
-  // AND THE SAME TRICK FOR THE PIPELINE WARM-UP, for the same reason: a canvas
-  // that remounts must hold its frames again, and deriving that from the key
-  // means the render that swaps the canvas already knows. See §26 Phase 13 and
-  // shared/nodePipelineWarmUp.ts.
-  const [lastWarmedCanvasKey, setLastWarmedCanvasKey] = useState<string | null>(null);
 
   const seed = String(scene?.seed ?? CANONICAL_FALLBACK_SEED);
   const backgroundColor = backgroundColorFromScene(scene);
@@ -543,16 +537,6 @@ export function UniverseCanvas({
   // key moves for anybody until a device is actually lost.
   const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}${rendererRemountSuffix(rendererChoice)}`;
   const isSceneReady = lastReadyCanvasKey === canvasRemountKey;
-  // WHY THE FRAMES WAIT. `compileAsync` is the only route to either node
-  // backend's asynchronous pipeline path, and a frame drawn while it is in
-  // flight builds its own pipelines the synchronous way — which is the cost it
-  // exists to remove. So the loop is held until the warm-up settles, with a
-  // ceiling inside `warmUpNodePipelines` so a warm-up that never finishes
-  // becomes a normal first mount rather than a blank canvas.
-  //
-  // The harness's "never" wins over both, and must: it drives its own clock,
-  // and frames started by anything else are frames it did not pin.
-  const isWaitingForNodePipelines = rendersWithNodePipeline && lastWarmedCanvasKey !== canvasRemountKey;
 
   const introDurationSeconds = CAMERA_INTRO_DURATION_SECONDS_BY_ENTRY_MOTION[entryMotion];
   const titleCardName = entryMotion === "cinematic" ? scene?.sceneName?.trim() : undefined;
@@ -613,7 +597,7 @@ export function UniverseCanvas({
             // pixels differing, which is the harness failing its own stability
             // gate. As a prop, no frame the scene ever draws is one the harness
             // did not drive.
-            frameloop={parityHarness || isWaitingForNodePipelines ? "never" : "always"}
+            frameloop={parityHarness ? "never" : "always"}
             camera={{ position: cameraPosition, fov: cameraFieldOfView }}
             // The forest (sun through the canopy) and the ocean (a single key
             // light through water) both cast real shadows; universe scenes are
@@ -824,15 +808,6 @@ export function UniverseCanvas({
                     postProcessingProfile={deviceRenderProfile.postProcessing}
                   />
                 )}
-                {/* Last inside the boundary on purpose — its effect runs after
-                    its siblings have mounted, and a warm-up over a suspended
-                    tree would compile almost nothing and report success. */}
-                {rendersWithNodePipeline ? (
-                  <NodePipelineWarmUpBridge
-                    expectsScenePass={!isOceanFamilyScene}
-                    onSettled={() => setLastWarmedCanvasKey(canvasRemountKey)}
-                  />
-                ) : null}
                 <SceneReadySignal
                   onSceneReady={(graphicsBackend) => {
                     setLastReadyCanvasKey(canvasRemountKey);

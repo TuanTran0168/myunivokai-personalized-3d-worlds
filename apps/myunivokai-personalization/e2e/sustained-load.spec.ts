@@ -64,7 +64,6 @@ import oceanSurfaceWorld from "./fixtures/ocean-surface-world.json";
 const HARNESS_READY_TIMEOUT_MILLISECONDS = 60_000;
 const SCENE_ARRIVAL_MILLISECONDS = 2_500;
 const MEASUREMENT_TIMEOUT_MILLISECONDS = 300_000;
-const WARM_UP_SETTLED_TIMEOUT_MILLISECONDS = 30_000;
 
 /**
  * Wide enough that scheduling noise cannot reach it, and narrow enough that a
@@ -100,7 +99,6 @@ type ParityHarnessWindow = Window & {
   __parityHarness?: {
     backend: string;
     measureSustainedFrames: () => Promise<SustainedReport>;
-    readPipelineWarmUp: () => { outcome: string; milliseconds: number } | null;
   };
 };
 
@@ -136,19 +134,6 @@ for (const fixture of FIXTURES) {
       await page.waitForFunction(() => (window as ParityHarnessWindow).__parityHarness !== undefined, undefined, {
         timeout: HARNESS_READY_TIMEOUT_MILLISECONDS
       });
-
-      // THE PIPELINE WARM-UP HAS TO BE OUT OF THE WAY, or its cost lands inside
-      // the first sampled frames and the tail this file exists to report becomes
-      // a measurement of compilation. §26 Phase 13 holds the canvas's frames
-      // until it settles; this waits for the same report. The classic leg never
-      // runs one, which is why the wait is conditional rather than universal.
-      if (renderer !== "webgl") {
-        await page.waitForFunction(
-          () => (window as ParityHarnessWindow).__parityHarness?.readPipelineWarmUp() !== null,
-          undefined,
-          { timeout: WARM_UP_SETTLED_TIMEOUT_MILLISECONDS }
-        );
-      }
 
       const backend = await page.evaluate(() => (window as ParityHarnessWindow).__parityHarness!.backend);
       const report = await page.evaluate(
