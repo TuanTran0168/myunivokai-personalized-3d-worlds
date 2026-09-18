@@ -427,9 +427,18 @@ trades download bytes for GPU bytes and a stall. **That trade needs the
 measurement Stage 1 produces**, and it is the clearest case on this list of a
 change that is obviously right in GPU terms and not obviously right in total.
 
-**Also open here, and cheaper:** there is no LOD of any kind in the app, and the
-repo already contains the low-detail asset that would prove it out
-(`tree-fir-distant.glb` beside `tree-fir-realistic.glb`).
+**And LOD is CLOSED, by the first thing Stage 1 measured.** The audit proposed
+splitting the forest's tree ring into a near and a far bucket — no new asset
+needed, `tree-fir-distant.glb` is already the same pack's LOD2 — and gated it
+on confirming that vertex work is what costs the milliseconds. It is not. The
+classic leg draws **8.07M triangles in 7.40 ms**; the node/WebGPU leg draws
+**6.51M in 1.00 ms**. A path that draws 81% of the geometry in 14% of the time
+is not geometry-bound, so halving the geometry would buy almost nothing. The
+same measurement says where the time goes instead, and it is the post chain.
+
+**This is what the instrument was for.** The proposal was reasonable, the asset
+was already committed, and it would have been a week of work against the wrong
+cause. It cost one run to rule out.
 
 ---
 
