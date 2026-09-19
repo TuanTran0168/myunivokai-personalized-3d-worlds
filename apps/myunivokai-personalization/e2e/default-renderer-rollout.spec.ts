@@ -8,11 +8,23 @@ import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
  *
  * Every other spec in this directory pins a renderer through the parity
  * harness, because every other spec is comparing renderers. **This one pins
- * nothing**, which makes it the only automated check of the decision the
- * rollout added: with `NEXT_PUBLIC_NODE_RENDERER` unset — which is what
- * production reads, since the variable is set nowhere in this repository — the
- * app now builds a `WebGPURenderer` where the browser has a real WebGPU
- * adapter, and the classic `WebGLRenderer` where it does not.
+ * nothing**, which makes it the only automated check of what an ordinary visit
+ * actually builds.
+ *
+ * # What it asserts changed on 2026-09-19, and the old assertion is why
+ *
+ * For the length of one commit the default was `where-webgpu-is-real`, and this
+ * spec asserted the veto: SwiftShader draws `webgl`, the real driver draws
+ * `webgpu`, neither draws `webgl2`. The owner then took the decision the
+ * roadmap's §2b had left open and set the default to `every-visitor` — the node
+ * renderer for everybody, WebGL2 backend included, with the forest's 13.6 s
+ * first mount on that backend accepted rather than avoided.
+ *
+ * **So `webgl2` is no longer a failure. It is the expected answer on a browser
+ * without WebGPU**, and this spec is now the thing that proves the node
+ * renderer reaches a frame at all on a stack that has no WebGPU — which nothing
+ * in this suite checked before, because the harness's `webgpu-forcewebgl` leg
+ * runs only on the real-driver project.
  *
  * # The expectation is derived, not hardcoded per project
  *
@@ -23,11 +35,10 @@ import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
  *
  * Instead the page is asked what WebGPU it has, through `navigator.gpu`
  * directly rather than through anything the app exports, and the expected
- * renderer is derived from that answer. The two sides are then independent: one
- * is the browser's own report, the other is what the app chose after making the
- * same call for itself. **On SwiftShader this asserts the veto, and on the real
- * driver it asserts the rollout** — the two halves of the same policy, each
- * checked on the machine that can actually exercise it.
+ * BACKEND is derived from that answer. The two sides stay independent: one is
+ * the browser's own report, the other is what three.js chose after making the
+ * same call for itself. **The renderer is the same on both; only the backend
+ * differs**, and that is exactly what `every-visitor` means.
  *
  * # What is asserted, and why it is the telemetry payload
  *
@@ -41,20 +52,20 @@ import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
  *
  * # What this does NOT check
  *
- * The kill switch and the `every-visitor` rollout, because `NEXT_PUBLIC_*` is
- * inlined by Next at BUILD time and this suite builds the app once. Changing
- * either would mean a second production build per assertion, for a value whose
- * parsing is already covered by `rendererSelection.test.ts`. Saying so here is
- * cheaper than a spec that appears to cover them and does not.
+ * The kill switch and the `where-webgpu-is-real` middle setting, because
+ * `NEXT_PUBLIC_*` is inlined by Next at BUILD time and this suite builds the app
+ * once. Changing either would mean a second production build per assertion, for
+ * a value whose parsing is already covered by `rendererSelection.test.ts`.
+ * Saying so here is cheaper than a spec that appears to cover them and does not.
  */
 
 const CLIENT_RENDER_REPORT_PATH = "/api/telemetry/render";
 
-/** The classic renderer. What every visitor got before the rollout. */
+/** The classic renderer. What every visitor got before the rollout, and nobody gets now. */
 const BACKEND_WEBGL = "webgl";
 /** `WebGPURenderer` on the backend the rollout exists to reach. */
 const BACKEND_WEBGPU = "webgpu";
-/** `WebGPURenderer` on its WebGL2 fallback — the 13.6 s forest, and a failure here. */
+/** `WebGPURenderer` on its WebGL2 fallback — the 13.6 s forest, now an accepted cost. */
 const BACKEND_WEBGL2 = "webgl2";
 
 const SCENE_READY_TIMEOUT_MILLISECONDS = 120_000;
@@ -70,10 +81,11 @@ const ROLLOUT_TIMEOUT_MILLISECONDS = 180_000;
 const SOFTWARE_ADAPTER_MARKERS = ["swiftshader", "lavapipe", "llvmpipe", "warp", "basic render", "software"];
 
 const ROLLOUT_FIXTURES = [
-  // The forest first, because it is the fixture the veto exists for: §26 Phase
-  // 13 measured 13593 ms of blocked main thread on the node renderer's WebGL2
-  // backend against 3596 ms classic. A `webgl2` answer on this row is the
-  // regression the rollout was designed to make unreachable.
+  // The forest first, because it is the fixture that pays for this decision:
+  // §26 Phase 13 measured 13593 ms of blocked main thread on the node
+  // renderer's WebGL2 backend against 3596 ms classic. A `webgl2` answer on
+  // this row is now the EXPECTED one wherever WebGPU is absent, and the point
+  // of the row is that the frame arrives at all.
   { name: "forest", worldId: natureWorld.world.id, family: "nature" },
   { name: "universe", worldId: universeWorld.world.id, family: undefined }
 ] as const;
@@ -191,7 +203,7 @@ for (const fixture of ROLLOUT_FIXTURES) {
     await page.goto(`/worlds/${fixture.worldId}${familyParameter}`);
 
     const hasHardwareWebGPU = await browserHasHardwareWebGPU(page, SOFTWARE_ADAPTER_MARKERS);
-    const expectedBackend = hasHardwareWebGPU ? BACKEND_WEBGPU : BACKEND_WEBGL;
+    const expectedBackend = hasHardwareWebGPU ? BACKEND_WEBGPU : BACKEND_WEBGL2;
 
     await page.waitForFunction(
       () => ((window as ClientRenderReportWindow).__clientRenderReports?.length ?? 0) > 0,
@@ -208,16 +220,15 @@ for (const fixture of ROLLOUT_FIXTURES) {
     );
 
     /**
-     * **THE REGRESSION THE ROLLOUT EXISTS TO MAKE UNREACHABLE**, asserted before
-     * the equality so that a failure names the right thing. `webgl2` means a
-     * `WebGPURenderer` went to its WebGL2 backend on an ordinary visit, which is
-     * the configuration measured at four times the classic renderer's blocked
-     * first mount on this very fixture.
+     * **NOBODY GETS THE CLASSIC RENDERER ANY MORE**, asserted before the
+     * equality so that a failure names the right thing. A `webgl` answer means
+     * the rollout did not take: either the default was read as something else,
+     * or `process.env.NEXT_PUBLIC_NODE_RENDERER` came back from the browser
+     * bundle as `{}` — which `parityHarness.ts` records this project having
+     * shipped once already, and which would look exactly like nothing being
+     * wrong.
      */
-    expect(
-      reportedBackend,
-      "an ordinary visit must never land on the node renderer's WebGL2 backend"
-    ).not.toBe(BACKEND_WEBGL2);
+    expect(reportedBackend, "no ordinary visit should still be on WebGLRenderer").not.toBe(BACKEND_WEBGL);
 
     expect(reportedBackend).toBe(expectedBackend);
   });

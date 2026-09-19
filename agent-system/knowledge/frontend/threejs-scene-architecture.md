@@ -474,8 +474,10 @@ cost as its budget.
 
 ### Which renderer a visitor gets, and the one direction the WebGPU probe is trusted
 
-Since 2026-09-19 the node renderer is the DEFAULT, not a flag. `rendererSelection.ts`
-decides, as a pure function, in this order:
+Since 2026-09-19 the node renderer is what EVERY visitor gets. `rendererSelection.ts`
+decides, as a pure function, in this order — and on the shipped default only the
+first three can change the answer, because the fourth is reached on the
+`where-webgpu-is-real` setting alone:
 
 1. **the parity harness**, which only exists in a build that sets
    `NEXT_PUBLIC_PARITY_HARNESS` and is the only caller allowed to name a renderer
@@ -492,8 +494,12 @@ decides, as a pure function, in this order:
    remount key therefore carries a `-recovered` suffix, because the classic
    renderer's own suffix is empty and React would otherwise keep the dead
    canvas
-4. **`navigator.gpu`** — `hardware` builds the node renderer, and `none`,
-   `absent` or `software` build the classic one
+4. **`navigator.gpu`**, on the `where-webgpu-is-real` setting only — `hardware`
+   builds the node renderer, and `none`, `absent` or `software` build the
+   classic one. **The shipped default never reaches this step**: it builds the
+   node renderer for everybody, so a browser without WebGPU gets
+   `WebGPURenderer` on its WebGL2 backend, with the 13.6 s forest first mount
+   that entails
 
 **The probe is a veto and never a promise, and that is what makes it compatible
 with §17's rejection of runtime renderer selection.** §17 is right that a
@@ -519,8 +525,25 @@ at module scope, so the app's many canvas remounts — one per world, per varian
 per interest chip — ask the driver once.
 
 `e2e/default-renderer-rollout.spec.ts` is the only spec that pins no renderer, and
-therefore the only one that measures this: SwiftShader draws `webgl`, the real
-driver draws `webgpu`, and neither draws `webgl2`.
+therefore the only one that measures this: SwiftShader draws `webgl2`, the real
+driver draws `webgpu`, and neither draws `webgl`. **The first of those had never
+been checked before this** — the parity harness's forced-WebGL2 leg runs only on
+the real-driver project, so nothing had ever put the node renderer on a stack
+with no WebGPU at all and asked whether it reaches a frame.
+
+**A CANVAS READ BACK WITH `drawImage` IS EMPTY ON THIS RENDERER, AND THAT NOW
+REACHES THE TEST SUITE.** `preserveDrawingBuffer` does not exist on
+`WebGPURenderer`, so `context.drawImage(canvas, …)` returns a CLEARED image
+rather than throwing — `ocean-look-down` computed statistics over one and
+reported "the frame has lost its colour to a pale layer" with a mean saturation
+of exactly 0 on five fixtures at once. Anything in `e2e/` that needs pixels must
+take a screenshot, which goes through the compositor, or go through the Stage 0
+capture bridge. The app's own still capture was already moved off the canvas by
+Stage 0; the suite had not been.
+
+**AND `toBeVisible` PASSES ON AN `opacity: 0` CANVAS**, which every screenshot
+spec was relying on a fast renderer to hide. See `e2e/sceneReveal.ts`, which
+also records why `scene-baseline` deliberately does NOT use the wait.
 
 ### The two backends of one renderer disagree about the first mount, in opposite directions
 

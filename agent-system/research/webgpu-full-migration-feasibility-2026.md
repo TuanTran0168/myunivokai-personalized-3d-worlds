@@ -23,18 +23,17 @@
 > into an offscreen render target instead, and it reproduces the canvas to 0.01-0.11 of 255 on all
 > three renderers. See §10.3, §26 Phase 9, and the roadmap's §2.
 >
-> **THE FLAG IS NO LONGER OFF. THE NODE RENDERER SHIPPED ON 2026-09-19**, to every browser
-> reporting a hardware WebGPU adapter and to no other. `NEXT_PUBLIC_NODE_RENDERER` is unset in every
-> deployment and unset now means ON; the two values that do something are a kill switch and
-> `every-visitor`. See the graphics upgrade roadmap's §2b.
+> **THE FLAG IS NO LONGER OFF. THE NODE RENDERER SHIPPED ON 2026-09-19, TO EVERYBODY.**
+> `NEXT_PUBLIC_NODE_RENDERER` is unset in every deployment and unset means `every-visitor`. The two
+> values that do something are `where-webgpu-is-real`, which gates on a hardware adapter, and a kill
+> switch. See the graphics upgrade roadmap's §2b.
 >
-> **THE SECOND BLOCKER WAS ROUTED AROUND RATHER THAN FIXED, AND THE DISTINCTION MATTERS.** The
+> **THE SECOND BLOCKER IS OPEN, KNOWN AND ACCEPTED — NOT CLOSED AND NOT ROUTED AROUND.** The
 > forest's first mount on the WebGL2 backend is still 13.6 s of blocked main thread against the
-> classic renderer's 3.6 s. Nothing made it faster. The roughly one fifth of visitors who would have
-> landed there now get the classic renderer instead, because `navigator.gpu` answering `none`,
-> `absent` or `software` selects it — the probe used as a VETO, which is sound in a way the PROMISE
-> §17 rejected would not be. Anything that later wants the fallback to carry traffic reopens this in
-> full.
+> classic renderer's 3.6 s, and nothing made it faster. For the length of one commit it was routed
+> around, by gating the renderer on `navigator.gpu`; the owner then chose to ship to everybody with
+> the number in hand. So roughly a fifth of visitors take that first mount, deliberately, and the
+> asset pipeline is what pays it down.
 >
 > **PHASE 13 WAS REVERTED ON 2026-09-18 — see its section, which is now about the reversal.** What
 > follows is what it found, which stands; what it built failed the parity ratchet and is out.

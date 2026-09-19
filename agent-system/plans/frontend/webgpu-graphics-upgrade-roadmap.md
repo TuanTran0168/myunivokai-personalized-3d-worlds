@@ -310,10 +310,10 @@ every visitor has, and a node-path transition shoot does not exist yet.
 ## 2b. The rollout itself — **ON 2026-09-19**
 
 **Gate: was the last one, and it is open.** Branch
-`feat/fe/webgpu-release-rollout`. `NEXT_PUBLIC_NODE_RENDERER` is unset in every
-deployment, and unset now means **the node renderer wherever the browser reports
-a real WebGPU adapter**. That is the release configuration; it is not a flag
-anybody has to remember to set.
+`feat/fe/webgpu-release-rollout`. **`NEXT_PUBLIC_NODE_RENDERER` is unset in every
+deployment, and unset means the node renderer for EVERY visitor** — read the
+subsection on the owner's decision below before the rest of this section, which
+describes the middle setting the default passed through on its way there.
 
 ### The blocker was routed around, not fixed, and the distinction is the point
 
@@ -325,10 +325,13 @@ still true.** What changed is who reaches it: an ordinary visit never selects
 the WebGL2 backend any more, because a browser without a hardware WebGPU adapter
 gets the classic renderer instead.
 
-So the blocker is not closed; it is **contained**, and it will reopen the moment
-anything wants the fallback to carry traffic. Stage 6's asset pipeline is where
-making it actually fast is aimed. Writing "blocker closed" here would be the
-Phase 13 failure mode in documentation form.
+So the blocker is not closed; it is **contained** — and on 2026-09-19 the owner
+chose to un-contain it. `every-visitor` puts the fallback back under real
+traffic, which means **the 13.6 s forest is live again for the ~20% without
+WebGPU**, deliberately and with the number in hand. Stage 6's asset pipeline is
+where making it actually fast is aimed, and that is no longer optional work.
+Writing "blocker closed" here would be the Phase 13 failure mode in
+documentation form.
 
 ### The probe is used as a veto, never as a promise
 
@@ -396,6 +399,57 @@ EMPTY — so a page that lost its device while on the node renderer would have
 produced the key it already had, React would have kept the dead canvas, and the
 recovery would silently not have happened. `rendererRemountSuffix` reads the
 decision rather than the choice, and adds `-recovered`.
+
+### THE OWNER TOOK THE DECISION THIS SECTION LEFT OPEN — `every-visitor`, 2026-09-19
+
+Everything above describes the middle setting, which was the default for the
+length of one commit. It is not the default any more. Shown the cost it buys and
+the cost it accepts, the owner's instruction was to set the variable and fix
+whatever broke, and **the default is now `every-visitor`: the node renderer for
+everybody, WebGL2 backend included.**
+
+It is set as a CODE DEFAULT and not as a deployment variable, and the reason is
+evidence rather than preference: `.env.local` is committed in this repository
+and carries `NEXT_PUBLIC_GATEWAY_BASE_URL=http://localhost:41800`, a value no
+deployed build could be using. That proves the Vercel deployment overrides this
+repository's env from its own dashboard, so a rollout living only in a file
+would be a rollout that silently did not happen — a bug `parityHarness.ts`
+records this project having shipped once already. `.env.local` sets it to the
+same value so local development and the Playwright build are explicit.
+
+**WHAT IT ACCEPTS.** The forest's 13593 ms of blocked main thread on the WebGL2
+backend, against the classic renderer's 3596 ms, for the roughly 20% of visitors
+with no WebGPU — and §19.5 says that figure is likely worse for this product,
+because caniuse weights global traffic while this audience is Vietnam-skewed and
+arrives through WebView-backed in-app browsers. Nothing in this branch made that
+number smaller. **Stage 6 is now the stage that pays this down, and it moved
+from last to first on the list.**
+
+**WHAT IT RESOLVES, AND THIS IS THE LARGER HALF.** §7 used to be blocked on a
+question nobody had answered: is the product allowed to look better on browsers
+with WebGPU? **With `every-visitor` the question dissolves, because the classic
+renderer stops shipping to anybody.** The 12.22 / 19.80 / 9.90 divergence stops
+being a per-browser difference in what people see and goes back to being what it
+was before the rollout — a comparison against a reference implementation that no
+visitor receives. `scene-parity` keeps its full value as a regression ratchet and
+loses its claim on what the product is allowed to look like.
+
+**So Stage 5's gate is open**, and it is the first time in this document that it
+has been.
+
+**MEASURED, AND THE MEASUREMENT IS NEW.** `e2e/default-renderer-rollout.spec.ts`
+now asserts the node renderer everywhere and derives only the BACKEND from the
+browser:
+
+| project | graphics stack | expected | drew |
+| --- | --- | --- | --- |
+| `desktop` | SwiftShader, no WebGPU | `webgl2` | **`webgl2`**, forest and universe |
+| `webgpu` | RTX 4060, real driver | `webgpu` | **`webgpu`**, forest and universe |
+
+The first row had never been checked. The harness's `webgpu-forcewebgl` leg runs
+only on the real-driver project, so **nothing in this suite had ever put the node
+renderer on a stack with no WebGPU at all and asked whether it reaches a frame.**
+It does.
 
 ### What the rollout does NOT do
 
@@ -681,11 +735,37 @@ Stage 6 and to anything that adds a model; it no longer blocks anything here.
 
 ## 7. Stage 5 — The effects the node path actually unlocks
 
-**Gate: SHUT, and the rollout changed what shutting it means — read this before
-the table.**
+**Gate: OPEN as of 2026-09-19, and it is the first time. Read why before the
+table, because the reason is not that anything here got easier.**
 
-**EVERY ROW BELOW NOW DIVERGES TWO SHIPPING RENDERERS, AND `scene-parity` IS A
-RATCHET THAT WILL SAY SO.** Until 2026-09-19 the node path shipped to nobody, so
+**THE `every-visitor` ROLLOUT DISSOLVED THIS STAGE'S BLOCKER BY REMOVING ONE OF
+THE TWO PATHS.** What follows was written when both renderers shipped, and it
+concluded — correctly at the time — that every row in the table would widen a
+visible per-browser difference and therefore needed a look decision from the
+owner. **The owner made a different decision that answers it: the classic
+renderer no longer ships to anybody** (§2b). `scene-parity` still ratchets, and
+should, but it now compares the shipping path against a reference implementation
+rather than against a second shipping path — which is what it was doing before
+the rollout, and what its recorded-debt design was built for.
+
+**So the question below is answered, and the answer is that there is no longer a
+two-speed look to authorise.** The paragraphs are kept rather than deleted
+because the reasoning is what makes the current state legible, and because
+reaching for the `where-webgpu-is-real` middle setting would bring the whole
+problem straight back.
+
+**ONE REAL CONSTRAINT SURVIVES AND IT IS NOW SHARPER.** Every effect here must
+work on the WebGL2 backend, because that backend now carries roughly 20% of
+visitors rather than nobody. A per-pixel raymarch that is free on WebGPU is not
+free there, and `ClusteredLightsNode` is the one item the table itself names as
+WebGL2-impossible — which under `every-visitor` makes it a look split between
+visitors, exactly the thing the rest of this stage no longer has.
+
+<details>
+<summary>The pre-rollout argument, kept because reverting to the middle setting restores it</summary>
+
+**EVERY ROW BELOW DIVERGED TWO SHIPPING RENDERERS, AND `scene-parity` IS A
+RATCHET THAT WOULD SAY SO.** Until 2026-09-19 the node path shipped to nobody, so
 an effect added to it was a change to an unreleased renderer and `scene-parity`
 measured how far the unreleased one had drifted from the released one. After the
 rollout **both paths carry real traffic** — the node renderer wherever WebGPU is
@@ -721,6 +801,8 @@ up by a canopy, a lens flare, screen-space reflections, subsurface scattering in
 leaves and jellyfish, a planet atmosphere — not one has a classic-path
 implementation, and `GodraysNode`, `SSRNode` and `ClusteredLightsNode` cannot
 have one.
+
+</details>
 
 **So Stage 5 is not gated on a measurement any more. It is gated on a decision
 nobody has made**, and it is the owner's rather than an agent's:

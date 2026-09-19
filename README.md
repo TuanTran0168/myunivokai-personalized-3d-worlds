@@ -311,41 +311,46 @@ sequenceDiagram
 
 ---
 
-## Rendering — two paths, one scene
+## Rendering — one renderer, two backends
 
-The repo ships **two complete renderers**, and which one you get depends on what
-your browser can run. `WebGPURenderer` — TSL node materials, three.js
-`RenderPipeline` — was built over Phases 0-13 of
+**Every visitor gets `WebGPURenderer`.** TSL node materials, three.js
+`RenderPipeline`, built over Phases 0-13 of
 [the migration study](agent-system/research/webgpu-full-migration-feasibility-2026.md)
-and **is now the default wherever the browser reports a real WebGPU adapter**.
-Everywhere else the scene is drawn by `WebGLRenderer`: GLSL materials, nine
-hand-written shaders, and the `postprocessing` composer.
+and made the default on 2026-09-19. Three.js then picks the backend by itself on
+`init()`: WebGPU where the browser has it, WebGL2 where it does not.
 
-**The split is decided by `navigator.gpu`, and only in one direction.** A
-browser that answers with a hardware adapter gets the node renderer — that is
-not a promise the device will be granted, and three's own fallback still handles
-the machine that reports an adapter and then refuses a device. A browser that
-answers `absent`, `none` or a software rasteriser gets the classic renderer,
-because the alternative is `WebGPURenderer` on its WebGL2 backend, and that
-backend blocks the main thread for **13.6 s on the forest's first mount against
-the classic renderer's 3.6 s**. Roughly a fifth of visitors are on that side of
-the line, and this is what keeps them off a measured regression.
+`WebGLRenderer` — GLSL materials, nine hand-written shaders, the `postprocessing`
+composer — is still here, still maintained and still photographed by the parity
+suite on every run. **It is no longer what anybody receives.** It is the
+reference implementation the node path is measured against, and the recovery
+target if a `GPUDevice` is lost mid-session.
 
-`NEXT_PUBLIC_NODE_RENDERER` is unset in every deployment, which is what selects
-the behaviour above. Two escapes exist: any of `0`/`off`/`false`/`no`/`disabled`
-is a kill switch that returns every visitor to the classic renderer with no code
-change, and `every-visitor` forces the node renderer even where WebGPU is
-absent — the only way to measure the WebGL2 backend in a real deployment, and
-not a value anybody types by accident.
+**What that costs, stated because it is measured and was accepted rather than
+missed.** On the WebGL2 backend the forest's first mount blocks the main thread
+for **13.6 s against the classic renderer's 3.6 s**, and underwater 2.9 s
+against 1.1 s. Roughly a fifth of visitors have no WebGPU and land there — likely
+more for this product, since that figure weights global traffic while this
+audience is Vietnam-skewed and arrives through WebView-backed in-app browsers.
+Nothing in this repo has made that faster yet; the asset pipeline is where the
+work is aimed.
 
-| | Classic path — no WebGPU | Node path — real WebGPU adapter |
+`NEXT_PUBLIC_NODE_RENDERER` is unset in every deployment, and unset is the
+setting above. Two escapes, both needing a frontend rebuild because
+`NEXT_PUBLIC_*` is inlined at build time:
+
+| value | what it does |
+| --- | --- |
+| `0`, `off`, `false`, `no`, `disabled` | kill switch — `WebGLRenderer` for everyone |
+| `where-webgpu-is-real` | `WebGPURenderer` only where `navigator.gpu` reports hardware; keeps the WebGPU win and gives up the WebGL2 backend's first mount |
+
+| | `WebGLRenderer` — reference and recovery | `WebGPURenderer` — what ships |
 | --- | --- | --- |
-| Renderer | `WebGLRenderer` | `WebGPURenderer`, WebGPU or WebGL2, chosen by three.js on `init()` |
+| Who gets it | nobody, unless the kill switch is set or a `GPUDevice` is lost | everybody |
+| Backend | WebGL2 | WebGPU, or WebGL2, chosen by three.js on `init()` |
 | Materials | GLSL `ShaderMaterial` + `onBeforeCompile` | TSL node graphs, one source for both backends |
 | Post-processing | `postprocessing` composer | three.js `RenderPipeline`, eight passes |
 | Device loss | no equivalent | `GPUDevice.lost` remounts onto the **classic** renderer |
 | Canvas readback | works | **empty** — `preserveDrawingBuffer` does not exist on this renderer |
-| Selected by | no WebGPU adapter, a software one, or the kill switch | `navigator.gpu` reporting hardware |
 | Scene stills and PNG export | read the canvas | rendered into an offscreen target, and within 0.11 of 255 of the canvas |
 
 Two things are worth knowing before touching either path.
@@ -365,20 +370,20 @@ closed that on 2026-09-19** by rendering the still into an offscreen render
 target rather than scraping the canvas; it now reproduces the canvas to between
 0.01 and 0.11 of 255 on all three renderers.
 
-The second was the WebGL2 backend's first mount, and **it is routed around
-rather than fixed**. The 13.6 s forest is still there on that backend, and
-nothing in this repo has made it faster; what changed is that no ordinary
-visitor is sent to it any more. That is a real limitation stated plainly: the
-node renderer's fallback backend remains four times the classic renderer's
-blocked first mount, `every-visitor` is the only way to reach it, and making it
-fast is where Stage 6's asset pipeline is aimed. The same roadmap is where the
-compute, HDR-compositing and particle work is planned, each stage behind the
-measurement that would otherwise be asserted rather than known.
+The second was the WebGL2 backend's first mount, and **it is open, known and
+accepted rather than closed**. The 13.6 s forest is still there and nothing has
+made it faster. It was briefly routed around — for the length of one commit the
+node renderer went only to browsers with real WebGPU — and then the owner chose
+to ship it to everybody anyway, with the number in hand. Making it fast is where
+the roadmap's asset-pipeline stage is aimed, and it stopped being optional work
+the moment that decision was taken.
 
-The two halves of that policy are checked on the two machines that can each
-exercise one — `e2e/default-renderer-rollout.spec.ts` pins no renderer and
-asserts that a SwiftShader browser draws with `webgl` while a real-driver
-browser draws with `webgpu`, and that neither ever lands on `webgl2`.
+`e2e/default-renderer-rollout.spec.ts` pins no renderer, which makes it the one
+spec that measures what an ordinary visit builds: a SwiftShader browser draws
+with `webgl2` and a real-driver browser with `webgpu`, and neither draws `webgl`.
+**The first of those had never been checked** — the parity harness's forced-WebGL2
+leg runs only on the real-driver machine, so nothing had ever put the node
+renderer on a stack with no WebGPU at all and asked whether it reaches a frame.
 
 ---
 
@@ -386,7 +391,7 @@ browser draws with `webgpu`, and that neither ever lands on `webgl2`.
 
 | Area | Technologies |
 | --- | --- |
-| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js (WebGPU where the browser has it, WebGL2 everywhere else), Web Audio API, Tailwind CSS |
+| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js `WebGPURenderer` (WebGPU backend where the browser has it, WebGL2 everywhere else), Web Audio API, Tailwind CSS |
 | **Backend** | Go (chi, pgxpool, zerolog), Rust (`telemetry-service`, sqlx, tokio) |
 | **Messaging & Cache** | NATS JetStream (durable events & commands), Core NATS (request-reply), Redis (rate limiting & cache) |
 | **Persistence** | PostgreSQL 17 (Database-per-service on Neon in production), Raw SQL (No ORM) |

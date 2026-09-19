@@ -86,7 +86,26 @@ export function nodeRendererEnvironmentVariableName(): string {
 export const NODE_RENDERER_ROLLOUT_OFF = "off";
 /** Node renderer wherever the browser actually has WebGPU. **The default.** */
 export const NODE_RENDERER_ROLLOUT_WHERE_WEBGPU_IS_REAL = "where-webgpu-is-real";
-/** Node renderer for everyone, WebGL2 backend included. For measuring, not for shipping. */
+/**
+ * Node renderer for everyone, WebGL2 backend included. **The default since
+ * 2026-09-19, by the owner's decision.**
+ *
+ * **WHAT THIS ACCEPTS, STATED PLAINLY BECAUSE IT IS MEASURED AND NOT A RISK.**
+ * A browser with no WebGPU gets `WebGPURenderer` on its WebGL2 backend, and §26
+ * Phase 13 measured that backend blocking the main thread for **13593 ms on the
+ * forest's first mount against the classic renderer's 3596 ms**, and 2872 ms
+ * against 1129 ms underwater. §19.5 puts roughly 20% of visitors there, and
+ * says the real figure is likely worse for this product: caniuse weights global
+ * traffic, this audience is Vietnam-skewed, and the in-app browsers a shared
+ * universe link arrives through — Facebook, Instagram, TikTok, Zalo — are
+ * WebView-backed and unverified.
+ *
+ * **WHAT IT BUYS.** One renderer for everybody. The classic path stops being a
+ * second shipping implementation that has to be kept in visual step with this
+ * one — which is what the 12.22 / 19.80 / 9.90 divergence between the two was
+ * about — and every effect the node path unlocks reaches every visitor rather
+ * than the WebGPU share of them.
+ */
 export const NODE_RENDERER_ROLLOUT_EVERY_VISITOR = "every-visitor";
 
 export type NodeRendererRollout =
@@ -107,43 +126,68 @@ export type NodeRendererRollout =
  */
 const ROLLOUT_VALUES_MEANING_OFF = ["0", "off", "false", "no", "disabled"];
 
-/** The one spelling that opts a build into the node renderer without a WebGPU check. */
-const ROLLOUT_VALUE_MEANING_EVERY_VISITOR = "every-visitor";
+/** The one spelling that opts a build back into the WebGPU-gated middle setting. */
+const ROLLOUT_VALUE_MEANING_WHERE_WEBGPU_IS_REAL = "where-webgpu-is-real";
 
 /**
- * WHICH ROLLOUT THIS BUILD SHIPS — and the default is now ON.
+ * WHICH ROLLOUT THIS BUILD SHIPS — and the default is `every-visitor`.
  *
- * **Unset means `where-webgpu-is-real`**, which is the release configuration:
- * a visitor whose browser has a real WebGPU adapter gets the node renderer, and
- * everyone else gets the classic renderer they get today. The frontend is
- * deployed on Vercel and this variable is set nowhere in this repository, so
- * "unset" is what production reads — the default IS the rollout.
+ * **Unset means the node renderer for EVERY visitor, WebGL2 backend included.**
+ * The owner took that decision on 2026-09-19, after being shown the cost it
+ * buys and the cost it accepts, in those words: *set it, and if something
+ * breaks we fix it*. What it accepts is written out in
+ * `NODE_RENDERER_ROLLOUT_EVERY_VISITOR` and is not softened here.
  *
- * Two escapes, both explicit:
+ * # Why this is a code default rather than a deployment variable
  *
- *   - any of `ROLLOUT_VALUES_MEANING_OFF` → the classic renderer for everyone,
- *     which is a kill switch that needs no code change and no rebuild of
- *     anything but the frontend.
- *   - `every-visitor` → the node renderer even where WebGPU is absent, which is
- *     what the flag used to mean when it was set to `1`. It is kept because it
- *     is the only way to measure the WebGL2 backend in a real deployment, and
- *     it is deliberately NOT a value anybody would type by accident.
+ * It was set here rather than in `.env.local` because `.env.local` cannot reach
+ * production. That file is committed, but it carries
+ * `NEXT_PUBLIC_GATEWAY_BASE_URL=http://localhost:41800` — a value no deployed
+ * build could be using — which proves the Vercel deployment overrides this
+ * repository's env from its own dashboard. A rollout that lived in a file
+ * production does not read would be a rollout that silently did not happen, and
+ * `parityHarness.ts` records this project having shipped exactly that bug once
+ * before.
+ *
+ * `.env.local` sets it too, to the same value, so that local development and
+ * the Playwright build are explicit rather than relying on a default. The two
+ * agreeing is deliberate; if they ever disagree, the variable wins and the
+ * deployment is the one to check.
+ *
+ * # The escapes, in the order a person reaches for them
+ *
+ *   - any of `ROLLOUT_VALUES_MEANING_OFF` → the classic renderer for everyone.
+ *     The kill switch. One environment variable and a rebuild of the frontend,
+ *     no code change, no revert.
+ *   - `where-webgpu-is-real` → the node renderer only where `navigator.gpu`
+ *     reports a hardware adapter. **This was the default for the length of one
+ *     commit** and is the middle setting: it keeps the WebGPU win and gives up
+ *     the WebGL2 backend's first mount. It is what to reach for if
+ *     `every-visitor` turns out to cost more than it is worth, before reaching
+ *     for the kill switch.
  */
 export function nodeRendererRollout(): NodeRendererRollout {
   // Statically analysable on purpose — see the note above. A `process.env[key]`
   // lookup reads `{}` in the browser bundle, and it has happened here before.
   const configured = process.env.NEXT_PUBLIC_NODE_RENDERER;
   if (configured === undefined || configured.trim() === "") {
-    return NODE_RENDERER_ROLLOUT_WHERE_WEBGPU_IS_REAL;
+    return NODE_RENDERER_ROLLOUT_EVERY_VISITOR;
   }
   const normalised = configured.trim().toLowerCase();
   if (ROLLOUT_VALUES_MEANING_OFF.includes(normalised)) {
     return NODE_RENDERER_ROLLOUT_OFF;
   }
-  if (normalised === ROLLOUT_VALUE_MEANING_EVERY_VISITOR) {
-    return NODE_RENDERER_ROLLOUT_EVERY_VISITOR;
+  if (normalised === ROLLOUT_VALUE_MEANING_WHERE_WEBGPU_IS_REAL) {
+    return NODE_RENDERER_ROLLOUT_WHERE_WEBGPU_IS_REAL;
   }
-  return NODE_RENDERER_ROLLOUT_WHERE_WEBGPU_IS_REAL;
+  // ANYTHING ELSE IS THE DEFAULT, INCLUDING `every-visitor` ITSELF AND THE OLD
+  // `1`. The unrecognised value is the one worth thinking about: it now lands on
+  // the most aggressive setting rather than the safest, which is the price of
+  // making the default the aggressive one. It is paid down by
+  // ROLLOUT_VALUES_MEANING_OFF accepting every plausible spelling of off, so the
+  // typo that matters — someone trying to disable this in an incident — is the
+  // one that still works.
+  return NODE_RENDERER_ROLLOUT_EVERY_VISITOR;
 }
 
 export type RendererSelectionInputs = {
@@ -177,36 +221,35 @@ export type RendererSelectionInputs = {
 /**
  * Which renderer to build.
  *
- * # A lost device now recovers onto the CLASSIC renderer, and that REVERSED on 2026-09-19
+ * # A lost device recovers onto the CLASSIC renderer, and that REVERSED on 2026-09-19
  *
- * It used to recover onto `WebGPURenderer` with `forceWebGL: true`, on three
- * reasons. Two of them still stand and the third does not, and the third was
- * load-bearing:
+ * It used to recover onto `WebGPURenderer` with `forceWebGL: true`. §18.3(b)
+ * gave three reasons; the argument is now made on one measurement instead.
  *
- *   - *It keeps Architecture A.* True, and still a cost of changing it: the
- *     remounted scene rebuilds every material through the other implementation.
- *     But the canvas is being thrown away and rebuilt either way, so this is a
- *     different rebuild rather than an extra one.
- *   - *A lost `GPUDevice` says nothing about WebGL2.* Still true. The device was
- *     lost, not the GPU.
- *   - *It is a configuration that ships anyway — roughly 20% of visitors get the
- *     WebGL2 backend from the start (§19.5).* **This is no longer true.** The
- *     rollout sends browsers without WebGPU to the classic renderer, so the
- *     WebGL2 backend ships to nobody: it is reachable only by the harness, by
- *     `every-visitor`, and — until this change — by a lost device.
+ * **THE REASONING HERE WAS REWRITTEN THE SAME DAY IT WAS WRITTEN, AND THE FIRST
+ * VERSION IS WORTH ONE LINE.** It argued that the WebGL2 backend "ships to
+ * nobody" after the rollout, which was true for the length of one commit —
+ * while the default was `where-webgpu-is-real`. The owner then set the default
+ * to `every-visitor`, which puts roughly 20% of visitors back on that backend,
+ * and the premise died. The conclusion did not, so the conclusion is restated
+ * from what survives rather than left standing on a dead reason.
  *
- * With that third reason gone, the two remaining are weighed against a
- * measurement: the WebGL2 backend blocks the main thread for **13593 ms on the
- * forest's first mount against the classic renderer's 3596 ms** (§26 Phase 13).
- * Recovering onto it would mean answering a dead GPU with this app's slowest
- * possible remount, at the moment a visitor is already looking at a broken
- * scene — and answering it with the path that 20% of visitors use all day
- * instead costs a rebuild that was going to happen regardless.
+ * **WHAT SURVIVES IS THE NUMBER.** The WebGL2 backend blocks the main thread
+ * for **13593 ms on the forest's first mount against the classic renderer's
+ * 3596 ms** (§26 Phase 13). A page that has lost its `GPUDevice` is rebuilding
+ * its canvas either way, so the choice is only WHICH rebuild — and answering a
+ * dead GPU with this app's slowest possible remount, at the moment the visitor
+ * is already looking at a broken scene, is the worst of the two.
  *
- * **It also closes the last hole in the rollout's own claim.** Refusing to send
- * ordinary visitors to a backend measured at four times the classic renderer's
- * first mount, and then sending them there on device loss, would have been the
- * policy contradicting itself in the one case nobody watches.
+ * **AND THE CLASSIC RENDERER IS NOT A STUB**, which is the objection this has to
+ * answer now that it ships to nobody by default. `scene-parity` pins it as the
+ * baseline on every fixture of every run, so it is the most continuously
+ * photographed renderer in this repository. Recovery lands on tested code.
+ *
+ * The two surviving §18.3(b) reasons are real and are outweighed: keeping
+ * Architecture A costs a rebuild through the other implementation, and a lost
+ * `GPUDevice` genuinely says nothing about WebGL2. Neither buys back ten
+ * seconds.
  */
 export type RendererDecision = {
   /** The renderer to build — or the safe one to fall back on if `isDecided` is false. */
@@ -271,12 +314,13 @@ export function rendererDecisionFor(inputs: RendererSelectionInputs): RendererDe
   if (inputs.webgpuAdapter === null) {
     return { choice: RENDERER_CHOICE_CLASSIC, isDecided: false, recoversFromDeviceLoss: false };
   }
-  // HARDWARE AND NOTHING ELSE. `software` is the trap worth naming: Chrome
-  // falls back to SwiftShader for WebGPU on configurations where WebGL is still
-  // hardware-accelerated, so an adapter that answers `swiftshader` describes a
-  // machine that would render every node frame on the CPU while the classic
-  // renderer it just left was using the GPU. `none` and `absent` are the ~20%
-  // with no WebGPU at all, and they are what this veto was built for.
+  // HARDWARE AND NOTHING ELSE — REACHED ONLY ON THE `where-webgpu-is-real`
+  // SETTING, which is no longer the default. `software` is the trap worth
+  // naming: Chrome falls back to SwiftShader for WebGPU on configurations where
+  // WebGL is still hardware-accelerated, so an adapter that answers
+  // `swiftshader` describes a machine that would render every node frame on the
+  // CPU while the classic renderer it just left was using the GPU. `none` and
+  // `absent` are the ~20% with no WebGPU at all.
   return {
     choice: inputs.webgpuAdapter === WEBGPU_ADAPTER_HARDWARE ? RENDERER_CHOICE_NODE : RENDERER_CHOICE_CLASSIC,
     isDecided: true,

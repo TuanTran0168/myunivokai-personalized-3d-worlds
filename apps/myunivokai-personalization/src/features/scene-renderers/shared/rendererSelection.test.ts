@@ -253,24 +253,28 @@ describe("nodeRendererRollout", () => {
   });
 
   /**
-   * **UNSET IS ON.** The frontend deploys on Vercel and this variable is set
-   * nowhere in this repository, so "unset" is what production reads — the
-   * default IS the rollout, and this test is the only place that says so
+   * **UNSET IS THE MOST AGGRESSIVE SETTING, BY THE OWNER'S DECISION OF
+   * 2026-09-19.** The Vercel deployment overrides this repository's env from its
+   * own dashboard — `.env.local` still carries `localhost:41800` for the gateway,
+   * which no deployed build could be using — so a rollout that lived only in a
+   * file would be a rollout that silently did not happen. The default is where
+   * production reads it from, and this test is the only place that says so
    * executably.
    */
-  it("defaults to the WebGPU-gated rollout when nothing is configured", () => {
+  it("defaults to the every-visitor rollout when nothing is configured", () => {
     vi.stubEnv("NEXT_PUBLIC_NODE_RENDERER", undefined);
-    expect(nodeRendererRollout()).toBe(NODE_RENDERER_ROLLOUT_WHERE_WEBGPU_IS_REAL);
+    expect(nodeRendererRollout()).toBe(NODE_RENDERER_ROLLOUT_EVERY_VISITOR);
     vi.stubEnv("NEXT_PUBLIC_NODE_RENDERER", "   ");
-    expect(nodeRendererRollout()).toBe(NODE_RENDERER_ROLLOUT_WHERE_WEBGPU_IS_REAL);
+    expect(nodeRendererRollout()).toBe(NODE_RENDERER_ROLLOUT_EVERY_VISITOR);
   });
 
   /**
-   * **FLIPPING THE DEFAULT FLIPPED WHICH TYPO IS DANGEROUS.** While the rollout
-   * shipped off, only `1` could enable it and a mistyped `false` was harmless.
-   * Now an unrecognised value ENABLES the thing a deploy meant to switch off, so
-   * every plausible spelling of "off" has to be recognised — that is what this
-   * test is protecting, not the strings themselves.
+   * **THE KILL SWITCH IS THE ONE THING THAT MUST NOT BE FRAGILE**, and it is the
+   * only escape from the default that an incident reaches for under pressure.
+   * An unrecognised value now lands on the MOST aggressive setting rather than
+   * the safest, which is the price of making the default aggressive; the price
+   * is paid down here, by accepting every plausible spelling of off. That is
+   * what this test protects, not the strings themselves.
    */
   it("accepts every plausible spelling of off, in any case", () => {
     for (const configured of ["0", "off", "false", "no", "disabled", "OFF", " False ", "No"]) {
@@ -279,20 +283,27 @@ describe("nodeRendererRollout", () => {
     }
   });
 
-  it("opts into the unguarded rollout only for the one deliberate spelling", () => {
-    vi.stubEnv("NEXT_PUBLIC_NODE_RENDERER", "every-visitor");
-    expect(nodeRendererRollout()).toBe(NODE_RENDERER_ROLLOUT_EVERY_VISITOR);
+  /**
+   * **THE MIDDLE SETTING IS WHAT TO REACH FOR BEFORE THE KILL SWITCH**, and it
+   * needs a spelling of its own because it is no longer the default. It keeps
+   * the WebGPU win and gives up the WebGL2 backend's first mount, which is the
+   * single thing `every-visitor` accepts.
+   */
+  it("opts back into the WebGPU-gated rollout for the one deliberate spelling", () => {
+    vi.stubEnv("NEXT_PUBLIC_NODE_RENDERER", "where-webgpu-is-real");
+    expect(nodeRendererRollout()).toBe(NODE_RENDERER_ROLLOUT_WHERE_WEBGPU_IS_REAL);
   });
 
   /**
-   * `1` was the old "on", and a deploy still carrying it must not be broken by
-   * the rename. It now means the guarded rollout, which is the safer of the two
-   * things it could have meant.
+   * `1` was the old "on" and `every-visitor` is the current default's own name;
+   * a deploy carrying either means "on", and both land where the default is.
+   * `nonsense` is here to pin the direction an unrecognised value falls in, which
+   * is the aggressive one and is a deliberate trade rather than an oversight.
    */
-  it("reads the old on-value, and anything unrecognised, as the guarded rollout", () => {
-    for (const configured of ["1", "true", "on", "yes", "nonsense"]) {
+  it("reads the old on-value, its own name, and anything unrecognised, as the every-visitor rollout", () => {
+    for (const configured of ["1", "true", "on", "yes", "every-visitor", "nonsense"]) {
       vi.stubEnv("NEXT_PUBLIC_NODE_RENDERER", configured);
-      expect(nodeRendererRollout()).toBe(NODE_RENDERER_ROLLOUT_WHERE_WEBGPU_IS_REAL);
+      expect(nodeRendererRollout()).toBe(NODE_RENDERER_ROLLOUT_EVERY_VISITOR);
     }
   });
 });
