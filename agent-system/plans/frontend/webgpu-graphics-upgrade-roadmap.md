@@ -44,6 +44,9 @@ forest and a **2.9 s** freeze underwater.
 **2. There is therefore a SECOND rollout blocker, and this plan named only one.**
 Stage 0's canvas readback is real. So is the forest's fallback first mount. A
 rollout gated only on the readback would ship the freeze.
+**Stage 0 was built on 2026-09-19 and the first of those two is now closed. The
+forest's fallback first mount is the one that remains**, and it is the whole of
+what stands between this and a rollout decision.
 
 **3. Stage 3's premise was half wrong in the app's favour.** The linear HDR
 buffer it proposes to introduce is **already the default** — `Renderer` defaults
@@ -83,70 +86,138 @@ Everything in this section is measured, and each number names where.
 | First mount, blocked main thread | node/WebGPU below classic on every fixture. **node/WebGL2 is below it on ONE of four** — see §0 | §26 Phases 11, 13 |
 | node/WebGL2 against classic, blocked | universe 1244 vs 2094 · forest **13593 vs 3596** · ocean 2872 vs 1129 · surface 307 vs 214 ms | §26 Phase 13 |
 | HDR compositing | **already the default** on the node chain; the ocean is the one family without a chain | `Renderer` `outputBufferType`, `PassNode` |
-| Canvas readback | **broken on both node backends** — `preserveDrawingBuffer` does not exist there | §26 Phase 9 |
+| Canvas readback | still broken on both node backends, and **nothing depends on it since Stage 0** — the still is rendered into an offscreen target instead | §26 Phase 9, Stage 0 |
 | Steady-state frame cost | **measured 2026-09-18** — forest 7.40 ms a frame classic against 1.00 ms node; see Stage 1 | `sustained-load.spec.ts` |
 | GPU compute in the app | none | §15 |
 
-Two of those rows are the whole reason this document is ordered the way it is.
-The readback is what keeps the flag off, so nothing below reaches a visitor
-until it is fixed. And the missing frame rate is what makes every performance
-claim below unfalsifiable until Stage 1 exists.
+Two of those rows were the whole reason this document was ordered the way it
+is, and **both are now closed**: Stage 1 built the frame-cost instrument on
+2026-09-18 and Stage 0 replaced the canvas readback on 2026-09-19. What keeps
+the flag off today is the forest's 13.6 s fallback first mount, which is a
+performance problem rather than a correctness one — a different argument, and one
+this plan does not yet make.
 
 ---
 
-## 2. Stage 0 — Stop reading the canvas (one of the two rollout blockers)
+## 2. Stage 0 — Stop reading the canvas — **BUILT 2026-09-19**
 
-**Gate: open. This is the next piece of work, and nothing else here starts
-before it.**
+**Gate: was open, and it is done.** Branch `feat/fe/webgpu-graphics-stages`. One of
+the two rollout blockers is cleared; the forest's fallback first mount (§0 item
+2) is the other and is untouched.
 
 **The defect.** `WebGPURendererParameters` does not declare
 `preserveDrawingBuffer`, and the string appears zero times in
 `three.webgpu.js` against twice in `three.module.js`. Both node backends
-therefore read back a fully transparent canvas — 0 of 256 samples carrying
-alpha, against 256 of 256 on the classic renderer. The WebGL2 backend failing
-too is what rules out WebGPU present-time semantics as the explanation: it is
-the same graphics API as the row that works.
+therefore read back an EMPTY canvas — **0 of 256 samples carrying alpha AND 0 of
+256 carrying colour**, against 256 and 256 on the classic renderer. The WebGL2
+backend failing too is what rules out WebGPU present-time semantics: it is the
+same graphics API as the row that works. The buffer is cleared, not transparent,
+so there was never a one-parameter fix.
 
-**Two features read that buffer.** `features/transitions/sceneStill.ts` already
-fails safe and the caller cuts. `lib/exportImage.ts` now refuses rather than
-downloading a transparent PNG. Both are guards, not fixes: with the flag on, a
-visitor loses the download button and every scene change becomes a hard cut.
+### What was built
 
-**Measured 2026-09-18, and it settles which defect this is.** The diagnostic
-used to report only "0 of 256 samples carry alpha", which cannot tell a buffer
-that was cleared from a buffer whose alpha channel is zero — and those need
-completely different fixes, one a renderer parameter and one a rewrite. It now
-counts colour separately. The answer on both node backends is **0/256 alpha and
-0/256 colour**, against 256/256 and 256/256 on the classic renderer: the buffer
-is empty, not transparent. There is no cheap fix.
+**The picture is rendered rather than scraped**, by a bridge mounted inside the
+canvas on the node path only — `SceneStillBridge.tsx` — which registers a source
+that `captureSceneStill` asks before it touches a canvas. **On the classic path
+nothing registers and nothing changed.** That is deliberate: the one path with
+traffic on it reads back correctly today, and putting it at risk to fix the one
+without traffic would be the wrong trade.
 
-**The fix is to render the picture instead of scraping it.** An offscreen render
-target, drawn on demand, read back with `readRenderTargetPixelsAsync`.
+**`setOutputRenderTarget`, not `setRenderTarget`, and the difference is not
+cosmetic.** `Renderer.isOutputTarget` is
+`this._renderTarget === this._outputRenderTarget || this._renderTarget === null`
+(`three.webgpu.js:61704`), and `currentToneMapping` / `currentColorSpace`
+collapse to `NoToneMapping` and the working colour space whenever it is false
+(`:61681`, `:61693`). A still taken through `setRenderTarget` therefore
+comes back **linear and un-tone-mapped** — a dark, flat, plausible-looking
+picture that nothing would have flagged. Through `setOutputRenderTarget` three
+treats the target exactly as it treats the canvas: `_getFrameBufferTarget()`
+builds the half-float intermediate (`:60625`), the scene renders into it, and
+`_renderOutput()` writes the tone-mapped, converted result into the target
+(`:60957`). The still is the same arithmetic as the frame on screen rather
+than a second one written by this app.
 
-**It is NOT one implementation for both paths, and this plan said it was.** The
-two methods share a name and nothing else: `WebGLRenderer`'s takes
-`( renderTarget, x, y, width, height, buffer, activeCubeFaceIndex, textureIndex )`
-and fills a buffer the caller allocates; the node `Renderer`'s takes
-`( renderTarget, x, y, width, height, textureIndex, faceIndex )` and returns the
-data itself. A single call site cannot serve both, so the capture needs a small
-per-renderer adapter — which is a dozen lines, not a redesign, but it has to be
-in the plan rather than discovered.
+**The two node backends disagree about what a readback IS, and both had to be
+corrected.** This is the part that would have shipped a plausible wrong picture:
 
-**What makes it a piece of work rather than a patch, and it is the honest
-reason it is not in Phase 13.** The readback becomes asynchronous, and all three
-call sites are synchronous today for reasons that are written down:
-`page.tsx:388` captures one statement before the state update that would destroy
-the frame; `WorldTransition.tsx:244` captures inside a `requestAnimationFrame`
-loop whose own comment says *"Everything about the pacing depends on this line
-not moving earlier"*; `GenieReveal.tsx:83` captures inside an effect. An `await`
-in the middle of those is a scheduling change to the transition system, in the
-one part of this app whose documented design is built around knowing when the
-main thread is idle. It needs its own branch, its own before/after shoot, and
-`world-transition.spec.ts` re-run.
+| | rows | padding |
+| --- | --- | --- |
+| WebGPU, `copyTextureToBuffer` | top-down, the texture's own order | **every row padded to 256 bytes** (`:77012-77015`) |
+| WebGL2, `gl.readPixels` | **bottom-up**, the framebuffer's origin | none, rows are tight (`:70159`) |
 
-**Done means:** the export produces a real PNG on all three renderers, the
-transitions warp a real still on all three, and the RATCHET in
-`e2e/node-path-diagnostic.spec.ts` is deleted rather than inverted.
+So the returned array is not `width * height * 4` bytes long unless the width
+happens to be a multiple of 64, and one of the two backends is upside down.
+`sceneStillCapture.test.ts` tests both corrections as arithmetic, including the
+width at which a missing de-pad would pass unnoticed.
+
+**And the capture target is `LinearSRGBColorSpace` on purpose.** `_renderOutput`
+encodes to the output colour space in the shader; a target carrying
+`SRGBColorSpace` would be created as `rgba8unorm-srgb` (`:77805`) and the
+hardware would encode a second time.
+
+### The capture became asynchronous, and three call sites had to keep their order
+
+`Renderer.readRenderTargetPixelsAsync` is the only readback the node renderer
+has — there is no synchronous twin anywhere in `three.webgpu.js`. Each site's
+ordering constraint was written down and each is now held across an `await`:
+
+- **`page.tsx`'s family switch.** The state update that matters is
+  `setRenderedWorldFamily`, which is what the `<Canvas>` is keyed on, and it is
+  still on the far side. `setWorldFamily` moved to the NEAR side on purpose: it
+  drives the picker, not the canvas, and a picker that waits for a GPU readback
+  before it highlights is a click that feels dropped.
+- **`WorldTransition.tsx`'s arrival still**, captured inside a `requestAnimationFrame`
+  loop whose comment forbids moving the destination mount earlier. The capture
+  did not move: the HOLD now stays on screen until the readback lands, with the
+  loader still running and the phase unchanged. The hold already had a floor and
+  no ceiling, so waiting longer there was already the expected behaviour.
+- **`GenieReveal.tsx`'s reveal**, where the wait is free because the overlay has
+  not been drawn yet — with a cancellation flag, because a reveal can now be
+  torn down before its first frame.
+
+**The download no longer refuses.** `lib/exportImage.ts`'s blank-canvas guard was
+the right thing to ship and the wrong thing to keep: it made the button dead on
+the node path. It is gone, and the export takes the still at the renderer's
+NATIVE resolution rather than the warp's capped one — a file a visitor keeps is
+worth every pixel the frame had.
+
+### What it measures, and the finding nobody was looking for
+
+`e2e/scene-still-capture.spec.ts`, four fixtures by three renderers, comparing
+the capture against a Playwright screenshot of the canvas element.
+
+**The still reproduces the canvas to between 0.01 and 0.11 of 255 on all twelve
+legs.** Row order, row padding, tone curve and colour space are each exercised
+on both backends and each lands.
+
+**Getting there produced a fact about this app that was not known: AN EXTRA
+FRAME IS NOT FREE.** The capture renders one more frame, and the first
+comparison read 16 to 21 of 255 on the universe and the forest. Everything
+obvious was ruled out by measurement — not a stale canvas, not a drifting scene
+(`readSceneState` reports the same clock, camera and world-position checksum on
+both sides, and two captures agree to 0.02), not the post chain, not the
+readback. What answered it was asking the canvas to repaint itself at the clock
+it is already at: **a zero delta, nothing to integrate, and the repainted canvas
+still differs from the frame before it by 16 to 36 of 255 — on the classic
+renderer as much as on the node ones.** Something in this app advances per FRAME
+rather than per DELTA. The spec now measures that per leg and uses it as the
+budget, and the still comes in two orders of magnitude inside it.
+
+A hand-recorded divergence table was written against the first reading —
+universe 16.93, forest 20.52 — and thrown away. It was recording the
+measurement's own methodology as if it were the app's defect, which is the
+failure mode §26 Phase 13 shipped.
+
+**The ratchet in `node-path-diagnostic.spec.ts` is deleted rather than inverted**,
+which is the ending it asked for in its own comment. The canvas still reads back
+empty and nothing depends on it any more, so an assertion either way would pin a
+fact the app stopped consulting. The number is still printed.
+
+**What this does NOT do.** It does not make the canvas readable — `toDataURL` on
+a node-renderer canvas is still blank, and any future code that reaches for it
+will still get nothing. It does not re-run the transition suite on the node
+path: `world-transition.spec.ts` runs on the classic renderer, which is what
+every visitor has, and a node-path transition shoot does not exist yet.
 
 ---
 

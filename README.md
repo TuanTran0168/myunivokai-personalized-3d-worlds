@@ -326,7 +326,8 @@ It is gated behind `NEXT_PUBLIC_NODE_RENDERER=1` and **ships off**.
 | Materials | GLSL `ShaderMaterial` + `onBeforeCompile` | TSL node graphs, one source for both backends |
 | Post-processing | `postprocessing` composer | three.js `RenderPipeline`, eight passes |
 | Device loss | no equivalent | `GPUDevice.lost` remounts onto the WebGL2 backend |
-| Canvas readback | works | **broken** — `preserveDrawingBuffer` does not exist on this renderer |
+| Canvas readback | works | **empty** — `preserveDrawingBuffer` does not exist on this renderer |
+| Scene stills and PNG export | read the canvas | rendered into an offscreen target, and within 0.11 of 255 of the canvas |
 
 Two things are worth knowing before touching either path.
 
@@ -336,13 +337,21 @@ client render report is read off the renderer INSTANCE rather than off the flag
 that built it — a value derived from what the build asked for would count that
 population as WebGPU and measure nothing.
 
-**The flag is off for one reason, and it is not visual parity.** Both node
-backends read back a fully transparent canvas, which breaks the image export and
-every scene transition. Closing that is Stage 0 of
-[the graphics upgrade roadmap](agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md),
-which is also where the compute, HDR-compositing and particle work is planned —
-each stage behind the measurement that would otherwise be asserted rather than
-known.
+**The flag is off for one reason, and it has never been visual parity.** It used
+to be the canvas readback: both node backends read an EMPTY canvas — 0 of 256
+samples carrying alpha and 0 of 256 carrying colour — which killed the image
+export and every scene transition. **Stage 0 of
+[the graphics upgrade roadmap](agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md)
+closed that on 2026-09-19** by rendering the still into an offscreen render
+target rather than scraping the canvas; it now reproduces the canvas to between
+0.01 and 0.11 of 255 on all three renderers.
+
+What keeps the flag off now is the forest's first mount on the WebGL2
+backend — 13.6 s of blocked main thread against the classic renderer's 3.6 s,
+for roughly a fifth of visitors. That is a performance decision rather than a
+correctness one, and nobody has made it yet. The same roadmap is where the
+compute, HDR-compositing and particle work is planned, each stage behind the
+measurement that would otherwise be asserted rather than known.
 
 ---
 

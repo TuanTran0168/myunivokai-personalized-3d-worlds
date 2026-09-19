@@ -1,15 +1,7 @@
+import { captureSceneStillAtNativeResolution } from "@/features/transitions/sceneStill";
+
 const EXPORTED_IMAGE_MIME_TYPE = "image/png";
 const EXPORTED_FILE_NAME_MAXIMUM_LENGTH = 60;
-
-/**
- * How coarsely the canvas is sampled to decide whether it read back at all.
- *
- * A blank readback is blank everywhere, so a 16x16 grid answers the question
- * for the cost of one tiny `drawImage` — against a full-resolution
- * `getImageData` on a 4K canvas, which would allocate 33 MB to look at pixels
- * that are all the same.
- */
-const BLANK_PROBE_GRID_SIZE = 16;
 
 function sanitizeFileName(rawFileName: string): string {
   const sanitized = rawFileName
@@ -21,72 +13,42 @@ function sanitizeFileName(rawFileName: string): string {
 }
 
 /**
- * Whether this canvas still holds an image, asked the way `sceneStill.ts` asks
- * it.
+ * Downloads the 3D scene as a PNG file, on whichever renderer drew it.
  *
- * **THIS IS NOT DEFENSIVE PROGRAMMING, IT IS A MEASURED CASE.** §26 Phase 9
+ * **THIS USED TO REFUSE ON THE NODE RENDERER AND NO LONGER HAS TO.** §26 Phase 9
  * measured the readback on all three renderers, same fixture, same machine:
  *
  *     WebGLRenderer                256/256 samples carry alpha
  *     WebGPURenderer / WebGPU        0/256
  *     WebGPURenderer / WebGL2        0/256
  *
- * The cause is one line that does not exist: `preserveDrawingBuffer` appears
- * twice in `three.module.js` (`:16074` reads it from the parameters, `:16372`
- * hands it to `getContext`) and **zero times in `three.webgpu.js`**.
- * `WebGPURendererParameters` does not declare it, so it cannot be requested on
- * either backend — the WebGL2 one fails for the same reason as the WebGPU one,
- * which is what rules out WebGPU present-time semantics as the explanation.
+ * The cause is one line that does not exist — `preserveDrawingBuffer` appears
+ * twice in `three.module.js` and zero times in `three.webgpu.js` — so this file
+ * carried a guard that detected a blank canvas and returned false rather than
+ * downloading a transparent rectangle and reporting success. That guard was the
+ * right thing to ship and the wrong thing to keep: it made the download button
+ * dead on a fifth of the renderers the rollout will produce.
  *
- * Without this check the download button would hand the visitor a fully
- * transparent PNG and report success. `features/transitions/sceneStill.ts`
- * already fails safe on the same signal — it returns null and the caller cuts
- * instead of warping a transparent rectangle — and this is the site that did
- * not.
- */
-function canvasReadsBackBlank(sceneCanvas: HTMLCanvasElement): boolean {
-  const probe = document.createElement("canvas");
-  probe.width = BLANK_PROBE_GRID_SIZE;
-  probe.height = BLANK_PROBE_GRID_SIZE;
-  const probeContext = probe.getContext("2d");
-  if (!probeContext) {
-    // No 2D context to check with. Not being able to ask is not an answer, so
-    // the export goes ahead rather than being refused on a guess.
-    return false;
-  }
-  probeContext.drawImage(sceneCanvas, 0, 0, BLANK_PROBE_GRID_SIZE, BLANK_PROBE_GRID_SIZE);
-  const pixels = probeContext.getImageData(0, 0, BLANK_PROBE_GRID_SIZE, BLANK_PROBE_GRID_SIZE).data;
-  for (let index = 0; index < pixels.length; index += 4) {
-    if (pixels[index + 3] > 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Downloads the 3D canvas inside the given container as a PNG file.
+ * Stage 0 of the graphics upgrade roadmap replaces it. `captureSceneStill*`
+ * asks whatever renderer is mounted for a picture — the live canvas on the
+ * classic path, one extra frame drawn into an offscreen render target on the
+ * node path — and returns null when there is genuinely nothing. A null still
+ * means the same failed-export message the guard used to produce, so the caller
+ * did not change.
  *
- * Requires the canvas to have been created with `preserveDrawingBuffer: true`,
- * otherwise the buffer may already be cleared when `toDataURL` runs — which is
- * why every route that offers this sets it. **On the node renderer that option
- * does not exist at all**, so the guard above refuses rather than downloading a
- * transparent rectangle. Returning false is what the caller already shows a
- * failed-export message for.
+ * At the renderer's NATIVE resolution rather than the warp's capped one: a file
+ * a visitor keeps is worth every pixel the frame had.
  */
-export function exportSceneCanvasAsPng(containerElement: HTMLElement | null, fileName: string): boolean {
-  if (!containerElement) {
-    return false;
-  }
-  const sceneCanvas = containerElement.querySelector("canvas");
-  if (!sceneCanvas) {
-    return false;
-  }
+export async function exportSceneCanvasAsPng(
+  containerElement: HTMLElement | null,
+  fileName: string
+): Promise<boolean> {
   try {
-    if (canvasReadsBackBlank(sceneCanvas)) {
+    const still = await captureSceneStillAtNativeResolution(containerElement);
+    if (!still) {
       return false;
     }
-    const imageDataUrl = sceneCanvas.toDataURL(EXPORTED_IMAGE_MIME_TYPE);
+    const imageDataUrl = still.toDataURL(EXPORTED_IMAGE_MIME_TYPE);
     const downloadAnchor = document.createElement("a");
     downloadAnchor.href = imageDataUrl;
     downloadAnchor.download = `${sanitizeFileName(fileName)}.png`;

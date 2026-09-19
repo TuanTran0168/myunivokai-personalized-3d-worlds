@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
 import { Vector3, WebGLCoordinateSystem, type Object3D } from "three";
+import { captureSceneStillAtNativeResolution } from "@/features/transitions/sceneStill";
+import { sceneStillSource } from "./sceneStillCapture";
 import {
   summariseSustainedLoad,
   sustainedFrameTimestamps,
@@ -105,6 +107,35 @@ export function ParityHarnessBridge({ request }: { request: ParityHarnessRequest
     // when the harness is driving, which is the only way to guarantee that no
     // free-running frame ever touched this scene. See the note there.
     const backend = describeBackend(renderer, request);
+
+    type CountingRenderInfo = {
+      autoReset?: boolean;
+      reset?: () => void;
+      render?: Record<string, number>;
+    };
+
+    /**
+     * `renderer.info` with automatic reset turned off.
+     *
+     * `info` resets per `render()` CALL, not per frame, so a chained frame
+     * reports only its last pass unless the reset is taken over. The sustained
+     * harness above learned the same thing the hard way and says so at length.
+     */
+    function countedRenderInfo(): CountingRenderInfo | undefined {
+      const info = (renderer as unknown as { info?: CountingRenderInfo }).info;
+      if (info) info.autoReset = false;
+      return info;
+    }
+
+    /** What the frame just measured drew. `-1` where the backend does not say. */
+    function readFrameCounts(info: CountingRenderInfo | undefined) {
+      const counts = {
+        drawCalls: info?.render?.drawCalls ?? info?.render?.calls ?? -1,
+        triangles: info?.render?.triangles ?? -1
+      };
+      if (info) info.autoReset = true;
+      return counts;
+    }
 
     /**
      * Steps the pinned clock to its target and resolves once the frames are on
@@ -243,8 +274,75 @@ export function ParityHarnessBridge({ request }: { request: ParityHarnessRequest
       };
     };
 
+    /**
+     * The still capture, as a PNG of exactly the size the caller asks for.
+     *
+     * Stage 0's only route to an assertion. `captureSceneStill` is reached from
+     * click handlers in production and from nothing at all in a test, so
+     * `scene-still-capture.spec.ts` would otherwise be photographing the canvas
+     * and calling it evidence — which is the defect, not the fix.
+     *
+     * The caller passes the size because the thing this is compared against is
+     * a Playwright screenshot of the canvas element, and two frames of
+     * different sizes cannot be compared at all. Scaling here rather than in
+     * the spec keeps the resize inside the browser's own resampler, which is
+     * the same one the warp uses.
+     */
+    const captureSceneStillAsPngDataUrl = async (comparisonWidth: number, comparisonHeight: number) => {
+      const sceneContainer = renderer.domElement.parentElement;
+      const info = countedRenderInfo();
+      info?.reset?.();
+      const still = await captureSceneStillAtNativeResolution(sceneContainer);
+      const captureCounts = readFrameCounts(info);
+      if (!still) {
+        return null;
+      }
+      const scaled = document.createElement("canvas");
+      scaled.width = Math.max(1, Math.round(comparisonWidth));
+      scaled.height = Math.max(1, Math.round(comparisonHeight));
+      const scaledContext = scaled.getContext("2d");
+      if (!scaledContext) {
+        return null;
+      }
+      scaledContext.drawImage(still, 0, 0, scaled.width, scaled.height);
+      return {
+        dataUrl: scaled.toDataURL("image/png"),
+        nativeWidth: still.width,
+        nativeHeight: still.height,
+        // Which of the two routes answered — the whole point of the spec.
+        capturedFromRenderTarget: sceneStillSource() !== null,
+        captureCounts
+      };
+    };
+
+    /**
+     * Draws the canvas again at the time it is already at, and counts it.
+     *
+     * **THE CONTROL FOR `scene-still-capture.spec.ts`, and it earned its place
+     * by ruling out the first explanation.** When the still capture disagreed
+     * with the canvas, the obvious reading was that the canvas was holding an
+     * older frame — the harness pins a clock, not a scene, and `advance()` is
+     * the only thing that repaints. A zero delta re-runs every `useFrame` with
+     * nothing to integrate, so the scene cannot move, and the repaint measured
+     * **0.03 of 255 against the screenshot taken before it**. The canvas is
+     * current. Whatever the capture disagrees about, it is not staleness.
+     *
+     * Returning the counts is what turned that from a picture into a number:
+     * the same frame drawn to the canvas and drawn into a capture target issues
+     * a DIFFERENT number of draw calls, which is a fact about three rather than
+     * about this app.
+     */
+    const redrawAtCurrentTime = () => {
+      const info = countedRenderInfo();
+      info?.reset?.();
+      advance(clock.elapsedTime);
+      return readFrameCounts(info);
+    };
+
     const harness = {
       backend,
+      redrawAtCurrentTime,
+      captureSceneStillAsPngDataUrl,
       measureSustainedFrames,
       requestedRenderer: request.renderer,
       pinnedSeconds: request.pinnedSeconds,

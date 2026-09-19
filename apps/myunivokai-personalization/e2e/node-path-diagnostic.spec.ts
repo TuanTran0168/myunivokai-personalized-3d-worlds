@@ -252,33 +252,23 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
       );
       expect(readback.found, "the scene canvas must exist to be read back").toBe(true);
 
-      // **RECORDED AS A RATCHET, THE WAY `KNOWN_BACKEND_DIVERGENCE` RECORDS A
-      // PIXEL DEBT**, because this is a defect that is currently true and is
-      // meant to stop being true. Measured 2026-09-17 on every fixture:
+      // **THE RATCHET THAT WAS HERE IS GONE, AND ITS ENDING IS THE ONE IT ASKED
+      // FOR.** It recorded "0/256 on both node backends" the way
+      // `KNOWN_BACKEND_DIVERGENCE` records a pixel debt, and said in its own
+      // words: *"the day three, or Chrome, or a rebuild of the export onto an
+      // offscreen render target makes this work, THIS TEST FAILS and says to
+      // delete the guard in `lib/exportImage.ts`."*
       //
-      //     WebGLRenderer              256/256 samples carry alpha
-      //     WebGPURenderer / WebGPU      0/256
-      //     WebGPURenderer / WebGL2      0/256
+      // Stage 0 of the graphics upgrade roadmap is that rebuild. The guard is
+      // gone, the export no longer reads this canvas on the node path, and the
+      // assertion had to go rather than invert: the canvas still reads back
+      // empty and now NOTHING DEPENDS ON IT, so an assertion either way would
+      // be pinning a fact the app stopped consulting. `scene-still-capture.spec.ts`
+      // is what asserts the replacement, on all three renderers.
       //
-      // Both node backends fail, which is what rules out WebGPU present-time
-      // semantics: the WebGL2 one fails for the same reason, and the reason is
-      // that `preserveDrawingBuffer` does not exist anywhere in
-      // `three.webgpu.js` so it cannot be asked for on either.
-      //
-      // The day three, or Chrome, or a rebuild of the export onto an offscreen
-      // render target makes this work, THIS TEST FAILS and says to delete the
-      // guard in `lib/exportImage.ts`. That is the intended way for it to end.
-      if (requestedRenderer === "webgl") {
-        expect(
-          readback.opaqueSamples,
-          "the classic renderer is the control here — a blank readback means the route stopped setting preserveDrawingBuffer"
-        ).toBeGreaterThan(0);
-      } else {
-        expect(
-          readback.opaqueSamples,
-          "the node renderer read the canvas back — the recorded defect is fixed, so delete this branch and the guard in lib/exportImage.ts"
-        ).toBe(0);
-      }
+      // The number is still PRINTED, because this spec's job is to show what
+      // the path does rather than to hold it in place, and because the day that
+      // number changes is a day somebody will want to know about.
 
       // A FRAME TO LOOK AT, because a mean absolute error does not say WHAT is
       // wrong. `scene-parity.spec.ts` reports that the universe differs by 151

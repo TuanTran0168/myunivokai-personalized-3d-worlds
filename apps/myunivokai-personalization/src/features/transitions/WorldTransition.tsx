@@ -199,6 +199,29 @@ export function WorldTransition({
     let phaseStartTimestamp = 0;
     let currentPhase: Exclude<WorldChangePhase, "idle"> = "departing";
     let arrivingStill: HTMLCanvasElement | null = null;
+    /**
+     * THE ARRIVAL CAPTURE, WHICH BECAME A PROMISE AND THEREFORE BECAME A
+     * STATE.
+     *
+     * The node renderer has no synchronous readback, so the arriving world's
+     * still cannot be taken inside a frame any more. Rather than move the
+     * capture earlier — which would photograph a world that has not finished
+     * arriving — the HOLD stays on screen until the readback lands: the loader
+     * keeps running, the phase does not change, and the arrival unfolds from a
+     * picture that is one readback old rather than from nothing.
+     *
+     * That extends the hold by the length of one GPU map, which is the honest
+     * cost. The hold has a floor and no ceiling by design (`isHoldFinished`
+     * waits on the destination being ready), so this is the one place in the
+     * transition where waiting longer was already the expected behaviour.
+     *
+     * Two flags rather than one, because `arrivingStill` is legitimately null
+     * after a settled capture that found nothing, and the loop has to tell that
+     * apart from a capture still in flight.
+     */
+    let arrivalCaptureRequested = false;
+    let arrivalCaptureSettled = false;
+    let transitionCancelled = false;
 
     function drawTransitionFrame(timestamp: number) {
       if (phaseStartTimestamp === 0) {
@@ -241,7 +264,21 @@ export function WorldTransition({
           animationFrame = requestAnimationFrame(drawTransitionFrame);
           return;
         }
-        arrivingStill = captureSceneStill(sceneContainer);
+        if (!arrivalCaptureRequested) {
+          arrivalCaptureRequested = true;
+          void captureSceneStill(sceneContainer).then((still) => {
+            if (transitionCancelled) {
+              return;
+            }
+            arrivingStill = still;
+            arrivalCaptureSettled = true;
+          });
+        }
+        if (!arrivalCaptureSettled) {
+          // Still reading back. The hold holds — see the flags' comment.
+          animationFrame = requestAnimationFrame(drawTransitionFrame);
+          return;
+        }
         if (!arrivingStill) {
           // Nothing readable to unfold — the scene never drew, or the route
           // forgot `preserveDrawingBuffer`. Cut to it rather than warping a
@@ -288,6 +325,7 @@ export function WorldTransition({
     animationFrame = requestAnimationFrame(drawTransitionFrame);
 
     return () => {
+      transitionCancelled = true;
       cancelAnimationFrame(animationFrame);
       // Deliberately NOT finishOnce. A cleanup that runs because a SECOND world
       // change arrived would clear the request that just replaced this one. But
