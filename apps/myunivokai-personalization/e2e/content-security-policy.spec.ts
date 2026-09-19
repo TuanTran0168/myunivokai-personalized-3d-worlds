@@ -35,6 +35,16 @@ const DRACO_FAMILY_PICKER_LABEL = "Forest";
 const SCENE_SETTLE_MILLISECONDS = 9_000;
 
 /**
+ * How long the decoder request is waited for, as a condition rather than a sleep.
+ *
+ * Generous because the slowest legitimate path to it is the forest's first
+ * mount on `WebGPURenderer`'s WebGL2 backend under SwiftShader, and the closest
+ * measurement anybody has is 13.6 s of blocked main thread on a REAL driver
+ * (§26 Phase 13). Nothing waits this long when the decoder arrives sooner.
+ */
+const DECODER_REQUEST_TIMEOUT_MILLISECONDS = 90_000;
+
+/**
  * The scene's own canvas, and why a bare `canvas` will not do.
  *
  * Picking a family starts a world transition, and `WorldTransition.tsx` mounts
@@ -196,15 +206,35 @@ test.describe("the Content-Security-Policy", () => {
     await page.goto("/");
     await page.getByRole("button", { name: DRACO_FAMILY_PICKER_LABEL, exact: false }).first().click();
     await expect(page.locator(SCENE_CANVAS_SELECTOR)).toBeVisible({ timeout: 60_000 });
-    await page.waitForTimeout(SCENE_SETTLE_MILLISECONDS);
 
+    // **WAITS FOR THE REQUEST RATHER THAN FOR A DURATION, AND THAT CHANGED ON
+    // 2026-09-19 WHEN THE NODE RENDERER BECAME THE DEFAULT.**
+    //
+    // `SCENE_SETTLE_MILLISECONDS` is nine seconds, which was comfortably enough
+    // for the forest to reach its model loads on `WebGLRenderer`. It is not
+    // enough on `WebGPURenderer`'s WebGL2 backend: §26 Phase 13 measured that
+    // backend blocking the main thread for 13.6 s on this very family's first
+    // mount against the classic renderer's 3.6 s, and this suite pins
+    // SwiftShader, which is slower again than the real driver those numbers
+    // came from.
+    //
+    // A longer sleep would have made it pass and would have been the wrong fix
+    // twice over — it would slow every run by the worst case, and it would still
+    // be a guess about the app rather than a wait for the thing being asserted.
+    // Polling the observation the test is ABOUT is correct on both renderers and
+    // returns as soon as the fast one is done.
+    await expect
+      .poll(() => observations.requestedUrls.filter((url) => url.includes("/vendor/draco/")).length, {
+        message:
+          "the self-hosted DRACO decoder was never requested - either no DRACO model loaded on this page, or the decoder path is wrong",
+        timeout: DECODER_REQUEST_TIMEOUT_MILLISECONDS
+      })
+      .toBeGreaterThan(0);
+
+    // Asserted AFTER the wait above, deliberately: checked before it, this
+    // would pass on a page that had not yet loaded a model at all, which is the
+    // reading that made the decoder assertion worth having in the first place.
     const gstaticRequests = observations.requestedUrls.filter((url) => url.includes("gstatic.com"));
     expect(gstaticRequests, "the DRACO decoder was still fetched from Google").toEqual([]);
-
-    const localDecoderRequests = observations.requestedUrls.filter((url) => url.includes("/vendor/draco/"));
-    expect(
-      localDecoderRequests.length,
-      "the self-hosted DRACO decoder was never requested - either no DRACO model loaded on this page, or the decoder path is wrong"
-    ).toBeGreaterThan(0);
   });
 });

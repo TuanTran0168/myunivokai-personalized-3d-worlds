@@ -157,12 +157,14 @@
         "qualityTier": 3,
         "family": "universe",
         "outcome": "rendered",
+        "graphicsBackend": "webgpu",
         "count": 12
       },
       {
         "qualityTier": 1,
         "family": "ocean",
         "outcome": "webgl_failed",
+        "graphicsBackend": "webgl",
         "count": 2
       }
     ]

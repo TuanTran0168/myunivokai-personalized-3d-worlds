@@ -21,6 +21,60 @@ const CLIENT_RENDER_REPORT_PATH = "/api/telemetry/render";
 export const CLIENT_RENDER_OUTCOME_RENDERED = "rendered";
 export const CLIENT_RENDER_OUTCOME_WEBGL_FAILED = "webgl_failed";
 
+// WHICH RENDERER ACTUALLY DREW, and §26 Phase 12 exists to turn this from an
+// estimate into a count. §19.5 of the migration study puts roughly 20% of
+// visitors on WebGL2 and says plainly why the real figure is likely worse for
+// this product: caniuse weights GLOBAL traffic and this audience is
+// Vietnam-skewed, and the in-app browsers a shared universe link arrives
+// through — Facebook, Instagram, TikTok, Zalo — are WebView-backed and
+// unverified, which is the app's most viral traffic path.
+//
+// **ASKED OF THE RENDERER, NEVER OF THE BUILD FLAG.** `WebGPURenderer` installs
+// its own fallback and switches to its WebGL2 backend when `requestDevice`
+// rejects — which is exactly the population this field exists to count, and a
+// value derived from what the build ASKED for would count it as WebGPU.
+export const CLIENT_RENDER_BACKEND_UNKNOWN = "unknown";
+export const CLIENT_RENDER_BACKEND_WEBGL = "webgl";
+export const CLIENT_RENDER_BACKEND_WEBGPU = "webgpu";
+export const CLIENT_RENDER_BACKEND_WEBGL2 = "webgl2";
+
+export type ClientRenderGraphicsBackend =
+  | typeof CLIENT_RENDER_BACKEND_UNKNOWN
+  | typeof CLIENT_RENDER_BACKEND_WEBGL
+  | typeof CLIENT_RENDER_BACKEND_WEBGPU
+  | typeof CLIENT_RENDER_BACKEND_WEBGL2;
+
+/**
+ * The backend this renderer is actually using, read the way
+ * `ParityHarnessBridge.describeBackend` reads it: from the instance.
+ *
+ * `WebGLRenderer` has no `backend` property at all, so its ABSENCE is the
+ * identification rather than a missing case — the same test
+ * `nodeMaterials.isNodeRenderer` makes. A node renderer whose backend answers
+ * neither flag is a shape this app has not seen, and it reports UNKNOWN rather
+ * than guessing: a wrong value here would not look like a bug, it would look
+ * like a finding.
+ */
+export function clientRenderBackendOf(renderer: unknown): ClientRenderGraphicsBackend {
+  const candidate = renderer as
+    | { backend?: { isWebGPUBackend?: boolean; isWebGLBackend?: boolean }; isWebGLRenderer?: boolean }
+    | null
+    | undefined;
+  if (!candidate) {
+    return CLIENT_RENDER_BACKEND_UNKNOWN;
+  }
+  if (!candidate.backend) {
+    return candidate.isWebGLRenderer === true ? CLIENT_RENDER_BACKEND_WEBGL : CLIENT_RENDER_BACKEND_UNKNOWN;
+  }
+  if (candidate.backend.isWebGPUBackend === true) {
+    return CLIENT_RENDER_BACKEND_WEBGPU;
+  }
+  if (candidate.backend.isWebGLBackend === true) {
+    return CLIENT_RENDER_BACKEND_WEBGL2;
+  }
+  return CLIENT_RENDER_BACKEND_UNKNOWN;
+}
+
 export type ClientRenderOutcome =
   | typeof CLIENT_RENDER_OUTCOME_RENDERED
   | typeof CLIENT_RENDER_OUTCOME_WEBGL_FAILED;
@@ -35,6 +89,7 @@ export interface ClientRenderReport {
   qualityTier: DeviceQualityTier;
   family: ClientRenderFamily;
   outcome: ClientRenderOutcome;
+  graphicsBackend: ClientRenderGraphicsBackend;
 }
 
 // A scene's TYPE is not its FAMILY, and the one place they disagree is the one
@@ -69,7 +124,11 @@ export function clientRenderFamilyForSceneType(sceneType?: string): ClientRender
 const reportedKeys = new Set<string>();
 
 function reportKey(report: ClientRenderReport): string {
-  return `${report.family}:${report.outcome}`;
+  // The backend joins the key, so a page that lost its GPU device and remounted
+  // onto the WebGL2 backend reports BOTH — which is two facts about one visit
+  // and is the only way the fallback's traffic is ever counted. Everything else
+  // about that remount is invisible from here.
+  return `${report.family}:${report.outcome}:${report.graphicsBackend}`;
 }
 
 /**

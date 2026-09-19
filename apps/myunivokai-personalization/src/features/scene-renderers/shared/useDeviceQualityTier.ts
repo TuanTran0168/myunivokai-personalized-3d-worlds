@@ -8,6 +8,7 @@ import {
   type DeviceRenderCapabilities,
   type DeviceRenderProfile
 } from "./deviceQualityTier";
+import { webgpuAdapterAvailabilityOnce } from "./webgpuSupport";
 
 /**
  * Reads the device's capabilities once and hands back the render profile.
@@ -96,6 +97,19 @@ function readDeviceRenderCapabilities(): DeviceRenderCapabilities {
   };
 }
 
+export type DeviceQualityTierOptions = {
+  /**
+   * Whether to ask `navigator.gpu` as well, which is only worth doing when the
+   * canvas is going to build a node renderer.
+   *
+   * It costs one `requestAdapter()` — 1 to 15 ms across every launch mode Phase
+   * 0 measured — and it is the ONLY signal that can see a software WebGPU
+   * device. Off by default, so a build with the rollout flag off behaves exactly
+   * as it did before this parameter existed, down to the number of renders.
+   */
+  probesWebGPUAdapter?: boolean;
+};
+
 /**
  * The profile this device should start on.
  *
@@ -114,13 +128,30 @@ function readDeviceRenderCapabilities(): DeviceRenderCapabilities {
  * the profile mid-scene would rebuild the render graph, which is precisely the
  * multi-second freeze the sprint spent its time removing.
  */
-export function useDeviceQualityTier(): DeviceRenderProfile {
+export function useDeviceQualityTier(options: DeviceQualityTierOptions = {}): DeviceRenderProfile {
   const [profile, setProfile] = useState<DeviceRenderProfile>(() => renderProfileForTier(QUALITY_TIER_HIGH));
+  const probesWebGPUAdapter = options.probesWebGPUAdapter === true;
 
   useEffect(() => {
-    const capabilities = readDeviceRenderCapabilities();
-    setProfile(renderProfileForTier(classifyDeviceQualityTier(capabilities)));
-  }, []);
+    // ONE setState WHETHER OR NOT THE ADAPTER IS PROBED, and that is worth the
+    // await rather than settling for a synchronous answer and refining it. The
+    // profile decides `dpr` and `shadows`, which R3F applies to a live canvas;
+    // moving a device from the high profile to the minimal one in two steps
+    // would resize the drawing buffer twice and rebuild the shadow map in
+    // between, during the first mount, which is already this app's most
+    // expensive moment (§24.1).
+    let cancelled = false;
+    const classify = async () => {
+      const capabilities = readDeviceRenderCapabilities();
+      const webgpuAdapter = probesWebGPUAdapter ? await webgpuAdapterAvailabilityOnce() : undefined;
+      if (cancelled) return;
+      setProfile(renderProfileForTier(classifyDeviceQualityTier({ ...capabilities, webgpuAdapter })));
+    };
+    void classify();
+    return () => {
+      cancelled = true;
+    };
+  }, [probesWebGPUAdapter]);
 
   return profile;
 }

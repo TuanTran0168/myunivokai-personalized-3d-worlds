@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clientRenderBackendOf,
   clientRenderFamilyForSceneType,
   reportClientRender,
   resetClientRenderReportsForTesting,
+  CLIENT_RENDER_BACKEND_UNKNOWN,
+  CLIENT_RENDER_BACKEND_WEBGL,
+  CLIENT_RENDER_BACKEND_WEBGL2,
+  CLIENT_RENDER_BACKEND_WEBGPU,
   CLIENT_RENDER_OUTCOME_RENDERED,
   CLIENT_RENDER_OUTCOME_WEBGL_FAILED
 } from "./reportClientRender";
@@ -71,7 +76,7 @@ describe("reportClientRender", () => {
     reportClientRender({
       qualityTier: QUALITY_TIER_HIGH,
       family: "universe",
-      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+      outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
 
     expect(sendBeacon).toHaveBeenCalledTimes(1);
@@ -82,7 +87,7 @@ describe("reportClientRender", () => {
     expect(body).toEqual({
       qualityTier: QUALITY_TIER_HIGH,
       family: "universe",
-      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+      outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
   });
 
@@ -90,7 +95,7 @@ describe("reportClientRender", () => {
     reportClientRender({
       qualityTier: QUALITY_TIER_MINIMAL,
       family: "ocean",
-      outcome: CLIENT_RENDER_OUTCOME_WEBGL_FAILED
+      outcome: CLIENT_RENDER_OUTCOME_WEBGL_FAILED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
     const payload = sendBeacon.mock.calls[0][1] as Blob;
     expect(payload.type).toBe("application/json");
@@ -101,7 +106,7 @@ describe("reportClientRender", () => {
       reportClientRender({
         qualityTier: QUALITY_TIER_HIGH,
         family: "nature",
-        outcome: CLIENT_RENDER_OUTCOME_RENDERED
+        outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
       });
     }
     expect(sendBeacon).toHaveBeenCalledTimes(1);
@@ -113,12 +118,12 @@ describe("reportClientRender", () => {
     reportClientRender({
       qualityTier: QUALITY_TIER_HIGH,
       family: "universe",
-      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+      outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
     reportClientRender({
       qualityTier: QUALITY_TIER_HIGH,
       family: "ocean",
-      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+      outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
     expect(sendBeacon).toHaveBeenCalledTimes(2);
   });
@@ -130,12 +135,12 @@ describe("reportClientRender", () => {
     reportClientRender({
       qualityTier: QUALITY_TIER_HIGH,
       family: "universe",
-      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+      outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
     reportClientRender({
       qualityTier: QUALITY_TIER_HIGH,
       family: "universe",
-      outcome: CLIENT_RENDER_OUTCOME_WEBGL_FAILED
+      outcome: CLIENT_RENDER_OUTCOME_WEBGL_FAILED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
     expect(sendBeacon).toHaveBeenCalledTimes(2);
   });
@@ -148,7 +153,7 @@ describe("reportClientRender", () => {
     reportClientRender({
       qualityTier: QUALITY_TIER_MINIMAL,
       family: "nature",
-      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+      outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -172,7 +177,7 @@ describe("reportClientRender", () => {
       reportClientRender({
         qualityTier: QUALITY_TIER_HIGH,
         family: "universe",
-        outcome: CLIENT_RENDER_OUTCOME_RENDERED
+        outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
       })
     ).not.toThrow();
   });
@@ -187,7 +192,7 @@ describe("reportClientRender", () => {
       reportClientRender({
         qualityTier: QUALITY_TIER_HIGH,
         family: "universe",
-        outcome: CLIENT_RENDER_OUTCOME_RENDERED
+        outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
       })
     ).not.toThrow();
     await Promise.resolve();
@@ -206,9 +211,38 @@ describe("reportClientRender outside a browser", () => {
     reportClientRender({
       qualityTier: QUALITY_TIER_HIGH,
       family: "universe",
-      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+      outcome: CLIENT_RENDER_OUTCOME_RENDERED, graphicsBackend: CLIENT_RENDER_BACKEND_WEBGL
     });
     expect(sendBeacon).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+});
+
+/**
+ * §26 PHASE 12 / §19.5. The share of visitors on WebGL2 was an ESTIMATE, and
+ * this is the function that turns it into a count — so what it must never do is
+ * report what the build ASKED for.
+ */
+describe("clientRenderBackendOf", () => {
+  it("names the classic renderer by the absence of a backend", () => {
+    expect(clientRenderBackendOf({ isWebGLRenderer: true })).toBe(CLIENT_RENDER_BACKEND_WEBGL);
+  });
+
+  /**
+   * **THE POPULATION THIS FIELD EXISTS TO COUNT.** A `WebGPURenderer` whose
+   * `requestDevice` was refused still constructs, still draws, and still reports
+   * itself as a node renderer — it simply has the other backend. Counting it as
+   * WebGPU would make the measurement agree with the estimate it is replacing.
+   */
+  it("separates the two backends of one renderer class", () => {
+    expect(clientRenderBackendOf({ backend: { isWebGPUBackend: true } })).toBe(CLIENT_RENDER_BACKEND_WEBGPU);
+    expect(clientRenderBackendOf({ backend: { isWebGLBackend: true } })).toBe(CLIENT_RENDER_BACKEND_WEBGL2);
+  });
+
+  it("answers unknown rather than guessing at a shape it has not seen", () => {
+    expect(clientRenderBackendOf(null)).toBe(CLIENT_RENDER_BACKEND_UNKNOWN);
+    expect(clientRenderBackendOf(undefined)).toBe(CLIENT_RENDER_BACKEND_UNKNOWN);
+    expect(clientRenderBackendOf({})).toBe(CLIENT_RENDER_BACKEND_UNKNOWN);
+    expect(clientRenderBackendOf({ backend: {} })).toBe(CLIENT_RENDER_BACKEND_UNKNOWN);
   });
 });

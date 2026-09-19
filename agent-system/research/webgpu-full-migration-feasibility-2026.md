@@ -1,15 +1,90 @@
 # WebGPU-first migration feasibility — myunivokai's full 3D rendering stack
 
-> **Document status:** Research, with **Phases 0–5 of §26 executed and passed, and Phases 6–8 blocked
-> one material short of complete**. Nothing in the verdict is approved, and **Phases 2–4 did modify
+> **Document status:** Research, with **all thirteen phases of §26 executed. The app has no
+> hand-written GLSL left in any family, and no material is refused on either node backend.** Phase 13
+> is done as one item rather than as written, and **that one item was then reverted** — the compute
+> work it listed moved to
+> [`../plans/frontend/webgpu-graphics-upgrade-roadmap.md`](../plans/frontend/webgpu-graphics-upgrade-roadmap.md),
+> each item behind the gate that would open it. Nothing in the verdict is approved, and **Phases 2–4 did modify
 > production code** — the last rows of the Quality check say exactly what a visitor now receives and
 > what is gated behind a build flag. Phase 5 added a second post chain behind that same flag and
 > changed nothing a visitor receives; it also **found §25's recommended architecture to be defined by
 > an impossible step**, which is corrected in place.
 >
+> **PHASES 9–12 ARE DONE (2026-09-17), AND THE ROLLOUT IS GATED ON ONE MEASURED DEFECT RATHER THAN
+> ON PARITY.** `WebGPURenderer` is reachable in production behind `NEXT_PUBLIC_NODE_RENDERER`, with
+> the `navigator.gpu` tier probe, the `GPUDevice.lost` remount and the multisampling Phase 5
+> deferred. Phase 10's verdict: **Architecture A is not invalidated.** The WebGL2 backend tracks the
+> WebGPU one to 0.02–1.24 of 255 and tracks the CLASSIC renderer just as closely as WebGPU does, on
+> every fixture, with zero refusals. **§10.3's canvas readback blocked the flag until 2026-09-19 and
+> no longer does.** The node renderer still cannot preserve its drawing buffer on either backend —
+> `preserveDrawingBuffer` appears twice in `three.module.js` and zero times in `three.webgpu.js` —
+> but nothing reads that buffer any more: Stage 0 of the graphics upgrade roadmap renders the still
+> into an offscreen render target instead, and it reproduces the canvas to 0.01-0.11 of 255 on all
+> three renderers. See §10.3, §26 Phase 9, and the roadmap's §2.
+>
+> **THE FLAG IS NO LONGER OFF. THE NODE RENDERER SHIPPED ON 2026-09-19, TO EVERYBODY.**
+> `NEXT_PUBLIC_NODE_RENDERER` is unset in every deployment and unset means `every-visitor`. The two
+> values that do something are `where-webgpu-is-real`, which gates on a hardware adapter, and a kill
+> switch. See the graphics upgrade roadmap's §2b.
+>
+> **THE SECOND BLOCKER IS OPEN, KNOWN AND ACCEPTED — NOT CLOSED AND NOT ROUTED AROUND.** The
+> forest's first mount on the WebGL2 backend is still 13.6 s of blocked main thread against the
+> classic renderer's 3.6 s, and nothing made it faster. For the length of one commit it was routed
+> around, by gating the renderer on `navigator.gpu`; the owner then chose to ship to everybody with
+> the number in hand. So roughly a fifth of visitors take that first mount, deliberately, and the
+> asset pipeline is what pays it down.
+>
+> **PHASE 13 WAS REVERTED ON 2026-09-18 — see its section, which is now about the reversal.** What
+> follows is what it found, which stands; what it built failed the parity ratchet and is out.
+>
+> **PHASE 13 (2026-09-17) FOUND THAT THE WEBGL2 BACKEND ALWAYS HAD AN ASYNCHRONOUS PIPELINE PATH AND
+> NOTHING WAS ASKING FOR IT.** `Renderer.compileAsync()` is the only route to `createRenderPipelineAsync` on
+> WebGPU and to `KHR_parallel_shader_compile` on WebGL2, and the app never called it — which is the
+> whole of the column §24.3 predicted and §17 named as able to force Architecture B. Blocked
+> main-thread time on a first mount now falls by 56%, 44% and 14% on three fixtures of four on the
+> fallback backend, with the classic renderer unmoved as the control. **The forest falls 11% and is
+> the open question this leaves**: 13.6 s against the classic renderer’s 3.6 s, after a warm-up that
+> reported compiled. About 5.5 s of it is the GTAO pass, measured; the rest is unattributed and the
+> leading hypothesis is texture upload rather than pipeline creation.
+>
+> **PHASE 8 IS NOW COMPLETE, INCLUDING UNDERWATER (2026-09-17).** The god rays are ported. The look
+> decision below was made rather than deferred, on arithmetic rather than taste, and the measurement
+> that followed overturned this report's own account of the ocean's parity gap: 63.35 → **9.90**, on
+> one material. See §26 Phase 8 and `oceanGodRays.ts`.
+>
+> **PHASE 8 WAS COMPLETE EXCEPT UNDERWATER, AND IT PRODUCED THIS REPORT'S BEST NUMBER (2026-09-17).**
+> The sea seen from above is ported, and above water the ocean has NO hand-written GLSL left —
+> refusals 0 on both node backends. A new fixture, `e2e/fixtures/ocean-surface-world.json`, exists
+> because without it that port would have moved no number at all: every other ocean fixture is
+> underwater and the surface material is only built when `viewerDepthMetres < 0`. That fixture
+> measures **0.31 between the node path and the classic one, with no recorded debt** — and because
+> the ocean mounts no post chain, it is the post-disabled run §30.2 said the harness could not
+> perform. Three families with no GLSL left: the two with a post chain sit at 12.22 and 19.49, the
+> one without at 0.31. See `knowledge/frontend/threejs-scene-architecture.md`.
+>
+> **PHASE 7 IS COMPLETE (2026-09-17).** All nine `onBeforeCompile` patches have a node arm. Three
+> findings came out of it, all recorded in `knowledge/frontend/threejs-scene-architecture.md`: the
+> node-path equivalent of a chunk patch is a `NodeMaterial` SUBCLASS overriding a `setup*` step, not
+> a `positionNode`/`outputNode` assignment — both of those REPLACE what three computed, and
+> `positionNode` in particular is read after instancing and discards the instance matrix, which
+> collapses an entire instanced bed onto the world origin; a dropped patch reports NOTHING, which is
+> worse than a refused material and is why every patch site now goes through a guard with a
+> source-scanning test behind it; and a uniform written after the material is built needs an explicit
+> copy step, without which the seabed renders at caustic strength ZERO on the node path only.
+>
+> **THE LOOK DECISION BELOW WAS MADE ON 2026-09-17, AND THE ARITHMETIC IS WHY.** Matching the two
+> compositing spaces needs `E(b + r') = E(b) + r`, so the node-path correction is the RECIPROCAL
+> DERIVATIVE OF THE ENCODE AT THE BACKDROP — 2.54 in deep water, 1.68 at midwater, 1.12 in the lit
+> shallows, all three in the same frame and all three crossed by one shaft. **No scalar exists**, and
+> one chosen to make a single measurement agree would be the invented lever §30.2 warns about, dressed
+> as physics. So the port is faithful and the difference is stated instead: the rays read brighter
+> where the water is darkest, and their tops read softer because ACES rolls off a sum the classic path
+> let clip. The lever if that is unwanted is `GOD_RAY_STRENGTH_MULTIPLE`, and it moves both paths.
+> The paragraph below is kept as written, because it is what was believed at the time.
+>
 > **PHASES 6–8 STOPPED ON A LOOK DECISION, NOT ON AN ENGINEERING ONE (2026-09-15).** The universe and
-> the forest have no hand-written shader left, and the ocean is down to its god rays and eight
-> `onBeforeCompile` patches. The god rays cannot be ported faithfully: the classic path lets an
+> the forest have no hand-written shader left, and the ocean is down to its god rays. The god rays cannot be ported faithfully: the classic path lets an
 > ADDITIVE layer write raw linear values into an already-encoded framebuffer, while the node path
 > encodes the whole composited frame once (`Renderer.needsFrameBufferTarget`, `Renderer.js:2446`),
 > and there is no per-material opt-out from a frame-wide pass. The shipped shader's own comment
@@ -366,7 +441,7 @@ prop or an `onCreated` mutation.
 | `antialias` | R3F default `true` | R3F default props | Constructor param exists; MSAA differs — see §11 |
 | `alpha` | R3F default `true` | R3F default props | Exists; **r185 premultiplied-alpha change applies** |
 | `powerPreference` | `"high-performance"` | `:518` | Exists; passed to `requestAdapter()` |
-| `preserveDrawingBuffer` | prop-driven, `false` default | `:290,517` | **No direct analogue.** Canvas readback semantics differ — §10.3 |
+| `preserveDrawingBuffer` | prop-driven, `false` default | `:290,517` | **MEASURED 2026-09-17: the option does not exist on `WebGPURenderer` at all**, on either backend — zero occurrences in `three.webgpu.js` — and the canvas reads back empty. **Stopped mattering 2026-09-19**: nothing reads the canvas on that path any more. §10.3 |
 | `toneMapping` | `ACESFilmic` (ocean) / `AgX` (rest) | `:519` | **Both registered** in the node library — §6.4 |
 | `outputColorSpace` | not set (three default sRGB) | — | Node path has `ColorSpaceNode` / `RenderOutputNode` |
 | `shadows` | `"soft"` = `PCFSoftShadowMap`, forest + ocean only | `:503-505` | **Removed for WebGPURenderer at r186** → `PCFShadowMap` |
@@ -787,6 +862,70 @@ But `preserveDrawingBuffer` has no direct WebGPU analogue, and a WebGPU canvas c
 present-time texture validity differently. **VISUAL_PARITY_RISK to test, not a blocker** — and
 `sceneStill.ts` already fails safe, which is a genuine piece of luck.
 
+> **MEASURED 2026-09-17, §26 PHASE 9, AND IT IS WORSE THAN "a WebGPU canvas configures present-time
+> texture validity differently".** The same fixture on all three renderers, sampling the canvas the
+> way both production sites sample it:
+>
+> | renderer | samples carrying alpha | `toDataURL` length |
+> | --- | --- | --- |
+> | `WebGLRenderer` | **256/256** | 1.6–3.4 MB |
+> | `WebGPURenderer` / WebGPU | **0/256** | 38 KB |
+> | `WebGPURenderer` / WebGL2 | **0/256** | 38 KB |
+>
+> **BOTH NODE BACKENDS FAIL, WHICH RULES OUT WEBGPU PRESENT-TIME SEMANTICS AS THE EXPLANATION.** The
+> WebGL2 backend is the same API the working row uses. What differs is one option: `preserveDrawingBuffer`
+> appears twice in `three.module.js` — `:16074` reads it out of the parameters, `:16372` hands it to
+> `getContext` — and **zero times in `three.webgpu.js`**. `WebGPURendererParameters` does not declare
+> it, so passing it is a typecheck error rather than a silent no-op, which is the one piece of luck
+> here. It cannot be requested on either backend.
+>
+> **CLOSED 2026-09-19 BY STAGE 0 OF THE GRAPHICS UPGRADE ROADMAP, ON BRANCH
+> `feat/fe/webgpu-graphics-stages`.** The fix named in the paragraph below is the fix that was
+> built: the app stops reading the canvas and renders the still into an offscreen render target
+> instead. `SceneStillBridge.tsx` registers a source on the node path only; the classic path still
+> scrapes its canvas and did not change, because it is the path every visitor is on and it works.
+>
+> Three things had to be right and each would have shipped a plausible wrong picture on its own.
+> **`setOutputRenderTarget`, not `setRenderTarget`** — `Renderer.isOutputTarget` is
+> `this._renderTarget === this._outputRenderTarget || this._renderTarget === null` (`:61704`), and
+> `currentToneMapping` collapses to `NoToneMapping` whenever it is false (`:61681`), so the
+> obvious call returns a linear, un-tone-mapped frame. **The row order and the row padding differ
+> between the two node backends** — WebGPU's `copyTextureToBuffer` is top-down and pads every row to
+> 256 bytes (`:77012-77015`), WebGL2's `gl.readPixels` is bottom-up and tight (`:70159`).
+> **And the capture target is `LinearSRGBColorSpace`**, because `_renderOutput` already encodes
+> and an sRGB target would encode again in hardware (`:77805`).
+>
+> Measured by `e2e/scene-still-capture.spec.ts`, four fixtures by three renderers: **the still
+> reproduces the canvas to between 0.01 and 0.11 of 255 on all twelve legs.** The export no longer
+> refuses on the node path and the transitions warp a real picture there. `scene-parity.spec.ts` is
+> unmoved — universe 0.45, forest 1.21, ocean 0.31, ocean-surface 0.02 — and 56 of 59 on the
+> `webgpu` project passed, the three failures being `driver-parity` needing its `desktop`
+> recording pass, which then passed too.
+>
+> **THE RATCHET IS DELETED RATHER THAN INVERTED**, which is the ending it asked for. The canvas still
+> reads back empty; nothing depends on it any more, so an assertion either way would pin a fact the
+> app stopped consulting.
+>
+> **AND IT TURNED UP SOMETHING ELSE: AN EXTRA FRAME IS NOT FREE IN THIS APP.** A capture renders one
+> more frame, and comparing it against the frame BEFORE it read 16 to 21 of 255. Stale canvas,
+> drifting scene, post chain and readback were each ruled out by measurement; what answered it was
+> repainting the canvas at the clock it is already at. A zero delta gives every `useFrame` nothing
+> to integrate, and **the repaint still differs from the frame before it by 16 to 36 of 255, on the
+> classic renderer as much as on the node ones.** Something advances per FRAME rather than per DELTA
+> and has not been tracked down. It matters to anything that assumes two renders of one pinned moment
+> are the same picture.
+>
+> **The original paragraph, kept because it is what was predicted and it held:**
+>
+> **THIS IS WHAT GATED PHASE 12'S FLAG, AND IT WAS NOT A PARITY PROBLEM.** `sceneStill.ts` fails safe
+> as predicted, so a transition CUTS instead of warping a transparent rectangle — degraded, stated,
+> survivable. `exportImage.ts` did not, and would have handed the visitor a fully transparent PNG
+> with a success message; it now runs the same check and returns false. The real fix is to stop
+> reading the canvas at all and render the export into an offscreen render target, which is
+> backend-neutral, more robust than `preserveDrawingBuffer` ever was, and its own piece of work.
+> `node-path-diagnostic.spec.ts` records the defect as a RATCHET: the day it starts working, the test
+> fails and says to delete the guard.
+
 ### 10.4 Under the node pipeline
 
 `RenderTarget` (the backend-neutral class), `MRTNode`, `StorageTexture`, `StorageTextureNode`,
@@ -1167,6 +1306,11 @@ alternative and it is far more work for a rarer event.
 **(c) A deliberate decision about `preserveDrawingBuffer`**, since image export and the transition
 stills depend on buffer-after-present semantics (§10.3).
 
+> **DECIDED 2026-09-17, AND THE DECISION AVAILABLE IS NARROWER THAN THE QUESTION: the option does not
+> exist on this renderer.** The prop is still honoured on the classic path — every visitor, while the
+> flag is off — and on the node path there is nothing to honour it with. See §10.3 for the
+> measurement and for what the real fix is.
+
 ### 18.4 What the fallback is NOT
 
 It is not a compatibility stub. At ~20% of real users (§19.5) it is a **second production renderer**,
@@ -1433,7 +1577,7 @@ other step (§4.3).
 | drei `Environment` / `Lightformer` | PMREM | `PMREMNode` exists | same | n/a | LOW | **HIGH** | UNKNOWN | **UNVERIFIED — test early** |
 | drei `useGLTF`/`useTexture`/`OrbitControls`/`Html`/`Clone` | — | expected unchanged | unchanged | n/a | LOW | LOW | IDENTICAL | Verify |
 | DRACO/KTX2 decoders | self-hosted, CSP-driven | unchanged | unchanged | n/a | TRIVIAL | LOW | IDENTICAL | — |
-| Image export | `toDataURL` + `preserveDrawingBuffer` | no direct analogue | existing | n/a | MEDIUM | VISUAL_PARITY_RISK | UNKNOWN | Test |
+| Image export | `toDataURL` + `preserveDrawingBuffer` | offscreen render target + `readRenderTargetPixelsAsync` | existing | n/a | MEDIUM | **RESOLVED 2026-09-19** | 0.01-0.11 of 255 vs the canvas | `scene-still-capture.spec.ts` |
 | Transition stills | `drawImage` + centre-pixel guard | same, already fails safe | existing | n/a | LOW | LOW | IDENTICAL | Lucky — keep the guard |
 | Visual parity harness | Playwright, SwiftShader, **no assertions** | ~~must reach WebGPU~~ **reachability solved (§19.7)** + ~~pin phase~~ + ~~add a metric~~ — **all three done (§26 Phase 4)** | same | n/a | ~~**MEDIUM**~~ **RETIRED** — was HIGH | **CRITICAL** | n/a | **Phase 4 DONE 2026-09-10** — stable to 0.00 against itself |
 | GPU compute | none | available; also lowers to transform feedback | emulated | yes | — | — | — | **Defer — not phase one** (§15) |
@@ -2047,43 +2191,294 @@ convention. **Every phase ships and is independently revertable.**
 - **Superseded by the correction above:** the dual-material machinery and the forest's single patch
   land first, because they are what produces the first parity number.
 
-### Phase 7 — The nine `onBeforeCompile` patches → node slots
+### Phase 7 — The nine `onBeforeCompile` patches → node slots — **DONE 2026-09-17, PASSED**
 
 - **Objective:** four slots, uniform pattern (§7.3). Start with `oceanRigFlora.ts` (lowest
   complexity) and finish with `oceanCaustics.ts` (highest).
 - **Validation:** per-patch shots; the caustics Jacobian is the one to watch.
+- **What actually happened.** The order held — kelp, seabed slope rock, fauna, caustics — but "four
+  slots" was wrong in both directions. There are THREE injection points, not four
+  (`<begin_vertex>`, `<map_fragment>`, `<tonemapping_fragment>`; `<common>` is declarations, which a
+  node graph does not have, and `<worldpos_vertex>` is a varying the node path already provides).
+  And they are not slots at all: see the correction below.
+- **THE PLAN'S "UNIFORM PATTERN" DOES NOT EXIST AS A NODE ASSIGNMENT.** §7.3 assumed each marker
+  maps to a material property. It does not — `positionNode` and `outputNode` REPLACE rather than
+  inject, and `positionNode` is read AFTER instancing (`NodeBuilder`: `NodeMaterial.js:796` then
+  `:802`), so using it on an `InstancedMesh` discards the instance matrix and stacks every instance
+  on the world origin. The mechanism that works is a `NodeMaterial` subclass overriding the `setup*`
+  step, which is what three documents on `setupOutput` itself.
+- **AND THE FAILURE MODE IS SILENT, WHICH CHANGED WHAT THIS PHASE HAD TO BUILD FIRST.**
+  `onBeforeCompile` does not exist on a node material; assigning it is legal and is never read. So
+  the first deliverable was detection — `applyClassicShaderPatch` plus a source-scanning test — not
+  a port. The refusal count cannot see any of this: it was 1 before this phase and 1 after, because
+  a dropped patch is not a refusal.
 
-### Phase 8 — The nine raw GLSL shaders → TSL
+### Phase 8 — The nine raw GLSL shaders → TSL — **DONE 2026-09-17 except the god rays**
 
 - **Objective:** the remaining six after Phase 6, plus the four point/sprite shaders.
 - **Note:** the in-box transpiler (§8.3) assists the maths bodies; hand-finish naming per
   [`../rules/coding-style.md`](../rules/coding-style.md).
 - **Validation:** shot per shader; the star colour-management bypass needs explicit attention.
+- **THE VALIDATION AS WRITTEN WOULD HAVE PASSED ON AN UNPORTED SHADER.** "Shot per shader" assumes
+  every shader appears in a shot. The sea top does not: it is built only when the camera is above
+  the water, and no fixture in this repository was. The port was therefore accompanied by the
+  fixture that makes it visible, and the rule this leaves behind is the one worth keeping — before
+  porting a material, find the frame that would change if you did not.
+- **What is left is the god rays, and they are only mounted underwater.** `godRays.visible = !above`,
+  so above water the ocean family is entirely free of hand-written GLSL. The blocker is the
+  additive-encode look decision recorded at the top of this document, not remaining work.
 
-### Phase 9 — Renderer swap, tier probe, device-loss path
+### Phase 9 — Renderer swap, tier probe, device-loss path — **DONE 2026-09-17**
 
 - **Objective:** `WebGPURenderer` becomes the renderer. Add the `navigator.gpu` tier probe and the
   `GPUDevice.lost` → remount-on-WebGL2 path.
 - **Validation:** three-way harness; forced device loss.
+- **The renderer was REACHABLE rather than default**, behind `NEXT_PUBLIC_NODE_RENDERER`, and
+  `rendererSelection.ts` holds the decision as a pure function with the flag-off case asserted by a
+  test. Phase 12 decides who gets it. **Superseded 2026-09-19: the node renderer is now the default
+  wherever `navigator.gpu` reports a hardware adapter, and the classic renderer is what the rest
+  get. See this document's header and the graphics upgrade roadmap's §2b.**
+- **THE TIER PROBE IS NOT THE RENDERER SELECTOR, and §18.3(a) is right to separate them.** §17 rejects
+  "choose the renderer at runtime" by name, and Phase 0 measured why on this machine: full Chromium
+  reported a fifteen-feature adapter and then REFUSED the device. A pre-flight would have answered
+  "yes" on that row. The probe stops at `requestAdapter()`, never asks for a device, and feeds the
+  QUALITY TIER — where it is the only signal that can see a machine whose WebGL renderer is an RTX
+  4060 and whose WebGPU adapter is a CPU rasteriser. It runs only when a node renderer is going to
+  draw, so a build with the flag off classifies exactly as it did before.
+- **NARROWED 2026-09-19: THE PROBE NOW ALSO SELECTS, IN ONE DIRECTION, AND THE BULLET ABOVE STILL
+  HOLDS FOR THE OTHER.** What §17 rejects is a pre-flight used as a PROMISE that WebGPU will work —
+  the Phase 0 machine is exactly why, and nothing about that case changed: an answered `hardware`
+  builds a `WebGPURenderer` and leaves the fallback to three, as it always did. The rollout uses the
+  probe as a VETO instead. An adapter that resolved `null` cannot be followed by a device that
+  succeeds, so `none` and `absent` are certain knowledge that the node renderer would land on its
+  WebGL2 backend — the 13.6 s forest. Refusing that is sound where promising the opposite would not
+  be, and the two error directions cost at most what the previous shipping behaviour cost.
+- **"FORCED DEVICE LOSS" CANNOT BE VALIDATED AS WRITTEN, and that is a finding rather than a gap.** A
+  page cannot provoke a real device loss; `device.destroy()` resolves the same promise with reason
+  `"destroyed"`, which this app does on EVERY canvas remount — one per world, per interest chip, per
+  nickname edit. So the thing worth testing is the reason filter and the remount target, and both are
+  unit-tested. Without the filter the first ordinary remount would look like a driver failure and
+  push the visitor onto the fallback for the rest of the page's life.
+- **The fallback is `WebGPURenderer` with `forceWebGL`, not `WebGLRenderer`.** §18.3(b) says "remount
+  onto the WebGL2 path", and that path keeps Architecture A: one renderer class, one node graph, one
+  shader source. A lost `GPUDevice` also says nothing about WebGL2, which is a different API on a
+  different code path.
+- **Multisampling is wired, which Phase 5 deferred to here.** `samples` is a constructor value with no
+  setter on the node renderer, keyed off the DISPLAY's density rather than the tier's ceiling — on the
+  weakest tier that yields the CHEAPER sample count, which is the right direction to err.
+- **AND IT FOUND THE DEFECT THAT GATES PHASE 12.** See §10.3: the node renderer cannot preserve its
+  drawing buffer on either backend, so the PNG export and the transition stills have nothing to read.
 
-### Phase 10 — Fallback validation
+### Phase 10 — Fallback validation — **DONE 2026-09-17: the PICTURE clears it, the FIRST MOUNT does not**
 
 - **Objective:** prove the `WebGLBackend` path against the `WebGLRenderer` baseline on one machine via
   `forceWebGL: true`. **This is the phase that can still invalidate Architecture A** and force B.
+- **The verdict, from four fixtures on one machine and one driver:**
 
-### Phase 11 — Performance
+  | fixture | forceWebGL vs WebGL | WebGPU vs WebGL | WebGPU vs forceWebGL |
+  | --- | --- | --- | --- |
+  | universe | 12.03 | 12.22 | 0.45 |
+  | forest | 19.50 | 19.49 | 1.24 |
+  | ocean, underwater | 9.79 | 9.90 | 0.31 |
+  | ocean, above water | 0.30 | 0.31 | 0.02 |
+
+- **The two columns that matter are the first two, and they are the same column.** Whatever separates
+  the node path from the classic one, the WebGL2 backend carries it to within a fifth of a unit of
+  what the WebGPU backend carries — on every fixture, in both directions. The fallback is not a
+  degraded rendition of the node path; it is the node path. Refusals are zero on both.
+- **WHAT THIS DOES NOT SETTLE, AND PHASE 11 THEN MADE IT URGENT.** It is one machine, one driver,
+  four fixtures, and it is a PICTURE rather than a cost. §17's comparison names the condition that
+  would force Architecture B: *"if the WebGL2 backend turns out to be visually or performance-
+  unacceptable for this content"*. Visually, it is acceptable — that is the table above.
+  **Performance is a different answer:** Phase 11 measured the node renderer's WebGL2 backend
+  blocking the main thread for **14.7 s** on the forest's first mount against **3.6 s** on the
+  classic renderer, four times worse, on the path roughly 20% of visitors land on. So §28.3 item 1 is
+  NOT closed, and the half that is still open is the half §17 says can still change the
+  recommendation.
+
+### Phase 11 — Performance — **DONE 2026-09-17, as a measurement rather than a gate**
 
 - **Objective:** first-mount pipeline latency, adaptive DPR interaction, per-frame instance upload.
   Measure against §24.1's numbers.
+- `e2e/first-mount-cost.spec.ts` measures the app rather than a probe: the same fixture through three
+  renderers, reporting blocked main-thread time from `longtask` entries — the unit §24.1 uses — and
+  the wall-clock cost of the sixty pinned frames, which is where any pipeline created on first use is
+  created. §30.4 had already answered the renderer half on a bare page with 24 synthetic materials;
+  this is the half that includes the app's textures, its GLB loads and its post chain.
+- **The assertion is a SMOKE CEILING and is labelled as one.** The repo's 60 fps bar is measured on a
+  real GPU with nothing else running; this runs a production build behind a Playwright driver. The
+  numbers are the deliverable, and §24.3's risk — pipeline creation going pathological on a scene with
+  many distinct materials — is what the ceiling is placed to catch.
 
-### Phase 12 — Rollout
+**Measured 2026-09-17. Main-thread time BLOCKED during the first mount, which is the unit §24.1 uses
+and the one a visitor feels:**
+
+| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
+| --- | --- | --- | --- |
+| universe | 2410 ms | 2547 ms | **1046 ms** |
+| forest | 3596 ms | **14660 ms** | **890 ms** |
+| ocean, underwater | 1069 ms | **4947 ms** | **734 ms** |
+| ocean, above water | 203 ms | 257 ms | **144 ms** |
+
+**THE MIGRATION'S ONE PERFORMANCE ARGUMENT HOLDS, IN THE APP.** §24.2 calls WebGPU's async,
+cacheable pipeline creation *"the main performance case for the migration"* and marks it UNVERIFIED on
+this ANGLE/D3D11 target. The WebGPU backend blocks LESS than the classic renderer on every fixture —
+2.3x, 4.0x, 1.5x and 1.4x less — and the forest, this app's worst first mount, drops from 3.6 s of
+blocking in three long tasks to 0.9 s in one. That is the §24.1 freeze, measurably smaller.
+
+**AND §24.3'S RISK LANDS, ON THE FALLBACK.** The same section warns that pipeline creation for a scene
+with many distinct materials could be WORSE rather than better. It is, on the WebGL2 backend
+specifically: 4.1x worse on the forest and 4.6x worse underwater, while being indistinguishable from
+the classic renderer on the two light fixtures. So the cost is not "the node path"; it is the node
+path's pipeline creation running synchronously on a backend that has no async pipeline API to use.
+
+**THE OTHER NUMBER, AND IT POINTS THE OTHER WAY.** Wall-clock time for the sixty pinned frames is
+higher on the node path everywhere — the forest is 3488 ms classic against 7677 ms on WebGPU — because
+the pipelines are still being created inside those frames. Both numbers are true and they are about
+different things: one is how long the work takes, the other is how much of it the main thread has to
+sit through. The second is what §24.1 measured and what froze the page for two seconds.
+
+**WHAT THESE NUMBERS ARE NOT.** One run per cell, one machine, one driver, and every page is a COLD
+shader cache — §24.1 records that Chrome's on-disk binary cache takes the second-ever compile of these
+shaders from ~2.5 s to ~230 ms, so this is the worst case for every row including the classic one.
+Nothing here is a steady-state frame rate: the harness renders with `frameloop="never"` precisely so
+that it never measures one.
+- **ADAPTIVE DPR AND PER-FRAME INSTANCE UPLOAD ARE NOT MEASURED, and saying so is the honest end of
+  this phase.** Both need a sustained-load harness that drives the scene for minutes and watches the
+  pixel ratio move; the parity harness is built to pin a single frame and is the wrong instrument.
+  §24.2 already predicts nothing for either — "same bytes over the same bus", "same pixels, same
+  shading work" — and inventing a measurement to confirm a prediction is how two hypotheses died in
+  §30.2.
+
+### Phase 12 — Rollout — **DONE 2026-09-17, flag shipped OFF**
 
 - **Objective:** ship behind a flag; add the analytics field from §19.5 so the WebGPU/WebGL2 split
   becomes a measurement rather than an estimate.
+- `NEXT_PUBLIC_NODE_RENDERER=1` is the flag, and `graphicsBackend` is the field: on the report, the
+  gateway's bucket key, the envelope, the stored row and the admin panel.
+- **THE FIELD IS ASKED OF THE RENDERER, NEVER OF THE FLAG.** `WebGPURenderer` falls back to its WebGL2
+  backend by itself, and that population is exactly what §19.5's ~20% estimate is about. A value
+  derived from what the build ASKED for would count them as WebGPU and make the measurement agree
+  with the estimate it replaces.
+- **THERE IS NO PERCENTAGE ROLLOUT, and that is a decision rather than an omission.** A staged
+  percentage needs a stable per-visitor bucket, which needs an identifier that survives a reload.
+  This app deliberately has none — the render report carries no world id, no account id and no
+  session id, and that absence is what lets an unauthenticated browser POST into the platform's own
+  numbers. Minting one to compute a percentage would put an identity into a system built not to have
+  one, to buy a gradualness that a boolean plus this field already provides.
+- **DEPLOY ORDER IS A REQUIREMENT.** `decodeJSONBody` calls `DisallowUnknownFields`, so a frontend
+  sending the field to a gateway that has not shipped it gets a 400 on every report — a chart that
+  goes FLAT rather than wrong. Gateway first, then frontend. An absent field normalises to `unknown`
+  rather than being refused, for the mirror-image case: cached bundles.
+- **THE FLAG IS OFF, AND §10.3 IS WHY.** Parity does not block it — Phase 10's table is the argument
+  that it should not. The canvas readback does: the download button would produce a transparent PNG
+  and every scene transition would cut. That is the named prerequisite for turning it on.
 
-### Phase 13 — Only now, optimisation
+### Phase 13 — REVERTED 2026-09-18, and the reversal is the finding
 
-Compute, indirect draw, storage buffers, GPU simulation — §15, §30 of the brief. Not before parity.
+**The optimisation this phase shipped on 2026-09-17 was removed the next day, because it fails the
+parity ratchet.** What it found about three.js is still true and still useful; what it did to the app
+was not acceptable, and the way it reached `staging` is the part worth keeping.
+
+#### What it found, which stands
+
+`Renderer.compileAsync()` (`three.webgpu.js:60065`) assigns `this._compilationPromises`, and that
+array is the only thing either backend tests:
+
+| backend | `promises === null` (what `render()` does) | `promises !== null` (what `compileAsync` does) |
+| --- | --- | --- |
+| WebGPU | `device.createRenderPipeline`, `:82517` | `createRenderPipelineAsync`, `:82546` |
+| WebGL2 | `_completeCompile` inline, `:72632` | poll `COMPLETION_STATUS_KHR` from rAF, `:72602` |
+
+`this.parallel` is `extensions.get( 'KHR_parallel_shader_compile' )` (`:71353`). The extension is
+present, three supports it, and **nothing in this app was asking for it**. §24.3 was right about the
+symptom and wrong about the cause: not "many distinct materials", but "nothing requested the
+asynchronous path".
+
+#### What it did, which was not acceptable
+
+Two versions were built and both failed, in different ways, and only the ratchet found either.
+
+**Version one compiled through `PassNode.compileAsync` for the families that mount the node post
+chain**, on the correct observation that pipelines are cached per render context and a scene
+compiled against the CANVAS is not the scene drawn into a PASS. **`PassNode.compileAsync` runs
+before `PassNode.setup()` ever has**, so the pass's render target has not yet been given its
+half-float type (`:40943`) or its sample count, and the WebGL2 backend then reuses those pipelines.
+Measured with `scene-parity.spec.ts`: **the forest rendered NOTHING on the WebGL2 backend** —
+luminance deviation 1.02 against a blank floor of 3, `GL_INVALID_OPERATION: glDrawArrays: Active
+draw buffers with missing fragment shader outputs` every frame, and the renderer reporting success.
+
+**Version two used `renderer.compileAsync( scene, camera )` for every family.** The forest drew
+again, and the ratchet still failed: the universe's two node backends read **0.88** of 255 against a
+recorded 0.45, on a worst block of 52.08 against a tolerance of 40, and the forest read 2.03 against
+1.21. Removing the warm-up entirely restores every number exactly — universe **0.45**, forest
+**1.21**, ocean **0.31**, ocean-surface **0.02**, six of six green.
+
+**The mechanism is named and not fully proven.** `compileAsync` does `nodeFrame.renderId ++` and
+`nodeFrame.update()` (`:60104-60108`), and the node post chain's film grain is
+`screenUV.mul( float( 1 ).add( time ) )` — so a warm-up shifts the grain's phase on the node legs
+and not on the classic one. That explains the direction. It does **not** comfortably explain a worst
+block of 52 from a 6%-opacity soft-light grain, so the debts were NOT re-recorded against it: a
+ratchet loosened on an unproven explanation is a ratchet switched off.
+
+#### The cost of the reversal, stated rather than hidden
+
+Blocked main-thread time on a first mount, with the warm-up against without:
+
+    fixture              node/WebGL2        node/WebGPU
+    universe             1557  ->  2500      654  ->  965
+    forest              16245  ->  17793      902  ->  963
+    ocean, underwater    2890  ->  4913      471  ->  686
+    ocean, above water    257  ->  300      150  ->  193
+
+**So the warm-up was a real improvement on every fixture, and it is a real improvement the app
+cannot take.** Between 20% and 45% of the blocked first mount, given up to keep a ratchet that six
+of six comparisons now pass. **And the forest's 13593 ms in the original Phase 13 table was
+measured on a backend that was drawing nothing at all**, which is the second reason that table
+could not be trusted — and the first reason to distrust a number arriving in the direction you
+were hoping for.
+
+Run-to-run spread on the forest's WebGL2 cell is wide — 15286 ms before Phase 13 and 17793 ms
+today, both without a warm-up — so that fixture's column is a range rather than a reading.
+
+#### How it reached `staging`, which is the part to keep
+
+Phase 13 validated itself with `first-mount-cost.spec.ts` — the instrument for the thing it was
+optimising — and did not re-run `scene-parity.spec.ts`, the ratchet that exists to catch what an
+optimisation might break. Phases 9-11 ran both. **A phase that measures only its own objective will
+ship this again**, and no amount of care inside the change substitutes for running the gate that was
+built for the class of defect.
+
+> **THE FLAG IS STILL OFF and §10.3's canvas readback is still what keeps it off.** Re-measured
+> 2026-09-18 with the diagnostic counting colour separately from alpha: **0/256 alpha and 0/256
+> colour** on both node backends against 256/256 and 256/256 on the classic renderer. The buffer is
+> empty rather than transparent, so there is no cheap fix.
+
+### Phase 13's three approvals, taken 2026-09-17
+
+Presented at the end of Phase 12 and decided here, with the owner's instruction to decide rather than
+hold them. All three are accepted as they stand, and the reasoning is in
+[`../plans/frontend/webgpu-graphics-upgrade-roadmap.md`](../plans/frontend/webgpu-graphics-upgrade-roadmap.md) §7:
+the god rays keep the faithful port and the difference is documented; a lost `GPUDevice` falls back
+to `WebGPURenderer` + `forceWebGL` rather than to `WebGLRenderer`; and there is no percentage
+rollout.
+
+**THE SECOND OF THOSE THREE WAS REVERSED ON 2026-09-19, BY THE ROLLOUT, AND ON ITS OWN REASONING.**
+The approval rested on three arguments and the third was that the WebGL2 backend "ships anyway" to
+roughly 20% of visitors, so the recovery landed on a path with real traffic rather than a stub. The
+rollout ended that: browsers without WebGPU now get the CLASSIC renderer, so the WebGL2 backend
+ships to nobody. With that argument gone, the recovery is weighed against a measurement — 13593 ms
+of blocked main thread on the forest's first mount against the classic renderer's 3596 ms — and it
+now remounts onto `WebGLRenderer`. **The third approval, no percentage rollout, still stands and the
+rollout was built on it.** The first is untouched.
+
+> **THE FLAG IS STILL OFF, AND PHASE 13 DOES NOT CHANGE THAT.** §10.3's canvas readback is the named
+> prerequisite and it is untouched here — see the roadmap's Stage 0, which is the next piece of work
+> and says why it is a branch of its own rather than a patch. Parity is also still 12.22, 19.49 and
+> 9.90 of 255 on the three families, unmoved by this phase, which touched no shader.
+>
+> **Superseded 2026-09-19 on both counts:** Stage 0 closed the readback, the flag is on, and parity
+> is 0.45 / 1.21 / 0.31 after Phases 6-8 landed the port.
 
 ---
 
@@ -2686,7 +3081,7 @@ Honest ticks and crosses. A cross is more useful than a dishonest tick.
 | Depth/MRT audited | ✅ — none in app code |
 | WebGL-specific APIs audited | ✅ all 5 type sites, 3 raw context calls, 1 event listener |
 | WebGPU/WebGL interoperability investigated | ❌ **NOT properly researched.** §16 shows the recommended architecture does not need it, and declines to assert an answer |
-| WebGL2 fallback investigated | ⚠️ **structurally proven; behaviourally verified on six probes and one family of app content** — §30, then §26 Phase 4's 0.02 of 255. Six of seven fixtures remain unmeasured, so §28.3 item 1 is half closed rather than closed |
+| WebGL2 fallback investigated | ⚠️ **structurally proven; visually verified on four fixtures; and NOT acceptable on cost for the two heavy ones.** §26 Phase 10 puts the WebGL2 backend within 0.02–1.24 of 255 of the WebGPU one on every fixture, so the PICTURE clears it. §26 Phase 11 then measured its first mount blocking the main thread for 14.7 s on the forest against 3.6 s on the classic renderer. §28.3 item 1 is therefore still open, and the half that is open is the half §17 says can force Architecture B |
 | Behavioural parity investigated | ✅ per subsystem, with named exceptions |
 | Previous research challenged | ✅ 12 claims audited and classified |
 | First conclusion challenged | ⚠️ **by me, not by an adversarial fleet** — §27; two of my own claims refuted |

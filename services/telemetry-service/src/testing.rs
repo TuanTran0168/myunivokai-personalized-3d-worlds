@@ -195,12 +195,14 @@ pub fn client_render_bucket(
     quality_tier: i16,
     family: &str,
     outcome: &str,
+    graphics_backend: &str,
     count: i64,
 ) -> ClientRenderBucket {
     ClientRenderBucket {
         quality_tier,
         family: family.to_owned(),
         outcome: outcome.to_owned(),
+        graphics_backend: graphics_backend.to_owned(),
         count,
     }
 }

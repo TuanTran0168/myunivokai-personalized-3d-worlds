@@ -30,27 +30,39 @@ import { CanvasLoader } from "@/features/scene-renderers/shared/CanvasLoader";
 import { WebGLFailureBoundary } from "@/features/scene-renderers/shared/WebGLFailureBoundary";
 import { useDeviceQualityTier } from "@/features/scene-renderers/shared/useDeviceQualityTier";
 import {
+  clientRenderBackendOf,
   clientRenderFamilyForSceneType,
   reportClientRender,
+  CLIENT_RENDER_BACKEND_UNKNOWN,
   CLIENT_RENDER_OUTCOME_RENDERED,
-  CLIENT_RENDER_OUTCOME_WEBGL_FAILED
+  CLIENT_RENDER_OUTCOME_WEBGL_FAILED,
+  type ClientRenderGraphicsBackend
 } from "@/features/scene-renderers/shared/reportClientRender";
 import {
   ADAPTIVE_SAMPLE_WINDOW_SECONDS,
   ADAPTIVE_SLOW_WINDOWS_BEFORE_ACTING,
   ADAPTIVE_WARM_UP_SECONDS,
-  adaptiveDevicePixelRatio
+  adaptiveDevicePixelRatio,
+  composerMultisamplingFor
 } from "@/features/scene-renderers/shared/renderQuality";
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
 import { NodePostEffects } from "@/features/scene-renderers/shared/NodePostEffects";
+import { SceneStillBridge } from "@/features/scene-renderers/shared/SceneStillBridge";
+import { ComposedFrameDrawerContext } from "@/features/scene-renderers/shared/sceneStillCapture";
 import { rendererToneMappingForFamily } from "@/features/scene-renderers/shared/sceneToneMapping";
 import { loadNodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
-import {
-  parityHarnessRequest,
-  PARITY_RENDERER_WEBGL,
-  PARITY_RENDERER_WEBGPU_FORCED_WEBGL
-} from "@/features/scene-renderers/shared/parityHarness";
+import { parityHarnessRequest } from "@/features/scene-renderers/shared/parityHarness";
 import { ParityHarnessBridge } from "@/features/scene-renderers/shared/ParityHarnessBridge";
+import {
+  buildsNodeRenderer,
+  forcesWebGLBackend,
+  nodeRendererRollout,
+  rendererDecisionFor,
+  rendererDecisionNeedsAdapterAnswer,
+  rendererRemountSuffix
+} from "@/features/scene-renderers/shared/rendererSelection";
+import { useWebGPUAdapterAvailability } from "@/features/scene-renderers/shared/useWebGPUAdapterAvailability";
+import { watchGraphicsDevice } from "@/features/scene-renderers/shared/graphicsDeviceLoss";
 import { PlanetPositionTrackerContext } from "@/features/scene-renderers/shared/PlanetPositionTracker";
 import { TerrainHeightSamplerContext, type TerrainHeightSampler } from "@/features/scene-renderers/shared/TerrainHeightSampler";
 
@@ -213,12 +225,18 @@ function AdaptiveResolution({ isSceneReady }: { isSceneReady: boolean }) {
  * means "textures resolved and pixels are on screen" — the moment the canvas
  * may fade in over the loading veil.
  */
-function SceneReadySignal({ onSceneReady }: { onSceneReady: () => void }) {
+function SceneReadySignal({ onSceneReady }: { onSceneReady: (graphicsBackend: ClientRenderGraphicsBackend) => void }) {
   const hasSignaledReference = useRef(false);
+  // THE BACKEND IS READ FROM THE RENDERER, AND THIS COMPONENT IS WHY IT CAN BE.
+  // It is inside the <Canvas>, so it can ask the instance what it is; the
+  // component holding the telemetry is outside and only knows what it asked
+  // for. Those two answers differ for exactly the population §19.5 is trying to
+  // count — a WebGPURenderer that fell back to its WebGL2 backend.
+  const renderer = useThree((state) => state.gl);
   useFrame(() => {
     if (!hasSignaledReference.current) {
       hasSignaledReference.current = true;
-      onSceneReady();
+      onSceneReady(clientRenderBackendOf(renderer));
     }
   });
   return null;
@@ -314,6 +332,64 @@ export function UniverseCanvas({
   );
 
   /**
+   * Whether a `GPUDevice` has been lost on this page.
+   *
+   * One-way, and it survives the remount it causes because this state lives
+   * ABOVE the `<Canvas>` that is being replaced. §26 Phase 9 / §18.3(b): the
+   * recovery is a remount onto the WebGL2 backend rather than rebuilding every
+   * buffer, texture and pipeline on a fresh device.
+   */
+  const [graphicsDeviceLost, setGraphicsDeviceLost] = useState(false);
+
+  /**
+   * WHICH ROLLOUT THIS BUILD SHIPS, read once.
+   *
+   * Unset in production, which now means ON — the node renderer wherever the
+   * browser has a real WebGPU adapter. See `rendererSelection.ts` for what the
+   * other two values do and why the default moved.
+   */
+  const rollout = useMemo(() => nodeRendererRollout(), []);
+
+  /**
+   * Whether this page has to ask `navigator.gpu` before it can build anything.
+   *
+   * False for the harness, false under the kill switch, false when the rollout
+   * is `every-visitor`, and false once a device has been lost — in every one of
+   * those the renderer is already determined, and probing would be a driver
+   * call made to answer a question nothing asked.
+   */
+  const needsAdapterAnswer = rendererDecisionNeedsAdapterAnswer({
+    harnessRenderer: parityHarness?.renderer ?? null,
+    rollout,
+    graphicsDeviceLost
+  });
+
+  const webgpuAdapter = useWebGPUAdapterAvailability(needsAdapterAnswer);
+
+  /**
+   * WHICH RENDERER THIS CANVAS BUILDS — the one decision §26 Phase 9 adds, kept
+   * as a pure function in `rendererSelection.ts` so it can be argued with and
+   * tested without a GPU.
+   *
+   * **`isDecided` is false only while the adapter probe is outstanding**, and
+   * the canvas below is not rendered until it is true. That is the safety
+   * property that replaced "the flag ships off": a renderer cannot be changed
+   * after the `gl` factory has run, so the one moment this can be got right is
+   * before the `<Canvas>` exists.
+   */
+  const rendererDecision = useMemo(
+    () =>
+      rendererDecisionFor({
+        harnessRenderer: parityHarness?.renderer ?? null,
+        rollout,
+        webgpuAdapter,
+        graphicsDeviceLost
+      }),
+    [parityHarness, rollout, webgpuAdapter, graphicsDeviceLost]
+  );
+  const rendererChoice = rendererDecision.choice;
+
+  /**
    * Whether the renderer this canvas gets is a NODE renderer, which decides
    * which post chain can mount at all.
    *
@@ -325,12 +401,21 @@ export function UniverseCanvas({
    * and mounting the composer would fail at construction, before a frame, with
    * the whole canvas replaced by the failure boundary.
    */
-  const rendersWithNodePipeline = parityHarness !== null && parityHarness.renderer !== PARITY_RENDERER_WEBGL;
+  const rendersWithNodePipeline = buildsNodeRenderer(rendererChoice);
 
   // Classified once per mount, before the first frame, because shadows and the
   // postprocessing chain are decided when the canvas is created and cannot be
   // walked back by a frame-rate reading the way the pixel ratio can.
-  const deviceRenderProfile = useDeviceQualityTier();
+  //
+  // THE WEBGPU ADAPTER IS PROBED ONLY WHEN IT IS GOING TO DRAW. The WebGL probe
+  // this hook has always done reads a throwaway WebGL context, which cannot see
+  // a machine whose WEBGPU device is a CPU rasteriser — that machine answers
+  // "RTX 4060" and then renders every frame on the processor, at the top tier.
+  // Asking costs one `requestAdapter()`; asking on the classic path would cost
+  // it for an adapter nothing touches. §18.3(a).
+  const deviceRenderProfile = useDeviceQualityTier({
+    probesWebGPUAdapter: buildsNodeRenderer(rendererChoice) && !forcesWebGLBackend(rendererChoice)
+  });
   // An explicit range from a caller still wins. The share page and the create
   // preview both pass one, and a device tier is not entitled to overrule a
   // decision the calling screen made about its own layout.
@@ -338,6 +423,15 @@ export function UniverseCanvas({
   const ambientSoundscape = useAmbientSoundscape(scene, enableAmbientSound);
   const [hoveredPlanet, setHoveredPlanet] = useState<PlanetSceneConfig | null>(null);
   const planetPositionTrackerReference = useRef<Map<string, Vector3>>(new Map());
+  /**
+   * Which call draws a composed frame, for the still capture to reuse.
+   *
+   * Written by `NodePostEffects` when it owns the frame, left null for the
+   * ocean, which mounts no chain. A ref rather than state on purpose: nothing
+   * re-renders when it changes, and the one reader asks for it inside a click
+   * handler. See `sceneStillCapture.ts`.
+   */
+  const composedFrameDrawerReference = useRef<(() => void) | null>(null);
   // Only a family with a ground plane the camera can clip through (currently
   // ocean) ever writes into this; CameraRig's clamp is a no-op while it is null.
   const terrainHeightSamplerReference = useRef<TerrainHeightSampler>({ current: null });
@@ -478,7 +572,12 @@ export function UniverseCanvas({
   // are ever compiled on a machine — even in a brand new tab, brand new
   // context, brand new renderer — the same program readback drops from ~2.5s
   // to ~230ms.
-  const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}`;
+  //
+  // The renderer suffix is what turns a lost GPU device into a recovery: nothing
+  // about a renderer can change without a new `<Canvas>`, because the `gl`
+  // factory is called once per canvas. Empty for every ordinary choice, so no
+  // key moves for anybody until a device is actually lost.
+  const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}${rendererRemountSuffix(rendererDecision)}`;
   const isSceneReady = lastReadyCanvasKey === canvasRemountKey;
 
   const introDurationSeconds = CAMERA_INTRO_DURATION_SECONDS_BY_ENTRY_MOTION[entryMotion];
@@ -509,7 +608,13 @@ export function UniverseCanvas({
           reportClientRender({
             qualityTier: deviceRenderProfile.tier,
             family: clientRenderFamilyForSceneType(scene?.sceneType),
-            outcome: CLIENT_RENDER_OUTCOME_WEBGL_FAILED
+            outcome: CLIENT_RENDER_OUTCOME_WEBGL_FAILED,
+            // UNKNOWN, and not a guess at what was being built. This boundary
+            // catches a canvas that never got a context or lost the one it
+            // had — so there is no renderer instance to ask, and the one thing
+            // worse than not knowing which backend failed is recording a
+            // plausible answer.
+            graphicsBackend: CLIENT_RENDER_BACKEND_UNKNOWN
           });
         }}
       >
@@ -518,6 +623,23 @@ export function UniverseCanvas({
             revealWithoutFade ? "duration-0" : "duration-1000"
           } ${isCanvasVisible ? "opacity-100" : "opacity-0"}`}
         >
+          {/* NOT MOUNTED UNTIL THE RENDERER IS DECIDED, and this conditional is
+              the whole of the rollout's safety.
+
+              `rendererDecision.isDecided` is false in exactly one state: the
+              rollout is `where-webgpu-is-real` and `navigator.gpu` has not
+              answered yet. Mounting during that state would build whichever
+              renderer the default happened to be, and a renderer cannot be
+              changed afterwards — the `gl` factory runs once per `<Canvas>`, so
+              correcting it would mean a remount, which is this app's most
+              expensive operation and the one §26 spent its length shortening.
+
+              The wait is one `requestAdapter()`, 1 to 15 ms in Phase 0's
+              numbers and hard-bounded by
+              WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS. It is invisible: the
+              wrapper above holds opacity-0 until the scene signals ready, which
+              is seconds away, and the hold layer below is already painted. */}
+          {!rendererDecision.isDecided ? null : (
           <Canvas
             key={canvasRemountKey}
             // "never" from the FIRST frame when the parity harness is driving,
@@ -583,9 +705,9 @@ export function UniverseCanvas({
             // which is what they were reaching for, and the frame-wide curve
             // rolls those values off at the end instead of clipping them.
             gl={
-              parityHarness && parityHarness.renderer !== PARITY_RENDERER_WEBGL
-                ? // The parity harness's second and third renderers, and the
-                  // reason this is a FUNCTION: @react-three/fiber 9.7.0 awaits
+              buildsNodeRenderer(rendererChoice)
+                ? // The node renderer, and the reason this prop is a
+                  // FUNCTION: @react-three/fiber 9.7.0 awaits
                   // the `gl` prop when it is one, so `WebGPURenderer.init()` —
                   // which is async, and which is where the WebGL fallback is
                   // decided — can complete before the first frame. Verified
@@ -613,10 +735,63 @@ export function UniverseCanvas({
                       ...canvasProperties,
                       antialias: true,
                       powerPreference: "high-performance",
-                      forceWebGL: parityHarness.renderer === PARITY_RENDERER_WEBGPU_FORCED_WEBGL,
+                      // `preserveDrawingBuffer` IS NOT PASSED, AND NOT BECAUSE
+                      // IT WAS FORGOTTEN. §18.3(c) asks for a deliberate
+                      // decision about it, and the decision available is
+                      // narrower than the question: **the option does not exist
+                      // on this renderer.** Zero occurrences of the string in
+                      // `three.webgpu.js`, against two in `three.module.js`
+                      // (`:16074` reads it out of the parameters, `:16372`
+                      // hands it to `getContext`), and `WebGPURendererParameters`
+                      // does not declare it — passing it is a typecheck error
+                      // rather than a silent no-op, which is the one piece of
+                      // luck here.
+                      //
+                      // So the two readback sites (§10.3) are on their own,
+                      // and the measurement is in: `node-path-diagnostic.spec.ts`
+                      // samples the canvas the way both of them do, and BOTH
+                      // node backends read back fully transparent — 0 of 256
+                      // samples carrying any alpha, against 256 of 256 on the
+                      // classic renderer. The WebGL2 backend failing too is what
+                      // rules out WebGPU present-time semantics: it is the same
+                      // graphics API as the row that works. `lib/exportImage.ts`
+                      // now refuses rather than downloading a transparent
+                      // rectangle, and `sceneStill.ts` already failed safe. The
+                      // prop is still honoured on the classic path below, which
+                      // is every visitor while the flag is off.
+
+                      // MULTISAMPLING, WHICH PHASE 5 DEFERRED TO HERE. On the
+                      // node renderer `samples` is a CONSTRUCTOR value with no
+                      // setter (`three.webgpu.js:61642`) and `PassNode` sizes
+                      // its target from it, so the node post chain could not
+                      // set its own the way EffectComposer does. This is the
+                      // only place it can be decided.
+                      //
+                      // Keyed on the DISPLAY's density rather than on the
+                      // tier's pixel-ratio ceiling, for the reason
+                      // renderQuality.ts gives at length: samples stop earning
+                      // their cost once the panel is already supersampling. The
+                      // tier is not known yet at construction — the first render
+                      // always carries the high profile — and on the weakest
+                      // tier that means a device whose ratio will be capped at
+                      // 1.5 gets the sample count for its native density, which
+                      // is the CHEAPER one. Erring cheap for the weakest device
+                      // is the right direction.
+                      samples: composerMultisamplingFor(
+                        typeof window === "undefined" ? 1 : window.devicePixelRatio
+                      ),
+                      forceWebGL: forcesWebGLBackend(rendererChoice),
                     });
                     renderer.toneMapping = rendererToneMappingForFamily({ isOceanFamilyScene });
                     await renderer.init();
+                    // THE FIFTH GATE, and the only one `WebGPURenderer` does not
+                    // cover itself. `GPUDevice.lost` stays pending for the
+                    // device's whole life and resolves when the driver takes it
+                    // away; there is no WebGL2 equivalent and nothing throws.
+                    // Recovery is the remount above. See graphicsDeviceLoss.ts.
+                    watchGraphicsDevice(renderer, () => {
+                      setGraphicsDeviceLost(true);
+                    });
                     return renderer;
                   }
                 : {
@@ -630,6 +805,16 @@ export function UniverseCanvas({
           >
             <color attach="background" args={[backgroundColor]} />
             {parityHarness ? <ParityHarnessBridge request={parityHarness} /> : null}
+            <ComposedFrameDrawerContext.Provider value={composedFrameDrawerReference}>
+            {/* THE DOWNLOAD BUTTON AND EVERY TRANSITION DEPEND ON THIS ON THE
+                NODE PATH. Its canvas reads back empty — 0 of 256 samples
+                carrying alpha AND 0 of 256 carrying colour, on both backends —
+                because `preserveDrawingBuffer` does not exist on
+                `WebGPURendererParameters`, so the still is rendered rather than
+                scraped. Not mounted on the classic path, whose canvas reads
+                back correctly and is what every visitor has while the flag is
+                off. Stage 0 of the graphics upgrade roadmap. */}
+            {rendersWithNodePipeline ? <SceneStillBridge /> : null}
             <PlanetPositionTrackerContext.Provider value={planetPositionTrackerReference.current}>
             <TerrainHeightSamplerContext.Provider value={terrainHeightSamplerReference.current}>
               <Suspense fallback={<CanvasLoader />}>
@@ -693,7 +878,7 @@ export function UniverseCanvas({
                   />
                 )}
                 <SceneReadySignal
-                  onSceneReady={() => {
+                  onSceneReady={(graphicsBackend) => {
                     setLastReadyCanvasKey(canvasRemountKey);
                     // Reported here rather than on mount, because a canvas
                     // that mounted and never reached a frame is exactly the
@@ -702,7 +887,8 @@ export function UniverseCanvas({
                     reportClientRender({
                       qualityTier: deviceRenderProfile.tier,
                       family: clientRenderFamilyForSceneType(scene?.sceneType),
-                      outcome: CLIENT_RENDER_OUTCOME_RENDERED
+                      outcome: CLIENT_RENDER_OUTCOME_RENDERED,
+                      graphicsBackend
                     });
                     onSceneReady?.();
                   }}
@@ -724,7 +910,9 @@ export function UniverseCanvas({
               />
             </TerrainHeightSamplerContext.Provider>
             </PlanetPositionTrackerContext.Provider>
+            </ComposedFrameDrawerContext.Provider>
           </Canvas>
+          )}
         </div>
       </WebGLFailureBoundary>
       {/* The hold before the scene arrives. Deliberately NOT a spinner: a pair

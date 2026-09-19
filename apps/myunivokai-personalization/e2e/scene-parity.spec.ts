@@ -3,6 +3,7 @@ import { inflateSync } from "node:zlib";
 import universeWorld from "./fixtures/universe-world.json";
 import natureWorld from "./fixtures/nature-world.json";
 import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
+import oceanSurfaceWorld from "./fixtures/ocean-surface-world.json";
 // A plain-ESM helper with a hand-written .d.mts beside it, the same shape
 // `frameMetrics.mjs` uses: it stays JavaScript so it can be run under bare node
 // alongside measure.mjs, and the declaration file keeps this a typed boundary.
@@ -75,7 +76,14 @@ const FIXTURES = {
 const PARITY_FIXTURES = [
   { name: "universe-world", worldId: universeWorld.world.id, family: undefined, oceanWorld: undefined },
   { name: "forest-world", worldId: natureWorld.world.id, family: "nature", oceanWorld: undefined },
-  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean", oceanWorld: oceanShallowWorld }
+  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean", oceanWorld: oceanShallowWorld },
+  // THE SAME SEA FROM SIX METRES ABOVE IT, and the only fixture in this suite
+  // that mounts the surface material. `isAboveWater` is `viewerDepthMetres < 0`,
+  // so every other ocean fixture is underwater and the sheet seen from above is
+  // never built — which means §26 Phase 8's largest port would otherwise move no
+  // number here at all. It is a fixture added to measure a thing, which is the
+  // only reason to add one.
+  { name: "ocean-surface", worldId: oceanSurfaceWorld.world.id, family: "ocean", oceanWorld: oceanSurfaceWorld }
 ] as const;
 
 const PARITY_RENDERERS = [
@@ -176,6 +184,50 @@ const KNOWN_WEBGPU_BLOCKERS: readonly { fragment: string; name: string }[] = [
  */
 const DIVERGENCE_HEADROOM = 1.1;
 
+/**
+ * **`ocean-surface` HAS NO ENTRY IN THIS LEDGER, AND THAT ABSENCE IS THE MOST
+ * USEFUL NUMBER THE HARNESS HAS PRODUCED.**
+ *
+ * The same sea from six metres above it, on 2026-09-17, needing no recorded
+ * debt at all:
+ *
+ *     ocean-surface · WebGPU against WebGL        mean 0.31 · 0.14% differing
+ *     ocean-surface · forceWebGL against WebGL    mean 0.30 · 0.08% differing
+ *     ocean-surface · WebGPU against forceWebGL   mean 0.02 · 0.08% differing
+ *
+ * It passes the raw cross-backend tolerance. Not "within its allowance" — there
+ * is no allowance. The node path and the classic path draw this scene the same.
+ *
+ * **AND IT ATTRIBUTES THE OTHER TWO FAMILIES' RESIDUALS, WHICH §30.2 GAVE UP
+ * ON.** That section says the universe's 12.22 is "the signature of the POST
+ * CHAIN", and then says plainly that the experiment which would settle it — a
+ * run with post disabled on both paths — "needs a lever the harness does not
+ * have", and that inventing one to confirm a hypothesis is how two earlier
+ * hypotheses died. No lever was invented. A scene that already had no post chain
+ * was measured instead:
+ *
+ *     family          hand-written GLSL left    post chain    node vs classic
+ *     universe        none                      yes           12.22
+ *     forest          none                      yes           19.49
+ *     ocean-surface   none                      NO            0.31
+ *
+ * Three families with no GLSL left. The two that mount a post chain sit twelve
+ * and nineteen units apart; the one that does not sits at a third of a unit.
+ *
+ * WHAT THIS DOES NOT PROVE. `ocean-surface` is a different scene, not the
+ * universe with its post chain switched off, so the post chain is the most
+ * obvious difference rather than the only one. It does not say WHICH pass, and
+ * it does not measure how much. What it does establish is that a fully ported
+ * scene reaches 0.31 between backends — so whatever the other two are made of,
+ * it is not the node path being unable to reproduce a frame.
+ *
+ * It is also the fixture without which §26 Phase 8's largest port would have
+ * been invisible. `isAboveWater` is `viewerDepthMetres < 0`; every other ocean
+ * fixture is underwater, the surface material is only built when the camera is
+ * out of the water, and the god rays are `visible = !above` — so above water the
+ * family has nothing left on the GLSL path at all, measured 0 on both node
+ * backends.
+ */
 const KNOWN_BACKEND_DIVERGENCE: readonly {
   fixture: string;
   comparison: string;
@@ -289,11 +341,56 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
     closedBy: "the AO retune and the PMREM bake, NOT a shader port — the forest has no GLSL left"
   },
   /**
+   * **THE ONLY DELIBERATE ENTRY IN THIS LEDGER, AND IT IS A PURCHASE RATHER
+   * THAN A DEBT.**
+   *
+   * Every other row here records something nobody chose and somebody will
+   * close. This one records a trade taken on 2026-09-19 with both numbers
+   * measured: **the forest's GTAO pass is skipped on the WebGL2 backend**, so
+   * the two node backends no longer render the same forest.
+   *
+   * WHAT IT BOUGHT, measured with `first-mount-cost.spec.ts`, this pass
+   * disabled and re-enabled with nothing else changed:
+   *
+   *   forest, node · WebGL2   blocked main thread   15916 ms -> 10524 ms   (-5.4 s, -34%)
+   *   forest, node · WebGPU   blocked main thread     820 ms ->   851 ms   (unchanged)
+   *
+   * The asymmetry is the argument. §26 Phase 13 found the WebGL2 backend
+   * creates pipelines SYNCHRONOUSLY, so a large shader is a stall there and is
+   * not one on WebGPU. GTAO is not expensive to run on the fallback; it is
+   * expensive to compile, once, during the app's most visible moment — and
+   * `every-visitor` put roughly 20% of visitors on that backend.
+   *
+   * WHAT IT COST is this entry: the forest loses its ambient occlusion for
+   * those visitors, and §28.3's claim that the fallback "is not a degraded
+   * rendition of the node path; it is the node path" is now false for one
+   * family, by one pass, on purpose.
+   *
+   * **AND IT DOES NOT MAKE THE FALLBACK GOOD.** 10.5 s is still a multi-second
+   * freeze against the classic renderer's 3.3 s. Phase 13's unattributed
+   * remainder — the leading hypothesis is texture upload — is what the asset
+   * pipeline stage is aimed at, and that is where the rest of this number goes.
+   *
+   * **DELETE THIS ENTRY IF THE GATE IS REMOVED.** It is reversed by making
+   * `backendAffordsAmbientOcclusion` return true, and the ratchet's
+   * halving rule will then demand this row's deletion, which is correct.
+   */
+  {
+    fixture: "forest-world",
+    comparison: "WebGPU against forceWebGL",
+    meanAbsoluteError: 4.12,
+    worstBlockError: 64.89,
+    differingFraction: 0.2272,
+    closedBy:
+      "nothing — this one is deliberate. See the block above, and delete this entry if the GTAO backend gate is removed"
+  },
+  /**
    * **THE OCEAN IS PART PORTED, AND THIS ENTRY IS THE ONLY ONE THAT WILL MOVE
    * FOR MORE THAN ONE REASON.** Five of its six `ShaderMaterial`s — the jellyfish
    * bell, the bubble stream, marine snow, the backdrop dome and the water's
-   * underside — are node materials as of 2026-09-15; the god rays are not, and
-   * neither are its eight `onBeforeCompile` patches.
+   * underside — are node materials as of 2026-09-15, and all eight of its
+   * `onBeforeCompile` patches have a node arm as of 2026-09-17. The god rays are
+   * still on the GLSL path and are blocked on a look decision, not on work.
    *
    * So the number below is a MIXTURE, and reading it as "what the ocean's
    * shaders cost" is what the two entries above already had to be corrected
@@ -338,22 +435,79 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
    *
    * So this entry will keep rising until the water is ported, and that is not a
    * regression. The refusal count is the number to watch until then.
+   *
+   * **AND PHASE 7 RAISED IT AGAIN, 61.43 -> 63.35, WITH THE REFUSAL COUNT
+   * UNMOVED AT 1.** That pairing is the whole point of the paragraph above. The
+   * eight patches were never refusals — a node material simply never reads
+   * `onBeforeCompile`, so before this the node frame had kelp that did not sway,
+   * a seabed with no caustics on it and fish that did not bend, and NOTHING
+   * anywhere reported that. They all run now. The frame gained detail, the
+   * detail carries the same encode residual that gives the universe 12.23 with
+   * no GLSL left at all, and more lit surface means more of it.
+   *
+   * The two node backends moved 0.04 -> 0.15 over the same change, which is the
+   * expected direction: the caustics are the only thing in this scene built on
+   * `dFdx`/`dFdy`, and screen-space derivatives are exactly where Dawn and the
+   * WebGL2 backend are entitled to differ. 0.15 of 255 is still agreement.
+   *
+   * **AND THEN THE GOD RAYS LANDED AND IT FELL TO 9.90, WHICH ANSWERS THE
+   * PARAGRAPH BELOW RATHER THAN CONFIRMING IT.** 63.35 -> 9.90 on one material.
+   * The paragraph that used to sit here said it was "NOT ESTABLISHED... how much
+   * of the 1.92 is that residual and how much is the god rays still missing
+   * underneath it", and declined to guess. It is established now, and the answer
+   * is not the one the shape of the question suggested: the god rays were not a
+   * contribution UNDERNEATH the residual, they were **five sixths of the whole
+   * number**. A 24-step additive raymarch over the entire hemisphere was being
+   * refused and drawn nowhere, and everything else in this fixture was being
+   * compared through the hole it left.
+   *
+   * **WHAT IS LEFT IS 9.90, AND TWO OCEAN FIXTURES NOW ISOLATE IT.** Both mount
+   * no post chain on either path, both have no hand-written GLSL left anywhere,
+   * both are the same family with the same renderer settings, and they differ in
+   * one structural way — what they are made of:
+   *
+   *     ocean-surface    no additive layers          0.31
+   *     ocean-shallow    five additive layers        9.90
+   *
+   * The five are the god rays, the three marine-snow layers and the
+   * bioluminescent fourth, plus the jellyfish and the bubbles. Every one of them
+   * deliberately writes RAW LINEAR with no encode, which on the classic path adds
+   * linear values onto an sRGB-encoded framebuffer and on the node path adds them
+   * before a frame-wide encode — see `oceanGodRays.ts`, which carries the
+   * arithmetic for why no scalar reconciles the two. **So 9.6 of 255 is what the
+   * additive-compositing-space difference costs on a scene built out of it**,
+   * measured rather than argued, on the day the last GLSL in the app ran out.
+   *
+   * WHAT THIS STILL DOES NOT PROVE. The two fixtures are different scenes, not
+   * one scene with its additive layers switched off, so "what they are made of"
+   * is the most obvious remaining difference and not the only possible one. It
+   * does not apportion the 9.90 between the six layers.
+   *
+   * The two node backends moved 0.15 -> 0.31 over this change, and that is the
+   * expected direction for exactly the reason `oceanGodRays.ts` predicts in
+   * advance: the march is jittered by a hash of the fragment's screen position,
+   * `gl_FragCoord` and TSL's `screenCoordinate` do not share a Y origin, and a
+   * chaotic hash of a different input is a different offset. The banding it
+   * breaks up is gone on both; the noise it leaves behind is not the same noise.
+   * 0.31 of 255 is still agreement.
    */
   {
     fixture: "ocean-shallow",
     comparison: "WebGPU against WebGL",
-    meanAbsoluteError: 61.43,
-    worstBlockError: 150.77,
-    differingFraction: 0.9834,
-    closedBy: "Phases 6-8 for PART of it — one shader and eight patches remain — and the post chain for the rest"
+    meanAbsoluteError: 9.9,
+    worstBlockError: 146.76,
+    differingFraction: 0.7535,
+    closedBy:
+      "nothing that is left to port — the family has no GLSL and no post chain, and what remains is the additive-compositing-space difference oceanGodRays.ts derives"
   },
   {
     fixture: "ocean-shallow",
     comparison: "forceWebGL against WebGL",
-    meanAbsoluteError: 61.43,
-    worstBlockError: 151.2,
-    differingFraction: 0.9834,
-    closedBy: "Phases 6-8 for PART of it — one shader and eight patches remain — and the post chain for the rest"
+    meanAbsoluteError: 9.79,
+    worstBlockError: 147.63,
+    differingFraction: 0.7524,
+    closedBy:
+      "nothing that is left to port — the family has no GLSL and no post chain, and what remains is the additive-compositing-space difference oceanGodRays.ts derives"
   }
 ];
 

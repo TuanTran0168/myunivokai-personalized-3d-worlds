@@ -5,6 +5,7 @@ import { useGLTF } from "@react-three/drei";
 import { Box3, Color, Mesh, MeshStandardMaterial, Vector3 } from "three";
 import { applyCaustics, type CausticsUniforms } from "./oceanCaustics";
 import { LANDMARK_HEIGHT_METRES } from "./oceanLandmarkGeometry";
+import { applyLoadedModelTextureQuality } from "../shared/textureQuality";
 
 /**
  * The one loaded prop on this family's seabed, and the one place a downloaded
@@ -70,6 +71,13 @@ export function OceanSunkenRelicModel({
   const { scene } = useGLTF(SUNKEN_RELIC_MODEL_PATH);
 
   const relic = useMemo(() => {
+    // The one ocean model that carries maps at all — a 512px base colour and a
+    // 512px normal, seen from a metre away on the seabed. Every other model in
+    // the family ships no images, and `loadSpeciesGeometry` deletes the UVs
+    // that would let them have any, so this is the whole of the ocean's share of
+    // the sharpening the forest just got. Applied to the SOURCE, because a
+    // clone carries the same texture objects.
+    applyLoadedModelTextureQuality(scene);
     const model = scene.clone(true);
     model.updateMatrixWorld(true);
 

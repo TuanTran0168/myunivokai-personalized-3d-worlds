@@ -311,11 +311,87 @@ sequenceDiagram
 
 ---
 
+## Rendering — one renderer, two backends
+
+**Every visitor gets `WebGPURenderer`.** TSL node materials, three.js
+`RenderPipeline`, built over Phases 0-13 of
+[the migration study](agent-system/research/webgpu-full-migration-feasibility-2026.md)
+and made the default on 2026-09-19. Three.js then picks the backend by itself on
+`init()`: WebGPU where the browser has it, WebGL2 where it does not.
+
+`WebGLRenderer` — GLSL materials, nine hand-written shaders, the `postprocessing`
+composer — is still here, still maintained and still photographed by the parity
+suite on every run. **It is no longer what anybody receives.** It is the
+reference implementation the node path is measured against, and the recovery
+target if a `GPUDevice` is lost mid-session.
+
+**What that costs, stated because it is measured and was accepted rather than
+missed.** On the WebGL2 backend the forest's first mount blocks the main thread
+for **13.6 s against the classic renderer's 3.6 s**, and underwater 2.9 s
+against 1.1 s. Roughly a fifth of visitors have no WebGPU and land there — likely
+more for this product, since that figure weights global traffic while this
+audience is Vietnam-skewed and arrives through WebView-backed in-app browsers.
+Nothing in this repo has made that faster yet; the asset pipeline is where the
+work is aimed.
+
+`NEXT_PUBLIC_NODE_RENDERER` is unset in every deployment, and unset is the
+setting above. Two escapes, both needing a frontend rebuild because
+`NEXT_PUBLIC_*` is inlined at build time:
+
+| value | what it does |
+| --- | --- |
+| `0`, `off`, `false`, `no`, `disabled` | kill switch — `WebGLRenderer` for everyone |
+| `where-webgpu-is-real` | `WebGPURenderer` only where `navigator.gpu` reports hardware; keeps the WebGPU win and gives up the WebGL2 backend's first mount |
+
+| | `WebGLRenderer` — reference and recovery | `WebGPURenderer` — what ships |
+| --- | --- | --- |
+| Who gets it | nobody, unless the kill switch is set or a `GPUDevice` is lost | everybody |
+| Backend | WebGL2 | WebGPU, or WebGL2, chosen by three.js on `init()` |
+| Materials | GLSL `ShaderMaterial` + `onBeforeCompile` | TSL node graphs, one source for both backends |
+| Post-processing | `postprocessing` composer | three.js `RenderPipeline`, eight passes |
+| Device loss | no equivalent | `GPUDevice.lost` remounts onto the **classic** renderer |
+| Canvas readback | works | **empty** — `preserveDrawingBuffer` does not exist on this renderer |
+| Scene stills and PNG export | read the canvas | rendered into an offscreen target, and within 0.11 of 255 of the canvas |
+
+Two things are worth knowing before touching either path.
+
+**Which renderer actually drew is measured, not assumed.** `WebGPURenderer`
+falls back to its WebGL2 backend by itself, so the `graphicsBackend` field on the
+client render report is read off the renderer INSTANCE rather than off the flag
+that built it — a value derived from what the build asked for would count that
+population as WebGPU and measure nothing.
+
+**The rollout was blocked twice, and neither blocker was visual parity.** The
+first was the canvas readback: both node backends read an EMPTY canvas — 0 of
+256 samples carrying alpha and 0 of 256 carrying colour — which killed the image
+export and every scene transition. **Stage 0 of
+[the graphics upgrade roadmap](agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md)
+closed that on 2026-09-19** by rendering the still into an offscreen render
+target rather than scraping the canvas; it now reproduces the canvas to between
+0.01 and 0.11 of 255 on all three renderers.
+
+The second was the WebGL2 backend's first mount, and **it is open, known and
+accepted rather than closed**. The 13.6 s forest is still there and nothing has
+made it faster. It was briefly routed around — for the length of one commit the
+node renderer went only to browsers with real WebGPU — and then the owner chose
+to ship it to everybody anyway, with the number in hand. Making it fast is where
+the roadmap's asset-pipeline stage is aimed, and it stopped being optional work
+the moment that decision was taken.
+
+`e2e/default-renderer-rollout.spec.ts` pins no renderer, which makes it the one
+spec that measures what an ordinary visit builds: a SwiftShader browser draws
+with `webgl2` and a real-driver browser with `webgpu`, and neither draws `webgl`.
+**The first of those had never been checked** — the parity harness's forced-WebGL2
+leg runs only on the real-driver machine, so nothing had ever put the node
+renderer on a stack with no WebGPU at all and asked whether it reaches a frame.
+
+---
+
 ## Tech Stack
 
 | Area | Technologies |
 | --- | --- |
-| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js, Web Audio API, Tailwind CSS |
+| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js `WebGPURenderer` (WebGPU backend where the browser has it, WebGL2 everywhere else), Web Audio API, Tailwind CSS |
 | **Backend** | Go (chi, pgxpool, zerolog), Rust (`telemetry-service`, sqlx, tokio) |
 | **Messaging & Cache** | NATS JetStream (durable events & commands), Core NATS (request-reply), Redis (rate limiting & cache) |
 | **Persistence** | PostgreSQL 17 (Database-per-service on Neon in production), Raw SQL (No ORM) |
@@ -464,4 +540,5 @@ Start here:
 - [`agent-system/knowledge/backend/source-overview.md`](agent-system/knowledge/backend/source-overview.md) — backend architecture and microservice patterns
 - [`agent-system/knowledge/backend/request-lifecycle.md`](agent-system/knowledge/backend/request-lifecycle.md) — request paths and cache invalidation
 - [`agent-system/knowledge/frontend/source-overview.md`](agent-system/knowledge/frontend/source-overview.md) — frontend architecture and the 3D scene registry
+- [`agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md`](agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md) — what the WebGPU path makes possible next, and which gate each stage waits on
 - [`agent-system/skills/production-deployment-guide.md`](agent-system/skills/production-deployment-guide.md) — the full production deployment runbook

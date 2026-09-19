@@ -1,7 +1,8 @@
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import natureWorld from "./fixtures/nature-world.json";
 import universeWorld from "./fixtures/universe-world.json";
 import oceanShallowWorld from "./fixtures/ocean-shallow-world.json";
+import oceanSurfaceWorld from "./fixtures/ocean-surface-world.json";
 
 /**
  * THE STACKS `scene-parity.spec.ts` DELIBERATELY DOES NOT KEEP.
@@ -43,9 +44,16 @@ const SHOT_DIRECTORY = "e2e/shots/node-path-diagnostic";
 const NODE_BUILDER_REFUSAL = "is not compatible";
 
 const DIAGNOSTIC_FIXTURES = [
-  { name: "forest-world", worldId: natureWorld.world.id, family: "nature" },
-  { name: "universe-world", worldId: universeWorld.world.id, family: undefined },
-  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean" }
+  { name: "forest-world", worldId: natureWorld.world.id, family: "nature", oceanWorld: oceanShallowWorld },
+  { name: "universe-world", worldId: universeWorld.world.id, family: undefined, oceanWorld: oceanShallowWorld },
+  { name: "ocean-shallow", worldId: oceanShallowWorld.world.id, family: "ocean", oceanWorld: oceanShallowWorld },
+  // THE SAME SEA, FROM SIX METRES ABOVE IT — and the only fixture that mounts
+  // the surface material at all. `isAboveWater` is `viewerDepthMetres < 0`, so
+  // every other ocean fixture here is underwater and the sheet seen from above
+  // is never built. Without this one, the largest shader in §26 Phase 8 could be
+  // ported, refused, and drawn nowhere, and every number in this suite would be
+  // unchanged.
+  { name: "ocean-surface", worldId: oceanSurfaceWorld.world.id, family: "ocean", oceanWorld: oceanSurfaceWorld }
 ] as const;
 
 // `webgl` is here as the CONTROL. A node-path frame is only interpretable
@@ -89,11 +97,11 @@ function describeFarthestObjects(state: SceneState): string {
   return state.farthestObjects.map((entry) => `    ${entry}`).join("\n");
 }
 
-async function serveWorldFixtures(page: Page) {
+async function serveWorldFixtures(page: Page, oceanWorld: unknown) {
   const routes = [
     ["**/api/nature/**", natureWorld],
     ["**/api/universe/**", universeWorld],
-    ["**/api/ocean/**", oceanShallowWorld]
+    ["**/api/ocean/**", oceanWorld]
   ] as const;
   for (const [path, world] of routes) {
     await page.route(path, async (route) => {
@@ -132,7 +140,7 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
         }
       });
 
-      await serveWorldFixtures(page);
+      await serveWorldFixtures(page, fixture.oceanWorld);
       const familyParameter = fixture.family ? `family=${fixture.family}&` : "";
       await page.goto(
         `/worlds/${fixture.worldId}?${familyParameter}parityRenderer=${requestedRenderer}` +
@@ -187,6 +195,80 @@ for (const fixture of DIAGNOSTIC_FIXTURES) {
       for (const pageError of pageErrors) {
         printStack(`\n--- ${pageError.message}`, pageError.stack);
       }
+
+      // CAN THIS CANVAS STILL BE READ BACK? §10.3 lists two production sites
+      // that do it — `lib/exportImage.ts` calls `toDataURL` for the download
+      // button, and `features/transitions/sceneStill.ts` draws the canvas into
+      // a 2D context and samples the centre pixel to decide whether to warp or
+      // to cut — and both depend on the canvas still holding an image AFTER the
+      // frame has been presented.
+      //
+      // **`preserveDrawingBuffer` IS WHAT BUYS THAT ON THE CLASSIC PATH, AND IT
+      // DOES NOT EXIST ON THE NODE ONE.** Zero occurrences of the string in
+      // `three.webgpu.js`; `WebGPURendererParameters` does not declare it. §10.3
+      // calls this "VISUAL_PARITY_RISK to test, not a blocker" and this is the
+      // test. It runs on all three renderers, so the classic leg is the control
+      // rather than an assumption.
+      const readback = await page.evaluate(() => {
+        const sceneCanvas = document.querySelector("canvas");
+        if (!sceneCanvas) return { found: false, dataUrlLength: 0, opaqueSamples: 0, colouredSamples: 0, sampleCount: 0 };
+        const dataUrl = sceneCanvas.toDataURL("image/png");
+        // The same route `sceneStill.ts` takes, at a size that costs nothing:
+        // a blank readback is blank everywhere, so a coarse grid answers it.
+        const SAMPLE_GRID_SIZE = 16;
+        const probe = document.createElement("canvas");
+        probe.width = SAMPLE_GRID_SIZE;
+        probe.height = SAMPLE_GRID_SIZE;
+        const probeContext = probe.getContext("2d");
+        if (!probeContext)
+          return { found: true, dataUrlLength: dataUrl.length, opaqueSamples: 0, colouredSamples: 0, sampleCount: 0 };
+        probeContext.drawImage(sceneCanvas, 0, 0, SAMPLE_GRID_SIZE, SAMPLE_GRID_SIZE);
+        const pixels = probeContext.getImageData(0, 0, SAMPLE_GRID_SIZE, SAMPLE_GRID_SIZE).data;
+        // ALPHA AND COLOUR ARE COUNTED SEPARATELY, BECAUSE "0 OF 256 CARRY
+        // ALPHA" DOES NOT SAY WHICH DEFECT THIS IS. A buffer that was cleared
+        // after presentation reads back black AND transparent. A buffer that is
+        // intact but whose alpha channel is zero reads back with the scene's
+        // colours and no alpha — and that second one is a renderer parameter,
+        // not a missing feature. The two need completely different fixes and
+        // the first version of this probe could not tell them apart.
+        let opaqueSamples = 0;
+        let colouredSamples = 0;
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (pixels[index + 3] > 0) opaqueSamples += 1;
+          if (pixels[index] > 0 || pixels[index + 1] > 0 || pixels[index + 2] > 0) colouredSamples += 1;
+        }
+        return {
+          found: true,
+          dataUrlLength: dataUrl.length,
+          opaqueSamples,
+          colouredSamples,
+          sampleCount: pixels.length / 4
+        };
+      });
+      console.log(
+        `canvas readback: ${readback.opaqueSamples}/${readback.sampleCount} samples carry alpha,` +
+          ` ${readback.colouredSamples}/${readback.sampleCount} carry colour` +
+          ` · toDataURL ${readback.dataUrlLength} characters`
+      );
+      expect(readback.found, "the scene canvas must exist to be read back").toBe(true);
+
+      // **THE RATCHET THAT WAS HERE IS GONE, AND ITS ENDING IS THE ONE IT ASKED
+      // FOR.** It recorded "0/256 on both node backends" the way
+      // `KNOWN_BACKEND_DIVERGENCE` records a pixel debt, and said in its own
+      // words: *"the day three, or Chrome, or a rebuild of the export onto an
+      // offscreen render target makes this work, THIS TEST FAILS and says to
+      // delete the guard in `lib/exportImage.ts`."*
+      //
+      // Stage 0 of the graphics upgrade roadmap is that rebuild. The guard is
+      // gone, the export no longer reads this canvas on the node path, and the
+      // assertion had to go rather than invert: the canvas still reads back
+      // empty and now NOTHING DEPENDS ON IT, so an assertion either way would
+      // be pinning a fact the app stopped consulting. `scene-still-capture.spec.ts`
+      // is what asserts the replacement, on all three renderers.
+      //
+      // The number is still PRINTED, because this spec's job is to show what
+      // the path does rather than to hold it in place, and because the day that
+      // number changes is a day somebody will want to know about.
 
       // A FRAME TO LOOK AT, because a mean absolute error does not say WHAT is
       // wrong. `scene-parity.spec.ts` reports that the universe differs by 151

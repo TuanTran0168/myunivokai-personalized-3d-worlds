@@ -10,6 +10,8 @@ import { planetIdentityKey } from "@/features/scene-renderers/planetIdentity";
 import { usePlanetPositionTracker } from "@/features/scene-renderers/shared/PlanetPositionTracker";
 import { getSoftCircleTexture } from "@/features/scene-renderers/shared/softCircleTexture";
 import { applyCaustics, type CausticsUniforms } from "./oceanCaustics";
+import { standardMaterialForRenderer } from "@/features/scene-renderers/shared/nodeMaterialChunkPatch";
+import { useNodeMaterialModules } from "@/features/scene-renderers/shared/useNodeMaterialModules";
 import {
   LANDMARK_BASE_COLORS,
   LANDMARK_HEIGHT_METRES,
@@ -17,6 +19,10 @@ import {
   landmarkGeometry
 } from "./oceanLandmarkGeometry";
 import { OceanSunkenRelicModel } from "./OceanSunkenRelicModel";
+
+/** A landmark is wet rock: matte, and never a mirror. */
+const LANDMARK_ROUGHNESS = 0.86;
+const LANDMARK_METALNESS = 0;
 import {
   hydrothermalFlickerIntensity,
   lowestSeafloorUnderFootprint,
@@ -205,17 +211,18 @@ function LandmarkFormation({
     [kind, worldSeed, landmarkIndex]
   );
 
+  const nodeModules = useNodeMaterialModules();
   const material = useMemo(() => {
-    const dressed = new MeshStandardMaterial({
+    const dressed = standardMaterialForRenderer(nodeModules, {
       color: new Color(bodyColor),
       // The geometry's own per-part colours ride underneath the body tint.
       vertexColors: true,
-      roughness: 0.86,
-      metalness: 0
+      roughness: LANDMARK_ROUGHNESS,
+      metalness: LANDMARK_METALNESS
     });
     applyCaustics(dressed, causticsUniforms);
     return dressed;
-  }, [bodyColor, causticsUniforms]);
+  }, [bodyColor, causticsUniforms, nodeModules]);
 
   useEffect(() => () => material.dispose(), [material]);
 

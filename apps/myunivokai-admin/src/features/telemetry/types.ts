@@ -53,6 +53,19 @@ export interface TelemetryClientRenderSummary {
   count: number;
 }
 
+/**
+ * One graphics backend's share of the window, across every tier and outcome.
+ *
+ * A separate row type from the one above rather than a fourth field on it, for
+ * the same reason the family is not a dimension there: splitting a small number
+ * further answers a question nobody asked. The question this one answers IS the
+ * split between the renderers.
+ */
+export interface TelemetryClientRenderBackendSummary {
+  graphicsBackend: string;
+  count: number;
+}
+
 export interface TelemetryErrorCodeCount {
   errorCode: string;
   count: number;
@@ -159,8 +172,12 @@ export interface TelemetryOverview extends TelemetrySink {
   comparison?: TelemetryComparison;
   trafficFunnel: TelemetryFunnelStage[];
   errorCodeTop: TelemetryErrorCodeCount[];
-  // The only field on this response the platform did not measure itself.
+  // The only fields on this response the platform did not measure itself.
   clientRender: TelemetryClientRenderSummary[];
+  // Which renderer actually drew. Optional because a telemetry service older
+  // than this field omits it, and an admin build newer than its service must
+  // render the rest of the page rather than an error.
+  clientRenderBackends?: TelemetryClientRenderBackendSummary[];
   backends: TelemetryBackendSummary[];
   cache: TelemetryCacheSummary[];
   wakeSignals: TelemetryVolumePoint[];

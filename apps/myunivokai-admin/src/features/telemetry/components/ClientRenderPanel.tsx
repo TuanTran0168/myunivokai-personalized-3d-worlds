@@ -4,7 +4,7 @@ import { MonitorSmartphone, TriangleAlert } from "lucide-react";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCount, formatPercent } from "@/features/analytics/format";
-import type { TelemetryClientRenderSummary } from "../types";
+import type { TelemetryClientRenderBackendSummary, TelemetryClientRenderSummary } from "../types";
 
 // The only numbers on any telemetry screen that the platform did not measure
 // itself. Everything else here comes from the gateway; these come from
@@ -34,11 +34,30 @@ const QUALITY_TIER_COLORS: Record<number, string> = {
 const RENDERED_OUTCOME = "rendered";
 const WEBGL_FAILED_OUTCOME = "webgl_failed";
 
+// WHICH RENDERER DREW, which until the WebGPU migration was a question with one
+// answer and no counter. The research that asked for this field estimated
+// roughly a fifth of visitors on WebGL2 and said plainly that the real figure is
+// likely worse here — the estimate is weighted from global traffic while this
+// audience is Vietnam-skewed, and the in-app browsers a shared universe link
+// arrives through are WebView-backed and were never measured at all.
+//
+// "Unknown" is a real row rather than a gap: a browser holding a cached bundle
+// from before the field existed reports nothing, and those visits are counted
+// rather than dropped.
+const GRAPHICS_BACKEND_LABELS: Record<string, string> = {
+  webgl: "WebGL",
+  webgpu: "WebGPU",
+  webgl2: "WebGPU renderer, WebGL2 backend",
+  unknown: "Not reported"
+};
+
 export function ClientRenderPanel({
   rows,
+  backendRows,
   isLoading
 }: {
   rows: TelemetryClientRenderSummary[];
+  backendRows: TelemetryClientRenderBackendSummary[];
   isLoading: boolean;
 }) {
   const renderedByTier = new Map<number, number>();
@@ -61,6 +80,10 @@ export function ClientRenderPanel({
   }
   const reportTotal = renderedTotal + failedTotal;
   const tiers = [...renderedByTier.entries()].sort(([left], [right]) => left - right);
+  // Largest first: the question this list answers is "what are most visitors
+  // on", and a reader should not have to scan for it.
+  const backends = [...backendRows].sort((left, right) => right.count - left.count);
+  const backendTotal = backends.reduce((sum, row) => sum + row.count, 0);
 
   return (
     <SectionCard
@@ -113,6 +136,24 @@ export function ClientRenderPanel({
               A lost or unavailable WebGL context. These visitors saw a stated failure rather than
               a blank rectangle, which is all the boundary can do — the scene did not run.
             </p>
+          ) : null}
+
+          {backendTotal > 0 ? (
+            <div className="mt-3 border-t border-border pt-3">
+              <p className="text-xs font-medium text-foreground">Which renderer drew</p>
+              <ul className="mt-2 flex flex-col gap-2">
+                {backends.map((row) => (
+                  <li key={row.graphicsBackend} className="flex items-baseline justify-between gap-3">
+                    <span className="text-xs text-foreground">
+                      {GRAPHICS_BACKEND_LABELS[row.graphicsBackend] ?? row.graphicsBackend}
+                    </span>
+                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                      {formatCount(row.count)} · {formatPercent((row.count * 100) / backendTotal)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
         </>
       )}

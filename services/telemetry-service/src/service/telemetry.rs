@@ -78,6 +78,10 @@ impl TelemetryService {
         let backends = self.repository.backend_aggregates(since).await?;
         let cache = self.repository.cache_aggregates(since).await?;
         let client_render = self.repository.client_render_aggregates(since).await?;
+        let client_render_backends = self
+            .repository
+            .client_render_backend_aggregates(since)
+            .await?;
         let wake_signals = self.repository.wake_signals(since).await?;
         let oldest_bucket_start = self.repository.oldest_bucket_start().await?;
 
@@ -122,6 +126,7 @@ impl TelemetryService {
             backends: backends.into_iter().map(Into::into).collect(),
             cache: cache.into_iter().map(Into::into).collect(),
             client_render: client_render.into_iter().map(Into::into).collect(),
+            client_render_backends: client_render_backends.into_iter().map(Into::into).collect(),
             wake_signals: wake_signals.into_iter().map(Into::into).collect(),
             oldest_bucket_start,
         })

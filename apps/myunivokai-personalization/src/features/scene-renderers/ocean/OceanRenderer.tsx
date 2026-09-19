@@ -5,6 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import type { Group, PerspectiveCamera } from "three";
 import type { SceneRendererProps } from "@/features/scene-renderers/types";
 import { useTerrainHeightSampler } from "@/features/scene-renderers/shared/TerrainHeightSampler";
+import { useNodeMaterialModules } from "@/features/scene-renderers/shared/useNodeMaterialModules";
 import { pointsOfInterestFromScene } from "@/lib/scene";
 import { OceanLandmarks } from "./OceanLandmarks";
 import { createCausticsUniforms } from "./oceanCaustics";
@@ -189,18 +190,23 @@ export function OceanRenderer({
 
   // Landmarks keep their own caustics clock, driven from the same frame loop so
   // the pattern on a coral head stays in step with the pattern on the sand.
+  // Null on the classic path, which is every visitor today. Stable for the life
+  // of the canvas, so it is safe in a dependency list — see useNodeMaterialModules.
+  const nodeModules = useNodeMaterialModules();
   const landmarkCaustics = useMemo(
     () =>
       createCausticsUniforms(
         lighting?.causticStrength ?? 0,
         viewerMetres + floorClearanceMetres,
         lighting?.surfaceLightColor ?? "#8FD8E8",
+        nodeModules,
       ),
     [
       lighting?.causticStrength,
       lighting?.surfaceLightColor,
       viewerMetres,
       floorClearanceMetres,
+      nodeModules,
     ],
   );
 
@@ -320,6 +326,7 @@ export function OceanRenderer({
     const elapsed = state.clock.getElapsedTime();
     rig.update(elapsed, camera);
     landmarkCaustics.uCausticTime.value = elapsed;
+    landmarkCaustics.synchronise();
   });
 
   return (

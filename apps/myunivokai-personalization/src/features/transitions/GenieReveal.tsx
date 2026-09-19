@@ -6,6 +6,12 @@ import { drawGenieSheet, genieRowCount } from "./genieSheet";
 import { GENIE_DURATION_MILLISECONDS, isGenieWorthPlaying, type GenieRectangle } from "./genieWarp";
 import { captureSceneStill } from "./sceneStill";
 
+/**
+ * Capped at 2 for the same reason the still is: past that the overlay costs
+ * memory and fill rate for detail nobody resolves inside a single warp.
+ */
+const MAXIMUM_OVERLAY_PIXEL_RATIO = 2;
+
 type GenieRevealProps = {
   /** The rectangle to unfold from, or null for no reveal at all. */
   origin: GenieRectangle | null;
@@ -77,60 +83,78 @@ export function GenieReveal({ origin, sceneContainerReference, onFinished }: Gen
       return;
     }
 
-    // Null when the canvas handed back a blank buffer — a route that forgot
-    // `preserveDrawingBuffer`. Unfolding a transparent rectangle over the scene
-    // would read as a flash of nothing rather than as a missing effect.
-    const snapshot = captureSceneStill(sceneContainer);
-    const overlayContext = overlayCanvas.getContext("2d");
-    if (!snapshot || !overlayContext) {
-      finish();
-      return;
-    }
-
-    const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    overlayCanvas.width = Math.max(1, Math.round(viewportWidth * pixelRatio));
-    overlayCanvas.height = Math.max(1, Math.round(viewportHeight * pixelRatio));
-
-    const rowCount = genieRowCount(destination.height);
-    // Bound before the frame callback closes over them: TypeScript loses the
-    // narrowing on `origin`, on the snapshot and on the context across a nested
-    // function declaration, which it has to assume could be called before the
-    // checks above ran.
-    const from = origin;
-    const context = overlayContext;
-    const sheetSource = snapshot;
+    // THE CAPTURE IS A PROMISE NOW, SO EVERYTHING DOWNSTREAM OF IT MOVED INSIDE
+    // ONE. The node renderer has no synchronous readback, and this is the call
+    // site where that costs least: the overlay has not been drawn yet, so the
+    // wait happens with nothing on screen to stutter. What it does introduce is
+    // a window in which the reveal can be cancelled before its first frame, and
+    // an animation started after that would run against an unmounted overlay.
     let animationFrame = 0;
-    let startTimestamp = 0;
+    let cancelled = false;
 
-    function drawFrame(timestamp: number) {
-      if (startTimestamp === 0) {
-        startTimestamp = timestamp;
+    void (async () => {
+      // Null when there was nothing to read — a canvas that never drew, or a
+      // route that forgot `preserveDrawingBuffer`. Unfolding a transparent
+      // rectangle over the scene would read as a flash of nothing rather than
+      // as a missing effect.
+      const snapshot = await captureSceneStill(sceneContainer);
+      if (cancelled) {
+        return;
       }
-      const progress = Math.min(1, (timestamp - startTimestamp) / GENIE_DURATION_MILLISECONDS);
-
-      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      context.clearRect(0, 0, viewportWidth, viewportHeight);
-      drawGenieSheet(context, {
-        source: sheetSource,
-        sourceWidth: sheetSource.width,
-        sourceHeight: sheetSource.height,
-        from,
-        to: destination,
-        progress,
-        rowCount
-      });
-
-      if (progress >= 1) {
+      const overlayContext = overlayCanvas.getContext("2d");
+      if (!snapshot || !overlayContext) {
         finish();
         return;
       }
-      animationFrame = requestAnimationFrame(drawFrame);
-    }
 
-    animationFrame = requestAnimationFrame(drawFrame);
-    return () => cancelAnimationFrame(animationFrame);
+      const pixelRatio = Math.min(MAXIMUM_OVERLAY_PIXEL_RATIO, window.devicePixelRatio || 1);
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      overlayCanvas.width = Math.max(1, Math.round(viewportWidth * pixelRatio));
+      overlayCanvas.height = Math.max(1, Math.round(viewportHeight * pixelRatio));
+
+      const rowCount = genieRowCount(destination.height);
+      // Bound before the frame callback closes over them: TypeScript loses the
+      // narrowing on `origin`, on the snapshot and on the context across a
+      // nested function declaration, which it has to assume could be called
+      // before the checks above ran.
+      const from = origin;
+      const context = overlayContext;
+      const sheetSource = snapshot;
+      let startTimestamp = 0;
+
+      function drawFrame(timestamp: number) {
+        if (startTimestamp === 0) {
+          startTimestamp = timestamp;
+        }
+        const progress = Math.min(1, (timestamp - startTimestamp) / GENIE_DURATION_MILLISECONDS);
+
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        context.clearRect(0, 0, viewportWidth, viewportHeight);
+        drawGenieSheet(context, {
+          source: sheetSource,
+          sourceWidth: sheetSource.width,
+          sourceHeight: sheetSource.height,
+          from,
+          to: destination,
+          progress,
+          rowCount
+        });
+
+        if (progress >= 1) {
+          finish();
+          return;
+        }
+        animationFrame = requestAnimationFrame(drawFrame);
+      }
+
+      animationFrame = requestAnimationFrame(drawFrame);
+    })();
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(animationFrame);
+    };
   }, [origin, sceneContainerReference]);
 
   if (!origin) {

@@ -370,10 +370,53 @@ func TestClientRenderReportValidateRefusesAnythingOutsideTheClosedSets(t *testin
 		"an empty family":           {QualityTier: ClientRenderTierHigh, Family: WorldFamily(""), Outcome: ClientRenderOutcomeRendered},
 		"an outcome nobody counts":  {QualityTier: ClientRenderTierHigh, Family: WorldFamilyOcean, Outcome: "slow"},
 		"an empty outcome":          {QualityTier: ClientRenderTierHigh, Family: WorldFamilyOcean, Outcome: ""},
+		"a graphics backend nobody ships": {
+			QualityTier:     ClientRenderTierHigh,
+			Family:          WorldFamilyOcean,
+			Outcome:         ClientRenderOutcomeRendered,
+			GraphicsBackend: "vulkan",
+		},
 	}
 	for description, report := range refused {
 		if err := report.Validate(); err == nil {
 			t.Errorf("%s was accepted", description)
+		}
+	}
+}
+
+// **AN ABSENT graphicsBackend IS NOT AN INVALID ONE, and that asymmetry is the
+// whole reason NormaliseClientRenderBackend exists.**
+//
+// Every other field here is required, because every other field has been sent by
+// every frontend that ever POSTed to this route. This one is new in §26 Phase 12,
+// and a browser keeps a cached bundle for as long as it keeps it — so reports
+// without the field arrive for days after the deploy that adds it. Refusing them
+// would turn a schema addition into an outage of the platform's own numbers,
+// which is a strange way to learn what share of visitors are on WebGL2.
+func TestAClientRenderReportWithoutAGraphicsBackendIsAcceptedAsUnknown(t *testing.T) {
+	report := ClientRenderReportData{
+		QualityTier: ClientRenderTierHigh,
+		Family:      WorldFamilyUniverse,
+		Outcome:     ClientRenderOutcomeRendered,
+	}
+	if err := report.Validate(); err != nil {
+		t.Fatalf("a report from a bundle that predates the field was refused: %v", err)
+	}
+	if NormaliseClientRenderBackend(report.GraphicsBackend) != ClientRenderBackendUnknown {
+		t.Fatalf("an absent backend normalised to %q", NormaliseClientRenderBackend(report.GraphicsBackend))
+	}
+	for _, backend := range []string{
+		ClientRenderBackendUnknown,
+		ClientRenderBackendWebGL,
+		ClientRenderBackendWebGPU,
+		ClientRenderBackendWebGL2,
+	} {
+		report.GraphicsBackend = backend
+		if err := report.Validate(); err != nil {
+			t.Errorf("%q was refused: %v", backend, err)
+		}
+		if NormaliseClientRenderBackend(backend) != backend {
+			t.Errorf("%q was normalised away", backend)
 		}
 	}
 }

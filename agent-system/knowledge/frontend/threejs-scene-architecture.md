@@ -263,7 +263,8 @@ the classic renderer:
 |---|---|---|---|
 | forest | yes | 19.49 | 1.24 |
 | universe | yes | 12.22 | 0.45 |
-| ocean | no, one `ShaderMaterial` and eight patches left | 61.43 | 0.04 |
+| ocean, underwater | no, the god rays remain | 63.35 | 0.15 |
+| ocean, above water | **yes, nothing left** | **0.31** | **0.02** |
 
 The universe is the sharper data point because its number **did not move**:
 12.19 before its two point shaders were ported, 12.22 after. What was eliminated
@@ -332,8 +333,402 @@ is a different picture.
 
 **There is no per-material opt-out from a frame-wide pass**, so this cannot be
 closed by porting harder. It is a decision about which compositing model the
-ocean should have, and therefore a look decision. Until it is made, the god rays
-should not be ported: the shipped comment already predicts the result.
+ocean should have, and therefore a look decision.
+
+#### The decision, and the arithmetic that made it rather than taste
+
+Made 2026-09-17. **No compensating scalar exists**, and that is arithmetic
+rather than an opinion. Matching the two spaces needs `E(b + r') = E(b) + r`, so
+the node-path correction is `r' = r / E'(b)` — the reciprocal derivative of the
+encode AT THE BACKDROP. For sRGB, `E'(x) = 0.4396 · x^(-0.5833)`:
+
+    backdrop 0.05 (deep water)     E' = 2.54
+    backdrop 0.10 (midwater)       E' = 1.68
+    backdrop 0.20 (lit shallows)   E' = 1.12
+
+One shaft crosses all three in the same frame. A single constant fits one row
+and is wrong by more than a factor of two at the others, and a constant chosen
+to make one measurement agree is an invented lever dressed as physics.
+
+So the god rays were ported FAITHFULLY, and the difference is stated instead:
+on the node path the rays read brighter where the water is darkest, and their
+tops read softer because ACES rolls off a sum the classic path let clip. The
+node path's model is also the physically correct one — light adds in linear, and
+adding a linear quantity to an sRGB-encoded one is an error rather than a
+convention. The shipped shader carries the receipt in its own comment history:
+the strength was halved to 1.05 and put back to 2.2, and a hard 0.62 ceiling was
+added and then removed once the renderer's ACES was back to do the roll-off
+"properly". Both are the tuning of an additive layer against the encode it lands
+in. The lever, if the classic look is wanted back, is
+`GOD_RAY_STRENGTH_MULTIPLE` — one number, and it moves both paths.
+
+#### And it is now 9.6 of 255, measured rather than argued
+
+Porting the god rays took `ocean-shallow` from **63.35 to 9.90** against the
+classic renderer — five sixths of the gap, on one material that was being
+refused and drawn nowhere. What is left isolates the compositing difference,
+because two ocean fixtures differ in exactly one structural way:
+
+| fixture | additive layers | post chain | GLSL left | node vs classic |
+| --- | --- | --- | --- | --- |
+| ocean, above water | none | no | none | **0.31** |
+| ocean, underwater | five | no | none | **9.90** |
+
+The five are the god rays, three marine-snow layers plus the bioluminescent
+fourth, the jellyfish and the bubbles. **So 9.6 of 255 is what the
+additive-compositing-space difference costs on a scene built out of it.** Not
+proven: these are two different scenes rather than one scene with its additive
+layers switched off, and this does not apportion the 9.90 between the layers.
+
+### The node renderer cannot preserve its drawing buffer, so the still is RENDERED
+
+Measured 2026-09-17 (§26 Phase 9) and re-measured 2026-09-18 with colour counted
+separately from alpha, sampling the canvas the way the production sites sample
+it, same fixture, three renderers:
+
+| renderer | carrying alpha | carrying colour | `toDataURL` length |
+| --- | --- | --- | --- |
+| `WebGLRenderer` | **256/256** | **256/256** | 1.6-3.4 MB |
+| `WebGPURenderer` / WebGPU | **0/256** | **0/256** | 38 KB |
+| `WebGPURenderer` / WebGL2 | **0/256** | **0/256** | 38 KB |
+
+**BOTH NODE BACKENDS FAIL, WHICH IS WHAT RULES OUT WEBGPU PRESENT-TIME
+SEMANTICS.** The WebGL2 backend is the same graphics API as the working row.
+What differs is one option that does not exist: `preserveDrawingBuffer` appears
+twice in `three.module.js` (`:16074` reads it from the parameters, `:16372`
+hands it to `getContext`) and **zero times in `three.webgpu.js`**.
+`WebGPURendererParameters` does not declare it, so passing it is a typecheck
+error rather than a silent no-op — the one piece of luck here. And counting
+colour separately settles WHICH defect it is: the buffer is **cleared**, not
+transparent, so there was never a one-parameter fix to find.
+
+**Stage 0 of the graphics upgrade roadmap, built 2026-09-19, stops reading the
+canvas.** `SceneStillBridge.tsx` mounts inside the canvas on the node path and
+registers a source; `captureSceneStill` asks that source before it touches a
+canvas. **On the classic path nothing registers and the canvas scrape is
+unchanged** — the one path every visitor is on was not put at risk to fix the
+one nobody is on yet.
+
+#### `setOutputRenderTarget`, not `setRenderTarget`
+
+The obvious shape is wrong and wrong quietly. `Renderer.isOutputTarget` is
+`this._renderTarget === this._outputRenderTarget || this._renderTarget === null`
+(`three.webgpu.js:61704`), and both `currentToneMapping` and
+`currentColorSpace` collapse to `NoToneMapping` and the working colour space
+whenever it is false (`:61681`, `:61693`). So a scene rendered through
+`setRenderTarget` comes back **linear and un-tone-mapped** — a dark, flat,
+entirely plausible picture.
+
+`setOutputRenderTarget( target )` leaves `_renderTarget` null, so three treats
+the target exactly as it treats the canvas: `_getFrameBufferTarget()` builds the
+half-float intermediate (`:60625`), the scene renders into it, and
+`_renderOutput()` writes the tone-mapped, converted result into the target
+(`:60957`). The capture target itself is `LinearSRGBColorSpace` for the
+matching reason: `_renderOutput` encodes in the shader, and a target carrying
+`SRGBColorSpace` would be created as `rgba8unorm-srgb` (`:77805`) and encode
+a second time in hardware.
+
+#### The two node backends disagree about what a readback IS
+
+| | row order | row padding |
+| --- | --- | --- |
+| WebGPU, `copyTextureToBuffer` | top-down | **padded to 256 bytes** (`:77012-77015`) |
+| WebGL2, `gl.readPixels` | **bottom-up** | none, rows are tight (`:70159`) |
+
+Read the WebGPU buffer as if it were tight and the picture shears progressively
+down its own height; forget the WebGL flip and it is upside down. Both mistakes
+survive every non-blank check there is. `sceneStillCapture.ts` carries both
+corrections and `sceneStillCapture.test.ts` tests them as arithmetic, including
+the width at which a missing de-pad would pass unnoticed.
+
+#### The capture is asynchronous, because there is no synchronous readback
+
+`Renderer.readRenderTargetPixelsAsync` (`:62244`) is the whole of it — there
+is no synchronous twin anywhere in the file. `captureSceneStill` is therefore a
+promise, and the three call sites whose synchrony was load-bearing each hold
+their ordering across the `await`: the create page sets `worldFamily` before it
+and `renderedWorldFamily` after it, the world transition extends its HOLD until
+the readback lands rather than moving the capture, and the gallery reveal waits
+before it has drawn anything and carries a cancellation flag.
+
+`lib/exportImage.ts`'s blank-canvas guard is gone with it. It was correct while
+the node path could not produce a picture and became a dead download button the
+moment it could.
+
+#### AN EXTRA FRAME IS NOT FREE IN THIS APP, and that is the surprise
+
+The capture renders one more frame, and comparing it against the frame BEFORE it
+read 16 to 21 of 255 on the universe and the forest. Stale canvas, drifting
+scene, post chain and readback were each ruled out by measurement. What answered
+it was asking the canvas to repaint itself at the clock it is already at: a zero
+delta gives every `useFrame` nothing to integrate, so the scene cannot move —
+and **the repainted canvas still differs from the frame before it by 16 to 36 of
+255, on the classic renderer as much as on the node ones.**
+
+Something in this app advances per FRAME rather than per DELTA. It has not been
+tracked down, and it matters to anything that assumes two renders of one pinned
+moment are the same picture. Compared like with like — capture against repaint —
+the still lands between **0.01 and 0.11 of 255** on all twelve legs, which is
+what `e2e/scene-still-capture.spec.ts` asserts, with each leg's own one-frame
+cost as its budget.
+
+### Which renderer a visitor gets, and the one direction the WebGPU probe is trusted
+
+Since 2026-09-19 the node renderer is what EVERY visitor gets. `rendererSelection.ts`
+decides, as a pure function, in this order — and on the shipped default only the
+first three can change the answer, because the fourth is reached on the
+`where-webgpu-is-real` setting alone:
+
+1. **the parity harness**, which only exists in a build that sets
+   `NEXT_PUBLIC_PARITY_HARNESS` and is the only caller allowed to name a renderer
+2. **the kill switch** — `NEXT_PUBLIC_NODE_RENDERER` set to `0`, `off`, `false`,
+   `no` or `disabled` — which outranks device loss, because a deploy switching the
+   node path off to stop an incident must not have it handed back by a lost
+   `GPUDevice` whose recovery IS the node path
+3. **a lost `GPUDevice`**, one-way for the page's lifetime, recovering onto the
+   CLASSIC renderer — **reversed on 2026-09-19 from `WebGPURenderer` with
+   `forceWebGL`**, because the third of §18.3(b)'s three reasons was "the WebGL2
+   backend ships anyway to ~20% of visitors" and the rollout ended that. With
+   nobody on that backend, recovering onto it would answer a dead GPU with a
+   13593 ms forest first mount where the classic renderer's is 3596 ms. The
+   remount key therefore carries a `-recovered` suffix, because the classic
+   renderer's own suffix is empty and React would otherwise keep the dead
+   canvas
+4. **`navigator.gpu`**, on the `where-webgpu-is-real` setting only — `hardware`
+   builds the node renderer, and `none`, `absent` or `software` build the
+   classic one. **The shipped default never reaches this step**: it builds the
+   node renderer for everybody, so a browser without WebGPU gets
+   `WebGPURenderer` on its WebGL2 backend, with the 13.6 s forest first mount
+   that entails
+
+**The probe is a veto and never a promise, and that is what makes it compatible
+with §17's rejection of runtime renderer selection.** §17 is right that a
+pre-flight cannot guarantee WebGPU will work: `requestDevice()` can reject after
+`requestAdapter()` succeeded, and Phase 0 measured that machine. Nothing here
+relies on it. An answered `hardware` still hands the fallback decision to three,
+exactly as before. What the probe buys is the other answer — no adapter means the
+WebGL2 backend for certain, and that backend is the 13.6 s forest in the table
+below.
+
+`software` is refused for a separate reason: Chrome falls back to SwiftShader for
+WebGPU on configurations where WebGL is still hardware-accelerated, so shipping
+the node path there moves a visitor from the GPU onto the CPU.
+
+**The canvas does not mount until the answer arrives.** A renderer is built by
+R3F's `gl` factory, once per `<Canvas>`, and cannot be changed afterwards — so
+mounting early and correcting later means a remount, which is this app's most
+expensive operation. The wait is one `requestAdapter()` (1–15 ms in Phase 0's
+numbers), bounded by `WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS` at 1.5 s so a
+wedged driver cannot hold the canvas forever, and invisible because the canvas is
+already held at `opacity-0` until the scene signals ready. The answer is memoised
+at module scope, so the app's many canvas remounts — one per world, per variant,
+per interest chip — ask the driver once.
+
+`e2e/default-renderer-rollout.spec.ts` is the only spec that pins no renderer, and
+therefore the only one that measures this: SwiftShader draws `webgl2`, the real
+driver draws `webgpu`, and neither draws `webgl`. **The first of those had never
+been checked before this** — the parity harness's forced-WebGL2 leg runs only on
+the real-driver project, so nothing had ever put the node renderer on a stack
+with no WebGPU at all and asked whether it reaches a frame.
+
+**A CANVAS READ BACK WITH `drawImage` IS EMPTY ON THIS RENDERER, AND THAT NOW
+REACHES THE TEST SUITE.** `preserveDrawingBuffer` does not exist on
+`WebGPURenderer`, so `context.drawImage(canvas, …)` returns a CLEARED image
+rather than throwing — `ocean-look-down` computed statistics over one and
+reported "the frame has lost its colour to a pale layer" with a mean saturation
+of exactly 0 on five fixtures at once. Anything in `e2e/` that needs pixels must
+take a screenshot, which goes through the compositor, or go through the Stage 0
+capture bridge. The app's own still capture was already moved off the canvas by
+Stage 0; the suite had not been.
+
+**AND `toBeVisible` PASSES ON AN `opacity: 0` CANVAS**, which every screenshot
+spec was relying on a fast renderer to hide. See `e2e/sceneReveal.ts`, which
+also records why `scene-baseline` deliberately does NOT use the wait.
+
+### The two backends of one renderer disagree about the first mount, in opposite directions
+
+Measured 2026-09-17 (§26 Phase 11). Main-thread time BLOCKED during a first
+mount — the unit `UniverseCanvas.tsx:398-450` measures and the one a visitor
+feels:
+
+| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
+| --- | --- | --- | --- |
+| universe | 2410 ms | 2547 ms | **1046 ms** |
+| forest | 3596 ms | **14660 ms** | **890 ms** |
+| ocean, underwater | 1069 ms | **4947 ms** | **734 ms** |
+| ocean, above water | 203 ms | 257 ms | **144 ms** |
+
+**Re-measured 2026-09-19 on the same instrument, after the rollout and after the
+GTAO backend gate.** The shape is unchanged and the fallback's forest is a third
+smaller:
+
+| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
+| --- | --- | --- | --- |
+| universe | 2122 ms | 2556 ms | **981 ms** |
+| forest | 3532 ms | **10524 ms**, was 15916 before the gate | **851 ms** |
+| ocean, underwater | 1086 ms | **4781 ms** | **679 ms** |
+| ocean, above water | 207 ms | 288 ms | **147 ms** |
+
+**GTAO is free on WebGPU and costs 5612 ms on WebGL2**, measured by disabling
+the pass and re-enabling it with nothing else changed. The WebGL2 backend
+creates pipelines synchronously, so a large shader is a stall there and is not
+one on the backend designed for asynchronous creation. `NodePostEffects` skips
+it when `backend.isWebGPUBackend` is not true; the forest's fallback loses its
+ambient occlusion, which `scene-parity` records as a deliberate 4.12 of 255.
+
+The WebGPU backend blocks LESS than the classic renderer on every fixture, and
+the forest — this app's worst first mount — drops from 3.6 s in three long tasks
+to 0.9 s in one. That is the freeze this repo has spent sprints on, measurably
+smaller, and it is the migration's only performance argument holding up in the
+app rather than in a probe.
+
+**The same change makes the WebGL2 backend four times worse on the heavy
+scenes**, while leaving the light ones alone. The cost is not "the node path" —
+it is the node path's pipeline creation running synchronously on a backend with
+no async pipeline API to use.
+
+**Roughly a fifth of visitors have no WebGPU, and since 2026-09-19 they get the
+CLASSIC renderer rather than this backend** (see the selection section above).
+That contains the cost without reducing it: the numbers in this table are
+unchanged, and anything that later routes ordinary traffic onto the WebGL2
+backend — `every-visitor`, or a change of policy — gets them back in full.
+
+**Corrected 2026-09-17 by §26 Phase 13: the WebGL2 backend DOES have an
+asynchronous pipeline API, and the app was not asking for it.** The section below
+replaces the explanation in this paragraph; the numbers in the table above stand
+as what was measured before the warm-up existed.
+
+Wall-clock time for the same sixty frames is higher on the node path everywhere
+(the forest: 3488 ms classic, 7677 ms on WebGPU), because the pipelines are
+still being built inside those frames. Both are true and they measure different
+things. Neither is a steady-state frame rate: the harness draws with
+`frameloop="never"` precisely so that it never measures one, and every page is a
+cold shader cache.
+
+### The asynchronous pipeline path exists on both backends, nothing asks for it, and asking broke the forest
+
+§26 Phase 13, built 2026-09-17 and **reverted 2026-09-18**. The correction above still stands — the
+sentence "a backend with no async pipeline API to use" was wrong. three's WebGL backend holds
+`KHR_parallel_shader_compile` (`three.webgpu.js:71353`) and both backends branch on one array:
+
+| backend | what `render()` gets | what `compileAsync()` gets |
+| --- | --- | --- |
+| WebGPU | `device.createRenderPipeline` | `createRenderPipelineAsync` |
+| WebGL2 | link status read inline | `COMPLETION_STATUS_KHR` polled from rAF |
+
+`Renderer._compilationPromises` is that array and it is non-null only inside `compileAsync`.
+
+**AND THE APP DOES NOT CALL IT, BECAUSE CALLING IT FAILS THE PARITY RATCHET.** Two versions were
+tried. Compiling through `PassNode.compileAsync` — which is what the render-context caching says is
+correct — runs before `PassNode.setup()` has given the pass's target its half-float type, and the
+WebGL2 backend reuses those pipelines: **the forest rendered nothing at all on that backend** while
+the renderer reported success. Compiling through `renderer.compileAsync( scene, camera )` instead
+draws correctly and still moves pixels: the universe's two node backends went from 0.45 to 0.88 of
+255 on a worst block of 52 against a tolerance of 40. Removing the warm-up restores every recorded
+number exactly.
+
+The likely mechanism is that `compileAsync` advances the node frame — `nodeFrame.renderId ++` and
+`nodeFrame.update()` — and the node post chain's film grain is a function of `time`. That explains
+the direction and not the magnitude, so the debts were not re-recorded against it.
+
+**What this leaves.** A measured first-mount saving of roughly 45% on three fixtures of four, which
+the app cannot currently take, and a known reason why. Anyone re-introducing it needs the pixel
+delta explained first, and needs to run `scene-parity.spec.ts` rather than only
+`first-mount-cost.spec.ts` — which is exactly how this got to `staging` in the first place.
+
+### The node path's equivalent of a chunk patch is a subclass, not a node assignment
+
+This is the finding of §26 Phase 7 and it cost a wrong port before it was
+understood.
+
+Nine materials in this app INJECT into a shader three otherwise assembles
+itself. The kelp bends `transformed` and keeps three's lighting; the seabed
+multiplies `diffuseColor` and keeps three's texture; the caustics add to
+`gl_FragColor` and keep three's fog. None of them replaces anything, and on the
+classic path `onBeforeCompile` plus a `#include` marker is exactly an injection.
+
+**`positionNode` and `outputNode` are not the node-path spellings of those
+markers.** Both REPLACE the value three computed, and what they replace is
+load-bearing:
+
+- `NodeMaterial.setupPosition` applies instancing at `NodeMaterial.js:796` and
+  reads `positionNode` at `:802` — **after** it — then does
+  `positionLocal.assign(...)`, which discards the instance matrix outright. A
+  kelp bed ported that way does not sway wrongly. Every blade collapses onto the
+  world origin, because each instance's position WAS that matrix.
+- `outputNode` is read at `:545`, after `setupOutput` has already folded fog
+  into the result, so a multiply expressed there scales the fog as well as the
+  surface. The classic patches all sit at `<tonemapping_fragment>`, which three's
+  fragment shaders place BEFORE `<fog_fragment>` (`meshphysical.glsl.js`, last
+  six lines).
+
+The mechanism that does inject is the one three documents on `setupOutput`
+itself (`NodeMaterial.js:1160-1178`): **subclass the node material, override the
+setup step, modify the ambient property node, and hand control back to
+`super`.** That puts the change exactly where the chunk marker puts it and keeps
+everything three does around it. `shared/nodeMaterialChunkPatch.ts` is that
+subclass, with the three injection points named:
+
+    <begin_vertex>          ->  localPositionOffset     (setupPosition)
+    <map_fragment>          ->  diffuseColorMultiplier  (setupDiffuseColor)
+    <tonemapping_fragment>  ->  litColorAdjustment      (setupOutput)
+
+**Two things get shorter rather than longer on the node path.**
+`positionWorld` and `normalWorld` are always available in the fragment stage and
+are already instanced — `Instance.js:213` and `:237` assign through
+`positionLocal` and `normalLocal`. The caustics patch's entire vertex stage, two
+varyings and an `#ifdef USE_INSTANCING` branch exist only because three's
+`<worldpos_vertex>` hides its `worldPosition` behind
+`#if defined(USE_ENVMAP) || ...` and may not emit it at all. None of that is
+needed here.
+
+### A dropped patch is worse than a refused material, because nothing reports it
+
+A refused `ShaderMaterial` prints `Material "ShaderMaterial" is not compatible`
+and drops the draw. **`onBeforeCompile` does not exist on a node material**:
+assigning it is legal JavaScript, the property sits on the object, three never
+reads it, and the effect is simply gone. No refusal, no console line, no thrown
+error — the kelp stops swaying, the seabed stops being rock, the sand stops
+having caustics on it, and the frame still looks like a frame.
+
+So every patch site in this app goes through `applyClassicShaderPatch`, which
+refuses to attach to a node material and says which patch was dropped, and
+`shaderChunkPatchSites.test.ts` scans the source the bundler builds so the next
+patch cannot be written without a node arm.
+
+**The same shape bites the uniforms.** Three of the caustics' four values are
+written AFTER the material exists — `tintSeabed` supplies strength, colour and
+depth once the world's water and lighting are known, and the frame loop writes
+the clock. A node uniform initialised from the same number at build time holds
+the placeholder forever, and for strength the placeholder is ZERO: a seabed with
+no caustics, on the node path only, indistinguishable from a seabed in water too
+deep for them. Every ported uniform set that has a late write therefore hands
+back a `synchronise()` the frame loop must call, in the same shape and for the
+same reason `waveUniformNodes` hands back `setElapsedSeconds`.
+
+### A fully ported scene measures 0.31 between the two paths, and that attributes the rest
+
+The ocean seen from ABOVE the water is the first scene in this app with no
+hand-written GLSL left anywhere in it — the surface material is the last one it
+mounts, and the god rays are `visible = !above`. Measured 2026-09-17:
+
+| family | GLSL left | post chain | node against classic |
+| --- | --- | --- | --- |
+| universe | none | yes | 12.22 |
+| forest | none | yes | 19.49 |
+| **ocean, above water** | **none** | **no** | **0.31** |
+
+The ocean mounts no post chain on either path — `isOceanFamilyScene ? null :` —
+so this is the run with post disabled that §30.2 of the feasibility report said
+it could not do, arrived at by finding a scene that already had none rather than
+by adding a lever to the harness.
+
+**It does not identify which pass, and `ocean-surface` is a different scene
+rather than the universe with its chain switched off**, so the post chain is the
+most obvious remaining difference and not the only possible one. What it does
+settle is the question underneath: a fully ported scene reaches a third of a
+unit of 255 between backends, so whatever the other two families' residuals are
+made of, it is not the node path being unable to reproduce a frame.
 
 ### Camera focus (NASA-Eyes style)
 

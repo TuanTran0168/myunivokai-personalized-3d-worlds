@@ -282,7 +282,7 @@ export default function HomePage() {
         // it leaves the form saying ocean while the world stays a universe.
         // That was the bug — a preferred family that filled the picker and
         // changed nothing anybody could see.
-        showWorldFamilyOnCanvas(currentValues.worldFamily, filledValues.worldFamily);
+        void showWorldFamilyOnCanvas(currentValues.worldFamily, filledValues.worldFamily);
         setPreferredWorldStyle(filledValues.preferredWorldStyle);
         setFavoriteColors(filledValues.favoriteColors);
         setWasFilledFromProfile(true);
@@ -317,7 +317,7 @@ export default function HomePage() {
     // Same rule as the autofill above: emptying the form has to carry the
     // canvas back to the family the form opens with, or the world keeps
     // showing the profile's ocean under a blank universe form.
-    showWorldFamilyOnCanvas(worldFamily, CREATE_FORM_INITIAL_VALUES.worldFamily);
+    void showWorldFamilyOnCanvas(worldFamily, CREATE_FORM_INITIAL_VALUES.worldFamily);
     setPreferredWorldStyle(CREATE_FORM_INITIAL_VALUES.preferredWorldStyle);
     setFavoriteColors(CREATE_FORM_INITIAL_VALUES.favoriteColors);
     setWasFilledFromProfile(false);
@@ -379,17 +379,34 @@ export default function HomePage() {
    * `fromFamily` is passed rather than read from state because one caller is a
    * network callback whose closure may be several renders old.
    *
-   * The still is captured HERE, before the state update, and that ordering is
-   * the whole trick: one render later React may have swapped the canvas for the
-   * next family's and the frame worth keeping no longer exists. A capture that
-   * comes back null (no canvas yet, a cleared GL buffer, a zero-size box)
-   * simply means no transition — the family still changes, immediately.
+   * The still is captured HERE, before the state update that swaps the canvas,
+   * and that ordering is the whole trick: one render later React may have
+   * mounted the next family's canvas and the frame worth keeping no longer
+   * exists. A capture that comes back null (no canvas yet, a cleared GL buffer,
+   * a zero-size box) simply means no transition — the family still changes,
+   * immediately.
+   *
+   * **THE CAPTURE IS A PROMISE NOW** — the node renderer has no synchronous
+   * readback — so "before the state update" had to be restated rather than
+   * assumed. The state update that matters is `setRenderedWorldFamily`, which
+   * is what the `<Canvas>` is keyed on, and it is still on the far side of the
+   * await. `setWorldFamily` moved to the near side deliberately: it drives the
+   * picker, not the canvas, and a picker that waits for a GPU readback before
+   * it highlights is a click that feels dropped.
    */
-  function showWorldFamilyOnCanvas(fromFamily: WorldFamily, nextFamily: WorldFamily) {
+  async function showWorldFamilyOnCanvas(fromFamily: WorldFamily, nextFamily: WorldFamily) {
     if (!isWorldChangeWorthPlaying(fromFamily, nextFamily)) {
       return;
     }
-    const still = captureSceneStill(sceneContainerReference.current);
+    // THE FORM MOVES FIRST AND THE CANVAS FOLLOWS, which is what this function
+    // was already doing and is now the reason the `await` below is safe.
+    // `worldFamily` is what the picker shows and `renderedWorldFamily` is what
+    // the canvas draws — the <Canvas> is keyed on the second one — so setting
+    // the first before the capture leaves the picture on screen exactly where
+    // the still needs it, and keeps the picker responding on the click rather
+    // than on a GPU readback.
+    setWorldFamily(nextFamily);
+    const still = await captureSceneStill(sceneContainerReference.current);
     if (still) {
       transitionTokenReference.current += 1;
       setIsSceneReady(false);
@@ -406,7 +423,6 @@ export default function HomePage() {
       // No picture to carry off, so nothing to wait for: the canvas swaps now.
       setRenderedWorldFamily(nextFamily);
     }
-    setWorldFamily(nextFamily);
   }
 
   /** The picker's own handler: the family change, plus the style that goes with it. */
@@ -414,7 +430,7 @@ export default function HomePage() {
     if (!isWorldChangeWorthPlaying(worldFamily, nextFamily)) {
       return;
     }
-    showWorldFamilyOnCanvas(worldFamily, nextFamily);
+    void showWorldFamilyOnCanvas(worldFamily, nextFamily);
     // A style belongs to exactly one family now, and the gateway returns 400
     // for one family's style posted to another. Reset to the family's own
     // neutral style rather than carrying the old value across — the neutral is

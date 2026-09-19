@@ -14,6 +14,7 @@ import {
 } from "three";
 import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 import { recolorableFoliageMaterial } from "./forestFoliageMaterial";
+import { applyLoadedModelTextureQuality } from "../shared/textureQuality";
 
 // The nature-1 asset catalog: every modelKey the backend config can emit maps
 // to self-hosted, draco-compressed CC0/CC-BY GLB files under
@@ -399,6 +400,14 @@ export function extractInstancedModelVariants(
   nodeModules: NodeMaterialModules | null,
   splitIntoVariants = false
 ): InstancedModelVariant[] {
+  // EVERY TEXTURE THAT ARRIVES INSIDE A .GLB USED TO KEEP THREE'S DEFAULT
+  // `anisotropy = 1`, AND THIS IS THE ONE PLACE ALL OF THEM PASS THROUGH.
+  // Trees, ground decor, terrain rocks, grass and the distant treeline all
+  // reach the scene by this function, so sharpening here covers the family
+  // without a hook in five components. The two helpers have existed since the
+  // planets were sharpened and were called only from `solar-system/` —
+  // `textureQuality.ts` has the argument for why a renderer is not needed.
+  applyLoadedModelTextureQuality(sceneRoot);
   sceneRoot.updateMatrixWorld(true);
   if (splitIntoVariants) {
     let splitLevel: Object3D = sceneRoot;
@@ -484,7 +493,18 @@ export function buildStaticInstancedMeshes(
       mesh.instanceColor.needsUpdate = true;
     }
     mesh.castShadow = options?.castShadow ?? true;
-    mesh.receiveShadow = options?.receiveShadow ?? false;
+    // RECEIVING DEFAULTS TO TRUE, AND IT USED TO DEFAULT TO FALSE.
+    //
+    // The sun's shadow map is 3072x3072 and every one of these instances is
+    // already redrawn into it — the cost is paid in full, once, by casting.
+    // Throwing the result away on everything except the ground and the rocks
+    // is what made the forest read flat: a mushroom standing under a tree was
+    // lit as if in the open, and so was every fern, bush and grass blade. The
+    // extra cost of receiving is one shadow-map sample in the lit pass.
+    //
+    // `ForestDistantTreeline` passes false explicitly and keeps it, because it
+    // sits past the shadow camera's far plane and would sample nothing.
+    mesh.receiveShadow = options?.receiveShadow ?? true;
     return mesh;
   });
 }
