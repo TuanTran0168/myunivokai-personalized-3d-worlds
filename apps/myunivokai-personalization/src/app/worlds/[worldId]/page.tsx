@@ -215,7 +215,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
       // to compare against, so worldChangeDirectionBetween's forward default is
       // what carries it in — which is the right reading anyway: it is the next
       // one.
-      requestVariantTransition(variant.id);
+      void requestVariantTransition(variant.id);
       setActiveVariantId(variant.id);
       toast.success("Variant created.");
     } catch (err) {
@@ -235,11 +235,18 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
    * swapped and the frame worth keeping is gone. A null capture is not an
    * error — it just means this change is a plain cut, which is what it always
    * used to be, and the canvas is released to draw the new variant at once.
+   *
+   * **THE CAPTURE IS A PROMISE NOW** — the node renderer has no synchronous
+   * readback — and the state update that has to stay on the far side of it is
+   * `setRenderedVariantId`, which is what the `<UniverseCanvas>` is keyed on.
+   * `activeVariantId` is read from this render's closure rather than from
+   * state, so a caller that moves the list on before this resolves still gets
+   * the direction measured from where the visitor actually was.
    */
-  function requestVariantTransition(nextVariantId: string) {
+  async function requestVariantTransition(nextVariantId: string) {
     const still =
       world && isWorldChangeWorthPlaying(activeVariantId ?? "", nextVariantId)
-        ? captureSceneStill(sceneContainerReference.current)
+        ? await captureSceneStill(sceneContainerReference.current)
         : null;
     if (!world || !still) {
       setRenderedVariantId(nextVariantId);
@@ -263,7 +270,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
 
   async function selectCurrentVariant(variant: WorldVariant) {
     setAction("select");
-    requestVariantTransition(variant.id);
+    void requestVariantTransition(variant.id);
     setActiveVariantId(variant.id);
     try {
       await api.selectVariant(worldId, variant.id, family);
@@ -317,9 +324,9 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
     }
   }
 
-  function exportSceneImage() {
+  async function exportSceneImage() {
     const exportFileName = `myunivokai-${renderedScene.sceneName ?? world?.id ?? "universe"}`;
-    const exportSucceeded = exportSceneCanvasAsPng(sceneContainerReference.current, exportFileName);
+    const exportSucceeded = await exportSceneCanvasAsPng(sceneContainerReference.current, exportFileName);
     if (exportSucceeded) {
       toast.success("Image exported.");
     } else {
@@ -550,7 +557,7 @@ function WorldPageContent({ worldId, family }: { worldId: string; family: WorldF
             </button>
             <button
               type="button"
-              onClick={exportSceneImage}
+              onClick={() => void exportSceneImage()}
               className="focus-ring inline-flex min-h-10 items-center gap-2 rounded-xl border border-hairline bg-black/30 px-4 py-2 text-sm text-on-surface tappable hover:border-white/25"
             >
               <Download className="h-4 w-4" aria-hidden="true" />

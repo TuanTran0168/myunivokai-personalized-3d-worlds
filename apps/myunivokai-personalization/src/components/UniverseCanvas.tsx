@@ -47,6 +47,8 @@ import {
 } from "@/features/scene-renderers/shared/renderQuality";
 import { PostEffects } from "@/features/scene-renderers/shared/PostEffects";
 import { NodePostEffects } from "@/features/scene-renderers/shared/NodePostEffects";
+import { SceneStillBridge } from "@/features/scene-renderers/shared/SceneStillBridge";
+import { ComposedFrameDrawerContext } from "@/features/scene-renderers/shared/sceneStillCapture";
 import { rendererToneMappingForFamily } from "@/features/scene-renderers/shared/sceneToneMapping";
 import { loadNodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 import { parityHarnessRequest } from "@/features/scene-renderers/shared/parityHarness";
@@ -390,6 +392,15 @@ export function UniverseCanvas({
   const ambientSoundscape = useAmbientSoundscape(scene, enableAmbientSound);
   const [hoveredPlanet, setHoveredPlanet] = useState<PlanetSceneConfig | null>(null);
   const planetPositionTrackerReference = useRef<Map<string, Vector3>>(new Map());
+  /**
+   * Which call draws a composed frame, for the still capture to reuse.
+   *
+   * Written by `NodePostEffects` when it owns the frame, left null for the
+   * ocean, which mounts no chain. A ref rather than state on purpose: nothing
+   * re-renders when it changes, and the one reader asks for it inside a click
+   * handler. See `sceneStillCapture.ts`.
+   */
+  const composedFrameDrawerReference = useRef<(() => void) | null>(null);
   // Only a family with a ground plane the camera can clip through (currently
   // ocean) ever writes into this; CameraRig's clamp is a no-op while it is null.
   const terrainHeightSamplerReference = useRef<TerrainHeightSampler>({ current: null });
@@ -746,6 +757,16 @@ export function UniverseCanvas({
           >
             <color attach="background" args={[backgroundColor]} />
             {parityHarness ? <ParityHarnessBridge request={parityHarness} /> : null}
+            <ComposedFrameDrawerContext.Provider value={composedFrameDrawerReference}>
+            {/* THE DOWNLOAD BUTTON AND EVERY TRANSITION DEPEND ON THIS ON THE
+                NODE PATH. Its canvas reads back empty — 0 of 256 samples
+                carrying alpha AND 0 of 256 carrying colour, on both backends —
+                because `preserveDrawingBuffer` does not exist on
+                `WebGPURendererParameters`, so the still is rendered rather than
+                scraped. Not mounted on the classic path, whose canvas reads
+                back correctly and is what every visitor has while the flag is
+                off. Stage 0 of the graphics upgrade roadmap. */}
+            {rendersWithNodePipeline ? <SceneStillBridge /> : null}
             <PlanetPositionTrackerContext.Provider value={planetPositionTrackerReference.current}>
             <TerrainHeightSamplerContext.Provider value={terrainHeightSamplerReference.current}>
               <Suspense fallback={<CanvasLoader />}>
@@ -841,6 +862,7 @@ export function UniverseCanvas({
               />
             </TerrainHeightSamplerContext.Provider>
             </PlanetPositionTrackerContext.Provider>
+            </ComposedFrameDrawerContext.Provider>
           </Canvas>
         </div>
       </WebGLFailureBoundary>

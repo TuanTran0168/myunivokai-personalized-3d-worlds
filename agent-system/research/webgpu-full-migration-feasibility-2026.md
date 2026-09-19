@@ -16,11 +16,17 @@
 > the `navigator.gpu` tier probe, the `GPUDevice.lost` remount and the multisampling Phase 5
 > deferred. Phase 10's verdict: **Architecture A is not invalidated.** The WebGL2 backend tracks the
 > WebGPU one to 0.02–1.24 of 255 and tracks the CLASSIC renderer just as closely as WebGPU does, on
-> every fixture, with zero refusals. **What blocks the flag is §10.3, now measured and real: the node
-> renderer cannot preserve its drawing buffer on EITHER backend** — `preserveDrawingBuffer` appears
-> twice in `three.module.js` and zero times in `three.webgpu.js` — so the canvas reads back fully
-> transparent and the PNG export and the transition stills have nothing to read. See §10.3 and §26
-> Phase 9.
+> every fixture, with zero refusals. **§10.3's canvas readback blocked the flag until 2026-09-19 and
+> no longer does.** The node renderer still cannot preserve its drawing buffer on either backend —
+> `preserveDrawingBuffer` appears twice in `three.module.js` and zero times in `three.webgpu.js` —
+> but nothing reads that buffer any more: Stage 0 of the graphics upgrade roadmap renders the still
+> into an offscreen render target instead, and it reproduces the canvas to 0.01-0.11 of 255 on all
+> three renderers. See §10.3, §26 Phase 9, and the roadmap's §2.
+>
+> **WHAT KEEPS THE FLAG OFF NOW IS A DIFFERENT ARGUMENT, AND A WEAKER ONE.** The forest's first mount
+> on the WebGL2 backend is 13.6 s of blocked main thread against the classic renderer's 3.6 s, and
+> roughly a fifth of visitors would land on that backend. That is a performance decision rather than
+> a correctness one, and this report does not yet make it.
 >
 > **PHASE 13 WAS REVERTED ON 2026-09-18 — see its section, which is now about the reversal.** What
 > follows is what it found, which stands; what it built failed the parity ratchet and is out.
@@ -428,7 +434,7 @@ prop or an `onCreated` mutation.
 | `antialias` | R3F default `true` | R3F default props | Constructor param exists; MSAA differs — see §11 |
 | `alpha` | R3F default `true` | R3F default props | Exists; **r185 premultiplied-alpha change applies** |
 | `powerPreference` | `"high-performance"` | `:518` | Exists; passed to `requestAdapter()` |
-| `preserveDrawingBuffer` | prop-driven, `false` default | `:290,517` | **MEASURED 2026-09-17: the option does not exist on `WebGPURenderer` at all**, on either backend — zero occurrences in `three.webgpu.js` — and the canvas reads back fully transparent. §10.3 |
+| `preserveDrawingBuffer` | prop-driven, `false` default | `:290,517` | **MEASURED 2026-09-17: the option does not exist on `WebGPURenderer` at all**, on either backend — zero occurrences in `three.webgpu.js` — and the canvas reads back empty. **Stopped mattering 2026-09-19**: nothing reads the canvas on that path any more. §10.3 |
 | `toneMapping` | `ACESFilmic` (ocean) / `AgX` (rest) | `:519` | **Both registered** in the node library — §6.4 |
 | `outputColorSpace` | not set (three default sRGB) | — | Node path has `ColorSpaceNode` / `RenderOutputNode` |
 | `shadows` | `"soft"` = `PCFSoftShadowMap`, forest + ocean only | `:503-505` | **Removed for WebGPURenderer at r186** → `PCFShadowMap` |
@@ -866,7 +872,45 @@ present-time texture validity differently. **VISUAL_PARITY_RISK to test, not a b
 > it, so passing it is a typecheck error rather than a silent no-op, which is the one piece of luck
 > here. It cannot be requested on either backend.
 >
-> **THIS IS WHAT GATES PHASE 12'S FLAG, AND IT IS NOT A PARITY PROBLEM.** `sceneStill.ts` fails safe
+> **CLOSED 2026-09-19 BY STAGE 0 OF THE GRAPHICS UPGRADE ROADMAP, ON BRANCH
+> `feat/fe/webgpu-graphics-stages`.** The fix named in the paragraph below is the fix that was
+> built: the app stops reading the canvas and renders the still into an offscreen render target
+> instead. `SceneStillBridge.tsx` registers a source on the node path only; the classic path still
+> scrapes its canvas and did not change, because it is the path every visitor is on and it works.
+>
+> Three things had to be right and each would have shipped a plausible wrong picture on its own.
+> **`setOutputRenderTarget`, not `setRenderTarget`** — `Renderer.isOutputTarget` is
+> `this._renderTarget === this._outputRenderTarget || this._renderTarget === null` (`:61704`), and
+> `currentToneMapping` collapses to `NoToneMapping` whenever it is false (`:61681`), so the
+> obvious call returns a linear, un-tone-mapped frame. **The row order and the row padding differ
+> between the two node backends** — WebGPU's `copyTextureToBuffer` is top-down and pads every row to
+> 256 bytes (`:77012-77015`), WebGL2's `gl.readPixels` is bottom-up and tight (`:70159`).
+> **And the capture target is `LinearSRGBColorSpace`**, because `_renderOutput` already encodes
+> and an sRGB target would encode again in hardware (`:77805`).
+>
+> Measured by `e2e/scene-still-capture.spec.ts`, four fixtures by three renderers: **the still
+> reproduces the canvas to between 0.01 and 0.11 of 255 on all twelve legs.** The export no longer
+> refuses on the node path and the transitions warp a real picture there. `scene-parity.spec.ts` is
+> unmoved — universe 0.45, forest 1.21, ocean 0.31, ocean-surface 0.02 — and 56 of 59 on the
+> `webgpu` project passed, the three failures being `driver-parity` needing its `desktop`
+> recording pass, which then passed too.
+>
+> **THE RATCHET IS DELETED RATHER THAN INVERTED**, which is the ending it asked for. The canvas still
+> reads back empty; nothing depends on it any more, so an assertion either way would pin a fact the
+> app stopped consulting.
+>
+> **AND IT TURNED UP SOMETHING ELSE: AN EXTRA FRAME IS NOT FREE IN THIS APP.** A capture renders one
+> more frame, and comparing it against the frame BEFORE it read 16 to 21 of 255. Stale canvas,
+> drifting scene, post chain and readback were each ruled out by measurement; what answered it was
+> repainting the canvas at the clock it is already at. A zero delta gives every `useFrame` nothing
+> to integrate, and **the repaint still differs from the frame before it by 16 to 36 of 255, on the
+> classic renderer as much as on the node ones.** Something advances per FRAME rather than per DELTA
+> and has not been tracked down. It matters to anything that assumes two renders of one pinned moment
+> are the same picture.
+>
+> **The original paragraph, kept because it is what was predicted and it held:**
+>
+> **THIS IS WHAT GATED PHASE 12'S FLAG, AND IT WAS NOT A PARITY PROBLEM.** `sceneStill.ts` fails safe
 > as predicted, so a transition CUTS instead of warping a transparent rectangle — degraded, stated,
 > survivable. `exportImage.ts` did not, and would have handed the visitor a fully transparent PNG
 > with a success message; it now runs the same check and returns false. The real fix is to stop
@@ -1526,7 +1570,7 @@ other step (§4.3).
 | drei `Environment` / `Lightformer` | PMREM | `PMREMNode` exists | same | n/a | LOW | **HIGH** | UNKNOWN | **UNVERIFIED — test early** |
 | drei `useGLTF`/`useTexture`/`OrbitControls`/`Html`/`Clone` | — | expected unchanged | unchanged | n/a | LOW | LOW | IDENTICAL | Verify |
 | DRACO/KTX2 decoders | self-hosted, CSP-driven | unchanged | unchanged | n/a | TRIVIAL | LOW | IDENTICAL | — |
-| Image export | `toDataURL` + `preserveDrawingBuffer` | no direct analogue | existing | n/a | MEDIUM | VISUAL_PARITY_RISK | UNKNOWN | Test |
+| Image export | `toDataURL` + `preserveDrawingBuffer` | offscreen render target + `readRenderTargetPixelsAsync` | existing | n/a | MEDIUM | **RESOLVED 2026-09-19** | 0.01-0.11 of 255 vs the canvas | `scene-still-capture.spec.ts` |
 | Transition stills | `drawImage` + centre-pixel guard | same, already fails safe | existing | n/a | LOW | LOW | IDENTICAL | Lucky — keep the guard |
 | Visual parity harness | Playwright, SwiftShader, **no assertions** | ~~must reach WebGPU~~ **reachability solved (§19.7)** + ~~pin phase~~ + ~~add a metric~~ — **all three done (§26 Phase 4)** | same | n/a | ~~**MEDIUM**~~ **RETIRED** — was HIGH | **CRITICAL** | n/a | **Phase 4 DONE 2026-09-10** — stable to 0.00 against itself |
 | GPU compute | none | available; also lowers to transform feedback | emulated | yes | — | — | — | **Defer — not phase one** (§15) |

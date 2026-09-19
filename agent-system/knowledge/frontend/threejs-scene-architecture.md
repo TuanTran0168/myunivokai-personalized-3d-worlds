@@ -380,16 +380,17 @@ additive-compositing-space difference costs on a scene built out of it.** Not
 proven: these are two different scenes rather than one scene with its additive
 layers switched off, and this does not apportion the 9.90 between the layers.
 
-### The node renderer cannot preserve its drawing buffer, and two features read it
+### The node renderer cannot preserve its drawing buffer, so the still is RENDERED
 
-Measured 2026-09-17 (§26 Phase 9), sampling the canvas the way both production
-sites sample it, same fixture, three renderers:
+Measured 2026-09-17 (§26 Phase 9) and re-measured 2026-09-18 with colour counted
+separately from alpha, sampling the canvas the way the production sites sample
+it, same fixture, three renderers:
 
-| renderer | samples carrying alpha | `toDataURL` length |
-| --- | --- | --- |
-| `WebGLRenderer` | **256/256** | 1.6–3.4 MB |
-| `WebGPURenderer` / WebGPU | **0/256** | 38 KB |
-| `WebGPURenderer` / WebGL2 | **0/256** | 38 KB |
+| renderer | carrying alpha | carrying colour | `toDataURL` length |
+| --- | --- | --- | --- |
+| `WebGLRenderer` | **256/256** | **256/256** | 1.6-3.4 MB |
+| `WebGPURenderer` / WebGPU | **0/256** | **0/256** | 38 KB |
+| `WebGPURenderer` / WebGL2 | **0/256** | **0/256** | 38 KB |
 
 **BOTH NODE BACKENDS FAIL, WHICH IS WHAT RULES OUT WEBGPU PRESENT-TIME
 SEMANTICS.** The WebGL2 backend is the same graphics API as the working row.
@@ -397,20 +398,79 @@ What differs is one option that does not exist: `preserveDrawingBuffer` appears
 twice in `three.module.js` (`:16074` reads it from the parameters, `:16372`
 hands it to `getContext`) and **zero times in `three.webgpu.js`**.
 `WebGPURendererParameters` does not declare it, so passing it is a typecheck
-error rather than a silent no-op — the one piece of luck here.
+error rather than a silent no-op — the one piece of luck here. And counting
+colour separately settles WHICH defect it is: the buffer is **cleared**, not
+transparent, so there was never a one-parameter fix to find.
 
-Two features read that buffer. `features/transitions/sceneStill.ts` already
-fails safe on exactly this signal and returns null, so a transition CUTS instead
-of warping a transparent rectangle. `lib/exportImage.ts` did not, and would have
-handed the visitor a fully transparent PNG with a success message; it now runs
-the same check and returns false.
+**Stage 0 of the graphics upgrade roadmap, built 2026-09-19, stops reading the
+canvas.** `SceneStillBridge.tsx` mounts inside the canvas on the node path and
+registers a source; `captureSceneStill` asks that source before it touches a
+canvas. **On the classic path nothing registers and the canvas scrape is
+unchanged** — the one path every visitor is on was not put at risk to fix the
+one nobody is on yet.
 
-**The real fix is to stop reading the canvas.** Rendering the export into an
-offscreen render target is backend-neutral, more robust than
-`preserveDrawingBuffer` ever was, and a separate piece of work. Until then this
-is what keeps the node renderer's rollout flag off, and
-`e2e/node-path-diagnostic.spec.ts` records the defect as a RATCHET: the day it
-starts working, the test fails and says to delete the guard.
+#### `setOutputRenderTarget`, not `setRenderTarget`
+
+The obvious shape is wrong and wrong quietly. `Renderer.isOutputTarget` is
+`this._renderTarget === this._outputRenderTarget || this._renderTarget === null`
+(`three.webgpu.js:61704`), and both `currentToneMapping` and
+`currentColorSpace` collapse to `NoToneMapping` and the working colour space
+whenever it is false (`:61681`, `:61693`). So a scene rendered through
+`setRenderTarget` comes back **linear and un-tone-mapped** — a dark, flat,
+entirely plausible picture.
+
+`setOutputRenderTarget( target )` leaves `_renderTarget` null, so three treats
+the target exactly as it treats the canvas: `_getFrameBufferTarget()` builds the
+half-float intermediate (`:60625`), the scene renders into it, and
+`_renderOutput()` writes the tone-mapped, converted result into the target
+(`:60957`). The capture target itself is `LinearSRGBColorSpace` for the
+matching reason: `_renderOutput` encodes in the shader, and a target carrying
+`SRGBColorSpace` would be created as `rgba8unorm-srgb` (`:77805`) and encode
+a second time in hardware.
+
+#### The two node backends disagree about what a readback IS
+
+| | row order | row padding |
+| --- | --- | --- |
+| WebGPU, `copyTextureToBuffer` | top-down | **padded to 256 bytes** (`:77012-77015`) |
+| WebGL2, `gl.readPixels` | **bottom-up** | none, rows are tight (`:70159`) |
+
+Read the WebGPU buffer as if it were tight and the picture shears progressively
+down its own height; forget the WebGL flip and it is upside down. Both mistakes
+survive every non-blank check there is. `sceneStillCapture.ts` carries both
+corrections and `sceneStillCapture.test.ts` tests them as arithmetic, including
+the width at which a missing de-pad would pass unnoticed.
+
+#### The capture is asynchronous, because there is no synchronous readback
+
+`Renderer.readRenderTargetPixelsAsync` (`:62244`) is the whole of it — there
+is no synchronous twin anywhere in the file. `captureSceneStill` is therefore a
+promise, and the three call sites whose synchrony was load-bearing each hold
+their ordering across the `await`: the create page sets `worldFamily` before it
+and `renderedWorldFamily` after it, the world transition extends its HOLD until
+the readback lands rather than moving the capture, and the gallery reveal waits
+before it has drawn anything and carries a cancellation flag.
+
+`lib/exportImage.ts`'s blank-canvas guard is gone with it. It was correct while
+the node path could not produce a picture and became a dead download button the
+moment it could.
+
+#### AN EXTRA FRAME IS NOT FREE IN THIS APP, and that is the surprise
+
+The capture renders one more frame, and comparing it against the frame BEFORE it
+read 16 to 21 of 255 on the universe and the forest. Stale canvas, drifting
+scene, post chain and readback were each ruled out by measurement. What answered
+it was asking the canvas to repaint itself at the clock it is already at: a zero
+delta gives every `useFrame` nothing to integrate, so the scene cannot move —
+and **the repainted canvas still differs from the frame before it by 16 to 36 of
+255, on the classic renderer as much as on the node ones.**
+
+Something in this app advances per FRAME rather than per DELTA. It has not been
+tracked down, and it matters to anything that assumes two renders of one pinned
+moment are the same picture. Compared like with like — capture against repaint —
+the still lands between **0.01 and 0.11 of 255** on all twelve legs, which is
+what `e2e/scene-still-capture.spec.ts` asserts, with each leg's own one-frame
+cost as its budget.
 
 ### The two backends of one renderer disagree about the first mount, in opposite directions
 
