@@ -56,10 +56,12 @@ import { ParityHarnessBridge } from "@/features/scene-renderers/shared/ParityHar
 import {
   buildsNodeRenderer,
   forcesWebGLBackend,
-  nodeRendererIsEnabled,
-  rendererChoiceFor,
+  nodeRendererRollout,
+  rendererDecisionFor,
+  rendererDecisionNeedsAdapterAnswer,
   rendererRemountSuffix
 } from "@/features/scene-renderers/shared/rendererSelection";
+import { useWebGPUAdapterAvailability } from "@/features/scene-renderers/shared/useWebGPUAdapterAvailability";
 import { watchGraphicsDevice } from "@/features/scene-renderers/shared/graphicsDeviceLoss";
 import { PlanetPositionTrackerContext } from "@/features/scene-renderers/shared/PlanetPositionTracker";
 import { TerrainHeightSamplerContext, type TerrainHeightSampler } from "@/features/scene-renderers/shared/TerrainHeightSampler";
@@ -340,23 +342,52 @@ export function UniverseCanvas({
   const [graphicsDeviceLost, setGraphicsDeviceLost] = useState(false);
 
   /**
+   * WHICH ROLLOUT THIS BUILD SHIPS, read once.
+   *
+   * Unset in production, which now means ON — the node renderer wherever the
+   * browser has a real WebGPU adapter. See `rendererSelection.ts` for what the
+   * other two values do and why the default moved.
+   */
+  const rollout = useMemo(() => nodeRendererRollout(), []);
+
+  /**
+   * Whether this page has to ask `navigator.gpu` before it can build anything.
+   *
+   * False for the harness, false under the kill switch, false when the rollout
+   * is `every-visitor`, and false once a device has been lost — in every one of
+   * those the renderer is already determined, and probing would be a driver
+   * call made to answer a question nothing asked.
+   */
+  const needsAdapterAnswer = rendererDecisionNeedsAdapterAnswer({
+    harnessRenderer: parityHarness?.renderer ?? null,
+    rollout,
+    graphicsDeviceLost
+  });
+
+  const webgpuAdapter = useWebGPUAdapterAvailability(needsAdapterAnswer);
+
+  /**
    * WHICH RENDERER THIS CANVAS BUILDS — the one decision §26 Phase 9 adds, kept
    * as a pure function in `rendererSelection.ts` so it can be argued with and
    * tested without a GPU.
    *
-   * **With the rollout flag off, this is `classic` for every visitor and nothing
-   * below changes at all.** That is the safety property of the phase: the node
-   * renderer becomes reachable, not default.
+   * **`isDecided` is false only while the adapter probe is outstanding**, and
+   * the canvas below is not rendered until it is true. That is the safety
+   * property that replaced "the flag ships off": a renderer cannot be changed
+   * after the `gl` factory has run, so the one moment this can be got right is
+   * before the `<Canvas>` exists.
    */
-  const rendererChoice = useMemo(
+  const rendererDecision = useMemo(
     () =>
-      rendererChoiceFor({
+      rendererDecisionFor({
         harnessRenderer: parityHarness?.renderer ?? null,
-        nodeRendererEnabled: nodeRendererIsEnabled(),
+        rollout,
+        webgpuAdapter,
         graphicsDeviceLost
       }),
-    [parityHarness, graphicsDeviceLost]
+    [parityHarness, rollout, webgpuAdapter, graphicsDeviceLost]
   );
+  const rendererChoice = rendererDecision.choice;
 
   /**
    * Whether the renderer this canvas gets is a NODE renderer, which decides
@@ -546,7 +577,7 @@ export function UniverseCanvas({
   // about a renderer can change without a new `<Canvas>`, because the `gl`
   // factory is called once per canvas. Empty for every ordinary choice, so no
   // key moves for anybody until a device is actually lost.
-  const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}${rendererRemountSuffix(rendererChoice)}`;
+  const canvasRemountKey = `${seed}-${cameraPosition[1].toFixed(2)}-${cameraPosition[2].toFixed(2)}-${cameraFieldOfView}${rendererRemountSuffix(rendererDecision)}`;
   const isSceneReady = lastReadyCanvasKey === canvasRemountKey;
 
   const introDurationSeconds = CAMERA_INTRO_DURATION_SECONDS_BY_ENTRY_MOTION[entryMotion];
@@ -592,6 +623,23 @@ export function UniverseCanvas({
             revealWithoutFade ? "duration-0" : "duration-1000"
           } ${isCanvasVisible ? "opacity-100" : "opacity-0"}`}
         >
+          {/* NOT MOUNTED UNTIL THE RENDERER IS DECIDED, and this conditional is
+              the whole of the rollout's safety.
+
+              `rendererDecision.isDecided` is false in exactly one state: the
+              rollout is `where-webgpu-is-real` and `navigator.gpu` has not
+              answered yet. Mounting during that state would build whichever
+              renderer the default happened to be, and a renderer cannot be
+              changed afterwards — the `gl` factory runs once per `<Canvas>`, so
+              correcting it would mean a remount, which is this app's most
+              expensive operation and the one §26 spent its length shortening.
+
+              The wait is one `requestAdapter()`, 1 to 15 ms in Phase 0's
+              numbers and hard-bounded by
+              WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS. It is invisible: the
+              wrapper above holds opacity-0 until the scene signals ready, which
+              is seconds away, and the hold layer below is already painted. */}
+          {!rendererDecision.isDecided ? null : (
           <Canvas
             key={canvasRemountKey}
             // "never" from the FIRST frame when the parity harness is driving,
@@ -864,6 +912,7 @@ export function UniverseCanvas({
             </PlanetPositionTrackerContext.Provider>
             </ComposedFrameDrawerContext.Provider>
           </Canvas>
+          )}
         </div>
       </WebGLFailureBoundary>
       {/* The hold before the scene arrives. Deliberately NOT a spinner: a pair
