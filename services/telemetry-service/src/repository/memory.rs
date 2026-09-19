@@ -21,9 +21,9 @@ use time::OffsetDateTime;
 
 use super::RollupRepository;
 use crate::domain::{
-    BackendAggregate, CacheAggregate, ClientRenderAggregate, ErrorCodeAggregate, HourOfDayBucket,
-    HttpTotals, IngestOutcome, LatencySummary, RollupBatch, RouteAggregate, StatusClassCount,
-    VolumeBucket, WakeSignalBucket,
+    BackendAggregate, CacheAggregate, ClientRenderAggregate, ClientRenderBackendAggregate,
+    ErrorCodeAggregate, HourOfDayBucket, HttpTotals, IngestOutcome, LatencySummary, RollupBatch,
+    RouteAggregate, StatusClassCount, VolumeBucket, WakeSignalBucket,
 };
 use crate::error::{Error, Result};
 
@@ -93,7 +93,7 @@ struct State {
     error_codes: BTreeMap<(OffsetDateTime, String), i64>,
     nats: BTreeMap<(OffsetDateTime, String), (Counters, i64)>,
     cache: BTreeMap<(OffsetDateTime, String), (i64, i64)>,
-    client_render: BTreeMap<(OffsetDateTime, i16, String, String), i64>,
+    client_render: BTreeMap<(OffsetDateTime, i16, String, String, String), i64>,
     /// Set to make the next call fail, so the consumer's nak path is testable
     /// without an unreachable database.
     next_failure: Option<&'static str>,
@@ -199,6 +199,7 @@ impl RollupRepository for InMemoryRollupRepository {
                     row.quality_tier,
                     row.family.clone(),
                     row.outcome.clone(),
+                    row.graphics_backend.clone(),
                 ))
                 .or_insert(0) += row.count;
         }
@@ -484,7 +485,9 @@ impl RollupRepository for InMemoryRollupRepository {
         // would return more rows than the database and let a test pass on a
         // shape the screen never sees.
         let mut grouped: BTreeMap<(i16, String), i64> = BTreeMap::new();
-        for ((bucket_start, quality_tier, _family, outcome), count) in &state.client_render {
+        for ((bucket_start, quality_tier, _family, outcome, _backend), count) in
+            &state.client_render
+        {
             if *bucket_start < since {
                 continue;
             }
@@ -495,6 +498,34 @@ impl RollupRepository for InMemoryRollupRepository {
             .map(|((quality_tier, outcome), count)| ClientRenderAggregate {
                 quality_tier,
                 outcome,
+                count,
+            })
+            .collect())
+    }
+
+    async fn client_render_backend_aggregates(
+        &self,
+        since: OffsetDateTime,
+    ) -> Result<Vec<ClientRenderBackendAggregate>> {
+        self.take_failure()?;
+        let state = self.state.lock().expect("repository lock");
+        // Keyed on the backend ALONE, which is what SELECT_CLIENT_RENDER_BACKEND's
+        // GROUP BY does. A double that kept another dimension would return more
+        // rows than the database and let a test pass on a shape the screen never
+        // sees.
+        let mut grouped: BTreeMap<String, i64> = BTreeMap::new();
+        for ((bucket_start, _tier, _family, _outcome, graphics_backend), count) in
+            &state.client_render
+        {
+            if *bucket_start < since {
+                continue;
+            }
+            *grouped.entry(graphics_backend.clone()).or_insert(0) += count;
+        }
+        Ok(grouped
+            .into_iter()
+            .map(|(graphics_backend, count)| ClientRenderBackendAggregate {
+                graphics_backend,
                 count,
             })
             .collect())
@@ -577,7 +608,7 @@ impl RollupRepository for InMemoryRollupRepository {
             .retain(|(bucket_start, _), _| *bucket_start >= cutoff);
         state
             .client_render
-            .retain(|(bucket_start, _, _, _), _| *bucket_start >= cutoff);
+            .retain(|(bucket_start, _, _, _, _), _| *bucket_start >= cutoff);
         let after = state.http.len()
             + state.error_codes.len()
             + state.nats.len()

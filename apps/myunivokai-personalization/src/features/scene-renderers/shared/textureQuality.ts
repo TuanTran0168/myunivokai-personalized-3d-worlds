@@ -1,4 +1,4 @@
-import { SRGBColorSpace, type Texture, type WebGLRenderer } from "three";
+import { SRGBColorSpace, type Mesh, type Object3D, type Texture } from "three";
 import { maximumTextureAnisotropy } from "./textureAnisotropy";
 
 /**
@@ -27,7 +27,7 @@ import { maximumTextureAnisotropy } from "./textureAnisotropy";
  * changed. A texture that already has the settings it is being asked for
  * needs no upload at all.
  */
-export function applyColorTextureQuality(texture: Texture, gl: WebGLRenderer): Texture {
+export function applyColorTextureQuality(texture: Texture, gl?: unknown): Texture {
   const anisotropy = maximumTextureAnisotropy(gl);
   if (texture.colorSpace === SRGBColorSpace && texture.anisotropy === anisotropy) {
     return texture;
@@ -39,7 +39,7 @@ export function applyColorTextureQuality(texture: Texture, gl: WebGLRenderer): T
 }
 
 /** Same anisotropy treatment for NON-color (data) maps: normal, roughness, alpha. */
-export function applyDataTextureQuality(texture: Texture, gl: WebGLRenderer): Texture {
+export function applyDataTextureQuality(texture: Texture, gl?: unknown): Texture {
   const anisotropy = maximumTextureAnisotropy(gl);
   if (texture.anisotropy === anisotropy) {
     return texture;
@@ -47,4 +47,85 @@ export function applyDataTextureQuality(texture: Texture, gl: WebGLRenderer): Te
   texture.anisotropy = anisotropy;
   texture.needsUpdate = true;
   return texture;
+}
+
+/**
+ * The material slots that carry a COLOUR image, which must be tagged sRGB.
+ *
+ * Kept as data rather than as a chain of `if`s because the two lists below are
+ * the whole difference between the two helpers above, and a slot in the wrong
+ * list is a bug you see as a washed-out or an over-saturated surface rather
+ * than as an error.
+ */
+const COLOUR_TEXTURE_SLOTS = ["map", "emissiveMap", "sheenColorMap", "specularColorMap"] as const;
+
+/** The slots that carry MEASUREMENTS rather than colour, and must stay linear. */
+const DATA_TEXTURE_SLOTS = [
+  "normalMap",
+  "roughnessMap",
+  "metalnessMap",
+  "aoMap",
+  "alphaMap",
+  "bumpMap",
+  "displacementMap",
+  "clearcoatNormalMap"
+] as const;
+
+type MaterialWithTextureSlots = Record<string, unknown> & { name?: string };
+
+/**
+ * GIVES EVERY TEXTURE INSIDE A LOADED MODEL THE SAME SHARPNESS THE HAND-LOADED
+ * ONES HAVE HAD ALL ALONG.
+ *
+ * The two helpers above have existed since the universe family's planets were
+ * sharpened, and until now they were called from `solar-system/` and nowhere
+ * else — four call sites, all of them textures this app loads itself. **Every
+ * texture that arrives inside a `.glb` kept three's default `anisotropy = 1`**:
+ * all the bark, the leaf cards, the moss, the rock, the mushrooms, the
+ * shipwreck. Those are precisely the grazing-angle surfaces the helpers' own
+ * header was written about — a forest floor and a bark cylinder seen from a
+ * walking-height camera are the textbook case — so the family that needed this
+ * most was the one not getting it.
+ *
+ * # Why the renderer is optional here, and why that is not a shortcut
+ *
+ * `maximumTextureAnisotropy` returns 16 when it is handed nothing, and 16 is
+ * not a guess: it is WebGPU's practical `maxAnisotropy` ceiling and the value
+ * desktop WebGL drivers report, and a driver with a lower limit CLAMPS rather
+ * than failing. `textureAnisotropy.ts` makes that argument at length. None of
+ * the forest components calls `useThree`, so requiring a renderer here would
+ * mean adding a hook to six components to obtain a number that is already
+ * correct — and would make this helper harder to call from the plain
+ * TypeScript of the model walk, which is where it belongs.
+ *
+ * Idempotent and cheap for the same reason the two helpers are: each returns
+ * early when the texture already has what it is being asked for, so a model
+ * re-prepared on a re-render uploads nothing.
+ */
+export function applyLoadedModelTextureQuality(modelRoot: Object3D, gl?: unknown): void {
+  modelRoot.traverse((object) => {
+    const mesh = object as Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      if (!material) {
+        continue;
+      }
+      const slots = material as unknown as MaterialWithTextureSlots;
+      for (const slotName of COLOUR_TEXTURE_SLOTS) {
+        const texture = slots[slotName] as Texture | null | undefined;
+        if (texture?.isTexture) {
+          applyColorTextureQuality(texture, gl);
+        }
+      }
+      for (const slotName of DATA_TEXTURE_SLOTS) {
+        const texture = slots[slotName] as Texture | null | undefined;
+        if (texture?.isTexture) {
+          applyDataTextureQuality(texture, gl);
+        }
+      }
+    }
+  });
 }

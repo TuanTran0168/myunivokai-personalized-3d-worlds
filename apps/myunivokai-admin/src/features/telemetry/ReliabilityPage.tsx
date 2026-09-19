@@ -137,7 +137,11 @@ export function ReliabilityPage() {
               </SectionCard>
             </div>
 
-            <ClientRenderPanel rows={overview?.clientRender ?? []} isLoading={isLoading} />
+            <ClientRenderPanel
+              rows={overview?.clientRender ?? []}
+              backendRows={overview?.clientRenderBackends ?? []}
+              isLoading={isLoading}
+            />
           </>
         );
       }}

@@ -168,3 +168,50 @@ describe("the profiles only ever raise the floor", () => {
     );
   });
 });
+
+/**
+ * §26 PHASE 9: THE ONE SIGNAL THE WEBGL PROBE CANNOT SEE.
+ *
+ * Every other field in `DeviceRenderCapabilities` describes the throwaway WebGL
+ * context this classifier has always read. A machine whose WEBGL renderer is an
+ * RTX 4060 and whose WEBGPU adapter is a CPU rasteriser answers every one of
+ * them like a workstation and then renders every frame on the processor.
+ */
+describe("a software WebGPU adapter, once the node renderer is what draws", () => {
+  const CAPABLE_DESKTOP: DeviceRenderCapabilities = {
+    isMobile: false,
+    logicalProcessorCount: 16,
+    deviceMemoryGigabytes: 8,
+    supportsWebGL2: true,
+    maximumTextureSize: 16384,
+    rendererDescription: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Laptop GPU Direct3D11 vs_5_0 ps_5_0)"
+  };
+
+  it("drops a machine to the minimal tier however good its WebGL looks", () => {
+    expect(classifyDeviceQualityTier(CAPABLE_DESKTOP)).toBe(QUALITY_TIER_HIGH);
+    expect(classifyDeviceQualityTier({ ...CAPABLE_DESKTOP, webgpuAdapter: "software" })).toBe(QUALITY_TIER_MINIMAL);
+  });
+
+  /**
+   * THE FIELD IS ABSENT WHENEVER THE ROLLOUT FLAG IS OFF, which is what keeps
+   * this phase from changing anything for anybody. A hardware adapter, a missing
+   * adapter and an unprobed one all have to leave the classification exactly
+   * where it was.
+   */
+  it("changes nothing when the adapter is hardware, missing, or never probed", () => {
+    for (const webgpuAdapter of ["hardware", "none", "absent", undefined] as const) {
+      expect(classifyDeviceQualityTier({ ...CAPABLE_DESKTOP, webgpuAdapter })).toBe(QUALITY_TIER_HIGH);
+    }
+  });
+
+  /**
+   * Same automation exemption as the WebGL marker check, for the same reason
+   * recorded on `isUnderAutomation`: a suite that deliberately runs software
+   * graphics must keep measuring the profile that ships.
+   */
+  it("is skipped under automation", () => {
+    expect(
+      classifyDeviceQualityTier({ ...CAPABLE_DESKTOP, isUnderAutomation: true, webgpuAdapter: "software" })
+    ).toBe(QUALITY_TIER_HIGH);
+  });
+});

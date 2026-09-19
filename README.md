@@ -311,11 +311,55 @@ sequenceDiagram
 
 ---
 
+## Rendering — two paths, one scene
+
+The scene you see is drawn by `WebGLRenderer`: GLSL materials, nine hand-written
+shaders, and the `postprocessing` composer. Beside it the repo ships a **complete
+second renderer** — `WebGPURenderer`, with WebGPU as the primary backend and
+WebGL2 as its own automatic fallback — built over Phases 0-13 of
+[the migration study](agent-system/research/webgpu-full-migration-feasibility-2026.md).
+It is gated behind `NEXT_PUBLIC_NODE_RENDERER=1` and **ships off**.
+
+| | Classic path — every visitor today | Node path — behind the flag |
+| --- | --- | --- |
+| Renderer | `WebGLRenderer` | `WebGPURenderer`, WebGPU or WebGL2, chosen by three.js on `init()` |
+| Materials | GLSL `ShaderMaterial` + `onBeforeCompile` | TSL node graphs, one source for both backends |
+| Post-processing | `postprocessing` composer | three.js `RenderPipeline`, eight passes |
+| Device loss | no equivalent | `GPUDevice.lost` remounts onto the WebGL2 backend |
+| Canvas readback | works | **empty** — `preserveDrawingBuffer` does not exist on this renderer |
+| Scene stills and PNG export | read the canvas | rendered into an offscreen target, and within 0.11 of 255 of the canvas |
+
+Two things are worth knowing before touching either path.
+
+**Which renderer actually drew is measured, not assumed.** `WebGPURenderer`
+falls back to its WebGL2 backend by itself, so the `graphicsBackend` field on the
+client render report is read off the renderer INSTANCE rather than off the flag
+that built it — a value derived from what the build asked for would count that
+population as WebGPU and measure nothing.
+
+**The flag is off for one reason, and it has never been visual parity.** It used
+to be the canvas readback: both node backends read an EMPTY canvas — 0 of 256
+samples carrying alpha and 0 of 256 carrying colour — which killed the image
+export and every scene transition. **Stage 0 of
+[the graphics upgrade roadmap](agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md)
+closed that on 2026-09-19** by rendering the still into an offscreen render
+target rather than scraping the canvas; it now reproduces the canvas to between
+0.01 and 0.11 of 255 on all three renderers.
+
+What keeps the flag off now is the forest's first mount on the WebGL2
+backend — 13.6 s of blocked main thread against the classic renderer's 3.6 s,
+for roughly a fifth of visitors. That is a performance decision rather than a
+correctness one, and nobody has made it yet. The same roadmap is where the
+compute, HDR-compositing and particle work is planned, each stage behind the
+measurement that would otherwise be asserted rather than known.
+
+---
+
 ## Tech Stack
 
 | Area | Technologies |
 | --- | --- |
-| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js, Web Audio API, Tailwind CSS |
+| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js (WebGL2 today, WebGPU behind a flag), Web Audio API, Tailwind CSS |
 | **Backend** | Go (chi, pgxpool, zerolog), Rust (`telemetry-service`, sqlx, tokio) |
 | **Messaging & Cache** | NATS JetStream (durable events & commands), Core NATS (request-reply), Redis (rate limiting & cache) |
 | **Persistence** | PostgreSQL 17 (Database-per-service on Neon in production), Raw SQL (No ORM) |
@@ -464,4 +508,5 @@ Start here:
 - [`agent-system/knowledge/backend/source-overview.md`](agent-system/knowledge/backend/source-overview.md) — backend architecture and microservice patterns
 - [`agent-system/knowledge/backend/request-lifecycle.md`](agent-system/knowledge/backend/request-lifecycle.md) — request paths and cache invalidation
 - [`agent-system/knowledge/frontend/source-overview.md`](agent-system/knowledge/frontend/source-overview.md) — frontend architecture and the 3D scene registry
+- [`agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md`](agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md) — what the WebGPU path makes possible next, and which gate each stage waits on
 - [`agent-system/skills/production-deployment-guide.md`](agent-system/skills/production-deployment-guide.md) — the full production deployment runbook

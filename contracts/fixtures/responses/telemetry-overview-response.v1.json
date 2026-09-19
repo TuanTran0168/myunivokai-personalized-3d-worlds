@@ -137,5 +137,19 @@
       "outcome": "rendered",
       "count": 41
     }
+  ],
+  "clientRenderBackends": [
+    {
+      "graphicsBackend": "webgl",
+      "count": 30
+    },
+    {
+      "graphicsBackend": "webgl2",
+      "count": 4
+    },
+    {
+      "graphicsBackend": "webgpu",
+      "count": 9
+    }
   ]
 }

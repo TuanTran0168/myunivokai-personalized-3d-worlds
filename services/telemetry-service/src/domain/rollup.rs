@@ -66,13 +66,14 @@ pub struct CacheRollupRow {
     pub misses: i64,
 }
 
-/// One `{tier, family, outcome}` cell of one interval, as a browser reported
-/// it. Carries no identity of any kind — see the migration.
+/// One `{tier, family, outcome, graphics backend}` cell of one interval, as a
+/// browser reported it. Carries no identity of any kind — see the migration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientRenderRollupRow {
     pub quality_tier: i16,
     pub family: String,
     pub outcome: String,
+    pub graphics_backend: String,
     pub count: i64,
 }
 
@@ -158,6 +159,7 @@ impl RollupBatch {
                     quality_tier: bucket.quality_tier,
                     family: bucket.family.clone(),
                     outcome: bucket.outcome.clone(),
+                    graphics_backend: bucket.graphics_backend.clone(),
                     count: bucket.count,
                 })
                 .collect(),

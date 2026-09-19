@@ -68,6 +68,7 @@ pub fn charts_are_elsewhere_overview(
         hours: normalize_telemetry_hours(query.hours),
         generated_at: now,
         client_render: Vec::new(),
+        client_render_backends: Vec::new(),
         total_requests: 0,
         error_requests: 0,
         error_rate_percent: 0.0,

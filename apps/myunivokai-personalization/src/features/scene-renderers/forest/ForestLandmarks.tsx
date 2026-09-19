@@ -12,6 +12,7 @@ import { getSoftCircleTexture } from "@/features/scene-renderers/shared/softCirc
 import { mixHexColors, type TerrainHeightSampler } from "./forestMath";
 import { ForestPondWater, ForestWaterShoreline } from "./ForestPondWater";
 import { LANDMARK_MODEL_CATALOG, natureModelUrl, normalizationForObject } from "./forestModels";
+import { applyLoadedModelTextureQuality } from "../shared/textureQuality";
 
 // The clickable POI layer — one hero object per Nature DNA landmark, the
 // forest's counterpart of planets. Hover feeds the canvas tooltip, click
@@ -65,6 +66,11 @@ function LandmarkModelShape({ landmarkKind, accentColor, yawRadians }: LandmarkM
   const gltf = useGLTF(natureModelUrl(definition));
 
   const preparedScene = useMemo(() => {
+    // Applied to the SOURCE rather than to the clone: `clone(true)` copies the
+    // material references, and a cloned material carries the same texture
+    // objects, so sharpening the source sharpens every clone ever taken of it —
+    // and does it once, on the one copy drei's cache keeps.
+    applyLoadedModelTextureQuality(gltf.scene);
     const cloned = gltf.scene.clone(true);
     const accent = new Color(accentColor);
     cloned.traverse((object) => {
@@ -73,6 +79,11 @@ function LandmarkModelShape({ landmarkKind, accentColor, yawRadians }: LandmarkM
         return;
       }
       mesh.castShadow = true;
+      // A landmark is the one object in the scene a visitor walks up to, so it
+      // is the worst place to have a surface that ignores the shadow it is
+      // standing in. See forestModels.ts for why this costs a sample rather
+      // than a pass.
+      mesh.receiveShadow = true;
       const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
       if (material && ACCENT_TINT_MATERIAL_NAME_PATTERN.test(material.name ?? "")) {
         const tintedMaterial = (material as MeshStandardMaterial).clone();

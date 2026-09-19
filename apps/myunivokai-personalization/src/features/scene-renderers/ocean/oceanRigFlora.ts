@@ -24,7 +24,6 @@
 import {
   Color,
   CylinderGeometry,
-  DoubleSide,
   Euler,
   Group,
   InstancedBufferAttribute,
@@ -33,24 +32,19 @@ import {
   MeshStandardMaterial,
   PlaneGeometry,
   Quaternion,
-  Vector2,
   Vector3,
 } from "three";
 import { randomFromSeed } from "@/lib/scene";
+import { oceanBladeMaterial } from "./oceanBladeMaterial";
+import { standardMaterialForRenderer } from "@/features/scene-renderers/shared/nodeMaterialChunkPatch";
+import { createSwayUniforms, swayUniformNodes, type SwayUniformNodes, type SwayUniforms } from "./oceanSway";
+import type { NodeMaterialModules } from "@/features/scene-renderers/shared/nodeMaterials";
 import { applyCaustics, type CausticsUniforms } from "./oceanCaustics";
-import { requireShaderChunks, SHADER_CHUNK_MARKERS } from "@/features/scene-renderers/shared/shaderChunkPatch";
 
-export type SwayUniforms = {
-  uSwayTime: { value: number };
-  uCurrent: { value: Vector2 };
-};
-
-export function createSwayUniforms(currentStrength: number): SwayUniforms {
-  return {
-    uSwayTime: { value: 0 },
-    uCurrent: { value: new Vector2(0.55, 0.2).multiplyScalar(currentStrength) },
-  };
-}
+// Declared in `oceanSway.ts` so the material factory and the rig can both see
+// them without importing each other. Re-exported here because this is where
+// every existing caller looks for them.
+export { createSwayUniforms, type SwayUniforms } from "./oceanSway";
 
 // Kelp/sponge radii used to start at 0, unlike the boulders in
 // oceanRigTerrain.ts (BOULDER_CAMERA_STANDOFF_METRES): a bed or a sponge could
@@ -92,6 +86,9 @@ type BladeOptions = {
   color: string;
   heightAt: (x: number, z: number) => number;
   sway: SwayUniforms;
+  /** Null on the classic path, which is every visitor today. */
+  swayNodes: SwayUniformNodes | null;
+  nodeModules: NodeMaterialModules | null;
 };
 
 /**
@@ -106,7 +103,8 @@ type BladeOptions = {
  * a stick.
  */
 function createBladeBed(options: BladeOptions): InstancedMesh {
-  const { count, seedName, heightBase, heightRange, radiusOuter, radiusInner, color, heightAt, sway } = options;
+  const { count, seedName, heightBase, heightRange, radiusOuter, radiusInner, color, heightAt, sway, swayNodes, nodeModules } =
+    options;
 
   const blade = new PlaneGeometry(1, 1, 1, 14);
   blade.translate(0, 0.5, 0);
@@ -119,54 +117,7 @@ function createBladeBed(options: BladeOptions): InstancedMesh {
   bladePositions.needsUpdate = true;
   blade.computeVertexNormals();
 
-  const material = new MeshStandardMaterial({
-    color: new Color(color),
-    roughness: 0.92,
-    metalness: 0,
-    side: DoubleSide,
-  });
-  material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, sway);
-    shader.vertexShader = requireShaderChunks(shader.vertexShader, "oceanRigFlora sway vertex", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.beginVertex
-    ])
-      .replace(
-        SHADER_CHUNK_MARKERS.common,
-        `#include <common>
-          uniform float uSwayTime; uniform vec2 uCurrent;
-          attribute float aSwayPhase;
-          varying float vHeightFraction; varying float vPlantTone;`,
-      )
-      .replace(
-        SHADER_CHUNK_MARKERS.beginVertex,
-        `#include <begin_vertex>
-          vHeightFraction = clamp(position.y, 0.0, 1.0);
-          vPlantTone = 0.72 + 0.56 * fract(sin(aSwayPhase * 12.9898) * 43758.5453);
-          // Quadratic envelope: anchored at the base, free at the tip. A linear
-          // ramp makes the whole plant slide instead of bend.
-          float bend = vHeightFraction * vHeightFraction;
-          transformed.x += sin(uSwayTime * 1.15 + aSwayPhase + vHeightFraction * 2.4) * bend * 0.34;
-          transformed.z += cos(uSwayTime * 0.83 + aSwayPhase * 1.7) * bend * 0.24;
-          transformed.xz += uCurrent * bend * 0.5;`,
-      );
-    shader.fragmentShader = requireShaderChunks(shader.fragmentShader, "oceanRigFlora sway fragment", [
-      SHADER_CHUNK_MARKERS.common,
-      SHADER_CHUNK_MARKERS.toneMappingFragment
-    ])
-      .replace(
-        SHADER_CHUNK_MARKERS.common,
-        "#include <common>\nvarying float vHeightFraction;\nvarying float vPlantTone;",
-      )
-      // Darkest at the ground — the contact shadow that stops vegetation
-      // floating — brightest at the tip, where a translucent blade really does
-      // catch the light.
-      .replace(
-        SHADER_CHUNK_MARKERS.toneMappingFragment,
-        "gl_FragColor.rgb *= mix(0.16, 1.32, smoothstep(0.0, 0.8, vHeightFraction)) * vPlantTone;\n#include <tonemapping_fragment>",
-      );
-  };
-
+  const material = oceanBladeMaterial(color, sway, swayNodes, nodeModules);
   const mesh = new InstancedMesh(blade, material, count);
   const next = randomFromSeed(seedName);
   // Bed radius drawn BEFORE the bed's own centre distance, because the centre
@@ -232,6 +183,11 @@ function createBladeBed(options: BladeOptions): InstancedMesh {
   return mesh;
 }
 
+/** Barrel sponge flesh: pale, matte, and not a mirror. */
+const SPONGE_COLOR = "#C7A681";
+const SPONGE_ROUGHNESS = 0.95;
+const SPONGE_METALNESS = 0;
+
 type SpongeOptions = {
   count: number;
   seedName: string;
@@ -240,6 +196,7 @@ type SpongeOptions = {
   heightAt: (x: number, z: number) => number;
   caustics: CausticsUniforms;
   castShadow: boolean;
+  nodeModules: NodeMaterialModules | null;
 };
 
 /**
@@ -250,7 +207,7 @@ type SpongeOptions = {
  * placeholder read that the straight blade was the first half of.
  */
 function createSpongeField(options: SpongeOptions): InstancedMesh {
-  const { count, seedName, radiusOuter, radiusInner, heightAt, caustics, castShadow } = options;
+  const { count, seedName, radiusOuter, radiusInner, heightAt, caustics, castShadow, nodeModules } = options;
   const geometry = new CylinderGeometry(0.44, 0.4, 1, 14, 4, false);
   geometry.translate(0, 0.5, 0);
   const positions = geometry.getAttribute("position");
@@ -267,10 +224,10 @@ function createSpongeField(options: SpongeOptions): InstancedMesh {
   positions.needsUpdate = true;
   geometry.computeVertexNormals();
 
-  const material = new MeshStandardMaterial({
-    color: new Color("#C7A681"),
-    roughness: 0.95,
-    metalness: 0,
+  const material = standardMaterialForRenderer(nodeModules, {
+    color: new Color(SPONGE_COLOR),
+    roughness: SPONGE_ROUGHNESS,
+    metalness: SPONGE_METALNESS,
   });
   applyCaustics(material, caustics);
 
@@ -317,6 +274,8 @@ export type FloraOptions = {
   caustics: CausticsUniforms;
   currentStrength: number;
   quality: "high" | "low";
+  /** Null on the classic path, which is every visitor today. */
+  nodeModules: NodeMaterialModules | null;
 };
 
 export type Flora = {
@@ -342,10 +301,13 @@ export function createFlora(options: FloraOptions): Flora {
     caustics,
     currentStrength,
     quality,
+    nodeModules,
   } = options;
   const high = quality === "high";
   const group = new Group();
   const sway = createSwayUniforms(currentStrength);
+  const swayNodeSet = nodeModules ? swayUniformNodes(nodeModules, sway) : null;
+  const swayNodes = swayNodeSet ? swayNodeSet.nodes : null;
   const present: string[] = [];
   const meshes: InstancedMesh[] = [];
   const radiusInner = cameraDistanceMetres + FLORA_CAMERA_STANDOFF_METRES;
@@ -370,6 +332,8 @@ export function createFlora(options: FloraOptions): Flora {
           color: "#4E9463",
           heightAt,
           sway,
+          swayNodes,
+          nodeModules,
         }),
       );
     }
@@ -385,6 +349,8 @@ export function createFlora(options: FloraOptions): Flora {
           color: "#63A971",
           heightAt,
           sway,
+          swayNodes,
+          nodeModules,
         }),
       );
     }
@@ -402,6 +368,7 @@ export function createFlora(options: FloraOptions): Flora {
     heightAt,
     caustics,
     castShadow: high,
+    nodeModules,
   });
   meshes.push(sponges);
   present.push("sponges");
@@ -430,6 +397,9 @@ export function createFlora(options: FloraOptions): Flora {
     },
     update: (elapsed) => {
       sway.uSwayTime.value = elapsed;
+      // The node clock is a separate uniform, and a bed that never advances it
+      // is a still bed rather than a broken one. See `oceanSway.ts`.
+      if (swayNodeSet) swayNodeSet.setElapsedSeconds(elapsed);
     },
     dispose: () => {
       for (const mesh of meshes) {

@@ -20,8 +20,6 @@
  * §11k why the service should carry exactly these fields).
  */
 import {
-  AdditiveBlending,
-  BackSide,
   BufferGeometry,
   Color,
   DirectionalLight,
@@ -36,7 +34,6 @@ import {
   PlaneGeometry,
   PointLight,
   Points,
-  ShaderMaterial,
   SphereGeometry,
   Vector2,
   Vector3,
@@ -87,6 +84,14 @@ import { createSeabed, tintSeabed, type Seabed } from "./oceanRigTerrain";
 import { algaeDepthLimitMetres, createFlora, type Flora } from "./oceanRigFlora";
 import { SKY_HAZE, createSeaTop, type SeaTop } from "./oceanRigSurface";
 import { oceanBackdropMaterial } from "./oceanBackdropMaterial";
+import {
+  GOD_RAY_SPHERE_HEIGHT_SEGMENTS,
+  GOD_RAY_SPHERE_RADIUS,
+  GOD_RAY_SPHERE_WIDTH_SEGMENTS,
+  GOD_RAY_VISIBILITY_STRENGTH_FLOOR,
+  godRayUniformValues,
+  oceanGodRayMaterial,
+} from "./oceanGodRays";
 import { oceanCeilingMaterial } from "./oceanCeilingMaterial";
 import {
   createBubbles,
@@ -553,6 +558,9 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       waveShared,
       whitecapFraction: seaState.whitecapFraction,
       quality,
+      skyNodes,
+      waveNodes: waveNodeSet ? waveNodeSet.nodes : null,
+      nodeModules,
     });
     seaTop.mesh.position.y = viewerDepthMetres;
     group.add(seaTop.mesh);
@@ -563,112 +571,31 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
   // light: sampled in world space it makes clouds, and only a cross-section
   // makes ribbons. Accumulate the MEAN, not the sum, or the brightness tracks
   // the step count instead of the water.
-  const godRayUniforms = {
-    uTime: { value: 0 },
-    // Halved from the first port. Additive over a whole hemisphere is the one
-    // term in this scene that can wash every other one out, and at 2.2 it
-    // turned a bright shallow world into a milky rectangle — the god rays were
-    // not visible AS rays, they were just a fog multiplier.
-    // 2.2, matching the prototype. 1.05 was less than half strength and it is
-    // why the app has a diffuse glow where the prototype has a distinct shaft:
-    // the beams were never bright enough to read as separate from the water.
-    uStrength: {
-      value: above ? 0 : (godRayStrength ?? Math.pow(brightness, 1.3)) * 2.2,
-    },
-    uRayColor: { value: keyColor.clone().lerp(new Color("#DCF6FF"), 0.35) },
-    uSunDirection: { value: sunBelow.clone() },
-    uAxisA: { value: new Vector3(1, 0, 0) },
-    uAxisB: { value: new Vector3(0, 0, 1) },
-    uExtinction: { value: palette.fogDensity },
-    uMarchDistance: { value: range * 1.8 },
-    uSurfaceY: { value: viewerDepthMetres },
-  };
-  const godRayGeometry = new SphereGeometry(120, 24, 18);
-  const godRayMaterial = new ShaderMaterial({
-    uniforms: godRayUniforms,
-    side: BackSide,
-    transparent: true,
-    depthWrite: false,
-    depthTest: false,
-    blending: AdditiveBlending,
-    fog: false,
-    vertexShader: `varying vec3 vW;
-      void main(){ vW = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vW,1.0); }`,
-    fragmentShader: `
-      uniform float uTime; uniform float uStrength; uniform vec3 uRayColor;
-      uniform vec3 uSunDirection; uniform vec3 uAxisA; uniform vec3 uAxisB;
-      uniform float uExtinction; uniform float uMarchDistance; uniform float uSurfaceY;
-      varying vec3 vW;
-      float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
-      float noise(vec2 p){
-        vec2 i = floor(p), f = fract(p);
-        vec2 u = f * f * (3.0 - 2.0 * f);
-        return mix(mix(hash(i), hash(i + vec2(1,0)), u.x),
-                   mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), u.x), u.y);
-      }
-      float fbm(vec2 p){
-        float v = 0.0, a = 0.5;
-        for (int i = 0; i < 4; i++){ v += a * noise(p); p *= 2.03; a *= 0.5; }
-        return v;
-      }
-      void main(){
-        vec3 dir = normalize(vW - cameraPosition);
-        float accumulated = 0.0;
-        const int STEPS = 24;
-        float stepSize = 1.0 / float(STEPS);
-        // Jittered per fragment rather than sampled at fixed offsets: 24
-        // steps at a FIXED phase band exactly where a coarse march always
-        // does, and the jitter spreads that banding into noise instead,
-        // which the eye reads as water rather than as a rendering artifact.
-        float jitter = hash(gl_FragCoord.xy) * stepSize;
-        for (int i = 0; i < STEPS; i++){
-          float t = jitter + float(i) * stepSize;
-          vec3 p = cameraPosition + dir * t * uMarchDistance;
-          if (p.y > uSurfaceY) continue;
-          // Sampled in the plane across the beam, which is what turns a cloud
-          // into a ribbon. ANISOTROPIC 4:1 — narrow along the beam's own axis
-          // (A), wide across it (B) — is what turns that ribbon into a
-          // shaft instead of a blob: an isotropic scale gives a beam the same
-          // width as its length, and every shaft reads as a cotton ball.
-          vec2 beamPlane = vec2(dot(p, uAxisA), dot(p, uAxisB));
-          vec2 uv = beamPlane * vec2(0.30, 0.075) + vec2(uTime * 0.02, 0.0);
-          float density = fbm(uv);
-          // Threshold ABOVE the mean, or the whole volume glows.
-          density = smoothstep(0.52, 0.86, density);
-          // A second octave, sampled at its own finer scale rather than
-          // folded into fbm's own series — a shaft with one smooth field and
-          // nothing riding on top of it reads as a gradient, not as light
-          // moving through real water.
-          float grain = 0.62 + 0.38 * noise(uv * 3.7 + vec2(uTime * 0.05, 0.0));
-          // Depth fade: independent of how far the CAMERA is from this point,
-          // this is how far the point itself sits below the surface — its
-          // own extinction path through the water column above it, which
-          // uExtinction (scaled by march distance FROM THE CAMERA) does not
-          // capture on its own.
-          float fade = exp(-max(0.0, uSurfaceY - p.y) * 0.02);
-          accumulated += density * grain * fade * exp(-t * uMarchDistance * uExtinction);
-        }
-        float mean = accumulated / float(STEPS);
-        // Hard ceiling. This is additive and depth-tested off, so an unbounded
-        // value here is the one thing in the scene able to paint over
-        // everything else, and it did.
-        // Unclamped. The 0.62 ceiling was a workaround for the composer having
-        // disabled tone mapping, where anything past 1.0 clipped flat to white;
-        // with the renderer's ACES back, its shoulder does that job properly and
-        // the ceiling only flattens the top of every shaft.
-        vec3 rays = uRayColor * mean * uStrength;
-        gl_FragColor = vec4(rays, 1.0);
-        // Additive, so raw linear: see oceanRigDrifters.ts. THIS is the layer
-        // that made it obvious. Encoded, the rays clipped the entire visible
-        // band of a 14 m reef to pure white — 100% of measured pixels — while
-        // the camera happened to point away from them, so it went unseen until
-        // the framing was corrected to look up along the shafts.
-      }`,
+  //
+  // Both shader languages live in oceanGodRays.ts, along with the record of why
+  // the two paths composite in different spaces and why no scalar reconciles
+  // them. The uniform record stays here because this loop writes into it from
+  // three places.
+  const godRayUniforms = godRayUniformValues({
+    isAboveWater: above,
+    configuredStrength: godRayStrength,
+    brightness,
+    keyColor,
+    sunBelow,
+    extinction: palette.fogDensity,
+    range,
+    surfaceY: viewerDepthMetres,
   });
-  const godRays = new Mesh(godRayGeometry, godRayMaterial);
-  godRays.visible = !above && godRayUniforms.uStrength.value > 0.004;
+  const godRayGeometry = new SphereGeometry(
+    GOD_RAY_SPHERE_RADIUS,
+    GOD_RAY_SPHERE_WIDTH_SEGMENTS,
+    GOD_RAY_SPHERE_HEIGHT_SEGMENTS,
+  );
+  const godRayMaterialSet = oceanGodRayMaterial(godRayUniforms, nodeModules);
+  const godRays = new Mesh(godRayGeometry, godRayMaterialSet.material);
+  godRays.visible = !above && godRayUniforms.uStrength.value > GOD_RAY_VISIBILITY_STRENGTH_FLOOR;
   group.add(godRays);
-  disposables.push(godRayGeometry, godRayMaterial);
+  disposables.push(godRayGeometry, godRayMaterialSet.material);
 
   // ---- marine snow and the light that living things make ----------------
   // Four layers, not one. A single layer at one radius and one fall rate is a
@@ -756,6 +683,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       caustics: seabed.causticUniforms,
       currentStrength: Math.min(1.4, 0.4 + seaState.significantHeightMetres * 0.3),
       quality,
+      nodeModules,
     });
     flora.tint(fogColor, brightness);
     seabed.group.add(flora.group);
@@ -831,7 +759,7 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
     if (!speciesIsPresent(species, viewerDepthMetres, seafloorInSight, surfaceInSight)) continue;
     // Visible from the first frame, with a procedural body. A GLB is an upgrade
     // applied under the running animation, not a precondition for existing.
-    const school = createSchool(species, seed, creatureTime, range);
+    const school = createSchool(species, seed, creatureTime, range, nodeModules);
     if (species.nearField) {
       // Near-field animals keep their own colour and lift it with a matching
       // emissive, so the one warm note a reef has does not get graded away by
@@ -922,14 +850,27 @@ export function createOceanRig(options: OceanRigOptions): OceanRig {
       for (const layer of moteLayers) layer.uniforms.uMoteTime.value = elapsed;
       jellyfish.uniforms.uJellyTime.value = elapsed;
       if (bubbles) bubbles.uniforms.uBubbleTime.value = elapsed;
-      if (seaTop) seaTop.uniforms.uTime.value = elapsed;
+      if (seaTop) {
+        seaTop.uniforms.uTime.value = elapsed;
+        seaTop.synchronise();
+      }
       if (flora) flora.update(elapsed);
-      if (seabed) seabed.causticUniforms.uCausticTime.value = elapsed;
+      if (seabed) {
+        seabed.causticUniforms.uCausticTime.value = elapsed;
+        // The node twins of the four caustics uniforms, three of which are
+        // written after the material was built. See `oceanCaustics.ts`.
+        seabed.causticUniforms.synchronise();
+      }
 
       // Keep the god-ray noise plane perpendicular to the light, or the beams
       // become clouds.
       godRayUniforms.uAxisA.value.set(1, 0, 0).cross(sunBelow).normalize();
       godRayUniforms.uAxisB.value.copy(sunBelow).cross(godRayUniforms.uAxisA.value).normalize();
+      // The node arm's own uniforms, copied from the record this loop writes.
+      // The two axis vectors are shared instances and are already live; the
+      // clock is not, and a set of shafts frozen mid-drift photographs as a
+      // plausible still frame. See oceanGodRays.ts.
+      godRayMaterialSet.synchronise();
 
       backdrop.position.copy(cameraPosition);
       godRays.position.copy(cameraPosition);

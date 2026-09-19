@@ -17,7 +17,7 @@ function fakeSeabed(): Seabed {
     floorMaterial: new MeshStandardMaterial(),
     rockMaterials: [new MeshStandardMaterial(), new MeshStandardMaterial()],
     slopeRockShift: { value: new Color(1, 1, 1) },
-    causticUniforms: createCausticsUniforms(0, 1, "#CFF6FF"),
+    causticUniforms: createCausticsUniforms(0, 1, "#CFF6FF", null),
     heightAt: () => 0,
     cellSizeMetres: 1,
     dispose: () => {},

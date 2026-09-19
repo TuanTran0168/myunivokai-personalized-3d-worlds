@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { Node, Renderer } from "three/webgpu";
 import type { ScenePostFXConfig } from "@/lib/types";
 import type { PostProcessingProfile } from "./deviceQualityTier";
+import { useComposedFrameDrawer } from "./sceneStillCapture";
 import {
   BLOOM_LUMINANCE_SMOOTHING,
   BLOOM_LUMINANCE_THRESHOLD,
@@ -212,6 +213,7 @@ export function NodePostEffects({
   const scene = useThree((state) => state.scene);
   const camera = useThree((state) => state.camera);
   const pixelRatio = useThree((state) => state.gl.getPixelRatio());
+  const composedFrameDrawer = useComposedFrameDrawer();
   const [pipeline, setPipeline] = useState<NodeRenderPipeline | null>(null);
 
   const bloomIntensity = postFX?.bloomIntensity ?? DEFAULT_BLOOM_INTENSITY;
@@ -468,6 +470,7 @@ export function NodePostEffects({
       // third renderers it is a `WebGPURenderer`, which is what this whole chain
       // requires and what the mount condition in UniverseCanvas guarantees.
       builtPipeline = new RenderPipeline(renderer as unknown as Renderer, chain);
+
       if (cancelled) {
         builtPipeline.dispose?.();
         return;
@@ -505,6 +508,24 @@ export function NodePostEffects({
   useFrame(() => {
     pipeline?.render();
   }, pipeline ? NODE_PIPELINE_RENDER_PRIORITY : FIBER_AUTOMATIC_RENDER_PRIORITY);
+
+  // THE SAME CALL, OFFERED TO THE STILL CAPTURE. A still has to be the picture
+  // the visitor is looking at, and on this path that picture is eight passes
+  // deep with the tone curve inside it — `renderer.render( scene, camera )`
+  // would produce a different image and nothing would say so. Null while the
+  // pipeline is still being imported, which is the ocean's permanent answer and
+  // this family's answer for the first few hundred milliseconds; the capture
+  // renders the scene directly then. See `sceneStillCapture.ts` for why this is
+  // a ref in a context rather than a `useFrame` priority.
+  useEffect(() => {
+    if (!pipeline) {
+      return;
+    }
+    composedFrameDrawer.current = () => pipeline.render();
+    return () => {
+      composedFrameDrawer.current = null;
+    };
+  }, [composedFrameDrawer, pipeline]);
 
   return null;
 }
