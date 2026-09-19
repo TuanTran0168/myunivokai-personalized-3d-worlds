@@ -472,6 +472,79 @@ the still lands between **0.01 and 0.11 of 255** on all twelve legs, which is
 what `e2e/scene-still-capture.spec.ts` asserts, with each leg's own one-frame
 cost as its budget.
 
+### Which renderer a visitor gets, and the one direction the WebGPU probe is trusted
+
+Since 2026-09-19 the node renderer is what EVERY visitor gets. `rendererSelection.ts`
+decides, as a pure function, in this order — and on the shipped default only the
+first three can change the answer, because the fourth is reached on the
+`where-webgpu-is-real` setting alone:
+
+1. **the parity harness**, which only exists in a build that sets
+   `NEXT_PUBLIC_PARITY_HARNESS` and is the only caller allowed to name a renderer
+2. **the kill switch** — `NEXT_PUBLIC_NODE_RENDERER` set to `0`, `off`, `false`,
+   `no` or `disabled` — which outranks device loss, because a deploy switching the
+   node path off to stop an incident must not have it handed back by a lost
+   `GPUDevice` whose recovery IS the node path
+3. **a lost `GPUDevice`**, one-way for the page's lifetime, recovering onto the
+   CLASSIC renderer — **reversed on 2026-09-19 from `WebGPURenderer` with
+   `forceWebGL`**, because the third of §18.3(b)'s three reasons was "the WebGL2
+   backend ships anyway to ~20% of visitors" and the rollout ended that. With
+   nobody on that backend, recovering onto it would answer a dead GPU with a
+   13593 ms forest first mount where the classic renderer's is 3596 ms. The
+   remount key therefore carries a `-recovered` suffix, because the classic
+   renderer's own suffix is empty and React would otherwise keep the dead
+   canvas
+4. **`navigator.gpu`**, on the `where-webgpu-is-real` setting only — `hardware`
+   builds the node renderer, and `none`, `absent` or `software` build the
+   classic one. **The shipped default never reaches this step**: it builds the
+   node renderer for everybody, so a browser without WebGPU gets
+   `WebGPURenderer` on its WebGL2 backend, with the 13.6 s forest first mount
+   that entails
+
+**The probe is a veto and never a promise, and that is what makes it compatible
+with §17's rejection of runtime renderer selection.** §17 is right that a
+pre-flight cannot guarantee WebGPU will work: `requestDevice()` can reject after
+`requestAdapter()` succeeded, and Phase 0 measured that machine. Nothing here
+relies on it. An answered `hardware` still hands the fallback decision to three,
+exactly as before. What the probe buys is the other answer — no adapter means the
+WebGL2 backend for certain, and that backend is the 13.6 s forest in the table
+below.
+
+`software` is refused for a separate reason: Chrome falls back to SwiftShader for
+WebGPU on configurations where WebGL is still hardware-accelerated, so shipping
+the node path there moves a visitor from the GPU onto the CPU.
+
+**The canvas does not mount until the answer arrives.** A renderer is built by
+R3F's `gl` factory, once per `<Canvas>`, and cannot be changed afterwards — so
+mounting early and correcting later means a remount, which is this app's most
+expensive operation. The wait is one `requestAdapter()` (1–15 ms in Phase 0's
+numbers), bounded by `WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS` at 1.5 s so a
+wedged driver cannot hold the canvas forever, and invisible because the canvas is
+already held at `opacity-0` until the scene signals ready. The answer is memoised
+at module scope, so the app's many canvas remounts — one per world, per variant,
+per interest chip — ask the driver once.
+
+`e2e/default-renderer-rollout.spec.ts` is the only spec that pins no renderer, and
+therefore the only one that measures this: SwiftShader draws `webgl2`, the real
+driver draws `webgpu`, and neither draws `webgl`. **The first of those had never
+been checked before this** — the parity harness's forced-WebGL2 leg runs only on
+the real-driver project, so nothing had ever put the node renderer on a stack
+with no WebGPU at all and asked whether it reaches a frame.
+
+**A CANVAS READ BACK WITH `drawImage` IS EMPTY ON THIS RENDERER, AND THAT NOW
+REACHES THE TEST SUITE.** `preserveDrawingBuffer` does not exist on
+`WebGPURenderer`, so `context.drawImage(canvas, …)` returns a CLEARED image
+rather than throwing — `ocean-look-down` computed statistics over one and
+reported "the frame has lost its colour to a pale layer" with a mean saturation
+of exactly 0 on five fixtures at once. Anything in `e2e/` that needs pixels must
+take a screenshot, which goes through the compositor, or go through the Stage 0
+capture bridge. The app's own still capture was already moved off the canvas by
+Stage 0; the suite had not been.
+
+**AND `toBeVisible` PASSES ON AN `opacity: 0` CANVAS**, which every screenshot
+spec was relying on a fast renderer to hide. See `e2e/sceneReveal.ts`, which
+also records why `scene-baseline` deliberately does NOT use the wait.
+
 ### The two backends of one renderer disagree about the first mount, in opposite directions
 
 Measured 2026-09-17 (§26 Phase 11). Main-thread time BLOCKED during a first
@@ -485,6 +558,24 @@ feels:
 | ocean, underwater | 1069 ms | **4947 ms** | **734 ms** |
 | ocean, above water | 203 ms | 257 ms | **144 ms** |
 
+**Re-measured 2026-09-19 on the same instrument, after the rollout and after the
+GTAO backend gate.** The shape is unchanged and the fallback's forest is a third
+smaller:
+
+| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
+| --- | --- | --- | --- |
+| universe | 2122 ms | 2556 ms | **981 ms** |
+| forest | 3532 ms | **10524 ms**, was 15916 before the gate | **851 ms** |
+| ocean, underwater | 1086 ms | **4781 ms** | **679 ms** |
+| ocean, above water | 207 ms | 288 ms | **147 ms** |
+
+**GTAO is free on WebGPU and costs 5612 ms on WebGL2**, measured by disabling
+the pass and re-enabling it with nothing else changed. The WebGL2 backend
+creates pipelines synchronously, so a large shader is a stall there and is not
+one on the backend designed for asynchronous creation. `NodePostEffects` skips
+it when `backend.isWebGPUBackend` is not true; the forest's fallback loses its
+ambient occlusion, which `scene-parity` records as a deliberate 4.12 of 255.
+
 The WebGPU backend blocks LESS than the classic renderer on every fixture, and
 the forest — this app's worst first mount — drops from 3.6 s in three long tasks
 to 0.9 s in one. That is the freeze this repo has spent sprints on, measurably
@@ -494,8 +585,13 @@ app rather than in a probe.
 **The same change makes the WebGL2 backend four times worse on the heavy
 scenes**, while leaving the light ones alone. The cost is not "the node path" —
 it is the node path's pipeline creation running synchronously on a backend with
-no async pipeline API to use. That backend is what roughly a fifth of visitors
-get, which makes this an open question about the fallback rather than a footnote.
+no async pipeline API to use.
+
+**Roughly a fifth of visitors have no WebGPU, and since 2026-09-19 they get the
+CLASSIC renderer rather than this backend** (see the selection section above).
+That contains the cost without reducing it: the numbers in this table are
+unchanged, and anything that later routes ordinary traffic onto the WebGL2
+backend — `every-visitor`, or a change of policy — gets them back in full.
 
 **Corrected 2026-09-17 by §26 Phase 13: the WebGL2 backend DOES have an
 asynchronous pipeline API, and the app was not asking for it.** The section below

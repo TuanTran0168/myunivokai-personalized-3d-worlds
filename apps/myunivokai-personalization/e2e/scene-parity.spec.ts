@@ -341,6 +341,50 @@ const KNOWN_BACKEND_DIVERGENCE: readonly {
     closedBy: "the AO retune and the PMREM bake, NOT a shader port — the forest has no GLSL left"
   },
   /**
+   * **THE ONLY DELIBERATE ENTRY IN THIS LEDGER, AND IT IS A PURCHASE RATHER
+   * THAN A DEBT.**
+   *
+   * Every other row here records something nobody chose and somebody will
+   * close. This one records a trade taken on 2026-09-19 with both numbers
+   * measured: **the forest's GTAO pass is skipped on the WebGL2 backend**, so
+   * the two node backends no longer render the same forest.
+   *
+   * WHAT IT BOUGHT, measured with `first-mount-cost.spec.ts`, this pass
+   * disabled and re-enabled with nothing else changed:
+   *
+   *   forest, node · WebGL2   blocked main thread   15916 ms -> 10524 ms   (-5.4 s, -34%)
+   *   forest, node · WebGPU   blocked main thread     820 ms ->   851 ms   (unchanged)
+   *
+   * The asymmetry is the argument. §26 Phase 13 found the WebGL2 backend
+   * creates pipelines SYNCHRONOUSLY, so a large shader is a stall there and is
+   * not one on WebGPU. GTAO is not expensive to run on the fallback; it is
+   * expensive to compile, once, during the app's most visible moment — and
+   * `every-visitor` put roughly 20% of visitors on that backend.
+   *
+   * WHAT IT COST is this entry: the forest loses its ambient occlusion for
+   * those visitors, and §28.3's claim that the fallback "is not a degraded
+   * rendition of the node path; it is the node path" is now false for one
+   * family, by one pass, on purpose.
+   *
+   * **AND IT DOES NOT MAKE THE FALLBACK GOOD.** 10.5 s is still a multi-second
+   * freeze against the classic renderer's 3.3 s. Phase 13's unattributed
+   * remainder — the leading hypothesis is texture upload — is what the asset
+   * pipeline stage is aimed at, and that is where the rest of this number goes.
+   *
+   * **DELETE THIS ENTRY IF THE GATE IS REMOVED.** It is reversed by making
+   * `backendAffordsAmbientOcclusion` return true, and the ratchet's
+   * halving rule will then demand this row's deletion, which is correct.
+   */
+  {
+    fixture: "forest-world",
+    comparison: "WebGPU against forceWebGL",
+    meanAbsoluteError: 4.12,
+    worstBlockError: 64.89,
+    differingFraction: 0.2272,
+    closedBy:
+      "nothing — this one is deliberate. See the block above, and delete this entry if the GTAO backend gate is removed"
+  },
+  /**
    * **THE OCEAN IS PART PORTED, AND THIS ENTRY IS THE ONLY ONE THAT WILL MOVE
    * FOR MORE THAN ONE REASON.** Five of its six `ShaderMaterial`s — the jellyfish
    * bell, the bubble stream, marine snow, the backdrop dome and the water's

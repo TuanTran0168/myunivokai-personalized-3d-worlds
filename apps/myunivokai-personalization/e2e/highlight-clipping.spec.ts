@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { inflateSync } from "node:zlib";
 import { clippedChannelFraction, inflatePng, CLIPPED_CHANNEL_BYTE } from "./parityMetrics.mjs";
+import { waitForSceneReveal } from "./sceneReveal";
 import universeWorld from "./fixtures/universe-world.json";
 import natureWorld from "./fixtures/nature-world.json";
 
@@ -86,6 +87,7 @@ async function measureClippedFraction(page: Page): Promise<number> {
   // page when the failure boundary has removed the scene, and an overlay
   // measures as beautifully unclipped.
   await expect(sceneCanvas).toBeVisible({ timeout: 60_000 });
+  await waitForSceneReveal(page);
   await page.waitForTimeout(SCENE_RENDER_MILLISECONDS);
   await page.evaluate(() => {
     window.requestAnimationFrame = () => 0;

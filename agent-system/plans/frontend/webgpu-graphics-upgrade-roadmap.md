@@ -4,6 +4,12 @@
 > first.** Between them they list seven load-bearing claims this document made
 > that turned out to be wrong, four found before anything was built on it and
 > three found while building Stage 0.
+>
+> **THE NODE RENDERER SHIPPED ON 2026-09-19 (§2b).** `NEXT_PUBLIC_NODE_RENDERER`
+> is unset everywhere and unset now means ON wherever the browser has a hardware
+> WebGPU adapter. Stages 2, 3, 5 and 6 below are written as if the flag were
+> still off in places; where they are, the rollout is the correction. **Stage 3
+> additionally has the wrong target — see §0b item 5.**
 > **Written:** 2026-09-17, branch `feat/fe/webgpu-migration-phase-13`;
 > corrected 2026-09-18, branch `feat/fe/webgpu-graphics-upgrade`;
 > Stage 0 built and corrected again 2026-09-19, branch
@@ -47,9 +53,13 @@ forest and a **2.9 s** freeze underwater.
 **2. There is therefore a SECOND rollout blocker, and this plan named only one.**
 Stage 0's canvas readback is real. So is the forest's fallback first mount. A
 rollout gated only on the readback would ship the freeze.
-**Stage 0 was built on 2026-09-19 and the first of those two is now closed. The
-forest's fallback first mount is the one that remains**, and it is the whole of
-what stands between this and a rollout decision.
+**Stage 0 closed the first on 2026-09-19. The second was never closed — it was
+ROUTED AROUND on the same day, and §2b is careful about the difference.** The
+13.6 s forest on the WebGL2 backend is still 13.6 s; the rollout simply stopped
+sending ordinary visitors to that backend, by selecting the classic renderer
+wherever `navigator.gpu` reports no hardware adapter. Anything that later wants
+the fallback to carry traffic reopens this, and Stage 6 is where making it fast
+is aimed.
 
 **3. Stage 3's premise was half wrong in the app's favour.** The linear HDR
 buffer it proposes to introduce is **already the default** — `Renderer` defaults
@@ -99,6 +109,15 @@ layer blends against an already-tone-mapped 8-bit canvas. That is §26 Phase 8's
 finding stated the other way round, and it means **the family that needs Stage 3
 is the ocean on the renderer EVERY VISITOR USES**, not the one behind the flag.
 
+**NARROWED 2026-09-19 BY THE ROLLOUT (§2b), WHICH IS THIS PLAN'S OWN CHANGE
+MAKING ITS OWN CORRECTION STALE.** "Every visitor" was true when this was
+written and it no longer is: the classic renderer is now what browsers WITHOUT
+WebGPU get, which §19.5 puts at roughly 20% of traffic. So Stage 3's target is a
+minority path rather than the whole of it. That makes the stage smaller, not
+larger — and it does not reopen the gate, because a look change is a look change
+whatever its share. What it does change is the ordering argument: this is no
+longer the highest-traffic fix on the list.
+
 That reframes the stage completely. It is no longer "give the node ocean a
 buffer it lacks"; it is "change how the classic renderer composites the ocean,
 for everyone, which changes the look and costs a fullscreen buffer". The
@@ -145,7 +164,7 @@ Everything in this section is measured, and each number names where.
 | Property | Where it stands | Source |
 | --- | --- | --- |
 | Renderer | `WebGPURenderer`, two backends, one node graph | §26 Phase 9 |
-| Rollout flag | `NEXT_PUBLIC_NODE_RENDERER`, **off** | §26 Phase 12 |
+| Rollout flag | `NEXT_PUBLIC_NODE_RENDERER`, **unset, and unset means ON** where the browser has a hardware WebGPU adapter | §2b |
 | Visual parity vs `WebGLRenderer` | universe **12.22**, forest **19.49**, ocean **9.90** of 255 | §26 Phases 8, 10 |
 | Fallback vs primary | universe 0.44, forest 1.31, ocean 0.02 of 255 | §26 Phases 4, 5 |
 | First mount, blocked main thread | node/WebGPU below classic on every fixture. **node/WebGL2 is below it on ONE of four** — see §0 | §26 Phases 11, 13 |
@@ -157,10 +176,12 @@ Everything in this section is measured, and each number names where.
 
 Two of those rows were the whole reason this document was ordered the way it
 is, and **both are now closed**: Stage 1 built the frame-cost instrument on
-2026-09-18 and Stage 0 replaced the canvas readback on 2026-09-19. What keeps
-the flag off today is the forest's 13.6 s fallback first mount, which is a
-performance problem rather than a correctness one — a different argument, and one
-this plan does not yet make.
+2026-09-18 and Stage 0 replaced the canvas readback on 2026-09-19. **The node
+renderer then shipped on 2026-09-19 — see §2b** — to every browser with a real
+WebGPU adapter, and to no other, which is how the forest's 13.6 s fallback first
+mount stopped blocking a release without anybody having made it faster. It is
+contained rather than fixed, and the table above still reports it because it is
+still true.
 
 ---
 
@@ -283,6 +304,220 @@ a node-renderer canvas is still blank, and any future code that reaches for it
 will still get nothing. It does not re-run the transition suite on the node
 path: `world-transition.spec.ts` runs on the classic renderer, which is what
 every visitor has, and a node-path transition shoot does not exist yet.
+
+---
+
+## 2b. The rollout itself — **ON 2026-09-19**
+
+**Gate: was the last one, and it is open.** Branch
+`feat/fe/webgpu-release-rollout`. **`NEXT_PUBLIC_NODE_RENDERER` is unset in every
+deployment, and unset means the node renderer for EVERY visitor** — read the
+subsection on the owner's decision below before the rest of this section, which
+describes the middle setting the default passed through on its way there.
+
+### The blocker was routed around, not fixed, and the distinction is the point
+
+§0 item 2 named the forest's fallback first mount as the second rollout blocker:
+**13593 ms of blocked main thread on the node renderer's WebGL2 backend against
+3596 ms on the classic renderer**, for the roughly 20% of visitors with no
+WebGPU. Nothing in this rollout made that faster. **That number is unchanged and
+still true.** What changed is who reaches it: an ordinary visit never selects
+the WebGL2 backend any more, because a browser without a hardware WebGPU adapter
+gets the classic renderer instead.
+
+So the blocker is not closed; it is **contained** — and on 2026-09-19 the owner
+chose to un-contain it. `every-visitor` puts the fallback back under real
+traffic, which means **the 13.6 s forest is live again for the ~20% without
+WebGPU**, deliberately and with the number in hand. Stage 6's asset pipeline is
+where making it actually fast is aimed, and that is no longer optional work.
+Writing "blocker closed" here would be the Phase 13 failure mode in
+documentation form.
+
+### The probe is used as a veto, never as a promise
+
+§17 rejects "choose the renderer at runtime" by name, and it was right about the
+thing it was rejecting: a pre-flight cannot PROMISE that WebGPU will work,
+because `requestDevice()` can reject after `requestAdapter()` has succeeded, and
+Phase 0 measured exactly that machine. The rollout does not use it that way.
+
+| the probe says | what happens | what a wrong answer costs |
+| --- | --- | --- |
+| `hardware` | build `WebGPURenderer`, let three choose the backend | nothing new — this is Phase 9's behaviour, fallback included |
+| `none` / `absent` | build `WebGLRenderer` | nothing — an adapter that resolved null cannot be followed by a device that succeeds |
+| `software` | build `WebGLRenderer` | a machine whose WebGPU is SwiftShader while its WebGL is hardware would otherwise move from the GPU to the CPU |
+| has not answered | **build nothing yet** | one `requestAdapter()`, measured at 1–15 ms in Phase 0, inside a window already held at `opacity-0` |
+
+The last row is the one with a cost, and it is bounded:
+`WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS` resolves to `absent` after 1.5 s so a
+wedged driver cannot hold the canvas forever. The wait exists because a renderer
+is created by the `gl` factory, once per `<Canvas>`, and cannot be changed
+afterwards — correcting it later would mean a remount, which is this app's most
+expensive operation.
+
+### Measured, on the two machines that can each exercise one half
+
+`e2e/default-renderer-rollout.spec.ts` pins no renderer, which makes it the only
+spec in the suite that measures the decision rather than comparing renderers.
+It asks `navigator.gpu` itself and derives its expectation, so it is not a
+restatement of the Playwright config:
+
+| project | graphics stack | expected | drew |
+| --- | --- | --- | --- |
+| `desktop` | SwiftShader, no WebGPU | `webgl` | **`webgl`**, forest and universe |
+| `webgpu` | RTX 4060, real driver | `webgpu` | **`webgpu`**, forest and universe |
+
+It asserts `webgl2` on neither, before the equality, so a failure names the
+regression rather than the mismatch. The value asserted is `graphicsBackend` on
+the client-render report — read off the renderer INSTANCE, so a selection that
+succeeded and then silently fell back would fail this.
+
+### It reversed one of Phase 13's three approvals, on that approval's own reasoning
+
+A lost `GPUDevice` used to recover onto `WebGPURenderer` with `forceWebGL`.
+§18.3(b) gave three reasons, and the third was that the WebGL2 backend **ships
+anyway** — roughly 20% of visitors get it from the start, so the recovery landed
+on a path with real traffic rather than a stub reached only by accident.
+
+**The rollout deleted that reason.** Browsers without WebGPU now get the classic
+renderer, so the WebGL2 backend ships to nobody: it is reachable only by the
+harness, by `every-visitor`, and — until this changed — by a lost device. The
+two surviving reasons (it keeps Architecture A; a lost device says nothing about
+WebGL2) are then weighed against **13593 ms against 3596 ms on the forest**, and
+they do not carry it. Answering a dead GPU with this app's slowest possible
+remount, at the moment the visitor is already looking at a broken scene, is the
+worst available answer.
+
+**And leaving it would have made the rollout contradict itself in the one case
+nobody watches.** Refusing to send ordinary visitors to a backend measured at
+four times the classic renderer's first mount, and then sending them there on
+device loss, is not a policy.
+
+One consequence is easy to miss and is unit-tested because of it: the remount
+key's suffix used to be derived from the renderer choice, which worked because
+`node-forced-webgl` has a distinctive one. The classic renderer's suffix is
+EMPTY — so a page that lost its device while on the node renderer would have
+produced the key it already had, React would have kept the dead canvas, and the
+recovery would silently not have happened. `rendererRemountSuffix` reads the
+decision rather than the choice, and adds `-recovered`.
+
+### THE OWNER TOOK THE DECISION THIS SECTION LEFT OPEN — `every-visitor`, 2026-09-19
+
+Everything above describes the middle setting, which was the default for the
+length of one commit. It is not the default any more. Shown the cost it buys and
+the cost it accepts, the owner's instruction was to set the variable and fix
+whatever broke, and **the default is now `every-visitor`: the node renderer for
+everybody, WebGL2 backend included.**
+
+It is set as a CODE DEFAULT and not as a deployment variable, and the reason is
+evidence rather than preference: `.env.local` is committed in this repository
+and carries `NEXT_PUBLIC_GATEWAY_BASE_URL=http://localhost:41800`, a value no
+deployed build could be using. That proves the Vercel deployment overrides this
+repository's env from its own dashboard, so a rollout living only in a file
+would be a rollout that silently did not happen — a bug `parityHarness.ts`
+records this project having shipped once already. `.env.local` sets it to the
+same value so local development and the Playwright build are explicit.
+
+**WHAT IT ACCEPTS.** The forest's 13593 ms of blocked main thread on the WebGL2
+backend, against the classic renderer's 3596 ms, for the roughly 20% of visitors
+with no WebGPU — and §19.5 says that figure is likely worse for this product,
+because caniuse weights global traffic while this audience is Vietnam-skewed and
+arrives through WebView-backed in-app browsers. Nothing in this branch made that
+number smaller. **Stage 6 is now the stage that pays this down, and it moved
+from last to first on the list.**
+
+**WHAT IT RESOLVES, AND THIS IS THE LARGER HALF.** §7 used to be blocked on a
+question nobody had answered: is the product allowed to look better on browsers
+with WebGPU? **With `every-visitor` the question dissolves, because the classic
+renderer stops shipping to anybody.** The 12.22 / 19.80 / 9.90 divergence stops
+being a per-browser difference in what people see and goes back to being what it
+was before the rollout — a comparison against a reference implementation that no
+visitor receives. `scene-parity` keeps its full value as a regression ratchet and
+loses its claim on what the product is allowed to look like.
+
+**So Stage 5's gate is open**, and it is the first time in this document that it
+has been.
+
+**MEASURED, AND THE MEASUREMENT IS NEW.** `e2e/default-renderer-rollout.spec.ts`
+now asserts the node renderer everywhere and derives only the BACKEND from the
+browser:
+
+| project | graphics stack | expected | drew |
+| --- | --- | --- | --- |
+| `desktop` | SwiftShader, no WebGPU | `webgl2` | **`webgl2`**, forest and universe |
+| `webgpu` | RTX 4060, real driver | `webgpu` | **`webgpu`**, forest and universe |
+
+The first row had never been checked. The harness's `webgpu-forcewebgl` leg runs
+only on the real-driver project, so **nothing in this suite had ever put the node
+renderer on a stack with no WebGPU at all and asked whether it reaches a frame.**
+It does.
+
+### What the rollout does NOT do
+
+- **It does not make the WebGL2 backend fast.** See above.
+- **It does not stage by percentage.** `rendererSelection.ts` explains why at
+  length: a stable per-visitor bucket needs an identifier this app deliberately
+  does not mint. The kill switch plus the `graphicsBackend` split is the trade.
+- **It does not test the kill switch or `every-visitor` end to end**, because
+  `NEXT_PUBLIC_*` is inlined at build time and the suite builds once. Their
+  parsing is unit-tested; saying so is cheaper than a spec that appears to cover
+  them.
+
+---
+
+## 2c. The GTAO backend gate — **BUILT 2026-09-19**
+
+**The first thing done about the cost §2b accepted, and it is a third of it.**
+
+§26 Phase 13 recorded that "about 5.5 s" of the forest's WebGL2 first mount was
+the GTAO pass, measured. That number was re-measured here on the shipped
+configuration, by disabling the pass and re-enabling it with nothing else
+changed:
+
+| forest, blocked main thread | with GTAO | without GTAO | difference |
+| --- | --- | --- | --- |
+| node · **WebGL2** | **15916 ms** | **10304 ms** | **−5612 ms, −35%** |
+| node · WebGPU | 820 ms | 848 ms | none, inside noise |
+| classic `WebGLRenderer` | 3315 ms | 3402 ms | none — it runs N8AO, not this pass |
+
+**The asymmetry is the whole argument.** Phase 13 found the WebGL2 backend
+creates pipelines SYNCHRONOUSLY while WebGPU's creation is asynchronous by
+design, so GTAO is not expensive to RUN on the fallback — it is expensive to
+COMPILE there, once, during the app's most visible moment. `every-visitor` put
+roughly 20% of visitors on that backend.
+
+So `NodePostEffects` now skips GTAO when `backend.isWebGPUBackend` is not true.
+In the shipped configuration that takes the forest's fallback first mount from
+**15916 ms to 10524 ms**.
+
+### What it costs, which is not nothing
+
+**The forest loses its ambient occlusion on browsers with no WebGPU.**
+`scene-parity`'s WebGPU-against-forceWebGL comparison for the forest goes from
+**1.21 to 4.12 of 255**, with 22.72% of pixels differing against 7.99% before —
+and that is now the **only deliberate entry** in `KNOWN_BACKEND_DIVERGENCE`,
+recorded with both numbers and with instructions to delete it if the gate is
+removed.
+
+It also makes §28.3's claim that the fallback *"is not a degraded rendition of
+the node path; it is the node path"* false for one family by one pass, on
+purpose. That claim was worth more when the fallback shipped to nobody.
+
+One number moved in the other direction and is worth noting rather than
+claiming: the forest's **forceWebGL against WebGL** comparison improved from
+19.50 to 17.55, because the classic renderer runs N8AO rather than GTAO and
+removing GTAO moved the fallback toward it. That is a coincidence of two
+different AO implementations, not evidence that the gate is free.
+
+### It does not make the fallback good, and saying so is the point
+
+**10.5 s is still a multi-second freeze against the classic renderer's 3.3 s.**
+A third of a bad number is a better bad number. Phase 13's unattributed
+remainder — leading hypothesis texture upload — is what Stage 6 is aimed at, and
+it is where the rest of this goes.
+
+**Reversing this is one function.** `backendAffordsAmbientOcclusion` returning
+true restores the pass, the 5.4 seconds and the parity, and the ledger's own
+halving rule will then demand its entry be deleted.
 
 ---
 
@@ -427,27 +662,60 @@ fixtures.
 
 ---
 
-## 5. Stage 3 — One linear HDR buffer for the additive layers
+## 5. Stage 3 — One linear HDR buffer for the additive layers — **CLOSED, NOT BUILT**
 
-**Gate: STILL SHUT, and pointed at a different renderer than this section says —
-see §0b item 5 before reading any of it.** Stage 0 is done, so the gate this
+**Gate: CLOSED 2026-09-19. Nothing here is worth building, and the reason is
+that its target stopped shipping.**
+
+Follow the three readings of this stage in order, because the sequence is the
+lesson:
+
+1. **As written**, it proposed giving the node ocean a linear HDR buffer it was
+   assumed to lack.
+2. **§0b item 5** found the node path already had one — `_getFrameBufferTarget()`
+   builds it whenever tone mapping or a colour-space conversion is needed, which
+   for the ocean is always — and that the path WITHOUT linear compositing was the
+   CLASSIC renderer, then used by every visitor. The stage was re-aimed at a look
+   change on the high-traffic path.
+3. **§2b** then shipped `WebGPURenderer` to every visitor, so the classic
+   renderer is a reference implementation and a device-loss recovery, not a path
+   anybody browses on. **The work this stage proposes would improve a renderer
+   nobody receives.**
+
+What remains true and belongs to the ocean rather than to this stage: the node
+path's additive compositing differs from the classic path's, `scene-parity`
+records it as a 9.90 of 255 debt underwater, and `oceanFrameBudget`'s shots show
+it as **7.4% of the twilight frame clipped on the node renderer against 2% or
+less on the classic one** when both are photographed after the reveal completes.
+That is a question about the ocean's own look on the shipping renderer, and it
+is not answered by adding a buffer the shipping renderer already has.
+
+<details>
+<summary>The stage as written, kept because the reasoning about WHY linear compositing is correct still holds</summary>
+
+**Gate was: STILL SHUT, and pointed at a different renderer than this section says —
+see §0b item 5.** Stage 0 is done, so the gate this
 section names is open; the stage did not become buildable, because checking its
 premise a third time moved its target.
 
 **In one line: the node path already does what this stage proposes. The path
-that does not is the classic renderer, which is what every visitor uses.**
+that does not is the classic renderer — which was every visitor when this was
+written and is roughly 20% of them since the rollout (§2b).**
 `_getFrameBufferTarget()` builds a half-float intermediate whenever tone mapping
 or a colour-space conversion is needed (`three.webgpu.js:60610-60632`), which for
 the ocean is always — so on the node path the ocean has composited additive
 light in linear and tone-mapped once since Phase 9, chain or no chain. What is
 left is a change to how `WebGLRenderer` composites the ocean for everyone: a
-look change, on the path with all the traffic, costing a fullscreen buffer. That
+look change, on the path carrying the visitors without WebGPU, costing a
+fullscreen buffer. That
 needs the owner's eye before a line of it, and it is a different proposal from
 the one written below.
 
 **The rest of this section is kept as written**, because its argument about WHY
 linear compositing is the correct model is the part that survives; only the
 question of which path needs it has changed.
+
+</details>
 
 **This is the stage with a real picture behind it, and the ocean's 9.90 of 255
 is the argument for it.** Phase 8 established what that number is: the two paths
@@ -555,9 +823,102 @@ Stage 6 and to anything that adds a model; it no longer blocks anything here.
 
 ## 7. Stage 5 — The effects the node path actually unlocks
 
-**Gate: SHUT until Stage 1. Every item here is a frame-time claim.**
+**Gate: OPEN as of 2026-09-19, and it is the first time. Read why before the
+table, because the reason is not that anything here got easier.**
 
-three 0.185.1 ships an effect library that only the node path can use —
+**THE `every-visitor` ROLLOUT DISSOLVED THIS STAGE'S BLOCKER BY REMOVING ONE OF
+THE TWO PATHS.** What follows was written when both renderers shipped, and it
+concluded — correctly at the time — that every row in the table would widen a
+visible per-browser difference and therefore needed a look decision from the
+owner. **The owner made a different decision that answers it: the classic
+renderer no longer ships to anybody** (§2b). `scene-parity` still ratchets, and
+should, but it now compares the shipping path against a reference implementation
+rather than against a second shipping path — which is what it was doing before
+the rollout, and what its recorded-debt design was built for.
+
+**So the question below is answered, and the answer is that there is no longer a
+two-speed look to authorise.** The paragraphs are kept rather than deleted
+because the reasoning is what makes the current state legible, and because
+reaching for the `where-webgpu-is-real` middle setting would bring the whole
+problem straight back.
+
+**ONE REAL CONSTRAINT SURVIVES AND IT IS NOW SHARPER.** Every effect here must
+work on the WebGL2 backend, because that backend now carries roughly 20% of
+visitors rather than nobody. A per-pixel raymarch that is free on WebGPU is not
+free there, and `ClusteredLightsNode` is the one item the table itself names as
+WebGL2-impossible — which under `every-visitor` makes it a look split between
+visitors, exactly the thing the rest of this stage no longer has.
+
+<details>
+<summary>The pre-rollout argument, kept because reverting to the middle setting restores it</summary>
+
+**EVERY ROW BELOW DIVERGED TWO SHIPPING RENDERERS, AND `scene-parity` IS A
+RATCHET THAT WOULD SAY SO.** Until 2026-09-19 the node path shipped to nobody, so
+an effect added to it was a change to an unreleased renderer and `scene-parity`
+measured how far the unreleased one had drifted from the released one. After the
+rollout **both paths carry real traffic** — the node renderer wherever WebGPU is
+real, the classic renderer for the roughly 20% without it — and the same number
+means something else entirely: **how differently the product looks depending on
+which browser a person opened it in.**
+
+**And the divergence is not hypothetical — it already exists, and the rollout
+just made it user-visible.** Measured 2026-09-19, node against classic:
+
+| family | node vs classic | pixels differing | what the ledger says closes it |
+| --- | --- | --- | --- |
+| universe | **12.22** of 255 | 61% | the post chain |
+| forest | **19.80** of 255 | 88% | the AO retune and the PMREM bake |
+| ocean, underwater | **9.90** of 255 | 75% | the additive-compositing-space difference — **which is Stage 3** |
+| ocean, above water | 0.31 of 255 | 0.1% | nothing; this family agrees |
+
+**Do not confuse these with 0.45 / 1.21 / 0.31 / 0.02.** Those are the two NODE
+BACKENDS against each other — WebGPU against `forceWebGL` — and they are near
+zero, which is Architecture A holding. The numbers that matter after the rollout
+are the ones above, and they are one to two orders of magnitude larger. This
+document conflated the two rows once already while §2b was being written; the
+column headings in `scene-parity`'s own output are the check.
+
+So the question at the top of this section is not one the roadmap gets to defer
+until Stage 5. **It is live now, on three families, for whatever share of
+visitors have WebGPU.** Stage 5 would widen a gap that is already open; Stage 3
+and Stage 4 are the two stages that would CLOSE it, and that reorders this plan
+more than anything in §0 or §0b did.
+
+Against that, the individual Stage 5 rows are straightforward: God rays broken
+up by a canopy, a lens flare, screen-space reflections, subsurface scattering in
+leaves and jellyfish, a planet atmosphere — not one has a classic-path
+implementation, and `GodraysNode`, `SSRNode` and `ClusteredLightsNode` cannot
+have one.
+
+</details>
+
+**So Stage 5 is not gated on a measurement any more. It is gated on a decision
+nobody has made**, and it is the owner's rather than an agent's:
+
+> Is the product allowed to LOOK BETTER on browsers with WebGPU than on browsers
+> without, and by how much?
+
+A "yes" re-scopes `scene-parity` from pixel parity to structural parity — same
+scene, same objects, same camera, different surfacing — and every entry in the
+divergence ledger becomes a deliberate, recorded look difference rather than a
+debt to be paid off. A "no" reduces Stage 5 to whatever can be ported to both
+paths, which is almost none of it.
+
+**Neither answer is wrong and this plan should not pick one.** What would be
+wrong is building a row below, watching the ratchet go red, and then editing the
+ledger to make it green — which is how a gate that exists stops existing. The
+rule below survives the rollout unchanged and gains a second half:
+
+**The rule for this stage, and the first half is what Phase 13 learned the hard
+way:** an effect that improves the WebGPU leg and regresses the WebGL2 leg has
+not improved this app — **and an effect that improves the node path while
+widening its recorded divergence from the classic one has not improved this app
+either, until somebody has said that a two-speed look is what this product
+wants.**
+
+Everything from here down was written before the rollout and is preserved as
+written. `three` 0.185.1 ships an effect library that only the node path can
+use —
 `three/addons/tsl/display/` — and the app currently mounts eight of about forty
 nodes. These are the ones an audit of the three families picked out, ranked by
 how much they change what a person sees. **None is a small change**, and each
@@ -575,10 +936,17 @@ visitors get.
 | **Planet atmosphere** | a scattering rim shell the solar family does not have | app-side TSL | none beyond cost |
 | **Clustered lighting** (`ClusteredLightsNode`) | the only item found that the WebGL2 backend genuinely cannot have | `lighting/ClusteredLightsNode.js` | splits the two backends' look, which Architecture A exists to avoid |
 
-**The rule for this stage, and it is the one Phase 13 learned the hard way:**
-an effect that improves the WebGPU leg and regresses the WebGL2 leg has not
-improved this app. Every row above gets three legs and a percentile, or it does
-not ship.
+Every row above gets three legs and a percentile, or it does not ship — and now
+also a parity number against the classic renderer, and an answer to the question
+at the top of this section.
+
+**One of the three legs changed meaning too.** "It must not regress the WebGL2
+leg" was a rule about a fifth of visitors; since the rollout that backend ships
+to nobody, and it is reached only by the harness and by `every-visitor`. The leg
+is still worth measuring — it is the only cheap warning that an effect is doing
+something a non-WebGPU GPU cannot — but a regression there is no longer a
+release blocker, and pretending otherwise would block work for a population that
+does not exist.
 
 ---
 
@@ -599,6 +967,20 @@ It is not free: ETC1S on disk is larger than a well-compressed JPEG, so this
 trades download bytes for GPU bytes and a stall. **That trade needs the
 measurement Stage 1 produces**, and it is the clearest case on this list of a
 change that is obviously right in GPU terms and not obviously right in total.
+
+**THIS STAGE MOVED FROM LAST TO FIRST ON 2026-09-19.** `every-visitor` puts
+roughly 20% of visitors on the WebGL2 backend and its 13593 ms forest first
+mount, deliberately and with the number in hand (§2b). Nothing else on this list
+pays that down. It is no longer the stage to do when the interesting ones are
+finished; it is the one the rollout created a bill for.
+
+**AND THE TOOLING BLOCKER REPORTED EARLIER WAS WRONG.** It was reported that
+this needs a native encoder — `toktx` or `basisu` — and that none is installed
+on the development machine, which is true as far as it goes. **`ktx2-encoder` is
+on npm at 0.6.0 and is a WASM build**, so the encode step can be a committed
+`.mjs` script beside the other pipeline scripts, with no native install and no
+environment decision. That removes the reason this was described as blocked; the
+work itself is unchanged and unstarted.
 
 **And LOD is CLOSED, by the first thing Stage 1 measured.** The audit proposed
 splitting the forest's tree ring into a near and a far bucket — no new asset
@@ -674,6 +1056,22 @@ standing decision rather than a phase-local one.
   report is the standing warning about exactly that distinction: `sizeNode` and
   `pointUV` are both present in the export list and both do nothing, and the
   only way that was found was by running them.
+- **THE ROLLOUT SHIPPED A PRODUCT THAT LOOKS DIFFERENT PER BROWSER, BY 12 TO 20
+  OF 255 ON THREE FAMILIES, AND NOBODY HAS LOOKED AT THE TWO PICTURES SIDE BY
+  SIDE.** The divergence ledger has stopped being "how far the unreleased path
+  has drifted" and become "how differently the product looks depending on which
+  browser a person opened it in": universe 12.22, forest 19.80, ocean 9.90. Every
+  one has a named cause and a named closer, so none of it is mysterious — but
+  the numbers were acceptable as DEBT against an unreleased renderer and nobody
+  has decided whether they are acceptable as a SHIPPING DIFFERENCE. That is a
+  look judgement, it is the owner's, and §7 states it as a question rather than
+  answering it.
+- **THE SHOTS TO ANSWER IT ARE ALREADY COMMITTED.**
+  `apps/myunivokai-personalization/e2e/shots/scene-still-capture/` holds a
+  `<fixture>-webgl.png` and a `<fixture>-webgpu.png` for all four fixtures, taken
+  at the same pinned time on the same machine. Opening `forest-world-webgl.png`
+  beside `forest-world-webgpu.png` is the whole of the decision, and it costs
+  nothing.
 - **THREE OF THIS DOCUMENT'S OWN CLAIMS WERE WRONG IN THE SAME DIRECTION, AND
   THE DIRECTION IS THE WARNING.** §0b items 5, 6 and 7 each describe work this
   plan proposed against a defect that either did not exist or lived on the other

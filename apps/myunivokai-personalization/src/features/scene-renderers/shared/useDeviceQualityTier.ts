@@ -8,7 +8,7 @@ import {
   type DeviceRenderCapabilities,
   type DeviceRenderProfile
 } from "./deviceQualityTier";
-import { probeWebGPUAdapter } from "./webgpuSupport";
+import { webgpuAdapterAvailabilityOnce } from "./webgpuSupport";
 
 /**
  * Reads the device's capabilities once and hands back the render profile.
@@ -143,7 +143,7 @@ export function useDeviceQualityTier(options: DeviceQualityTierOptions = {}): De
     let cancelled = false;
     const classify = async () => {
       const capabilities = readDeviceRenderCapabilities();
-      const webgpuAdapter = probesWebGPUAdapter ? await probeWebGPUAdapter() : undefined;
+      const webgpuAdapter = probesWebGPUAdapter ? await webgpuAdapterAvailabilityOnce() : undefined;
       if (cancelled) return;
       setProfile(renderProfileForTier(classifyDeviceQualityTier({ ...capabilities, webgpuAdapter })));
     };

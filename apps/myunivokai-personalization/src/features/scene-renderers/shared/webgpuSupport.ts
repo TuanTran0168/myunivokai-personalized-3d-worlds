@@ -1,15 +1,14 @@
 /**
- * WHAT THE BROWSER WILL ACTUALLY GIVE US, ASKED BEFORE THE CANVAS IS BUILT —
- * AND DELIBERATELY NOT USED TO CHOOSE THE RENDERER.
+ * WHAT THE BROWSER WILL ACTUALLY GIVE US, ASKED BEFORE THE CANVAS IS BUILT.
  *
  * §26 Phase 9, and §18.3(a) of the feasibility report, which is precise about
- * what this is for: *"an async pre-flight before the canvas mounts, for the
- * QUALITY TIER, not for renderer selection"*. The distinction is the whole
- * design and it is easy to get backwards.
+ * what this was originally for: *"an async pre-flight before the canvas mounts,
+ * for the QUALITY TIER, not for renderer selection"*.
  *
- * # Why this must not pick the renderer
+ * # `rendererSelection.ts` now reads this file, in ONE direction only
  *
- * §17 compares four architectures and rejects "choose the renderer at runtime"
+ * That header used to say it never would, and the reason it gave was sound for
+ * the use it was arguing against. §17 rejects "choose the renderer at runtime"
  * by name: a manual pre-flight is *"easy to get wrong"* against a fallback that
  * `WebGPURenderer` installs in its own constructor and fires on the one event
  * that actually matters — `backend.init()` rejecting. There are four gates
@@ -17,14 +16,28 @@
  * one of them — `requestDevice()` — can reject after `requestAdapter()` has
  * already succeeded. Phase 0 measured exactly that on this machine: full
  * Chromium reported an adapter with fifteen features and then refused the
- * device. A pre-flight that answered "yes, WebGPU" on that row and handed the
- * app a renderer it could not build would have been worse than no pre-flight,
- * because the renderer's own fallback covers the same case correctly.
+ * device.
  *
- * So `rendererSelection.ts` never reads this file. The renderer is chosen by
- * policy and the BACKEND is chosen by three.
+ * **That argument is about using the probe as a PROMISE. The rollout uses it as
+ * a VETO, and the two fail in opposite directions.**
  *
- * # What it IS for
+ *   - The probe answers `absent` or `none`. There is no WebGPU, so a
+ *     `WebGPURenderer` would land on its WebGL2 backend — the one configuration
+ *     this app has measured as four times WORSE than the classic renderer on
+ *     the forest's first mount. Vetoing it is sound, because a `requestAdapter()`
+ *     that resolved null cannot be followed by a `requestDevice()` that
+ *     succeeds. **There is no false positive in this direction.**
+ *   - The probe answers `hardware`. That is NOT a promise that the device will
+ *     be granted, and nothing here treats it as one: the app builds a
+ *     `WebGPURenderer` and three's own fallback handles the Phase 0 machine
+ *     exactly as it does today. **This direction is unchanged by the veto.**
+ *
+ * So a wrong answer costs at most what the current shipping behaviour costs,
+ * and a right answer keeps a fifth of visitors off a measured regression. That
+ * is a different trade from the one §17 refused, and `rendererSelection.ts`
+ * states it again at the point of use.
+ *
+ * # What it is ALSO for, and always was
  *
  * `classifyDeviceQualityTier` decides shadows and the post profile before the
  * first frame, from a throwaway WebGL context. That probe answers a question
@@ -175,4 +188,72 @@ export async function probeWebGPUAdapter(): Promise<WebGPUAdapterAvailability> {
   } catch {
     return WEBGPU_ADAPTER_ABSENT;
   }
+}
+
+/**
+ * How long the page will wait for `requestAdapter()` before deciding without it.
+ *
+ * `probeWebGPUAdapter` never rejects, but nothing stops it HANGING: it is a
+ * driver call, and a wedged driver is the exact machine this app most wants to
+ * keep off the node path. Without a bound, the canvas that waits for this
+ * answer would never mount at all, which is a worse failure than the one the
+ * probe exists to prevent.
+ *
+ * Phase 0 measured `requestAdapter()` at 1 to 15 ms across every launch mode,
+ * so this is not a budget — it is two orders of magnitude of headroom, placed
+ * so that the only thing that can reach it is a driver that has stopped
+ * answering. Timing out resolves to `absent`, which selects the classic
+ * renderer: a machine that took longer than this to describe its GPU is not a
+ * machine to hand an unproven render path.
+ */
+export const WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS = 1_500;
+
+/**
+ * The page's single outstanding or settled answer, or null before anything asks.
+ *
+ * Module scope rather than per-canvas, because the answer is a property of the
+ * BROWSER and this app remounts its canvas on every world, every variant and
+ * every interest chip. Per-canvas memoisation would ask the driver again on
+ * each of those, for a value that cannot have changed.
+ */
+let webgpuAdapterAvailabilityAnswer: Promise<WebGPUAdapterAvailability> | null = null;
+
+/**
+ * What WebGPU this page has, asked at most once and answered within a bound.
+ *
+ * Two callers, and they want the same fact for different reasons:
+ * `rendererSelection.ts` vetoes the node renderer when there is no WebGPU, and
+ * `deviceQualityTier.ts` drops to the minimal profile when the WebGPU device is
+ * a CPU rasteriser. Sharing one promise is what keeps that from being two
+ * `requestAdapter()` calls per canvas.
+ */
+export function webgpuAdapterAvailabilityOnce(): Promise<WebGPUAdapterAvailability> {
+  if (webgpuAdapterAvailabilityAnswer) {
+    return webgpuAdapterAvailabilityAnswer;
+  }
+  webgpuAdapterAvailabilityAnswer = new Promise<WebGPUAdapterAvailability>((resolve) => {
+    let hasAnswered = false;
+    const answerWith = (availability: WebGPUAdapterAvailability) => {
+      if (hasAnswered) {
+        return;
+      }
+      hasAnswered = true;
+      clearTimeout(timeoutHandle);
+      resolve(availability);
+    };
+    const timeoutHandle = setTimeout(() => answerWith(WEBGPU_ADAPTER_ABSENT), WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS);
+    void probeWebGPUAdapter().then(answerWith);
+  });
+  return webgpuAdapterAvailabilityAnswer;
+}
+
+/**
+ * Drops the memoised answer so the next caller probes again.
+ *
+ * For tests. Nothing in the app calls it: a page that has been told there is no
+ * WebGPU does not get to ask a second time, for the same reason
+ * `rendererSelection.ts` makes device loss one-way.
+ */
+export function forgetWebGPUAdapterAvailability(): void {
+  webgpuAdapterAvailabilityAnswer = null;
 }

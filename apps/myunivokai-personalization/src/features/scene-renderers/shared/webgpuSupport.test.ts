@@ -1,11 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WEBGPU_ADAPTER_ABSENT,
   WEBGPU_ADAPTER_HARDWARE,
   WEBGPU_ADAPTER_NONE,
   WEBGPU_ADAPTER_SOFTWARE,
+  WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS,
   classifyWebGPUAdapterIdentity,
-  probeWebGPUAdapter
+  forgetWebGPUAdapterAvailability,
+  probeWebGPUAdapter,
+  webgpuAdapterAvailabilityOnce
 } from "./webgpuSupport";
 
 /**
@@ -129,5 +132,71 @@ describe("probeWebGPUAdapter", () => {
     });
     // An adapter that refuses to describe itself is a working adapter.
     await expect(probeWebGPUAdapter()).resolves.toBe(WEBGPU_ADAPTER_HARDWARE);
+  });
+});
+
+describe("webgpuAdapterAvailabilityOnce", () => {
+  afterEach(() => {
+    forgetWebGPUAdapterAvailability();
+    vi.useRealTimers();
+  });
+
+  /**
+   * **ONE `requestAdapter()` PER PAGE, NOT ONE PER CANVAS.** Two callers want
+   * this fact — the rollout veto and the quality tier — and this app remounts
+   * its canvas on every world, every variant and every interest chip. Without
+   * the memo, each of those would ask the driver again for a value that cannot
+   * have changed.
+   */
+  it("asks the driver once however many callers there are", async () => {
+    let requestCount = 0;
+    setNavigator({
+      gpu: {
+        requestAdapter: async () => {
+          requestCount += 1;
+          return { info: { vendor: "nvidia" } };
+        }
+      }
+    });
+
+    const answers = await Promise.all([
+      webgpuAdapterAvailabilityOnce(),
+      webgpuAdapterAvailabilityOnce(),
+      webgpuAdapterAvailabilityOnce()
+    ]);
+
+    expect(answers).toEqual([WEBGPU_ADAPTER_HARDWARE, WEBGPU_ADAPTER_HARDWARE, WEBGPU_ADAPTER_HARDWARE]);
+    expect(requestCount).toBe(1);
+    await expect(webgpuAdapterAvailabilityOnce()).resolves.toBe(WEBGPU_ADAPTER_HARDWARE);
+    expect(requestCount).toBe(1);
+  });
+
+  /**
+   * **A WEDGED DRIVER MUST NOT HOLD THE CANVAS FOREVER.** `probeWebGPUAdapter`
+   * never rejects, but nothing stops it hanging, and the canvas does not mount
+   * until this answers. Timing out resolves to `absent`, which selects the
+   * classic renderer — a machine that took longer than Phase 0's 15 ms by two
+   * orders of magnitude is not a machine to hand an unproven render path.
+   */
+  it("answers absent rather than hanging when the driver never replies", async () => {
+    vi.useFakeTimers();
+    setNavigator({ gpu: { requestAdapter: () => new Promise(() => {}) } });
+
+    const answer = webgpuAdapterAvailabilityOnce();
+    await vi.advanceTimersByTimeAsync(WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS);
+
+    await expect(answer).resolves.toBe(WEBGPU_ADAPTER_ABSENT);
+  });
+
+  /** A driver that answers in time beats the timeout, and leaves no timer behind. */
+  it("keeps the driver's answer when it arrives before the bound", async () => {
+    vi.useFakeTimers();
+    setNavigator({ gpu: { requestAdapter: async () => null } });
+
+    const answer = webgpuAdapterAvailabilityOnce();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(answer).resolves.toBe(WEBGPU_ADAPTER_NONE);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

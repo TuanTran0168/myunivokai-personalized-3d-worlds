@@ -93,7 +93,7 @@ export default defineConfig({
       // and not on SwiftShader, so the property can only fail where the real GPU
       // is. See e2e/star-is-lit.spec.ts.
       testMatch:
-        /(scene-parity|star-is-lit|sun-colour|driver-parity|node-path-diagnostic|first-mount-cost|sustained-load|scene-still-capture)\.spec\.ts/,
+        /(scene-parity|star-is-lit|sun-colour|driver-parity|node-path-diagnostic|first-mount-cost|sustained-load|scene-still-capture|default-renderer-rollout)\.spec\.ts/,
       // Four minutes, against the suite's 120 s default. A parity test renders
       // the same fixture through THREE renderers in one test, and each leg pays
       // its own renderer creation, lazy chunk, GLTF load and environment bake —

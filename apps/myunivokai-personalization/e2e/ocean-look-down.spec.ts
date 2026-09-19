@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { inflateSync } from "node:zlib";
+import { inflatePng } from "./parityMetrics.mjs";
 import {
   CAMERA_POSE_WINDOW_KEY,
   type PublishedCameraPose
@@ -138,6 +140,24 @@ const SETTLED_PUBLISHED_FRAME_COUNT = 3;
 // after it passed on the compiled program.
 const FIRST_FRAME_TIMEOUT_MILLISECONDS = 60_000;
 
+/**
+ * Four minutes a test, against the suite's 120 s default.
+ *
+ * **Raised 2026-09-19 because the renderer under it changed, not because the
+ * test got slower at what it does.** Each of these drives a real ocean preview
+ * through an open, a zoom to the widest radius in eight wheel steps and an orbit
+ * to the polar limit, then measures one frame. On `WebGLRenderer` that fitted in
+ * 120 s with room to spare — the control run came in at 1.1 to 1.2 minutes. On
+ * `WebGPURenderer`, which is now what every visitor gets, the same sequence on
+ * this suite's SwiftShader pin crosses the default and times out inside
+ * `page.screenshot`.
+ *
+ * The work and the assertions are unchanged. What is being bought here is the
+ * right to keep measuring the ocean on the renderer that ships, rather than
+ * deleting the measurement because its budget was written for the other one.
+ */
+const OCEAN_ORBIT_TIMEOUT_MILLISECONDS = 240_000;
+
 function shotDirectory(): string {
   mkdirSync(SHOT_DIRECTORY, { recursive: true });
   return SHOT_DIRECTORY;
@@ -149,45 +169,78 @@ type FrameStatistics = {
   meanSaturation: number;
 };
 
-/** Reads the canvas back and reduces it to the three numbers that matter. */
-async function measureFrame(page: Page): Promise<FrameStatistics> {
-  return page.evaluate(() => {
-    const canvas = document.querySelector("canvas");
-    if (!canvas) {
-      throw new Error("no canvas on the page");
-    }
-    const scratch = document.createElement("canvas");
-    scratch.width = Math.min(480, canvas.width);
-    scratch.height = Math.min(300, canvas.height);
-    const context = scratch.getContext("2d");
-    if (!context) {
-      throw new Error("no 2d context for the readback");
-    }
-    context.drawImage(canvas, 0, 0, scratch.width, scratch.height);
-    const { data } = context.getImageData(0, 0, scratch.width, scratch.height);
+/** A frame this flat in colour is not seawater — it is a canvas that gave back nothing. */
+const BLANK_READBACK_SATURATION = 0.001;
 
-    let lumaTotal = 0;
-    let saturationTotal = 0;
-    let blownCount = 0;
-    const pixelCount = data.length / 4;
-    for (let index = 0; index < data.length; index += 4) {
-      const red = data[index] / 255;
-      const green = data[index + 1] / 255;
-      const blue = data[index + 2] / 255;
-      lumaTotal += 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-      const maximum = Math.max(red, green, blue);
-      const minimum = Math.min(red, green, blue);
-      saturationTotal += maximum === 0 ? 0 : (maximum - minimum) / maximum;
-      if (data[index] >= 250 || data[index + 1] >= 250 || data[index + 2] >= 250) {
-        blownCount++;
-      }
+/**
+ * Reads the frame back and reduces it to the three numbers that matter.
+ *
+ * **IT TAKES A SCREENSHOT RATHER THAN CALLING `drawImage(canvas)`, AND THAT
+ * CHANGED ON 2026-09-19 BECAUSE THE APP'S RENDERER DID.**
+ *
+ * This used to copy the live canvas into a scratch 2D context. That works on
+ * `WebGLRenderer`, which the app asks for `preserveDrawingBuffer`. It does not
+ * work on `WebGPURenderer`: `WebGPURendererParameters` has no such option — the
+ * string appears zero times in `three.webgpu.js` against twice in
+ * `three.module.js` — so the drawing buffer is gone by the time anything reads
+ * it, on BOTH of its backends.
+ *
+ * The failure was not an exception. `drawImage` succeeded and returned a
+ * cleared buffer, so every statistic below was computed over a blank image and
+ * `meanSaturation` came back as **exactly 0** on five fixtures at once. A
+ * greyscale frame and a missing frame are indistinguishable to this function,
+ * which is why the guard below exists as well as the change.
+ *
+ * Playwright's screenshot goes through the browser's compositor rather than the
+ * drawing buffer, so it sees what the visitor sees on either renderer. It is
+ * also what `highlight-clipping.spec.ts` already does, and that spec kept
+ * measuring real numbers through the same rollout that blinded this one.
+ */
+async function measureFrame(page: Page): Promise<FrameStatistics> {
+  // `canvas[data-engine]` rather than `canvas`, for the reason
+  // highlight-clipping records: r3f stamps that attribute, and a bare `canvas`
+  // selector can match a scratch element the page made for itself.
+  const sceneCanvas = page.locator("canvas[data-engine]").first();
+  const screenshot = await sceneCanvas.screenshot({ animations: "disabled" });
+  const frame = inflatePng(screenshot, inflateSync);
+  const pixels = frame.pixels;
+
+  let lumaTotal = 0;
+  let saturationTotal = 0;
+  let blownCount = 0;
+  const pixelCount = pixels.length / 4;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const red = pixels[index] / 255;
+    const green = pixels[index + 1] / 255;
+    const blue = pixels[index + 2] / 255;
+    lumaTotal += 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    const maximum = Math.max(red, green, blue);
+    const minimum = Math.min(red, green, blue);
+    saturationTotal += maximum === 0 ? 0 : (maximum - minimum) / maximum;
+    if (pixels[index] >= 250 || pixels[index + 1] >= 250 || pixels[index + 2] >= 250) {
+      blownCount++;
     }
-    return {
-      meanLuma: lumaTotal / pixelCount,
-      blownPercentage: (blownCount / pixelCount) * 100,
-      meanSaturation: saturationTotal / pixelCount
-    };
-  });
+  }
+
+  const statistics = {
+    meanLuma: lumaTotal / pixelCount,
+    blownPercentage: (blownCount / pixelCount) * 100,
+    meanSaturation: saturationTotal / pixelCount
+  };
+
+  // **THE GUARD THAT WOULD HAVE NAMED THE DEFECT INSTEAD OF MISREPORTING IT.**
+  // A perfectly colourless frame is not a look this scene can produce; it is a
+  // readback that returned nothing. Failing here says so, rather than letting
+  // the assertions below report "the frame has lost its colour to a pale layer"
+  // about an image that was never drawn.
+  if (statistics.meanSaturation < BLANK_READBACK_SATURATION) {
+    throw new Error(
+      `the readback produced a colourless frame (mean saturation ${statistics.meanSaturation}, ` +
+        `mean luma ${statistics.meanLuma}) — this is a capture fault, not a look fault`
+    );
+  }
+
+  return statistics;
 }
 
 /**
@@ -353,6 +406,7 @@ test.describe("turning the camera in an ocean world", () => {
     for (const orbit of world.orbits) {
       test(`${world.name}, orbiting ${orbit.name}: shows seawater, not a wall of light`, async ({ page }) => {
         test.skip(test.info().project.name !== "desktop", "one viewport is enough for a render fault");
+        test.setTimeout(OCEAN_ORBIT_TIMEOUT_MILLISECONDS);
         await openOceanPreview(page, world.moodLabel);
         const restingPose = await readCameraPose(page);
 
