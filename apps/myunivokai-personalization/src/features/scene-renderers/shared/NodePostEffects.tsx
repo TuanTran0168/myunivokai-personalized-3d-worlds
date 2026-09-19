@@ -91,6 +91,52 @@ const AMBIENT_OCCLUSION_HALF_RESOLUTION_SCALE = 0.5;
 const AMBIENT_OCCLUSION_FULL_RESOLUTION_SCALE = 1;
 
 /**
+ * WHETHER THIS BACKEND CAN AFFORD GTAO, MEASURED RATHER THAN ASSUMED.
+ *
+ * **It costs 5612 ms of blocked main thread on the WebGL2 backend and nothing
+ * on WebGPU.** Measured 2026-09-19 with `first-mount-cost.spec.ts`, the forest
+ * fixture, this pass disabled and re-enabled with nothing else changed:
+ *
+ * | forest, blocked main thread | with GTAO | without | difference |
+ * | --- | --- | --- | --- |
+ * | node · WebGL2  | 15916 ms | 10304 ms | **−5612 ms, −35%** |
+ * | node · WebGPU  |   820 ms |   848 ms | none, inside noise |
+ *
+ * That asymmetry is the whole argument, and §26 Phase 13 explains it: the
+ * WebGL2 backend creates its pipelines SYNCHRONOUSLY, so a large shader is a
+ * stall, while WebGPU's pipeline creation is asynchronous by design. The pass
+ * is not expensive to RUN on WebGL2 — it is expensive to COMPILE there, once,
+ * during the app's most visible moment.
+ *
+ * # Why this is a real trade and not free
+ *
+ * **The forest loses its ambient occlusion on the ~20% of browsers with no
+ * WebGPU**, which is a visible quality difference between visitors and not a
+ * tidy one. It also weakens §28.3's claim that the fallback "is not a degraded
+ * rendition of the node path; it is the node path": `scene-parity` measures the
+ * two node backends against each other, and the forest's 1.21 of 255 becomes a
+ * recorded, deliberate divergence.
+ *
+ * It is taken anyway because the alternative is worse for the same people: a
+ * **15.9 second** frozen main thread on a forest first mount, against the
+ * classic renderer's 3.3 s. The app already treats ambient occlusion as
+ * conditional — `deviceQualityTier` drops it on the minimal tier — so this is
+ * the existing quality mechanism reaching one more input, rather than a new
+ * kind of decision.
+ *
+ * **Reversing it is one constant.** Set this to always return true and the
+ * fallback gets its AO and its 5.6 seconds back.
+ */
+function backendAffordsAmbientOcclusion(renderer: unknown): boolean {
+  const backend = (renderer as { backend?: { isWebGPUBackend?: boolean } } | null)?.backend;
+  // Absent rather than false is the interesting case: a renderer that has not
+  // built its backend yet, or is not a node renderer at all, is not a renderer
+  // this chain should be guessing about. It takes the same answer as WebGL2,
+  // which is the one that cannot afford to be wrong.
+  return backend?.isWebGPUBackend === true;
+}
+
+/**
  * The AO scale three.js's own release notes ask for.
  *
  * §11.3 quotes r185: *"computes more physically correct ambient occlusion;
@@ -218,7 +264,10 @@ export function NodePostEffects({
 
   const bloomIntensity = postFX?.bloomIntensity ?? DEFAULT_BLOOM_INTENSITY;
   const grade = resolveSceneGrade(postFX?.grade, theme);
-  const wantsAmbientOcclusion = ambientOcclusion && postProcessingProfile.ambientOcclusion;
+  // THE BACKEND IS THE THIRD INPUT, and it is the one with a measurement behind
+  // it rather than a policy. See `backendAffordsAmbientOcclusion`.
+  const wantsAmbientOcclusion =
+    ambientOcclusion && postProcessingProfile.ambientOcclusion && backendAffordsAmbientOcclusion(renderer);
   const wantsBloom = postProcessingProfile.bloom;
   const wantsLensAndGrain = postProcessingProfile.lensAndGrain;
   const wantsVignette = postProcessingProfile.vignette;

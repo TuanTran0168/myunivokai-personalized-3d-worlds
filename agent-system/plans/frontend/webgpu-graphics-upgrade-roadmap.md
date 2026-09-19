@@ -464,6 +464,63 @@ It does.
 
 ---
 
+## 2c. The GTAO backend gate — **BUILT 2026-09-19**
+
+**The first thing done about the cost §2b accepted, and it is a third of it.**
+
+§26 Phase 13 recorded that "about 5.5 s" of the forest's WebGL2 first mount was
+the GTAO pass, measured. That number was re-measured here on the shipped
+configuration, by disabling the pass and re-enabling it with nothing else
+changed:
+
+| forest, blocked main thread | with GTAO | without GTAO | difference |
+| --- | --- | --- | --- |
+| node · **WebGL2** | **15916 ms** | **10304 ms** | **−5612 ms, −35%** |
+| node · WebGPU | 820 ms | 848 ms | none, inside noise |
+| classic `WebGLRenderer` | 3315 ms | 3402 ms | none — it runs N8AO, not this pass |
+
+**The asymmetry is the whole argument.** Phase 13 found the WebGL2 backend
+creates pipelines SYNCHRONOUSLY while WebGPU's creation is asynchronous by
+design, so GTAO is not expensive to RUN on the fallback — it is expensive to
+COMPILE there, once, during the app's most visible moment. `every-visitor` put
+roughly 20% of visitors on that backend.
+
+So `NodePostEffects` now skips GTAO when `backend.isWebGPUBackend` is not true.
+In the shipped configuration that takes the forest's fallback first mount from
+**15916 ms to 10524 ms**.
+
+### What it costs, which is not nothing
+
+**The forest loses its ambient occlusion on browsers with no WebGPU.**
+`scene-parity`'s WebGPU-against-forceWebGL comparison for the forest goes from
+**1.21 to 4.12 of 255**, with 22.72% of pixels differing against 7.99% before —
+and that is now the **only deliberate entry** in `KNOWN_BACKEND_DIVERGENCE`,
+recorded with both numbers and with instructions to delete it if the gate is
+removed.
+
+It also makes §28.3's claim that the fallback *"is not a degraded rendition of
+the node path; it is the node path"* false for one family by one pass, on
+purpose. That claim was worth more when the fallback shipped to nobody.
+
+One number moved in the other direction and is worth noting rather than
+claiming: the forest's **forceWebGL against WebGL** comparison improved from
+19.50 to 17.55, because the classic renderer runs N8AO rather than GTAO and
+removing GTAO moved the fallback toward it. That is a coincidence of two
+different AO implementations, not evidence that the gate is free.
+
+### It does not make the fallback good, and saying so is the point
+
+**10.5 s is still a multi-second freeze against the classic renderer's 3.3 s.**
+A third of a bad number is a better bad number. Phase 13's unattributed
+remainder — leading hypothesis texture upload — is what Stage 6 is aimed at, and
+it is where the rest of this goes.
+
+**Reversing this is one function.** `backendAffordsAmbientOcclusion` returning
+true restores the pass, the 5.4 seconds and the parity, and the ledger's own
+halving rule will then demand its entry be deleted.
+
+---
+
 ## 3. Stage 1 — A sustained-load harness (the instrument every later stage needs) — **BUILT**
 
 **Gate: open, and this is the one that goes FIRST.** The plan originally put
@@ -605,10 +662,39 @@ fixtures.
 
 ---
 
-## 5. Stage 3 — One linear HDR buffer for the additive layers
+## 5. Stage 3 — One linear HDR buffer for the additive layers — **CLOSED, NOT BUILT**
 
-**Gate: STILL SHUT, and pointed at a different renderer than this section says —
-see §0b item 5 before reading any of it.** Stage 0 is done, so the gate this
+**Gate: CLOSED 2026-09-19. Nothing here is worth building, and the reason is
+that its target stopped shipping.**
+
+Follow the three readings of this stage in order, because the sequence is the
+lesson:
+
+1. **As written**, it proposed giving the node ocean a linear HDR buffer it was
+   assumed to lack.
+2. **§0b item 5** found the node path already had one — `_getFrameBufferTarget()`
+   builds it whenever tone mapping or a colour-space conversion is needed, which
+   for the ocean is always — and that the path WITHOUT linear compositing was the
+   CLASSIC renderer, then used by every visitor. The stage was re-aimed at a look
+   change on the high-traffic path.
+3. **§2b** then shipped `WebGPURenderer` to every visitor, so the classic
+   renderer is a reference implementation and a device-loss recovery, not a path
+   anybody browses on. **The work this stage proposes would improve a renderer
+   nobody receives.**
+
+What remains true and belongs to the ocean rather than to this stage: the node
+path's additive compositing differs from the classic path's, `scene-parity`
+records it as a 9.90 of 255 debt underwater, and `oceanFrameBudget`'s shots show
+it as **7.4% of the twilight frame clipped on the node renderer against 2% or
+less on the classic one** when both are photographed after the reveal completes.
+That is a question about the ocean's own look on the shipping renderer, and it
+is not answered by adding a buffer the shipping renderer already has.
+
+<details>
+<summary>The stage as written, kept because the reasoning about WHY linear compositing is correct still holds</summary>
+
+**Gate was: STILL SHUT, and pointed at a different renderer than this section says —
+see §0b item 5.** Stage 0 is done, so the gate this
 section names is open; the stage did not become buildable, because checking its
 premise a third time moved its target.
 
@@ -628,6 +714,8 @@ the one written below.
 **The rest of this section is kept as written**, because its argument about WHY
 linear compositing is the correct model is the part that survives; only the
 question of which path needs it has changed.
+
+</details>
 
 **This is the stage with a real picture behind it, and the ocean's 9.90 of 255
 is the argument for it.** Phase 8 established what that number is: the two paths
@@ -879,6 +967,20 @@ It is not free: ETC1S on disk is larger than a well-compressed JPEG, so this
 trades download bytes for GPU bytes and a stall. **That trade needs the
 measurement Stage 1 produces**, and it is the clearest case on this list of a
 change that is obviously right in GPU terms and not obviously right in total.
+
+**THIS STAGE MOVED FROM LAST TO FIRST ON 2026-09-19.** `every-visitor` puts
+roughly 20% of visitors on the WebGL2 backend and its 13593 ms forest first
+mount, deliberately and with the number in hand (§2b). Nothing else on this list
+pays that down. It is no longer the stage to do when the interesting ones are
+finished; it is the one the rollout created a bill for.
+
+**AND THE TOOLING BLOCKER REPORTED EARLIER WAS WRONG.** It was reported that
+this needs a native encoder — `toktx` or `basisu` — and that none is installed
+on the development machine, which is true as far as it goes. **`ktx2-encoder` is
+on npm at 0.6.0 and is a WASM build**, so the encode step can be a committed
+`.mjs` script beside the other pipeline scripts, with no native install and no
+environment decision. That removes the reason this was described as blocked; the
+work itself is unchanged and unstarted.
 
 **And LOD is CLOSED, by the first thing Stage 1 measured.** The audit proposed
 splitting the forest's tree ring into a near and a far bucket — no new asset

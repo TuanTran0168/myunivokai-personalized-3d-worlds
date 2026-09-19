@@ -558,6 +558,24 @@ feels:
 | ocean, underwater | 1069 ms | **4947 ms** | **734 ms** |
 | ocean, above water | 203 ms | 257 ms | **144 ms** |
 
+**Re-measured 2026-09-19 on the same instrument, after the rollout and after the
+GTAO backend gate.** The shape is unchanged and the fallback's forest is a third
+smaller:
+
+| fixture | `WebGLRenderer` | node · WebGL2 | node · WebGPU |
+| --- | --- | --- | --- |
+| universe | 2122 ms | 2556 ms | **981 ms** |
+| forest | 3532 ms | **10524 ms**, was 15916 before the gate | **851 ms** |
+| ocean, underwater | 1086 ms | **4781 ms** | **679 ms** |
+| ocean, above water | 207 ms | 288 ms | **147 ms** |
+
+**GTAO is free on WebGPU and costs 5612 ms on WebGL2**, measured by disabling
+the pass and re-enabling it with nothing else changed. The WebGL2 backend
+creates pipelines synchronously, so a large shader is a stall there and is not
+one on the backend designed for asynchronous creation. `NodePostEffects` skips
+it when `backend.isWebGPUBackend` is not true; the forest's fallback loses its
+ambient occlusion, which `scene-parity` records as a deliberate 4.12 of 255.
+
 The WebGPU backend blocks LESS than the classic renderer on every fixture, and
 the forest — this app's worst first mount — drops from 3.6 s in three long tasks
 to 0.9 s in one. That is the freeze this repo has spent sprints on, measurably
