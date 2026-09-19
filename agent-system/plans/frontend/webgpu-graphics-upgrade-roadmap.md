@@ -1,10 +1,13 @@
 # WebGPU graphics upgrade roadmap — what the node path makes possible, and in what order
 
-> **Document status:** Active plan. **Corrected and expanded 2026-09-18 —
-> read §0 first**, it lists what this document got wrong before anything was
-> built on it.
+> **Document status:** Active plan. **Corrected twice — read §0 AND §0b
+> first.** Between them they list seven load-bearing claims this document made
+> that turned out to be wrong, four found before anything was built on it and
+> three found while building Stage 0.
 > **Written:** 2026-09-17, branch `feat/fe/webgpu-migration-phase-13`;
-> corrected 2026-09-18, branch `feat/fe/webgpu-graphics-upgrade`
+> corrected 2026-09-18, branch `feat/fe/webgpu-graphics-upgrade`;
+> Stage 0 built and corrected again 2026-09-19, branch
+> `feat/fe/webgpu-graphics-stages`
 > **Companion to:** [`../../research/webgpu-full-migration-feasibility-2026.md`](../../research/webgpu-full-migration-feasibility-2026.md)
 > (the migration itself, §26 Phases 0–13) and
 > [`../../knowledge/frontend/threejs-scene-architecture.md`](../../knowledge/frontend/threejs-scene-architecture.md)
@@ -70,6 +73,68 @@ texture generation because "§24.1 attributes 1121 ms of the forest's remount to
 (8192x4096, 134 MB of RGBA once decoded). **No procedural bake in this repo is
 anywhere near 8K** — the largest is the gas giant's 1024x512. The rejection may
 still be right; the reason given for it is not.
+
+---
+
+## 0b. Corrections, made 2026-09-19 while building Stage 0
+
+Three more load-bearing claims checked against the installed source and the
+committed assets, and **all three were wrong**. They are here rather than folded
+away because each of them would have sent the next stage at the wrong target.
+
+**5. STAGE 3 IS AIMED AT THE PATH THAT ALREADY HAS WHAT IT PROPOSES TO ADD.**
+§0 item 3 corrected this once — the half-float buffer is the node `Renderer`'s
+default — and then concluded "only the ocean lacks one, because it mounts no
+chain". That conclusion does not follow and is not true. `_getFrameBufferTarget()`
+builds the half-float intermediate whenever tone mapping or a colour-space
+conversion is needed (`three.webgpu.js:60610-60632`), which for the ocean is
+ALWAYS: it renders with ACES at a per-depth exposure and an sRGB output colour
+space. The chain has nothing to do with it. **So on the node path every family
+including the ocean already composites additive light in linear half-float and
+tone-maps once at the end.**
+
+The path WITHOUT linear compositing is the classic one, where `WebGLRenderer`
+applies the curve inline in each material's fragment shader and every additive
+layer blends against an already-tone-mapped 8-bit canvas. That is §26 Phase 8's
+finding stated the other way round, and it means **the family that needs Stage 3
+is the ocean on the renderer EVERY VISITOR USES**, not the one behind the flag.
+
+That reframes the stage completely. It is no longer "give the node ocean a
+buffer it lacks"; it is "change how the classic renderer composites the ocean,
+for everyone, which changes the look and costs a fullscreen buffer". The
+`toneMappingExposure` question is also not what §0 item 4 said: on the classic
+path `toneMappingExposure` is a real uniform on any program that includes
+`tonemapping_pars_fragment` and three pushes it in `setProgram`
+(`three.module.js:18703`) — but only when `refreshMaterial` is true, so whether
+a composer pass would track a per-depth exposure set once per rig build is a
+question about uniform refresh, not about frame-wide passes. **Nobody has
+measured it.** Stage 3 stays SHUT, with a different target and an honest gate.
+
+**6. THE OCEAN FAUNA HAVE NO TEXTURE DATA TO RESTORE, AND THE `uv` DELETION IS A
+NO-OP.** §6 lists both as open work. Every one of the sixteen committed ocean
+GLBs was scanned on 2026-09-19:
+
+| | images | `TEXCOORD_0` | materials |
+| --- | --- | --- | --- |
+| the fifteen fauna | **0, every one** | **absent, every one** | 0 to 6 |
+| `prop-shipwreck-stern.glb` | 2 | present, plus `TEXCOORD_1` | 2 |
+
+So `loadSpeciesGeometry`'s `deleteAttribute( 'uv' )` removes an attribute that is
+never there, and "a normal or roughness map could not be sampled even if one
+were added" is true for a different reason than the one given: the models were
+authored without UVs, not stripped of them. **And "re-export the ocean fauna
+with maps" is not an export-pipeline problem.** There is no texture data in the
+sources to export. Giving these models maps means AUTHORING them — new art, not
+a reproducible command — and that is a different decision for a different
+person. The item is closed rather than carried.
+
+**7. THE OCTOPUS AND THE SQUID ARE SCANS, AND THEIR COLOUR IS ALREADY READ.**
+`fauna-giant-pacific-octopus.glb` and `fauna-giant-squid-scan.glb` carry
+**`COLOR_0` and zero materials** — photogrammetry, with the colour baked per
+vertex. `mergeParts` already prefers a part's own `COLOR_0` over its material
+colour and says so in its own comment, so the scanned detail reaches the frame.
+`oceanRig.ts`'s note that "the giant Pacific octopus rendered with zero visible
+texture" describes a defect that was fixed; it reads as an open one.
 
 ---
 
@@ -364,7 +429,25 @@ fixtures.
 
 ## 5. Stage 3 — One linear HDR buffer for the additive layers
 
-**Gate: SHUT until Stage 0. Independent of Stages 1 and 2.**
+**Gate: STILL SHUT, and pointed at a different renderer than this section says —
+see §0b item 5 before reading any of it.** Stage 0 is done, so the gate this
+section names is open; the stage did not become buildable, because checking its
+premise a third time moved its target.
+
+**In one line: the node path already does what this stage proposes. The path
+that does not is the classic renderer, which is what every visitor uses.**
+`_getFrameBufferTarget()` builds a half-float intermediate whenever tone mapping
+or a colour-space conversion is needed (`three.webgpu.js:60610-60632`), which for
+the ocean is always — so on the node path the ocean has composited additive
+light in linear and tone-mapped once since Phase 9, chain or no chain. What is
+left is a change to how `WebGLRenderer` composites the ocean for everyone: a
+look change, on the path with all the traffic, costing a fullscreen buffer. That
+needs the owner's eye before a line of it, and it is a different proposal from
+the one written below.
+
+**The rest of this section is kept as written**, because its argument about WHY
+linear compositing is the correct model is the part that survives; only the
+question of which path needs it has changed.
 
 **This is the stage with a real picture behind it, and the ocean's 9.90 of 255
 is the argument for it.** Phase 8 established what that number is: the two paths
@@ -447,17 +530,26 @@ any committed model REQUIRES an extension that map does not contain. It was run
 against the unconverted bear and fails on it, which is the only evidence that a
 passing test means anything.
 
-**Still open in this stage, and both are the ocean's:**
+**BOTH ITEMS THAT WERE OPEN HERE ARE CLOSED BY MEASUREMENT, 2026-09-19 — see
+§0b items 6 and 7.** Every one of the sixteen committed ocean GLBs was scanned:
 
-- **Ocean fauna have no material maps at all**, and `oceanRigFauna.ts` deletes
-  `uv`, `uv1`, `uv2` and `tangent` from every geometry it merges — so a normal
-  or roughness map could not be sampled even if one were added. Thirteen of the
-  sixteen models ship zero images. The code already names the symptom
-  (`oceanRig.ts:778`, "this is why the giant Pacific octopus rendered with zero
-  visible texture") and works around it by assigning `emissiveMap = map`.
-- **The 58 GLBs were produced under three incompatible compression policies**
-  and no pipeline is committed, so "re-export the ocean fauna with maps" has no
-  reproducible command behind it yet.
+- **Fifteen of the sixteen ship zero images AND no `TEXCOORD_0` at all** — not
+  thirteen, and the sixteenth is `prop-shipwreck-stern.glb`, which is a prop
+  rather than a fauna and carries 2 images with `TEXCOORD_0` and `TEXCOORD_1`.
+  So `loadSpeciesGeometry`'s `deleteAttribute( 'uv' )` deletes an attribute that
+  was never present, and these models were authored without UVs rather than
+  stripped of them. **"Re-export the ocean fauna with maps" is therefore not an
+  export-pipeline problem: there is no texture data in the sources to export.**
+  Giving them maps means authoring new art, which is a decision for a person
+  rather than a task for a stage.
+- **The octopus and the squid are photogrammetry scans carrying `COLOR_0` and
+  zero materials**, and `mergeParts` already prefers a part's own `COLOR_0` to
+  its material colour, with a comment saying so. `oceanRig.ts:778`'s note reads
+  like an open defect and describes a fixed one.
+
+**What remains true** is that the 58 GLBs were produced under three
+incompatible compression policies with no committed pipeline. That matters to
+Stage 6 and to anything that adds a model; it no longer blocks anything here.
 
 ---
 
@@ -577,10 +669,17 @@ standing decision rather than a phase-local one.
   argument for any stage above.
 - **Stage 5's table is a reading of three's source, not of its behaviour.** Every
   node named there was confirmed to exist in the installed 0.185.1 with the
-  signature claimed. Not one has been run in this app. §30.2 of the migration
+  signature claimed. **Not one has been run in this app, and that is still true
+  after Stage 0** — nothing in Stage 0 touched an effect node. §30.2 of the migration
   report is the standing warning about exactly that distinction: `sizeNode` and
   `pointUV` are both present in the export list and both do nothing, and the
   only way that was found was by running them.
+- **THREE OF THIS DOCUMENT'S OWN CLAIMS WERE WRONG IN THE SAME DIRECTION, AND
+  THE DIRECTION IS THE WARNING.** §0b items 5, 6 and 7 each describe work this
+  plan proposed against a defect that either did not exist or lived on the other
+  renderer. All three were written from reading the app rather than measuring it,
+  and all three took minutes to check. A stage that has not been checked that way
+  is a stage whose gate is not really shut.
 - **Stage 4's five fixes are verified mechanically and not photographically.**
   The unit ratchet proves the bear is no longer asking for an extension three
   cannot read; it does not prove the bear looks like a bear. That is what the
