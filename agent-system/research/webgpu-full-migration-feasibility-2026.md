@@ -23,10 +23,18 @@
 > into an offscreen render target instead, and it reproduces the canvas to 0.01-0.11 of 255 on all
 > three renderers. See §10.3, §26 Phase 9, and the roadmap's §2.
 >
-> **WHAT KEEPS THE FLAG OFF NOW IS A DIFFERENT ARGUMENT, AND A WEAKER ONE.** The forest's first mount
-> on the WebGL2 backend is 13.6 s of blocked main thread against the classic renderer's 3.6 s, and
-> roughly a fifth of visitors would land on that backend. That is a performance decision rather than
-> a correctness one, and this report does not yet make it.
+> **THE FLAG IS NO LONGER OFF. THE NODE RENDERER SHIPPED ON 2026-09-19**, to every browser
+> reporting a hardware WebGPU adapter and to no other. `NEXT_PUBLIC_NODE_RENDERER` is unset in every
+> deployment and unset now means ON; the two values that do something are a kill switch and
+> `every-visitor`. See the graphics upgrade roadmap's §2b.
+>
+> **THE SECOND BLOCKER WAS ROUTED AROUND RATHER THAN FIXED, AND THE DISTINCTION MATTERS.** The
+> forest's first mount on the WebGL2 backend is still 13.6 s of blocked main thread against the
+> classic renderer's 3.6 s. Nothing made it faster. The roughly one fifth of visitors who would have
+> landed there now get the classic renderer instead, because `navigator.gpu` answering `none`,
+> `absent` or `software` selects it — the probe used as a VETO, which is sound in a way the PROMISE
+> §17 rejected would not be. Anything that later wants the fallback to carry traffic reopens this in
+> full.
 >
 > **PHASE 13 WAS REVERTED ON 2026-09-18 — see its section, which is now about the reversal.** What
 > follows is what it found, which stands; what it built failed the parity ratchet and is out.
@@ -2226,9 +2234,11 @@ convention. **Every phase ships and is independently revertable.**
 - **Objective:** `WebGPURenderer` becomes the renderer. Add the `navigator.gpu` tier probe and the
   `GPUDevice.lost` → remount-on-WebGL2 path.
 - **Validation:** three-way harness; forced device loss.
-- **The renderer is now REACHABLE rather than default**, behind `NEXT_PUBLIC_NODE_RENDERER`, and
+- **The renderer was REACHABLE rather than default**, behind `NEXT_PUBLIC_NODE_RENDERER`, and
   `rendererSelection.ts` holds the decision as a pure function with the flag-off case asserted by a
-  test. Phase 12 decides who gets it.
+  test. Phase 12 decides who gets it. **Superseded 2026-09-19: the node renderer is now the default
+  wherever `navigator.gpu` reports a hardware adapter, and the classic renderer is what the rest
+  get. See this document's header and the graphics upgrade roadmap's §2b.**
 - **THE TIER PROBE IS NOT THE RENDERER SELECTOR, and §18.3(a) is right to separate them.** §17 rejects
   "choose the renderer at runtime" by name, and Phase 0 measured why on this machine: full Chromium
   reported a fifteen-feature adapter and then REFUSED the device. A pre-flight would have answered
@@ -2236,6 +2246,14 @@ convention. **Every phase ships and is independently revertable.**
   QUALITY TIER — where it is the only signal that can see a machine whose WebGL renderer is an RTX
   4060 and whose WebGPU adapter is a CPU rasteriser. It runs only when a node renderer is going to
   draw, so a build with the flag off classifies exactly as it did before.
+- **NARROWED 2026-09-19: THE PROBE NOW ALSO SELECTS, IN ONE DIRECTION, AND THE BULLET ABOVE STILL
+  HOLDS FOR THE OTHER.** What §17 rejects is a pre-flight used as a PROMISE that WebGPU will work —
+  the Phase 0 machine is exactly why, and nothing about that case changed: an answered `hardware`
+  builds a `WebGPURenderer` and leaves the fallback to three, as it always did. The rollout uses the
+  probe as a VETO instead. An adapter that resolved `null` cannot be followed by a device that
+  succeeds, so `none` and `absent` are certain knowledge that the node renderer would land on its
+  WebGL2 backend — the 13.6 s forest. Refusing that is sound where promising the opposite would not
+  be, and the two error directions cost at most what the previous shipping behaviour cost.
 - **"FORCED DEVICE LOSS" CANNOT BE VALIDATED AS WRITTEN, and that is a finding rather than a gap.** A
   page cannot provoke a real device loss; `device.destroy()` resolves the same promise with reason
   `"destroyed"`, which this app does on EVERY canvas remount — one per world, per interest chip, per
@@ -2446,10 +2464,22 @@ the god rays keep the faithful port and the difference is documented; a lost `GP
 to `WebGPURenderer` + `forceWebGL` rather than to `WebGLRenderer`; and there is no percentage
 rollout.
 
+**THE SECOND OF THOSE THREE WAS REVERSED ON 2026-09-19, BY THE ROLLOUT, AND ON ITS OWN REASONING.**
+The approval rested on three arguments and the third was that the WebGL2 backend "ships anyway" to
+roughly 20% of visitors, so the recovery landed on a path with real traffic rather than a stub. The
+rollout ended that: browsers without WebGPU now get the CLASSIC renderer, so the WebGL2 backend
+ships to nobody. With that argument gone, the recovery is weighed against a measurement — 13593 ms
+of blocked main thread on the forest's first mount against the classic renderer's 3596 ms — and it
+now remounts onto `WebGLRenderer`. **The third approval, no percentage rollout, still stands and the
+rollout was built on it.** The first is untouched.
+
 > **THE FLAG IS STILL OFF, AND PHASE 13 DOES NOT CHANGE THAT.** §10.3's canvas readback is the named
 > prerequisite and it is untouched here — see the roadmap's Stage 0, which is the next piece of work
 > and says why it is a branch of its own rather than a patch. Parity is also still 12.22, 19.49 and
 > 9.90 of 255 on the three families, unmoved by this phase, which touched no shader.
+>
+> **Superseded 2026-09-19 on both counts:** Stage 0 closed the readback, the flag is on, and parity
+> is 0.45 / 1.21 / 0.31 after Phases 6-8 landed the port.
 
 ---
 

@@ -313,20 +313,39 @@ sequenceDiagram
 
 ## Rendering — two paths, one scene
 
-The scene you see is drawn by `WebGLRenderer`: GLSL materials, nine hand-written
-shaders, and the `postprocessing` composer. Beside it the repo ships a **complete
-second renderer** — `WebGPURenderer`, with WebGPU as the primary backend and
-WebGL2 as its own automatic fallback — built over Phases 0-13 of
-[the migration study](agent-system/research/webgpu-full-migration-feasibility-2026.md).
-It is gated behind `NEXT_PUBLIC_NODE_RENDERER=1` and **ships off**.
+The repo ships **two complete renderers**, and which one you get depends on what
+your browser can run. `WebGPURenderer` — TSL node materials, three.js
+`RenderPipeline` — was built over Phases 0-13 of
+[the migration study](agent-system/research/webgpu-full-migration-feasibility-2026.md)
+and **is now the default wherever the browser reports a real WebGPU adapter**.
+Everywhere else the scene is drawn by `WebGLRenderer`: GLSL materials, nine
+hand-written shaders, and the `postprocessing` composer.
 
-| | Classic path — every visitor today | Node path — behind the flag |
+**The split is decided by `navigator.gpu`, and only in one direction.** A
+browser that answers with a hardware adapter gets the node renderer — that is
+not a promise the device will be granted, and three's own fallback still handles
+the machine that reports an adapter and then refuses a device. A browser that
+answers `absent`, `none` or a software rasteriser gets the classic renderer,
+because the alternative is `WebGPURenderer` on its WebGL2 backend, and that
+backend blocks the main thread for **13.6 s on the forest's first mount against
+the classic renderer's 3.6 s**. Roughly a fifth of visitors are on that side of
+the line, and this is what keeps them off a measured regression.
+
+`NEXT_PUBLIC_NODE_RENDERER` is unset in every deployment, which is what selects
+the behaviour above. Two escapes exist: any of `0`/`off`/`false`/`no`/`disabled`
+is a kill switch that returns every visitor to the classic renderer with no code
+change, and `every-visitor` forces the node renderer even where WebGPU is
+absent — the only way to measure the WebGL2 backend in a real deployment, and
+not a value anybody types by accident.
+
+| | Classic path — no WebGPU | Node path — real WebGPU adapter |
 | --- | --- | --- |
 | Renderer | `WebGLRenderer` | `WebGPURenderer`, WebGPU or WebGL2, chosen by three.js on `init()` |
 | Materials | GLSL `ShaderMaterial` + `onBeforeCompile` | TSL node graphs, one source for both backends |
 | Post-processing | `postprocessing` composer | three.js `RenderPipeline`, eight passes |
-| Device loss | no equivalent | `GPUDevice.lost` remounts onto the WebGL2 backend |
+| Device loss | no equivalent | `GPUDevice.lost` remounts onto the **classic** renderer |
 | Canvas readback | works | **empty** — `preserveDrawingBuffer` does not exist on this renderer |
+| Selected by | no WebGPU adapter, a software one, or the kill switch | `navigator.gpu` reporting hardware |
 | Scene stills and PNG export | read the canvas | rendered into an offscreen target, and within 0.11 of 255 of the canvas |
 
 Two things are worth knowing before touching either path.
@@ -337,21 +356,29 @@ client render report is read off the renderer INSTANCE rather than off the flag
 that built it — a value derived from what the build asked for would count that
 population as WebGPU and measure nothing.
 
-**The flag is off for one reason, and it has never been visual parity.** It used
-to be the canvas readback: both node backends read an EMPTY canvas — 0 of 256
-samples carrying alpha and 0 of 256 carrying colour — which killed the image
+**The rollout was blocked twice, and neither blocker was visual parity.** The
+first was the canvas readback: both node backends read an EMPTY canvas — 0 of
+256 samples carrying alpha and 0 of 256 carrying colour — which killed the image
 export and every scene transition. **Stage 0 of
 [the graphics upgrade roadmap](agent-system/plans/frontend/webgpu-graphics-upgrade-roadmap.md)
 closed that on 2026-09-19** by rendering the still into an offscreen render
 target rather than scraping the canvas; it now reproduces the canvas to between
 0.01 and 0.11 of 255 on all three renderers.
 
-What keeps the flag off now is the forest's first mount on the WebGL2
-backend — 13.6 s of blocked main thread against the classic renderer's 3.6 s,
-for roughly a fifth of visitors. That is a performance decision rather than a
-correctness one, and nobody has made it yet. The same roadmap is where the
+The second was the WebGL2 backend's first mount, and **it is routed around
+rather than fixed**. The 13.6 s forest is still there on that backend, and
+nothing in this repo has made it faster; what changed is that no ordinary
+visitor is sent to it any more. That is a real limitation stated plainly: the
+node renderer's fallback backend remains four times the classic renderer's
+blocked first mount, `every-visitor` is the only way to reach it, and making it
+fast is where Stage 6's asset pipeline is aimed. The same roadmap is where the
 compute, HDR-compositing and particle work is planned, each stage behind the
 measurement that would otherwise be asserted rather than known.
+
+The two halves of that policy are checked on the two machines that can each
+exercise one — `e2e/default-renderer-rollout.spec.ts` pins no renderer and
+asserts that a SwiftShader browser draws with `webgl` while a real-driver
+browser draws with `webgpu`, and that neither ever lands on `webgl2`.
 
 ---
 
@@ -359,7 +386,7 @@ measurement that would otherwise be asserted rather than known.
 
 | Area | Technologies |
 | --- | --- |
-| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js (WebGL2 today, WebGPU behind a flag), Web Audio API, Tailwind CSS |
+| **Frontend** | Next.js 15, React 19, TypeScript, React Three Fiber, Three.js (WebGPU where the browser has it, WebGL2 everywhere else), Web Audio API, Tailwind CSS |
 | **Backend** | Go (chi, pgxpool, zerolog), Rust (`telemetry-service`, sqlx, tokio) |
 | **Messaging & Cache** | NATS JetStream (durable events & commands), Core NATS (request-reply), Redis (rate limiting & cache) |
 | **Persistence** | PostgreSQL 17 (Database-per-service on Neon in production), Raw SQL (No ORM) |

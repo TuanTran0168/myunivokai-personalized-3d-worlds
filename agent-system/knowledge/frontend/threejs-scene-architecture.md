@@ -472,6 +472,56 @@ the still lands between **0.01 and 0.11 of 255** on all twelve legs, which is
 what `e2e/scene-still-capture.spec.ts` asserts, with each leg's own one-frame
 cost as its budget.
 
+### Which renderer a visitor gets, and the one direction the WebGPU probe is trusted
+
+Since 2026-09-19 the node renderer is the DEFAULT, not a flag. `rendererSelection.ts`
+decides, as a pure function, in this order:
+
+1. **the parity harness**, which only exists in a build that sets
+   `NEXT_PUBLIC_PARITY_HARNESS` and is the only caller allowed to name a renderer
+2. **the kill switch** — `NEXT_PUBLIC_NODE_RENDERER` set to `0`, `off`, `false`,
+   `no` or `disabled` — which outranks device loss, because a deploy switching the
+   node path off to stop an incident must not have it handed back by a lost
+   `GPUDevice` whose recovery IS the node path
+3. **a lost `GPUDevice`**, one-way for the page's lifetime, recovering onto the
+   CLASSIC renderer — **reversed on 2026-09-19 from `WebGPURenderer` with
+   `forceWebGL`**, because the third of §18.3(b)'s three reasons was "the WebGL2
+   backend ships anyway to ~20% of visitors" and the rollout ended that. With
+   nobody on that backend, recovering onto it would answer a dead GPU with a
+   13593 ms forest first mount where the classic renderer's is 3596 ms. The
+   remount key therefore carries a `-recovered` suffix, because the classic
+   renderer's own suffix is empty and React would otherwise keep the dead
+   canvas
+4. **`navigator.gpu`** — `hardware` builds the node renderer, and `none`,
+   `absent` or `software` build the classic one
+
+**The probe is a veto and never a promise, and that is what makes it compatible
+with §17's rejection of runtime renderer selection.** §17 is right that a
+pre-flight cannot guarantee WebGPU will work: `requestDevice()` can reject after
+`requestAdapter()` succeeded, and Phase 0 measured that machine. Nothing here
+relies on it. An answered `hardware` still hands the fallback decision to three,
+exactly as before. What the probe buys is the other answer — no adapter means the
+WebGL2 backend for certain, and that backend is the 13.6 s forest in the table
+below.
+
+`software` is refused for a separate reason: Chrome falls back to SwiftShader for
+WebGPU on configurations where WebGL is still hardware-accelerated, so shipping
+the node path there moves a visitor from the GPU onto the CPU.
+
+**The canvas does not mount until the answer arrives.** A renderer is built by
+R3F's `gl` factory, once per `<Canvas>`, and cannot be changed afterwards — so
+mounting early and correcting later means a remount, which is this app's most
+expensive operation. The wait is one `requestAdapter()` (1–15 ms in Phase 0's
+numbers), bounded by `WEBGPU_ADAPTER_PROBE_TIMEOUT_MILLISECONDS` at 1.5 s so a
+wedged driver cannot hold the canvas forever, and invisible because the canvas is
+already held at `opacity-0` until the scene signals ready. The answer is memoised
+at module scope, so the app's many canvas remounts — one per world, per variant,
+per interest chip — ask the driver once.
+
+`e2e/default-renderer-rollout.spec.ts` is the only spec that pins no renderer, and
+therefore the only one that measures this: SwiftShader draws `webgl`, the real
+driver draws `webgpu`, and neither draws `webgl2`.
+
 ### The two backends of one renderer disagree about the first mount, in opposite directions
 
 Measured 2026-09-17 (§26 Phase 11). Main-thread time BLOCKED during a first
@@ -494,8 +544,13 @@ app rather than in a probe.
 **The same change makes the WebGL2 backend four times worse on the heavy
 scenes**, while leaving the light ones alone. The cost is not "the node path" —
 it is the node path's pipeline creation running synchronously on a backend with
-no async pipeline API to use. That backend is what roughly a fifth of visitors
-get, which makes this an open question about the fallback rather than a footnote.
+no async pipeline API to use.
+
+**Roughly a fifth of visitors have no WebGPU, and since 2026-09-19 they get the
+CLASSIC renderer rather than this backend** (see the selection section above).
+That contains the cost without reducing it: the numbers in this table are
+unchanged, and anything that later routes ordinary traffic onto the WebGL2
+backend — `every-visitor`, or a change of policy — gets them back in full.
 
 **Corrected 2026-09-17 by §26 Phase 13: the WebGL2 backend DOES have an
 asynchronous pipeline API, and the app was not asking for it.** The section below
